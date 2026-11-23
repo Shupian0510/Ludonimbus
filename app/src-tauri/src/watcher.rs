@@ -9,7 +9,7 @@ use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution};
 use ludonimbus_core::{config, logger, paths, process, spec, steam, util};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter};
 
@@ -98,6 +98,8 @@ pub fn spawn(app: AppHandle) {
     std::thread::spawn(move || {
         // Games currently running → whether the Steam wrapper was handling them.
         let mut running: HashMap<String, bool> = HashMap::new();
+        // Games whose real game process (`waitFor`) is up, for upload-on-game-exit.
+        let mut game_procs: HashSet<String> = HashSet::new();
         let mut last_vdf: Option<SystemTime> = None;
         let mut tick: u64 = 0;
         loop {
@@ -110,7 +112,25 @@ pub fn spawn(app: AppHandle) {
             for g in &cfg.games {
                 let runner = runner_state(&g.key);
                 let game_up = watch_names(g).iter().any(|n| procs.contains(n));
+                let eff = spec::effective(g);
+                let game_proc_up = eff.wait_for.iter().any(|n| procs.contains(&n.to_lowercase()));
+                let game_proc_ended = if game_proc_up {
+                    game_procs.insert(g.key.clone());
+                    false
+                } else {
+                    game_procs.remove(&g.key)
+                };
                 if runner == Runner::Active || game_up {
+                    // Started outside Steam, launcher still open, game closed.
+                    if game_proc_ended
+                        && eff.upload_on_game_exit
+                        && g.auto_sync
+                        && runner != Runner::Active
+                        && running.get(&g.key) == Some(&false)
+                    {
+                        background_sync(&app, &cfg, g, "game process exited while the launcher is still open");
+                        changed = true;
+                    }
                     let started = !running.contains_key(&g.key);
                     let wrapped = running.entry(g.key.clone()).or_insert(false);
                     if runner == Runner::Active {

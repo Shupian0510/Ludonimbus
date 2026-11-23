@@ -385,6 +385,26 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
         </div>
       </label>
       <label>
+        <span>上传时机</span>
+        <div>
+          <div className="row">
+            <Toggle
+              checked={game.uploadOnGameExit}
+              disabled={!game.hasGameProcess}
+              onChange={(v) =>
+                api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
+              }
+            />
+            <span>游戏进程退出就上传，不等启动器关闭</span>
+          </div>
+          <p className="muted small">
+            {game.hasGameProcess
+              ? `适合启动器会一直开着的游戏。开启后，${(game.waitFor.length ? game.waitFor : game.defaultWaitFor).join("、")} 一退出就上传；关闭启动器时会再检查一次。`
+              : "需要先在下面的「游戏进程」里填写游戏真正的进程名。"}
+          </p>
+        </div>
+      </label>
+      <label>
         <span>存档位置</span>
         <textarea
           className="input mono"
@@ -408,7 +428,11 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
       </label>
       <label>
         <span>游戏进程</span>
-        <textarea className="input mono" rows={2} value={waitFor} placeholder="例如 game.exe（启动器会先退出时，用来判断游戏是否还在运行）" onChange={(e) => setWaitFor(e.target.value)} />
+        <textarea className="input mono" rows={2} value={waitFor} placeholder={
+            game.defaultWaitFor.length
+              ? `使用内置规则：${game.defaultWaitFor.join("、")}`
+              : "例如 game.exe（游戏真正的进程名，用来判断游戏是否还在运行）"
+          } onChange={(e) => setWaitFor(e.target.value)} />
       </label>
       <label>
         <span>启动参数</span>

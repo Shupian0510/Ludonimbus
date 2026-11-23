@@ -105,6 +105,9 @@ export interface GameView {
   waitFor: string[];
   customSaves: boolean;
   defaultSaves: string[];
+  defaultWaitFor: string[];
+  uploadOnGameExit: boolean;
+  hasGameProcess: boolean;
   ludusaviTitle: string | null;
   autoSync: boolean;
   steam: { account: string; appid: number; enabled: boolean } | null;
@@ -274,6 +277,7 @@ export const api = {
       waitFor?: string[];
       args?: string;
       autoSync?: boolean;
+      uploadOnGameExit?: boolean;
     },
   ) => invoke<void>("update_game", { key, patch }),
   removeGame: (key: string) => invoke<void>("remove_game", { key }),

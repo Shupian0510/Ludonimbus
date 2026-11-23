@@ -233,25 +233,51 @@ fn run(args: &[String]) -> Result<i32> {
     }
 
     let spec = spec::effective(&game);
-    log(format!("{key}: launching {} {:?}", launch.exe.display(), launch.args));
-    let code = process::launch_and_wait(&launch.exe, &launch.args, &launch.work_dir, &spec.wait_for, &|m| {
-        log(format!("{key}: {m}"))
-    })?;
-
-    if game.auto_sync {
-        // Wait until the game has finished writing (e.g. lock files gone).
-        if let Ok(roots) = spec::resolve_roots(&game, &spec) {
-            let patterns: Vec<PathBuf> = spec
-                .quiesce_absent
+    let quiesce: Vec<PathBuf> = spec::resolve_roots(&game, &spec)
+        .map(|roots| {
+            spec.quiesce_absent
                 .iter()
                 .filter_map(|p| spec::split_pattern(p).ok())
                 .filter_map(|(root, rest)| spec::resolve_root_name(&root, &roots).map(|b| b.join(rest)))
-                .collect();
-            if !patterns.is_empty() {
-                log(format!("{key}: waiting for save files to be released"));
-                process::wait_quiesce(&patterns, Duration::from_secs(20));
-            }
+                .collect()
+        })
+        .unwrap_or_default();
+    // Wait until the game has finished writing (e.g. lock files released).
+    let settle = || {
+        if !quiesce.is_empty() {
+            log(format!("{key}: waiting for save files to be released"));
+            process::wait_quiesce(&quiesce, Duration::from_secs(20));
         }
+    };
+
+    // Optionally upload as soon as the game process exits, while a launcher
+    // that stays open keeps the Steam session alive.
+    let mut early_upload = || {
+        settle();
+        log(format!("{key}: game exited, uploading before the launcher closes"));
+        match sync::sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {
+            Ok(out) => log(format!("{key}: early upload {out:?}")),
+            Err(e) => log(format!("{key}: early upload failed: {e:#}")),
+        }
+    };
+    let on_game_exit: Option<&mut dyn FnMut()> = if game.auto_sync && spec.upload_on_game_exit {
+        Some(&mut early_upload)
+    } else {
+        None
+    };
+
+    log(format!("{key}: launching {} {:?}", launch.exe.display(), launch.args));
+    let code = process::launch_and_wait(
+        &launch.exe,
+        &launch.args,
+        &launch.work_dir,
+        &spec.wait_for,
+        on_game_exit,
+        &|m| log(format!("{key}: {m}")),
+    )?;
+
+    if game.auto_sync {
+        settle();
         log(format!("{key}: uploading saves"));
         match sync::sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {
             Ok(Outcome::Conflict { cloud, .. }) => {

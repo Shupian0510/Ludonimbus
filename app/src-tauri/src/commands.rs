@@ -58,6 +58,10 @@ pub struct GameView {
     wait_for: Vec<String>,
     custom_saves: bool,
     default_saves: Vec<String>,
+    default_wait_for: Vec<String>,
+    /// Effective: upload when the game process exits, not when the launcher closes.
+    upload_on_game_exit: bool,
+    has_game_process: bool,
     ludusavi_title: Option<String>,
     auto_sync: bool,
     steam: Option<SteamView>,
@@ -106,6 +110,9 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
         wait_for: g.wait_for.clone(),
         custom_saves: !g.saves.is_empty(),
         default_saves: adapter.map(|a| a.saves.clone()).unwrap_or_default(),
+        default_wait_for: adapter.map(|a| a.wait_for.clone()).unwrap_or_default(),
+        upload_on_game_exit: eff.upload_on_game_exit,
+        has_game_process: !eff.wait_for.is_empty(),
         ludusavi_title: g.ludusavi_title.clone(),
         auto_sync: g.auto_sync,
         steam: g.steam.as_ref().map(|l| SteamView {
@@ -485,6 +492,7 @@ pub struct GamePatch {
     wait_for: Option<Vec<String>>,
     args: Option<String>,
     auto_sync: Option<bool>,
+    upload_on_game_exit: Option<bool>,
 }
 
 fn clean(list: Vec<String>) -> Vec<String> {
@@ -520,6 +528,9 @@ pub async fn update_game(key: String, patch: GamePatch) -> CmdResult<()> {
             }
             if let Some(a) = patch.auto_sync {
                 g.auto_sync = a;
+            }
+            if let Some(v) = patch.upload_on_game_exit {
+                g.upload_on_game_exit = Some(v);
             }
             Ok(())
         })?;

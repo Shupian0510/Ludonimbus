@@ -18,6 +18,7 @@ pub struct SaveSpec {
     pub wait_for: Vec<String>,
     pub quiesce_absent: Vec<String>,
     pub ludusavi_title: Option<String>,
+    pub upload_on_game_exit: bool,
 }
 
 /// Merge adapter rules with the user's overrides.
@@ -30,6 +31,7 @@ pub fn effective(game: &GameEntry) -> SaveSpec {
         spec.exclude = a.exclude.clone();
         spec.wait_for = a.wait_for.clone();
         spec.quiesce_absent = a.quiesce.absent.clone();
+        spec.upload_on_game_exit = a.upload_on_game_exit;
     }
     for (k, v) in &game.roots {
         spec.roots.insert(k.clone(), v.clone());
@@ -44,6 +46,9 @@ pub fn effective(game: &GameEntry) -> SaveSpec {
         }
     }
     spec.ludusavi_title = game.ludusavi_title.clone();
+    if let Some(v) = game.upload_on_game_exit {
+        spec.upload_on_game_exit = v;
+    }
     spec
 }
 

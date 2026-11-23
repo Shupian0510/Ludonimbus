@@ -26,6 +26,10 @@ pub struct Adapter {
     pub quiesce: Quiesce,
     #[serde(default)]
     pub relocate: Option<Relocate>,
+    /// Upload as soon as the game process (`waitFor`) exits, without waiting
+    /// for a launcher that stays open.
+    #[serde(default)]
+    pub upload_on_game_exit: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -43,11 +43,16 @@ pub fn pid_alive(pid: u32) -> bool {
 
 /// Start the game and block until it (and everything it spawned) has exited.
 /// Returns the exit code of the started process.
+///
+/// With `on_game_exit`, the `wait_for` processes (the real game) are watched
+/// while the launcher is still open, and the callback runs every time the
+/// game exits, so saves can be uploaded without waiting for the launcher.
 pub fn launch_and_wait(
     exe: &Path,
     args: &[String],
     work_dir: &Path,
     wait_for: &[String],
+    mut on_game_exit: Option<&mut dyn FnMut()>,
     log: &dyn Fn(&str),
 ) -> Result<i32> {
     let mut cmd = std::process::Command::new(exe);
@@ -76,21 +81,58 @@ pub fn launch_and_wait(
     let tracked = false;
 
     let started = Instant::now();
-    let status = child.wait()?;
-    let code = status.code().unwrap_or(0);
-    let main_lifetime = started.elapsed();
-    log(&format!("main process exited with {code} after {}s", main_lifetime.as_secs()));
-
-    #[cfg(windows)]
-    if tracked {
-        if let Some(j) = &job {
-            while j.active_processes() > 0 {
-                std::thread::sleep(Duration::from_millis(500));
+    let mut exit: Option<(i32, Duration)> = None;
+    let watch_game = on_game_exit.is_some() && !wait_for.is_empty();
+    let mut game_seen = false;
+    let mut game_gone_since: Option<Instant> = None;
+    loop {
+        if exit.is_none() {
+            if let Some(status) = child.try_wait()? {
+                let code = status.code().unwrap_or(0);
+                exit = Some((code, started.elapsed()));
+                log(&format!("main process exited with {code} after {}s", started.elapsed().as_secs()));
             }
-            log("job is empty");
         }
+        #[cfg(windows)]
+        let active = match (&job, tracked) {
+            (Some(j), true) => j.active_processes() > 0,
+            _ => exit.is_none(),
+        };
+        #[cfg(not(windows))]
+        let active = exit.is_none();
+
+        if watch_game {
+            if is_running(wait_for) {
+                if !game_seen {
+                    log("game process is running");
+                }
+                game_seen = true;
+                game_gone_since = None;
+            } else if game_seen
+                && game_gone_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(3)
+            {
+                game_seen = false;
+                game_gone_since = None;
+                if active {
+                    log("game exited while the launcher is still open");
+                    if let Some(cb) = on_game_exit.as_mut() {
+                        cb();
+                    }
+                }
+            }
+        }
+        if !active {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(if watch_game { 1000 } else { 500 }));
     }
-    let _ = tracked;
+    if tracked {
+        log("job is empty");
+    }
+    let (code, main_lifetime) = match exit {
+        Some(e) => e,
+        None => (child.wait()?.code().unwrap_or(0), started.elapsed()),
+    };
 
     // Fallback: the real game may live outside the job. Only wait for it to
     // appear when the launcher handed off quickly (or tracking failed);
@@ -205,6 +247,39 @@ mod tests {
         assert!(file_in_use(&lock));
         drop(held);
         assert!(!file_in_use(&lock));
+    }
+
+    #[test]
+    fn reports_game_exit_while_launcher_stays_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A uniquely named "game": a copy of ping that runs ~2 s.
+        let game = tmp.path().join("ln-fake-game.exe");
+        std::fs::copy(r"C:\Windows\System32\PING.EXE", &game).unwrap();
+        // The "launcher" starts the game, then stays open ~8 s.
+        let script = format!(
+            "start /b {} -n 3 127.0.0.1 >nul & ping -n 9 127.0.0.1 >nul",
+            game.display()
+        );
+        let calls = std::cell::Cell::new(0);
+        let launcher_done = std::cell::Cell::new(false);
+        let mut cb = || {
+            assert!(!launcher_done.get());
+            calls.set(calls.get() + 1);
+        };
+        let start = Instant::now();
+        let code = launch_and_wait(
+            Path::new(r"C:\Windows\System32\cmd.exe"),
+            &["/c".to_string(), script],
+            tmp.path(),
+            &["ln-fake-game.exe".to_string()],
+            Some(&mut cb),
+            &|_| {},
+        )
+        .unwrap();
+        launcher_done.set(true);
+        assert_eq!(code, 0);
+        assert_eq!(calls.get(), 1, "callback should run once, before the launcher exits");
+        assert!(start.elapsed() >= Duration::from_secs(7));
     }
 }
 

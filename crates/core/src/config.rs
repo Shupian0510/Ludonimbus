@@ -135,6 +135,9 @@ pub struct GameEntry {
     pub roots: BTreeMap<String, String>,
     /// Resolve saves through Ludusavi's database instead of patterns.
     pub ludusavi_title: Option<String>,
+    /// Upload when the game process exits instead of waiting for the
+    /// launcher to close. `None` = the adapter's default.
+    pub upload_on_game_exit: Option<bool>,
     pub steam: Option<SteamLink>,
     #[serde(default = "yes")]
     pub auto_sync: bool,
