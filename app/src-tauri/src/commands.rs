@@ -7,14 +7,14 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, ludusavi, paths, process, relocate, spec, steam};
+use ludonimbus_core::{adapters, games, localart, ludusavi, paths, process, relocate, spec, steam};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-type CmdResult<T> = std::result::Result<T, String>;
+pub(crate) type CmdResult<T> = std::result::Result<T, String>;
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> CmdResult<T> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> CmdResult<T> {
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| e.to_string())?
@@ -28,6 +28,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
 #[serde(rename_all = "camelCase")]
 pub struct ArtView {
     cover: Option<String>,
+    wide: Option<String>,
     hero: Option<String>,
     logo: Option<String>,
     icon: Option<String>,
@@ -39,6 +40,8 @@ pub struct SteamView {
     account: String,
     appid: u32,
     enabled: bool,
+    /// Created by Ludonimbus ("Add to Steam"), so it can be removed again.
+    created: bool,
 }
 
 #[derive(Serialize)]
@@ -81,18 +84,21 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
     let eff = spec::effective(g);
     let st = state::game(&g.key);
     let root = steam::root(cfg);
-    let art = match (&root, &g.steam) {
-        (Some(r), Some(l)) => {
-            let a = steam::art(r, &l.account, l.appid);
-            let u = |p: &Option<PathBuf>, kind: &str| p.as_ref().map(|_| art::url(&l.account, l.appid, kind));
-            ArtView {
-                cover: u(&a.cover, "cover"),
-                hero: u(&a.hero, "hero"),
-                logo: u(&a.logo, "logo"),
-                icon: u(&a.icon, "icon"),
+    // Steam's artwork for linked games, else the artwork chosen in Ludonimbus.
+    let pick = |kind: &str| -> Option<String> {
+        if let (Some(r), Some(l)) = (&root, &g.steam) {
+            if let Some(f) = steam::art_file(r, &l.account, l.appid, kind) {
+                return Some(art::url(&l.account, l.appid, kind, &f));
             }
         }
-        _ => ArtView::default(),
+        localart::file(&g.key, kind).map(|f| art::local_url(&g.key, kind, &f))
+    };
+    let art = ArtView {
+        cover: pick("cover"),
+        wide: pick("wide"),
+        hero: pick("hero"),
+        logo: pick("logo"),
+        icon: pick("icon"),
     };
     let names = watcher::watch_names(g);
     GameView {
@@ -119,6 +125,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
             account: l.account.clone(),
             appid: l.appid,
             enabled: l.enabled,
+            created: l.created,
         }),
         health: steam::health(cfg, g),
         art,
@@ -428,8 +435,8 @@ pub async fn steam_shortcuts(account: String) -> CmdResult<Vec<ShortcutView>> {
             .map(|c| {
                 let a = steam::art(&root, &account, c.appid);
                 ShortcutView {
-                    cover: a.cover.map(|_| art::url(&account, c.appid, "cover")),
-                    icon: a.icon.map(|_| art::url(&account, c.appid, "icon")),
+                    cover: a.cover.map(|f| art::url(&account, c.appid, "cover", &f)),
+                    icon: a.icon.map(|f| art::url(&account, c.appid, "icon", &f)),
                     candidate: c,
                 }
             })
@@ -448,7 +455,7 @@ pub async fn add_from_shortcut(
     key: Option<String>,
 ) -> CmdResult<String> {
     blocking(move || {
-        let g = games::add_from_shortcut(&account, appid, games::NewGame { name, adapter, saves, key })?;
+        let g = games::add_from_shortcut(&account, appid, games::NewGame { name, adapter, saves, key, ludusavi_title: None })?;
         Ok(g.key)
     })
     .await
@@ -557,7 +564,9 @@ pub async fn relocate_auto(key: String) -> CmdResult<Option<String>> {
     blocking(move || {
         let cfg = config::load()?;
         let g = cfg.require_game(&key)?;
-        Ok(relocate::find_candidate(g).map(|p| p.display().to_string()))
+        // No exe yet (added from its saves): look for where it is installed.
+        let found = if g.exe.is_none() { ludonimbus_core::discover::locate_game(&cfg, g) } else { relocate::find_candidate(g) };
+        Ok(found.map(|p| p.display().to_string()))
     })
     .await
 }
@@ -610,7 +619,7 @@ pub async fn folder_to_pattern(path: String, exe: Option<String>) -> CmdResult<S
     .await
 }
 
-fn with_steam_closed<T>(close_steam: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub(crate) fn with_steam_closed<T>(close_steam: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
     let cfg = config::load()?;
     let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
     let was_running = steam::is_running();

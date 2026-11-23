@@ -110,9 +110,9 @@ export interface GameView {
   hasGameProcess: boolean;
   ludusaviTitle: string | null;
   autoSync: boolean;
-  steam: { account: string; appid: number; enabled: boolean } | null;
+  steam: { account: string; appid: number; enabled: boolean; created: boolean } | null;
   health: Health;
-  art: { cover: string | null; hero: string | null; logo: string | null; icon: string | null };
+  art: { cover: string | null; wide: string | null; hero: string | null; logo: string | null; icon: string | null };
   running: boolean;
   lastSyncAt: string | null;
   lastSyncedDevice: string | null;
@@ -178,6 +178,80 @@ export interface LocalFile {
   logical: string;
   size: number;
   mtime: number;
+}
+
+/** A game found on this PC by a scan. */
+export interface Found {
+  id: string;
+  name: string;
+  /** `emulator`: a game with saves in an emulator's data folder. */
+  source: "steam" | "epic" | "gog" | "xbox" | "recomplauncher" | "emulator" | "ludusavi" | "folder";
+  exe: string | null;
+  install: string | null;
+  args: string;
+  steamAccount: string | null;
+  steamAppid: number | null;
+  adapter: string | null;
+  adapterName: string | null;
+  /** Save patterns the scan worked out (one emulator game, or a folder picked in RecompLauncher). */
+  saves: string[];
+  ludusaviTitle: string | null;
+  saveFiles: number;
+  saveBytes: number;
+  saveSample: string[];
+  steamCloud: boolean;
+  storeGame: boolean;
+  addedKey: string | null;
+  registryOnly: boolean;
+  /** Where the install of a game found by its saves was found. */
+  installStore: string | null;
+  matchKey: string;
+}
+
+/** The built-in rule an exe matches. */
+export interface AdapterInfo {
+  key: string;
+  /** The game's name (the emulator's name for emulators). */
+  name: string;
+  /** What to show, e.g. "Dolphin（整个模拟器的存档）". */
+  label: string;
+  emulator: boolean;
+}
+
+/** A folder a game store installs games into. */
+export interface GameFolder {
+  label: string;
+  path: string;
+}
+
+/** A folder that may hold a game's saves. */
+export interface SaveCandidate {
+  path: string;
+  files: number;
+  bytes: number;
+  modified: string | null;
+  sample: string[];
+  reason: string;
+}
+
+export type ArtKind = "cover" | "wide" | "hero" | "logo" | "icon";
+
+export interface SgdbGame {
+  id: number;
+  name: string;
+  year: number | null;
+  verified: boolean;
+}
+
+export interface SgdbImage {
+  id: number;
+  url: string;
+  thumb: string;
+  width: number;
+  height: number;
+  score: number;
+  style: string;
+  author: string;
 }
 
 export type CloudKind = "none" | "localFolder" | "googleDrive" | "webDav" | "s3" | "baiduPan";
@@ -369,6 +443,37 @@ export const api = {
   cloudConnectBaidu: (appKey: string, secretKey: string, appName: string) =>
     invoke<string>("cloud_connect_baidu", { appKey, secretKey, appName }),
   cloudCancelLogin: () => invoke<void>("cloud_cancel_login"),
+  scanQuick: () => invoke<Found[]>("scan_quick"),
+  scanLudusavi: () => invoke<Found[]>("scan_ludusavi"),
+  scanFolder: (path: string) => invoke<Found[]>("scan_folder", { path }),
+  gameFolders: () => invoke<GameFolder[]>("game_folders"),
+  addFound: (found: Found, choice: { name?: string; saves?: string[]; ludusaviTitle?: string | null; exe?: string | null } = {}) =>
+    invoke<string>("add_found", {
+      found,
+      name: choice.name ?? found.name,
+      saves: choice.saves ?? [],
+      ludusaviTitle: choice.ludusaviTitle ?? null,
+      exe: choice.exe ?? null,
+    }),
+  detectAdapter: (exe: string) => invoke<AdapterInfo | null>("detect_adapter", { exe }),
+  saveSuggest: (name: string, exe: string | null, install: string | null) =>
+    invoke<SaveCandidate[]>("savefind_suggest", { name, exe, install }),
+  saveWatchStart: (exe: string | null, args: string | null, install: string | null) =>
+    invoke<void>("savefind_watch_start", { exe, args, install }),
+  saveWatchStop: () => invoke<SaveCandidate[]>("savefind_watch_stop"),
+  sgdbStatus: () => invoke<{ hasKey: boolean; keyPage: string }>("sgdb_status"),
+  sgdbSetKey: (key: string) => invoke<void>("sgdb_set_key", { key }),
+  sgdbClearKey: () => invoke<void>("sgdb_clear_key"),
+  sgdbSearch: (term: string) => invoke<SgdbGame[]>("sgdb_search", { term }),
+  sgdbImages: (gameId: number, kind: ArtKind) => invoke<SgdbImage[]>("sgdb_images", { gameId, kind }),
+  artSetUrl: (key: string, kind: ArtKind, url: string) => invoke<void>("art_set_url", { key, kind, url }),
+  artSetFile: (key: string, kind: ArtKind, path: string) => invoke<void>("art_set_file", { key, kind, path }),
+  pickImage: () => invoke<string | null>("pick_image"),
+  steamAddGame: (key: string, account: string, closeSteam: boolean) =>
+    invoke<number>("steam_add_game", { key, account, closeSteam }),
+  steamAddGames: (keys: string[], account: string, autoArt: boolean, closeSteam: boolean) =>
+    invoke<{ key: string; error: string | null }[]>("steam_add_games", { keys, account, autoArt, closeSteam }),
+  steamRemoveGame: (key: string, closeSteam: boolean) => invoke<void>("steam_remove_game", { key, closeSteam }),
   cloudAccount: () => invoke<AccountInfo>("cloud_account"),
   devices: () => invoke<DeviceInfo[]>("list_devices"),
   ludusaviSearch: (query: string) => invoke<string[]>("ludusavi_search", { query }),

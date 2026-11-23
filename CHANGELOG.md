@@ -4,6 +4,30 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.4.0
+
+### 中文
+
+- 新增：「添加游戏 → 扫描本机」一次列出 Steam 里的非 Steam 游戏、Epic / GOG / Xbox 应用安装的游戏、RecompLauncher 安装的游戏、模拟器里有存档的游戏，以及 Ludusavi 数据库里本机已经有存档的游戏，勾选后批量添加。Steam 云已经在同步的游戏单独列出。放在别处的游戏可以「扫描文件夹…」。
+- 新增：找存档向导。认不出的游戏可以搜索 Ludusavi 数据库、从常见位置里挑、「玩一下再找」（启动游戏存一次档，列出刚才被写入的文件夹），或者手动选文件夹；存档很大、可能含有缓存时会提醒。
+- 新增：一键加入 Steam。不在 Steam 里的游戏可以单个或批量加入 Steam，并自动开启云存档同步。Ludonimbus 建的快捷方式可以在详情页移除。
+- 新增：从 SteamGridDB 自动配好或手动挑选封面、背景、Logo 和图标（需要你自己的 API Key，在设置里填写），也可以用本地图片；详情页可以随时更换封面。
+- 新增：只找到存档的游戏，会自动去 Epic、GOG、Xbox、已安装的程序和常用游戏文件夹里找游戏位置；详情页的「自动查找…」也能用。选游戏程序时可以直接打开 Steam、Xbox、Epic、GOG、EA、Ubisoft 的安装目录。
+- 新增：Xbox 应用（PC Game Pass）的游戏通过 `gamelaunchhelper.exe` 启动，Ludonimbus 等游戏本身退出后再上传存档。
+- 新增：模拟器按游戏同步。Dolphin、Cemu、Azahar / Citra / Lime3DS、RPCS3、shadPS4、PPSSPP、Vita3K、RetroArch、Ryujinx 可以只同步一个游戏的存档：扫描会列出模拟器里有存档的游戏，Steam 快捷方式带游戏文件时自动读出游戏 ID。Ryujinx 换电脑后会自动在当前用户档案下新建存档。
+- 新增：内置规则扩充到 19 个模拟器和 140 多个重编译 / 移植游戏（大部分来自 RecompLauncher 的游戏目录）；RecompLauncher 建的 Steam 快捷方式也能认出。
+
+### English
+
+- New: "Add game → Scan this PC" lists non-Steam shortcuts, games installed by Epic, GOG, the Xbox app and RecompLauncher, games with saves inside emulators, and games from Ludusavi's database that have saves on this PC, ready to add in bulk. Games Steam Cloud already syncs are listed apart. Games kept elsewhere can be found with "Scan folder…".
+- New: a save finder for unknown games: search Ludusavi's database, pick from common locations, "play and find" (save once in the game and see the folders it wrote to), or choose a folder by hand. Very large saves that may include caches are flagged.
+- New: one-click "Add to Steam" for games that are not in Steam, one by one or in bulk, with cloud saves turned on. Shortcuts made by Ludonimbus can be removed from the game page.
+- New: artwork (cover, background, logo, icon) picked automatically or by hand from SteamGridDB with your own API key (set in Settings), or from local images; the cover can be changed on the game page at any time.
+- New: games found by their saves are looked up in Epic, GOG, Xbox, installed programs and common game folders to find where they are installed; "Find automatically…" on the game page does the same. The program picker opens Steam, Xbox, Epic, GOG, EA and Ubisoft install folders in one click.
+- New: Xbox app (PC Game Pass) games start through `gamelaunchhelper.exe`, and saves are uploaded after the game itself exits.
+- New: per-game saves for emulators. Dolphin, Cemu, Azahar / Citra / Lime3DS, RPCS3, shadPS4, PPSSPP, Vita3K, RetroArch and Ryujinx can sync a single game: the scan lists games with saves inside the emulator, and shortcuts that start a game file are recognised by its game ID. On another PC, Ryujinx gets a new save for the current user profile automatically.
+- New: built-in rules for 19 emulators and 140+ recomps and ports (mostly from RecompLauncher's catalog); Steam shortcuts made by RecompLauncher are recognised.
+
 ## 0.3.0
 
 ### 中文

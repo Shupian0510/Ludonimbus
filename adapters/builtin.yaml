@@ -2,15 +2,20 @@
 #
 # 路径写法：每条路径以 {根目录名} 开头，后面接相对路径或通配符。
 # 可用的根目录：
-#   {install}       游戏目录（Ludonimbus 记录的 exe 所在文件夹）
+#   {install}       游戏目录（Ludonimbus 记录的 exe 所在文件夹；match 写了子文件夹时是发布包的根目录）
 #   {home}          用户目录
 #   {appdata}       %APPDATA%（Roaming）
 #   {localappdata}  %LOCALAPPDATA%
 #   {documents}     文档
-#   以及在 roots 里自定义的根目录（可以引用 {env:变量名} 和上面这些）
+#   以及在 roots 里自定义的根目录（可以引用 {env:变量名} 和上面这些；
+#   用 | 分隔几个候选位置时用第一个存在的，都不存在时用最后一个）
 #
 # 字段：
-#   match      用来从 Steam 快捷方式识别游戏：exe 文件名 + 可选的同目录文件
+#   match      用来从 Steam 快捷方式识别游戏：
+#                exe      文件名（可以列多个；* 匹配任意字符），或相对 {install} 的路径（game/x.exe）
+#                sibling  同目录必须有的文件（可选）
+#                args     启动参数里必须包含的文字（可选）
+#   recomplauncher  RecompLauncher 里的游戏 id（它建的 Steam 快捷方式是 recomplauncher.exe --play <id>）
 #   saves      要同步的存档
 #   exclude    排除的文件
 #   waitFor    游戏真正的进程名（启动器会先退出时用来判断游戏是否还在运行）
@@ -32,6 +37,7 @@
 - key: fe-fortunes-weave
   name: 火焰纹章：万缕千丝
   platform: fefw recomp
+  recomplauncher: [fefw-recomp, fefw-recomp-2]
   match: { exe: fefw.exe }
   saves: ["{install}/save/**"]
   waitFor: ["fefw.exe"]
@@ -40,8 +46,111 @@
 - key: bloodborne-lantern
   name: Bloodborne
   platform: Lantern Engine（shadPS4）
+  recomplauncher: [lanternengine]
   match: { exe: Bloodborne.exe, sibling: "Lantern Engine.exe" }
   saves: ["{install}/user/savedata/1/CUSA00207/**"]
   exclude: ["{install}/user/launcher-backups/**", "{install}/user/cache/**"]
   waitFor: ["Lantern Engine.exe"]
   relocate: { exe: Bloodborne.exe, sibling: "Lantern Engine.exe" }
+
+# --- 移植 / 重编译（存档位置按源码或 PCGamingWiki 核对过）---------------------
+# 更多重编译游戏的规则在 recomplauncher.yaml（自动生成），模拟器在 emulators.yaml。
+
+- key: soh
+  name: 塞尔达传说：时之笛
+  platform: Ship of Harkinian（N64 移植）
+  recomplauncher: [shipwright]
+  match: { exe: soh.exe }
+  saves: ["{install}/Save/**"]
+
+- key: 2ship2harkinian
+  name: 塞尔达传说：姆吉拉的假面
+  platform: 2 Ship 2 Harkinian（N64 移植）
+  recomplauncher: [2ship2harkinian]
+  match: { exe: 2ship.exe }
+  saves: ["{install}/saves/**"]
+
+- key: ghostship
+  name: 超级马力欧64
+  platform: Ghostship（N64 移植）
+  recomplauncher: [ghostship]
+  match: { exe: Ghostship.exe }
+  saves: ["{install}/saves/**"]
+
+# libultraship 把 N64 的 EEPROM 存档写在程序目录的 default.sav
+- key: starship
+  name: 星际火狐64
+  platform: Starship（N64 移植）
+  recomplauncher: [starship]
+  match: { exe: Starship.exe }
+  saves: ["{install}/default.sav"]
+
+- key: spaghettikart
+  name: 马力欧卡丁车64
+  platform: SpaghettiKart（N64 移植）
+  recomplauncher: [spaghettikart]
+  match: { exe: Spaghettify.exe }
+  saves: ["{install}/default.sav"]
+
+- key: sm64coopdx
+  name: 超级马力欧64（联机版）
+  platform: sm64coopdx（N64 移植）
+  recomplauncher: [sm64coopdx]
+  match: { exe: sm64coopdx.exe }
+  saves: ["{appdata}/sm64coopdx/sm64_save_file.bin", "{appdata}/sm64ex-coop/sm64_save_file.bin"]
+
+- key: sm64ex
+  name: 超级马力欧64
+  platform: sm64ex（N64 移植）
+  match: { exe: "sm64.*.exe" }
+  saves: ["{appdata}/sm64ex/sm64_save_file.bin"]
+
+# 默认在 %APPDATA%\perfectdark，加 --portable 启动时在程序目录
+- key: perfect-dark
+  name: 完美黑暗
+  platform: Perfect Dark（N64 移植）
+  recomplauncher: [perfect-dark, perfect-dark-dabs-mod]
+  match: { exe: [pd.x86_64.exe, pd.i686.exe, pd.exe] }
+  saves: ["{appdata}/perfectdark/*.bin", "{install}/eeprom.bin"]
+
+- key: unleashed-recomp
+  name: 索尼克：释放
+  platform: Unleashed Recompiled（Xbox 360）
+  recomplauncher: [unleashedrecomp]
+  match: { exe: UnleashedRecomp.exe }
+  # 程序目录有 portable.txt 时存在程序目录
+  saves:
+    - "{appdata}/UnleashedRecomp/save/**"
+    - "{appdata}/UnleashedRecomp/mlsave/**"
+    - "{install}/save/**"
+    - "{install}/mlsave/**"
+
+- key: opengoal-jak1
+  name: "Jak and Daxter: The Precursor Legacy"
+  platform: OpenGOAL（PS2 移植）
+  match: { exe: gk.exe }
+  saves: ["{appdata}/OpenGOAL/jak1/saves/**"]
+  waitFor: [gk.exe]
+
+- key: opengoal-jak2
+  name: Jak II
+  platform: OpenGOAL（PS2 移植）
+  match: { exe: gk.exe, args: "--game jak2" }
+  saves: ["{appdata}/OpenGOAL/jak2/saves/**"]
+  waitFor: [gk.exe]
+
+- key: opengoal-jak3
+  name: Jak 3
+  platform: OpenGOAL（PS2 移植）
+  match: { exe: gk.exe, args: "--game jak3" }
+  saves: ["{appdata}/OpenGOAL/jak3/saves/**"]
+  waitFor: [gk.exe]
+
+# Godot 游戏，用户数据在 %APPDATA%\SMB1R
+- key: smb1r
+  name: 超级马力欧兄弟
+  platform: Super Mario Bros. Remastered（同人重制）
+  recomplauncher: [super-mario-bros-remastered-public]
+  match: { exe: SMB1R.exe }
+  saves: ["{appdata}/SMB1R/**"]
+  exclude: ["{appdata}/SMB1R/logs/**", "{appdata}/SMB1R/shader_cache/**", "{appdata}/SMB1R/vulkan/**"]

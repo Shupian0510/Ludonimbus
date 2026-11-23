@@ -6,7 +6,7 @@ use ludonimbus_core::cloud::{self, oauth};
 use ludonimbus_core::config::{self, CloudConfig};
 use ludonimbus_core::snapshot::{self, Trigger};
 use ludonimbus_core::sync::{self, Ctx, Resolution};
-use ludonimbus_core::{games, ludusavi, paths, steam};
+use ludonimbus_core::{discover, games, ludusavi, paths, steam};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -48,6 +48,16 @@ enum Cmd {
     Cloud(CloudCmd),
     /// Rename this device
     DeviceName { name: String },
+    /// Find games on this PC (Steam shortcuts, Epic, GOG; optionally Ludusavi
+    /// and a folder)
+    Discover {
+        /// Also run Ludusavi's full scan (about a minute)
+        #[arg(long)]
+        ludusavi: bool,
+        /// Also look for games in this folder
+        #[arg(long)]
+        folder: Option<PathBuf>,
+    },
     /// Search Ludusavi's save database
     Ludusavi {
         query: String,
@@ -309,7 +319,7 @@ fn run(cli: Cli) -> Result<()> {
                 let g = games::add_from_shortcut(
                     &account,
                     appid,
-                    games::NewGame { name, adapter, saves, key: None },
+                    games::NewGame { name, adapter, saves, key: None, ludusavi_title: None },
                 )?;
                 println!("已添加 {}（{}）", g.name, g.key);
             }
@@ -449,6 +459,41 @@ fn run(cli: Cli) -> Result<()> {
                 let _ = c.put_device(&cloud::device_info(&ctx.cfg));
             }
             println!("设备名已改为 {name}");
+        }
+        Cmd::Discover { ludusavi: full, folder } => {
+            let cfg = config::load()?;
+            let mut list = discover::quick(&cfg);
+            if let Some(dir) = folder {
+                list.extend(discover::folder_scan(&cfg, &dir));
+            }
+            if full {
+                list.extend(discover::ludusavi_scan(&cfg)?);
+            }
+            for f in &list {
+                let rule = f
+                    .adapter_name
+                    .clone()
+                    .or_else(|| f.ludusavi_title.as_ref().map(|t| format!("Ludusavi: {t}")))
+                    .unwrap_or_else(|| "需要指定存档".into());
+                let mut flags = Vec::new();
+                if f.steam_cloud {
+                    flags.push("Steam 云存档".to_string());
+                }
+                if f.store_game {
+                    flags.push("Steam 商店游戏".to_string());
+                }
+                if let Some(k) = &f.added_key {
+                    flags.push(format!("已添加：{k}"));
+                }
+                if f.save_files > 0 {
+                    flags.push(format!("{} 个存档文件 {}", f.save_files, human(f.save_bytes)));
+                }
+                if f.source == "emulator" && !f.args.is_empty() {
+                    flags.push(format!("启动：{}", f.args));
+                }
+                println!("{:<9} {:<40} {:<32} {}", f.source, f.name, rule, flags.join("，"));
+            }
+            println!("共 {} 个", list.len());
         }
         Cmd::Ludusavi { query, files } => {
             if files {

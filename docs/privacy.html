@@ -60,6 +60,7 @@
     <li>If you use a local or synced folder instead of Google Drive, no Google data is involved.</li>
     <li>If you connect Baidu Netdisk, Ludonimbus uses Baidu's official open platform (permissions <code>basic,netdisk</code>) and can only read and write the folder 我的应用数据/Ludonimbus (My App Data/Ludonimbus) in your Baidu Netdisk. The sign-in token is stored in the Windows Credential Manager and removed when you disconnect. Delete that folder to delete all data the app stored there.</li>
     <li>If you use a WebDAV server or S3-compatible storage, saves are sent only to the server you entered. Its password or secret key is stored in the Windows Credential Manager on your computer and removed when you disconnect.</li>
+    <li>If you enter a SteamGridDB API key to pick artwork, Ludonimbus sends the game names you search for to SteamGridDB with your key and downloads the images you choose. The key is stored in the Windows Credential Manager and can be deleted in Settings. No save data is sent to SteamGridDB.</li>
   </ul>
 
   <h2>Changes and contact</h2>
@@ -104,6 +105,7 @@
     <li>如果你使用本地或同步文件夹而不是 Google Drive，则不涉及任何 Google 数据。</li>
     <li>如果你连接百度网盘，Ludonimbus 使用百度网盘官方开放平台（权限 <code>basic,netdisk</code>），只能读写你网盘里的「我的应用数据/Ludonimbus」文件夹。登录凭据保存在 Windows 凭据管理器里，断开时删除。删除这个文件夹即可删除应用在百度网盘里存储的全部数据。</li>
     <li>如果你使用 WebDAV 服务器或 S3 兼容存储，存档只会传到你填写的服务器。它的密码或密钥保存在你电脑的 Windows 凭据管理器里，断开时会删除。</li>
+    <li>如果你填写了 SteamGridDB API Key 来挑选封面，Ludonimbus 会用你的 Key 把你搜索的游戏名发给 SteamGridDB，并下载你选中的图片。Key 保存在 Windows 凭据管理器里，可以在设置里删除。不会向 SteamGridDB 发送任何存档数据。</li>
   </ul>
 
   <h2>变更与联系</h2>

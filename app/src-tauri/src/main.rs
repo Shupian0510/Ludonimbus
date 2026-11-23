@@ -4,6 +4,7 @@ mod agent;
 mod art;
 mod busy;
 mod commands;
+mod library;
 mod steam_plugin;
 mod updater;
 mod watcher;
@@ -105,6 +106,26 @@ fn main() {
             commands::cloud_migrate,
             commands::cloud_dismiss_previous,
             commands::cloud_connect_baidu,
+            library::scan_quick,
+            library::scan_ludusavi,
+            library::scan_folder,
+            library::game_folders,
+            library::add_found,
+            library::detect_adapter,
+            library::savefind_suggest,
+            library::savefind_watch_start,
+            library::savefind_watch_stop,
+            library::sgdb_status,
+            library::sgdb_set_key,
+            library::sgdb_clear_key,
+            library::sgdb_search,
+            library::sgdb_images,
+            library::art_set_url,
+            library::art_set_file,
+            library::pick_image,
+            library::steam_add_game,
+            library::steam_add_games,
+            library::steam_remove_game,
             commands::cloud_cancel_login,
             commands::cloud_account,
             commands::list_devices,

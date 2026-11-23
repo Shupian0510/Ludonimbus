@@ -45,11 +45,42 @@ pub fn effective(game: &GameEntry) -> SaveSpec {
             spec.wait_for.push(w.clone());
         }
     }
+    // An Xbox app game started through its launch helper: the game itself
+    // runs as other processes.
+    if spec.wait_for.is_empty() {
+        if let Some(content) = game.exe.as_deref().filter(|e| crate::xbox::is_launch_helper(e)).and_then(Path::parent) {
+            spec.wait_for = crate::xbox::game_processes(content);
+        }
+    }
     spec.ludusavi_title = game.ludusavi_title.clone();
     if let Some(v) = game.upload_on_game_exit {
         spec.upload_on_game_exit = v;
     }
+    if adapter.is_some_and(|a| a.skip_junk) {
+        spec.exclude.extend(junk_excludes(&spec.saves));
+    }
     spec
+}
+
+/// Files and folders that are never saves, for each root the saves use:
+/// programs, disc images and archives, logs, caches and screenshots.
+pub fn junk_excludes(saves: &[String]) -> Vec<String> {
+    const FILES: &str = "**/*.{exe,dll,pdb,msi,iso,cue,chd,cso,rvz,wbfs,wad,nsp,xci,xex,xbe,z64,n64,v64,sfc,smc,gba,nds,3ds,cia,zip,7z,rar,log,tmp,dmp,mp4,mkv}";
+    const DIRS: [&str; 9] = ["cache", "caches", "shadercache", "shader_cache", "shaders", "logs", "crashdumps", "dumps", "screenshots"];
+    let mut roots: Vec<String> = Vec::new();
+    for s in saves {
+        if let Ok((root, _)) = split_pattern(s) {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for r in roots {
+        out.push(format!("{{{r}}}/{FILES}"));
+        out.extend(DIRS.iter().map(|d| format!("{{{r}}}/**/{d}/**")));
+    }
+    out
 }
 
 /// The game folder used for `{install}`.
@@ -102,7 +133,46 @@ pub fn expand(template: &str, known: &BTreeMap<String, PathBuf>) -> Result<PathB
         rest = &rest[end + 1..];
     }
     out.push_str(rest);
-    Ok(PathBuf::from(out.replace('/', "\\")))
+    Ok(normalize(&PathBuf::from(out.replace('/', "\\"))))
+}
+
+/// Remove `.` and `..` components without touching the disk.
+pub fn normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else {
+                    out.push(c);
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Expand a root template. `a|b|c` lists candidates: the first that exists
+/// is used, otherwise the last one that can be expanded (the portable
+/// location goes first, the usual install location last).
+pub fn expand_root(template: &str, known: &BTreeMap<String, PathBuf>) -> Result<PathBuf> {
+    let alts: Vec<&str> = template.split('|').map(str::trim).filter(|s| !s.is_empty()).collect();
+    if alts.len() <= 1 {
+        return expand(template, known);
+    }
+    let (mut last, mut err) = (None, None);
+    for a in alts {
+        match expand(a, known) {
+            Ok(p) if p.is_dir() => return Ok(p),
+            Ok(p) => last = Some(p),
+            Err(e) => err = Some(e),
+        }
+    }
+    last.ok_or_else(|| err.unwrap_or_else(|| anyhow!("根目录为空：{template}")))
 }
 
 /// Look up a root by name, including dynamic `drive-x` roots used for
@@ -122,8 +192,16 @@ pub fn resolve_root_name(name: &str, known: &BTreeMap<String, PathBuf>) -> Optio
 pub fn resolve_roots(game: &GameEntry, spec: &SaveSpec) -> Result<BTreeMap<String, PathBuf>> {
     let mut roots = builtin_roots(install_dir(game).as_deref());
     for (name, tpl) in &spec.roots {
-        let p = expand(tpl, &roots)?;
+        let p = expand_root(tpl, &roots)?;
         roots.insert(name.clone(), p);
+    }
+    // What the emulator's own settings and data say on this PC, unless the user set the root.
+    if let Some(a) = game.adapter.as_deref().and_then(adapters::find) {
+        for (name, p) in crate::emulators::config_roots(a, &roots, &spec.saves) {
+            if !game.roots.contains_key(&name) {
+                roots.insert(name, p);
+            }
+        }
     }
     Ok(roots)
 }
@@ -195,5 +273,31 @@ mod tests {
             "appdata/Game/a.sav"
         );
         assert_eq!(tokenize(Path::new(r"D:\Saves\x.sav"), &roots), "drive-d/Saves/x.sav");
+    }
+
+    #[test]
+    fn root_candidates_and_dots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let portable = tmp.path().join("Emu").join("User");
+        let mut known = BTreeMap::new();
+        known.insert("install".to_string(), tmp.path().join("Emu"));
+        known.insert("appdata".to_string(), tmp.path().join("Roaming"));
+        let tpl = "{install}/User|{appdata}/Dolphin Emulator";
+        // Nothing exists yet: the last candidate (the usual place).
+        assert_eq!(expand_root(tpl, &known).unwrap(), tmp.path().join("Roaming").join("Dolphin Emulator"));
+        std::fs::create_dir_all(&portable).unwrap();
+        assert_eq!(expand_root(tpl, &known).unwrap(), portable);
+        // A candidate whose root is unknown is skipped.
+        assert_eq!(expand_root("{nope}/x|{appdata}/y", &known).unwrap(), tmp.path().join("Roaming").join("y"));
+        assert!(expand_root("{nope}/x", &known).is_err());
+        assert_eq!(expand("{install}/../Saves", &known).unwrap(), tmp.path().join("Saves"));
+    }
+
+    #[test]
+    fn junk_exclusions_follow_the_roots() {
+        let ex = junk_excludes(&["{install}/save".into(), "{appdata}/X/saves".into(), "{install}/a.ini".into()]);
+        assert!(ex.iter().any(|e| e.starts_with("{install}/**/*.{exe")));
+        assert!(ex.contains(&"{appdata}/**/cache/**".to_string()));
+        assert_eq!(ex.iter().filter(|e| e.starts_with("{install}/")).count(), ex.len() / 2);
     }
 }

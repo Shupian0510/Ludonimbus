@@ -1,38 +1,61 @@
-//! `ludoart://` protocol: serves the custom artwork Steam keeps in
-//! `userdata/<account>/config/grid` (cover, hero, logo, icon).
-//! On Windows the webview reaches it as `http://ludoart.localhost/<account>/<appid>/<kind>`.
+//! `ludoart://` protocol for artwork:
+//! - `/<account>/<appid>/<kind>`: Steam's custom artwork in
+//!   `userdata/<account>/config/grid`;
+//! - `/local/<game>/<kind>`: artwork chosen in Ludonimbus for games that are
+//!   not in Steam.
+//!
+//! On Windows the webview reaches it as `http://ludoart.localhost/...`. URLs
+//! carry the file's modification time so a replaced image is not cached.
 
-use ludonimbus_core::{config, steam};
+use ludonimbus_core::{config, localart, steam};
+use std::path::Path;
 use tauri::http::{Request, Response};
 use tauri::{Runtime, UriSchemeContext};
 
-pub fn url(account: &str, appid: u32, kind: &str) -> String {
-    format!("http://ludoart.localhost/{account}/{appid}/{kind}")
+fn version(file: &Path) -> u64 {
+    std::fs::metadata(file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+pub fn url(account: &str, appid: u32, kind: &str, file: &Path) -> String {
+    format!("http://ludoart.localhost/{account}/{appid}/{kind}?v={}", version(file))
+}
+
+pub fn local_url(key: &str, kind: &str, file: &Path) -> String {
+    format!("http://ludoart.localhost/local/{key}/{kind}?v={}", version(file))
 }
 
 fn not_found() -> Response<Vec<u8>> {
     Response::builder().status(404).body(Vec::new()).unwrap()
 }
 
+fn resolve(parts: &[&str]) -> Option<std::path::PathBuf> {
+    match parts {
+        ["local", key, kind] => {
+            let valid = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            valid.then(|| localart::file(key, kind)).flatten()
+        }
+        [account, appid, kind] => {
+            if !account.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            let appid = appid.parse::<u32>().ok()?;
+            let cfg = config::load().ok()?;
+            let root = steam::root(&cfg)?;
+            steam::art_file(&root, account, appid, kind)
+        }
+        _ => None,
+    }
+}
+
 pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let path = req.uri().path().trim_start_matches('/').to_string();
     let parts: Vec<&str> = path.split('/').collect();
-    let [account, appid, kind] = parts.as_slice() else {
-        return not_found();
-    };
-    if !account.chars().all(|c| c.is_ascii_digit()) {
-        return not_found();
-    }
-    let Ok(appid) = appid.parse::<u32>() else {
-        return not_found();
-    };
-    let Ok(cfg) = config::load() else {
-        return not_found();
-    };
-    let Some(root) = steam::root(&cfg) else {
-        return not_found();
-    };
-    let Some(file) = steam::art_file(&root, account, appid, kind) else {
+    let Some(file) = resolve(&parts) else {
         return not_found();
     };
     let Ok(bytes) = std::fs::read(&file) else {
@@ -46,7 +69,7 @@ pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>) 
     };
     Response::builder()
         .header("Content-Type", mime)
-        .header("Cache-Control", "max-age=60")
+        .header("Cache-Control", "max-age=3600")
         .header("Access-Control-Allow-Origin", "*")
         .body(bytes)
         .unwrap()

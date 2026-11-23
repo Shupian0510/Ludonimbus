@@ -195,6 +195,10 @@ pub struct SteamLink {
     pub enabled: bool,
     /// Shortcut fields before we wrapped it, restored on disable.
     pub original: Option<OriginalShortcut>,
+    /// The shortcut was created by Ludonimbus ("Add to Steam"), so it may be
+    /// deleted again when the game is removed.
+    #[serde(default)]
+    pub created: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

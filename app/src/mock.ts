@@ -1,7 +1,7 @@
 // Browser-only mock backend, used when the UI runs outside Tauri
 // (`npm run dev` in a normal browser) so the interface can be developed and
 // reviewed without the Rust side. Never loaded inside the app.
-import type { GameView, Outcome, Overview, SnapshotSummary, StatusReport } from "./api";
+import type { Found, GameView, Outcome, Overview, SnapshotSummary, StatusReport } from "./api";
 
 const now = Date.now();
 const ago = (min: number) => new Date(now - min * 60000).toISOString();
@@ -80,9 +80,9 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     hasGameProcess: key === "zelda-oot-longshot",
     ludusaviTitle: null,
     autoSync: true,
-    steam: { account: "12345678", appid, enabled: true },
+    steam: { account: "12345678", appid, enabled: true, created: false },
     health: { state: "ok" },
-    art: { cover: art(appid, "p.png"), hero: art(appid, "_hero.png"), logo: art(appid, "_logo.png"), icon: art(appid, "_icon.png") },
+    art: { cover: art(appid, "p.png"), wide: null, hero: art(appid, "_hero.png"), logo: art(appid, "_logo.png"), icon: art(appid, "_icon.png") },
     running: false,
     lastSyncAt: snapshots[key]?.[0]?.createdAt ?? null,
     lastSyncedDevice: snapshots[key]?.[0]?.deviceName ?? null,
@@ -103,15 +103,108 @@ const overview: Overview = {
   games: [
     game("zelda-oot-longshot", "塞尔达传说：时之笛", 4079546474, "Longshot（原生重制）", "C:\\Users\\me\\AppData\\Local\\Programs\\LongshotLauncher\\LongshotLauncher.exe", ["{data}/save/**"]),
     game("fe-fortunes-weave", "火焰纹章：万缕千丝", 2661209017, "fefw recomp", "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", ["{install}/save/**"], {
-      art: { cover: art(2661209017, "p.jpg"), hero: art(2661209017, "_hero.png"), logo: art(2661209017, "_logo.png"), icon: art(2661209017, "_icon.png") },
+      art: { cover: art(2661209017, "p.jpg"), wide: null, hero: art(2661209017, "_hero.png"), logo: art(2661209017, "_logo.png"), icon: art(2661209017, "_icon.png") },
       health: { state: "changed", exe: "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", launchOptions: "" },
     }),
     game("bloodborne-lantern", "Bloodborne", 4000695018, "Lantern Engine（shadPS4）", "C:\\Users\\me\\Desktop\\Switch\\Bloodborne\\BloodbornePC\\Bloodborne.exe", ["{install}/user/savedata/1/CUSA00207/**"], {
-      art: { cover: art(4000695018, "p.png"), hero: art(4000695018, "_hero.jpg"), logo: art(4000695018, "_logo.png"), icon: art(4000695018, "_icon.png") },
+      art: { cover: art(4000695018, "p.png"), wide: null, hero: art(4000695018, "_hero.jpg"), logo: art(4000695018, "_logo.png"), icon: art(4000695018, "_icon.png") },
       conflict: { cloudId: "01BB2", cloudDevice: "GPD-Win-Mini", cloudCreatedAt: ago(300), localHash: "y", detectedAt: ago(10) },
+    }),
+    game("celeste", "Celeste", 0, "", "D:\\Games\\Celeste\\Celeste.exe", ["{data}/Saves/**"], {
+      adapter: null,
+      adapterName: null,
+      platform: null,
+      ludusaviTitle: "Celeste",
+      steam: null,
+      health: { state: "notLinked" },
+      art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+    }),
+    game("starfield", "Starfield", 0, "", "", ["{ludusavi}"], {
+      adapter: null,
+      adapterName: null,
+      platform: null,
+      exe: null,
+      exeExists: false,
+      install: null,
+      ludusaviTitle: "Starfield",
+      steam: null,
+      health: { state: "notLinked" },
+      art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+    }),
+    game("doom-eternal", "DOOM Eternal", 0, "", "C:\\XboxGames\\Doom Eternal - PC\\Content\\launcher\\idTechLauncher.exe", ["{ludusavi}"], {
+      adapter: null,
+      adapterName: null,
+      platform: null,
+      install: null,
+      ludusaviTitle: "DOOM Eternal",
+      steam: null,
+      health: { state: "notLinked" },
+      art: { cover: null, wide: null, hero: null, logo: null, icon: null },
     }),
   ],
 };
+
+function found(id: string, name: string, source: Found["source"], extra: Partial<Found> = {}): Found {
+  return {
+    id,
+    name,
+    source,
+    exe: null,
+    install: null,
+    args: "",
+    steamAccount: null,
+    steamAppid: null,
+    adapter: null,
+    adapterName: null,
+    saves: [],
+    ludusaviTitle: null,
+    saveFiles: 0,
+    saveBytes: 0,
+    saveSample: [],
+    steamCloud: false,
+    storeGame: false,
+    addedKey: null,
+    registryOnly: false,
+    installStore: null,
+    matchKey: name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ""),
+    ...extra,
+  };
+}
+
+const quickScan: Found[] = [
+  found("steam:12345678:4079546474", "塞尔达传说：时之笛", "steam", { exe: overview.games[0].exe, adapter: "zelda-oot-longshot", adapterName: "Longshot", addedKey: "zelda-oot-longshot", steamAccount: "12345678", steamAppid: 4079546474 }),
+  found("steam:12345678:4000695018", "Bloodborne", "steam", { exe: overview.games[2].exe, adapter: "bloodborne-lantern", adapterName: "Lantern Engine", addedKey: "bloodborne-lantern", steamAccount: "12345678", steamAppid: 4000695018 }),
+  found("steam:12345678:3112233445", "Ryujinx", "steam", { exe: "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe", adapter: "ryujinx", adapterName: "Ryujinx（整个模拟器的存档）", steamAccount: "12345678", steamAppid: 3112233445 }),
+  found("steam:12345678:3220011223", "超级马力欧银河", "steam", { exe: "D:\\Emulators\\Dolphin-x64\\Dolphin.exe", args: '-b -e "D:\\ROMs\\Wii\\Super Mario Galaxy.rvz"', adapter: "dolphin", adapterName: "Dolphin（RMGE01）", saves: ["{emu}/Wii/title/0001000?/524d4745/data/**"], steamAccount: "12345678", steamAppid: 3220011223 }),
+  found("emulator:ryujinx:default:0100770008DD8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "emulator", { exe: "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe", args: '"C:\\Users\\me\\Desktop\\Switch\\Games\\ROMS\\MONSTER HUNTER GENERATIONS ULTIMATE [0100770008dd8000][v0].nsp"', adapter: "ryujinx", adapterName: "Ryujinx（0100770008DD8000）", saves: ["{nxsave-0100770008dd8000}/**", "{nxdevice-0100770008dd8000}/**"], saveFiles: 4, saveBytes: 6.2e6, saveSample: ["C:\\Users\\me\\AppData\\Roaming\\Ryujinx\\bis\\user\\save\\0000000000000003\\0\\system"] }),
+  found("emulator:dolphin:gc:GALE01", "Super Smash Bros. Melee", "emulator", { adapter: "dolphin", adapterName: "Dolphin（GALE01）", saves: ["{emu}/GC/*/Card ?/01-GALE-*.gci"], saveFiles: 1, saveBytes: 4.0e4, saveSample: ["C:\\Users\\me\\Documents\\Dolphin Emulator\\GC\\USA\\Card A\\01-GALE-SuperSmashBros0110290334.gci"] }),
+  found("recomplauncher:zelda64recomp", "The Legend of Zelda: Majora's Mask", "recomplauncher", { exe: "D:\\RecompLauncher\\Library\\zelda64recomp\\Zelda64Recompiled.exe", install: "D:\\RecompLauncher\\Library\\zelda64recomp", adapter: "zelda64recomp", adapterName: "The Legend of Zelda: Majora's Mask" }),
+  found("steam:87654321:3998877665", "Star Rail Launcher", "steam", { exe: "D:\\Games\\StarRail\\launcher.exe", steamAccount: "87654321", steamAppid: 3998877665 }),
+  found("epic:Salt", "Celeste", "epic", { exe: "D:\\Games\\Celeste\\Celeste.exe", install: "D:\\Games\\Celeste", ludusaviTitle: "Celeste", addedKey: "celeste" }),
+  found("xbox:Doom Eternal - PC", "Doom Eternal", "xbox", { exe: "C:\\XboxGames\\Doom Eternal - PC\\Content\\gamelaunchhelper.exe", install: "C:\\XboxGames\\Doom Eternal - PC\\Content", ludusaviTitle: "DOOM Eternal", installStore: "xbox" }),
+  found("gog:1207658930", "The Witcher 3: Wild Hunt", "gog", { exe: "D:\\GOG Games\\The Witcher 3\\bin\\x64\\witcher3.exe", install: "D:\\GOG Games\\The Witcher 3", ludusaviTitle: "The Witcher 3: Wild Hunt" }),
+];
+
+const ludusaviScan: Found[] = [
+  found("ludusavi:The Witcher 3: Wild Hunt", "The Witcher 3: Wild Hunt", "ludusavi", { ludusaviTitle: "The Witcher 3: Wild Hunt", saveFiles: 38, saveBytes: 412e6, saveSample: ["C:\\Users\\me\\Documents\\The Witcher 3\\gamesaves\\AutoSave_0.sav"] }),
+  found("ludusavi:Hollow Knight", "Hollow Knight", "ludusavi", { ludusaviTitle: "Hollow Knight", saveFiles: 6, saveBytes: 3.1e6, saveSample: ["C:\\Users\\me\\AppData\\LocalLow\\Team Cherry\\Hollow Knight\\user1.dat"] }),
+  found("ludusavi:DOOM Eternal", "DOOM Eternal", "ludusavi", { ludusaviTitle: "DOOM Eternal", saveFiles: 3, saveBytes: 1.1e6, exe: "C:\\XboxGames\\Doom Eternal - PC\\Content\\gamelaunchhelper.exe", installStore: "xbox", saveSample: ["C:\\XboxGames\\GameSave\\wgs\\000901F...\\container.1"] }),
+  found("ludusavi:Phantom Blade Zero", "Phantom Blade Zero", "ludusavi", { ludusaviTitle: "Phantom Blade Zero", saveFiles: 71, saveBytes: 2.5e9, saveSample: ["C:\\Program Files (x86)\\Steam\\steamapps\\common\\PBZ\\ProjectPBZ\\Saved\\Cache\\PBZInstallVerify.bin"] }),
+  found("ludusavi:Titanfall 2", "Titanfall 2", "ludusavi", { ludusaviTitle: "Titanfall 2", exe: "C:\\Program Files\\EA Games\\Titanfall2\\Titanfall2.exe", install: "C:\\Program Files\\EA Games\\Titanfall2", installStore: "registry", saveFiles: 4, saveBytes: 2.2e5, saveSample: ["C:\\Users\\me\\Documents\\Respawn\\Titanfall2\\profile\\profile.cfg"] }),
+  found("ludusavi:Starfield", "Starfield", "ludusavi", { ludusaviTitle: "Starfield", saveFiles: 120, saveBytes: 2.4e9, steamCloud: true, storeGame: true }),
+  found("ludusavi:No Man's Sky", "No Man's Sky", "ludusavi", { ludusaviTitle: "No Man's Sky", saveFiles: 22, saveBytes: 1.6e7, steamCloud: true, storeGame: true }),
+  found("ludusavi:Zenless Zone Zero", "Zenless Zone Zero", "ludusavi", { ludusaviTitle: "Zenless Zone Zero", registryOnly: true }),
+];
+
+const folderScan: Found[] = [
+  found("folder:D:\\Games\\Hades\\x64\\Hades.exe", "Hades", "folder", { exe: "D:\\Games\\Hades\\x64\\Hades.exe", install: "D:\\Games\\Hades", ludusaviTitle: "Hades" }),
+  found("folder:D:\\Games\\Some Indie\\SomeIndie.exe", "Some Indie", "folder", { exe: "D:\\Games\\Some Indie\\SomeIndie.exe", install: "D:\\Games\\Some Indie" }),
+];
+
+const sgdbCovers = [art(4079546474, "p.png"), art(2661209017, "p.jpg"), art(4000695018, "p.png")];
+const sgdbHeroes = [art(4079546474, "_hero.png"), art(2661209017, "_hero.png"), art(4000695018, "_hero.jpg")];
+const sgdbLogos = [art(4079546474, "_logo.png"), art(2661209017, "_logo.png"), art(4000695018, "_logo.png")];
+const sgdbIcons = [art(4079546474, "_icon.png"), art(2661209017, "_icon.png"), art(4000695018, "_icon.png")];
 
 const delay = <T,>(v: T, ms = 250) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 
@@ -228,8 +321,72 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       });
     case "steam_plugin_install":
       return delay({ millenniumInstalled: "v3.6.3", steamRestarted: true }, 1500);
+    case "scan_quick":
+      return delay(quickScan, 500);
+    case "scan_ludusavi":
+      return delay(ludusaviScan, 2500);
+    case "scan_folder":
+      return delay(folderScan, 600);
+    case "game_folders":
+      return delay([
+        { label: "Steam C:", path: "C:\\Program Files (x86)\\Steam\\steamapps\\common" },
+        { label: "Steam D:", path: "D:\\SteamLibrary\\steamapps\\common" },
+        { label: "Xbox", path: "C:\\XboxGames" },
+        { label: "Epic", path: "C:\\Program Files\\Epic Games" },
+      ]);
+    case "pick_exe":
+      return delay(`${(args.start as string | null) ?? "C:\\Games"}\\Starfield\\Starfield.exe`);
+    case "pick_folder":
+      return delay("D:\\Games");
+    case "add_found":
+      return delay((args.found as Found).addedKey ?? (args.name as string).toLowerCase().replace(/[^a-z0-9]+/g, "-"), 300);
+    case "detect_adapter": {
+      const exe = (args.exe as string).toLowerCase();
+      if (exe.endsWith("dolphin.exe")) return delay({ key: "dolphin", name: "Dolphin", label: "Dolphin（整个模拟器的存档）", emulator: true });
+      if (exe.endsWith("soh.exe")) return delay({ key: "soh", name: "塞尔达传说：时之笛", label: "塞尔达传说：时之笛", emulator: false });
+      return delay(null);
+    }
+    case "savefind_suggest":
+      return delay([
+        { path: "C:\\Users\\me\\AppData\\LocalLow\\Indie Studio\\Some Indie", files: 3, bytes: 48213, modified: ago(60 * 20), sample: ["save0.dat", "settings.json"], reason: "名字和游戏相近" },
+        { path: "D:\\Games\\Some Indie\\saves", files: 2, bytes: 20480, modified: ago(60 * 24 * 3), sample: ["slot1.sav"], reason: "在游戏目录里" },
+      ]);
+    case "savefind_watch_start":
+      return delay(undefined);
+    case "savefind_watch_stop":
+      return delay([{ path: "C:\\Users\\me\\Saved Games\\Some Indie", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: "刚才被写入" }], 600);
+    case "folder_to_pattern":
+      return delay(args.path as string);
+    case "sgdb_status":
+      return delay({ hasKey: true, keyPage: "https://www.steamgriddb.com/profile/preferences/api" });
+    case "sgdb_set_key":
+    case "sgdb_clear_key":
+      return delay(undefined);
+    case "sgdb_search":
+      return delay([
+        { id: 1, name: args.term as string, year: 2018, verified: true },
+        { id: 2, name: `${args.term as string}: Farewell`, year: 2019, verified: false },
+      ]);
+    case "sgdb_images": {
+      const pool = args.kind === "hero" || args.kind === "wide" ? sgdbHeroes : args.kind === "logo" ? sgdbLogos : args.kind === "icon" ? sgdbIcons : sgdbCovers;
+      return delay(pool.map((u, i) => ({ id: i + 10, url: u, thumb: u, width: 600, height: 900, score: 3 - i, style: "alternate", author: "someone" })), 400);
+    }
+    case "art_set_url":
+    case "art_set_file":
+      return delay(undefined, 500);
+    case "steam_add_games":
+      return delay((args.keys as string[]).map((k) => ({ key: k, error: null })), 1200);
+    case "steam_add_game":
+      return delay(3000000001, 800);
+    case "steam_remove_game":
+      return delay(undefined, 500);
+    case "set_game_exe": {
+      const g = overview.games.find((x) => x.key === key);
+      if (g) Object.assign(g, { exe: args.path as string, exeExists: true });
+      return delay(undefined);
+    }
     case "relocate_auto":
-      return delay("C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.8\\fefw.exe");
+      return delay(key === "starfield" ? null : "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.8\\fefw.exe");
     default:
       return delay(null);
   }

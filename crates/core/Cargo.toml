@@ -28,6 +28,9 @@ roxmltree = "0.20"
 dirs = "5"
 opener = "0.7"
 keyring = { version = "3", features = ["windows-native"] }
+crc32fast = "1"
+notify = "9.0.0"
+aes = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

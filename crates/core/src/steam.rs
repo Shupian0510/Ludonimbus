@@ -166,41 +166,245 @@ pub fn find_shortcut(root: &Path, account: &str, appid: u32) -> Result<Option<Sh
         .find(|s| s.appid == appid))
 }
 
+/// Steam library folders (the install folder plus `libraryfolders.vdf`).
+pub fn library_folders(root: &Path) -> Vec<PathBuf> {
+    let mut out = vec![root.to_path_buf()];
+    let file = root.join("steamapps").join("libraryfolders.vdf");
+    if let Some(doc) = std::fs::read_to_string(file).ok().and_then(|s| vdf::parse_text(&s).ok()) {
+        for (_, lib) in doc.get("libraryfolders").map(|l| l.entries()).unwrap_or_default() {
+            if let Some(p) = lib.get("path").and_then(vdf::Text::as_str) {
+                let p = PathBuf::from(p);
+                if !out.iter().any(|o| util::same_path(&o.to_string_lossy(), &p.to_string_lossy())) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A store game installed through Steam.
+#[derive(Debug, Clone)]
+pub struct InstalledApp {
+    pub appid: u32,
+    pub name: String,
+    pub install_dir: PathBuf,
+}
+
+/// Store games installed in any Steam library (`appmanifest_<id>.acf`).
+pub fn installed_apps(root: &Path) -> Vec<InstalledApp> {
+    let mut out = Vec::new();
+    for lib in library_folders(root) {
+        let apps = lib.join("steamapps");
+        let Ok(rd) = std::fs::read_dir(&apps) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if !(name.starts_with("appmanifest_") && name.ends_with(".acf")) {
+                continue;
+            }
+            let Some(doc) = std::fs::read_to_string(e.path()).ok().and_then(|s| vdf::parse_text(&s).ok()) else {
+                continue;
+            };
+            let Some(state) = doc.get("AppState") else { continue };
+            let field = |k: &str| state.get(k).and_then(vdf::Text::as_str).unwrap_or("").to_string();
+            let Ok(appid) = field("appid").parse::<u32>() else { continue };
+            out.push(InstalledApp {
+                appid,
+                name: field("name"),
+                install_dir: apps.join("common").join(field("installdir")),
+            });
+        }
+    }
+    out
+}
+
+/// The id Steam derives for a non-Steam shortcut from its `Exe` field (as
+/// stored, quotes included) and name. Grid artwork files are named after it.
+pub fn shortcut_appid(exe_field: &str, name: &str) -> u32 {
+    let mut h = crc32fast::Hasher::new();
+    h.update(exe_field.as_bytes());
+    h.update(name.as_bytes());
+    h.finalize() | 0x8000_0000
+}
+
+/// Fields of a shortcut to create.
+#[derive(Debug, Clone)]
+pub struct NewShortcut {
+    pub name: String,
+    pub exe: String,
+    pub start_dir: String,
+    pub launch_options: String,
+    pub icon: String,
+}
+
+fn save_doc(root: &Path, account: &str, doc: &vdf::Value) -> Result<()> {
+    let path = shortcuts_path(root, account);
+    if path.exists() {
+        let backup = paths::steam_backups_dir().join(format!(
+            "shortcuts-{account}-{}.vdf",
+            chrono::Local::now().format("%Y%m%d-%H%M%S%.3f")
+        ));
+        std::fs::copy(&path, &backup)?;
+    }
+    util::atomic_write(&path, &vdf::write(doc))
+}
+
+/// Add a non-Steam shortcut and return its appid.
+pub fn add_shortcut(root: &Path, account: &str, sc: &NewShortcut) -> Result<u32> {
+    ensure_steam_closed(root)?;
+    if !root.join("userdata").join(account).is_dir() {
+        bail!("找不到 Steam 账号 {account}");
+    }
+    let (mut doc, existing) = read_shortcuts(root, account)?;
+    let exe_field = util::quote(&sc.exe);
+    let mut appid = shortcut_appid(&exe_field, &sc.name);
+    while existing.iter().any(|s| s.appid == appid) {
+        appid = appid.wrapping_add(1) | 0x8000_0000;
+    }
+    if doc.get("shortcuts").is_none() {
+        if let Some(e) = doc.entries_mut() {
+            e.push((b"shortcuts".to_vec(), vdf::Value::Map(vec![])));
+        }
+    }
+    let list = doc
+        .get_mut("shortcuts")
+        .and_then(vdf::Value::entries_mut)
+        .ok_or_else(|| anyhow!("shortcuts.vdf 格式异常"))?;
+    let index = list
+        .iter()
+        .filter_map(|(k, _)| std::str::from_utf8(k).ok()?.parse::<usize>().ok())
+        .max()
+        .map_or(0, |m| m + 1);
+    let s = |v: &str| vdf::Value::Str(v.as_bytes().to_vec());
+    let quoted = |v: &str| if v.is_empty() { s("") } else { s(&util::quote(v)) };
+    list.push((
+        index.to_string().into_bytes(),
+        vdf::Value::Map(vec![
+            (b"appid".to_vec(), vdf::Value::Int(appid as i32)),
+            (b"AppName".to_vec(), s(&sc.name)),
+            (b"Exe".to_vec(), s(&exe_field)),
+            (b"StartDir".to_vec(), quoted(&sc.start_dir)),
+            (b"icon".to_vec(), quoted(&sc.icon)),
+            (b"ShortcutPath".to_vec(), s("")),
+            (b"LaunchOptions".to_vec(), s(&sc.launch_options)),
+            (b"IsHidden".to_vec(), vdf::Value::Int(0)),
+            (b"AllowDesktopConfig".to_vec(), vdf::Value::Int(1)),
+            (b"AllowOverlay".to_vec(), vdf::Value::Int(1)),
+            (b"OpenVR".to_vec(), vdf::Value::Int(0)),
+            (b"Devkit".to_vec(), vdf::Value::Int(0)),
+            (b"DevkitGameID".to_vec(), s("")),
+            (b"DevkitOverrideAppID".to_vec(), vdf::Value::Int(0)),
+            (b"LastPlayTime".to_vec(), vdf::Value::Int(0)),
+            (b"FlatpakAppID".to_vec(), s("")),
+            (b"tags".to_vec(), vdf::Value::Map(vec![])),
+        ]),
+    ));
+    save_doc(root, account, &doc)?;
+    Ok(appid)
+}
+
+/// Remove a shortcut (and renumber the rest). `Ok(false)` when it was not there.
+pub fn remove_shortcut(root: &Path, account: &str, appid: u32) -> Result<bool> {
+    ensure_steam_closed(root)?;
+    let (mut doc, existing) = read_shortcuts(root, account)?;
+    if !existing.iter().any(|s| s.appid == appid) {
+        return Ok(false);
+    }
+    let list = doc
+        .get_mut("shortcuts")
+        .and_then(vdf::Value::entries_mut)
+        .ok_or_else(|| anyhow!("shortcuts.vdf 格式异常"))?;
+    list.retain(|(_, v)| v.get("appid").and_then(vdf::Value::int).map(|i| i as u32) != Some(appid));
+    for (i, (k, _)) in list.iter_mut().enumerate() {
+        *k = i.to_string().into_bytes();
+    }
+    save_doc(root, account, &doc)?;
+    for kind in ART_KINDS {
+        remove_art(root, account, appid, kind);
+    }
+    Ok(true)
+}
+
+/// Artwork kinds: portrait cover, horizontal capsule, hero banner, logo, icon.
+pub const ART_KINDS: [&str; 5] = ["cover", "wide", "hero", "logo", "icon"];
+const ART_EXTS: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+fn art_suffix(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "cover" => "p",
+        "wide" => "",
+        "hero" => "_hero",
+        "logo" => "_logo",
+        "icon" => "_icon",
+        _ => return None,
+    })
+}
+
+pub fn grid_dir(root: &Path, account: &str) -> PathBuf {
+    root.join("userdata").join(account).join("config").join("grid")
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Art {
     pub cover: Option<PathBuf>,
+    pub wide: Option<PathBuf>,
     pub hero: Option<PathBuf>,
     pub logo: Option<PathBuf>,
     pub icon: Option<PathBuf>,
 }
 
 pub fn art(root: &Path, account: &str, appid: u32) -> Art {
-    let grid = root.join("userdata").join(account).join("config").join("grid");
-    let pick = |suffix: &str| {
-        util::first_existing(
-            ["png", "jpg", "jpeg", "webp"]
-                .iter()
-                .map(|ext| grid.join(format!("{appid}{suffix}.{ext}"))),
-        )
-    };
+    let pick = |kind: &str| art_file(root, account, appid, kind);
     Art {
-        cover: pick("p"),
-        hero: pick("_hero"),
-        logo: pick("_logo"),
-        icon: pick("_icon"),
+        cover: pick("cover"),
+        wide: pick("wide"),
+        hero: pick("hero"),
+        logo: pick("logo"),
+        icon: pick("icon"),
     }
 }
 
 pub fn art_file(root: &Path, account: &str, appid: u32, kind: &str) -> Option<PathBuf> {
-    let a = art(root, account, appid);
-    match kind {
-        "cover" => a.cover,
-        "hero" => a.hero,
-        "logo" => a.logo,
-        "icon" => a.icon,
-        _ => None,
+    let suffix = art_suffix(kind)?;
+    let grid = grid_dir(root, account);
+    util::first_existing(ART_EXTS.iter().map(|ext| grid.join(format!("{appid}{suffix}.{ext}"))))
+}
+
+fn remove_art(root: &Path, account: &str, appid: u32, kind: &str) {
+    if let Some(suffix) = art_suffix(kind) {
+        let grid = grid_dir(root, account);
+        for ext in ART_EXTS {
+            let _ = std::fs::remove_file(grid.join(format!("{appid}{suffix}.{ext}")));
+        }
     }
+}
+
+/// Image extension of a file (by name), defaulting to png.
+pub fn image_ext(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
+        Some("jpg") | Some("jpeg") => "jpg",
+        Some("webp") => "webp",
+        _ => "png",
+    }
+}
+
+/// Copy an image into Steam's grid folder as the given kind of artwork.
+/// Steam picks up new files after a restart. Returns the written path.
+pub fn write_art(root: &Path, account: &str, appid: u32, kind: &str, src: &Path) -> Result<PathBuf> {
+    let suffix = art_suffix(kind).ok_or_else(|| anyhow!("未知的图片类型 {kind}"))?;
+    let grid = grid_dir(root, account);
+    std::fs::create_dir_all(&grid)?;
+    remove_art(root, account, appid, kind);
+    let dest = grid.join(format!("{appid}{suffix}.{}", image_ext(src)));
+    std::fs::copy(src, &dest).with_context(|| format!("无法写入 {}", dest.display()))?;
+    Ok(dest)
+}
+
+/// Point a shortcut's icon at an image or exe.
+pub fn set_shortcut_icon(root: &Path, account: &str, appid: u32, icon: &Path) -> Result<()> {
+    let icon = icon.to_string_lossy().into_owned();
+    edit_shortcut(root, account, appid, |e| e.set_str("icon", &util::quote(&icon)))
 }
 
 pub fn is_running() -> bool {
@@ -229,8 +433,11 @@ pub fn shutdown(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_steam_closed() -> Result<()> {
-    if !cfg!(test) && is_running() {
+/// A running Steam overwrites `shortcuts.vdf` in its own install folder, so
+/// edits there need Steam closed. Other folders (tests, copies) are fine.
+fn ensure_steam_closed(root: &Path) -> Result<()> {
+    let live = detect_root().is_some_and(|r| util::same_path(&r.to_string_lossy(), &root.to_string_lossy()));
+    if live && !cfg!(test) && is_running() {
         bail!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）");
     }
     Ok(())
@@ -238,8 +445,7 @@ fn ensure_steam_closed() -> Result<()> {
 
 /// Modify one shortcut entry and save `shortcuts.vdf` (with a backup copy).
 fn edit_shortcut(root: &Path, account: &str, appid: u32, f: impl FnOnce(&mut vdf::Value)) -> Result<()> {
-    ensure_steam_closed()?;
-    let path = shortcuts_path(root, account);
+    ensure_steam_closed(root)?;
     let (mut doc, _) = read_shortcuts(root, account)?;
     let list = doc
         .get_mut("shortcuts")
@@ -253,15 +459,7 @@ fn edit_shortcut(root: &Path, account: &str, appid: u32, f: impl FnOnce(&mut vdf
         })
         .ok_or_else(|| anyhow!("在 Steam 中找不到这个快捷方式（appid {appid}）"))?;
     f(entry);
-    if path.exists() {
-        let backup = paths::steam_backups_dir().join(format!(
-            "shortcuts-{account}-{}.vdf",
-            chrono::Local::now().format("%Y%m%d-%H%M%S")
-        ));
-        std::fs::copy(&path, &backup)?;
-    }
-    util::atomic_write(&path, &vdf::write(&doc))?;
-    Ok(())
+    save_doc(root, account, &doc)
 }
 
 /// Point a shortcut at `ludonimbus-run --game <key>`. Returns the original fields.
@@ -437,6 +635,7 @@ mod tests {
                 appid,
                 enabled: true,
                 original: Some(original.clone()),
+                created: false,
             }),
             ..Default::default()
         };

@@ -30,6 +30,8 @@ flowchart LR
 A 和 B/D 之间没有依赖，如果国内网盘更急，可以把 0.3 和 0.4 对调；C 最好排在 A0 之后。
 
 > **2026-11-23 决定**：先做 A，作为 0.3；B + D 顺延到 0.4。
+>
+> **进度**：A 已在 0.3 发布（百度网盘一键登录等审核）。B + D 已实现，测试清单见 [testing-v0.4.md](testing-v0.4.md)。
 
 ---
 
@@ -86,6 +88,15 @@ A 和 B/D 之间没有依赖，如果国内网盘更急，可以把 0.3 和 0.4 
 
 ## 2. 方向 B：添加游戏
 
+> **0.4 实现情况**：
+> - 已做：Steam 快捷方式（所有账号，默认账号优先）、Ludusavi 全量扫描（并标出 Steam 云已同步、存档只在注册表的游戏）、Epic、GOG、Xbox 应用（`.GamingRoot` + `MicrosoftGame.config`；游戏自己的程序加密、别的程序读不了也启动不了，所以用 Content 里的 `gamelaunchhelper.exe` 启动，并按配置里的程序和 Content 里的 exe 名判断游戏是否在运行）、指定文件夹；Ludusavi 找到存档的游戏按商店名称和清单里的 `installDir` 去 Epic / GOG / Xbox / 卸载注册表（EA、Ubisoft 等）/ 游戏文件夹里找安装位置；选游戏程序时提供各平台安装目录的快捷入口；B2 向导的 Ludusavi 搜索、常见位置、「玩一下再找」、手动选文件夹、200 MB 提醒；添加后提示加入 Steam。
+> - 和设计不同：没有加 `source` 字段，再次扫描时按 exe 路径、Steam 快捷方式和 Ludusavi 名称认出已添加的游戏；扫描结果在前端按 exe 和名称合并。
+> - 「Steam 云已在同步」的判断：Steam 现在装着这个游戏（主 id、清单里的其他版本 id 或名称），并且清单标了 Steam 云 / 有 Auto-Cloud 标记 / 有 userdata 副本；或者存档全在 userdata 里。Steam 卸载后留下的标记不再算。
+> - 还没做：EA app、Ubisoft Connect 的专用清单（目前靠卸载注册表）、exe 版本信息里的 ProductName、分享规则。
+> - 模拟器和重编译游戏的规则（2026-11-23）：19 个模拟器（`adapters/emulators.yaml`），Dolphin、Cemu、Azahar / Citra / Lime3DS、RPCS3、shadPS4、PPSSPP、Vita3K、RetroArch 从快捷方式的游戏文件读出游戏 ID，按游戏同步；Switch 模拟器（存档编号和用户档案跟本机绑定）、PCSX2 / DuckStation（共用记忆卡）、Xenia 整体同步，一个模拟器只允许一个整体同步的条目。重编译 / 移植游戏：手写 13 条，另外 132 条由 `scripts/import-recomplauncher.py` 从 RecompLauncher 目录生成（111 条开发者声明的存档位置，21 条 N64Recomp）。RecompLauncher 装的游戏作为扫描来源，它建的 `--play <id>` 快捷方式也能认出。
+> - 和设计不同：没有单独的「模拟器 + 游戏 ID」记录，按游戏的存档模板在添加时填好写进 `saves`，模拟器的数据目录仍由规则的根目录（可列多个候选）在每台电脑上解析。模拟器数据目录扫描和 Ryujinx 按游戏同步也已完成（见下一条）。
+> - 模拟器数据目录扫描、Ryujinx 按游戏同步（2026-11-23）：「扫描本机」逐个列出模拟器里有存档的游戏（来源 `emulator`），找得到游戏文件时（Ryujinx、Dolphin、Cemu）带上启动参数。Ryujinx 用 `{nxsave-<ID>}` / `{nxdevice-<ID>}` 动态根目录，每台电脑查存档索引；恢复时没有就按 Ryujinx 的方式新建（索引条目 + ExtraData），见 `docs/development.md`。同一个模拟器整体同步和逐个游戏二选一。Eden / yuzu 系仍整体同步。
+
 ### 2.1 现状
 
 「添加游戏」有四个标签页：Steam 快捷方式 / 云端 / Ludusavi 搜索 / 手动。只有 Steam 快捷方式会自动识别，其他都要用户自己知道游戏叫什么、存档在哪。
@@ -119,6 +130,11 @@ A 和 B/D 之间没有依赖，如果国内网盘更急，可以把 0.3 和 0.4 
 ---
 
 ## 3. 方向 D：一键加入 Steam + SteamGridDB
+
+> **0.4 实现情况**：
+> - 已做：加入 Steam（单个 / 批量，批量时只重启一次 Steam）、SteamGridDB 选封面（竖版、横版、背景、Logo、图标）、本地图片、批量时自动选评分最高的封面、`SteamLink.created`、从 Steam 移除快捷方式、移除游戏时一起删掉我们建的快捷方式、不在 Steam 里的游戏在 Ludonimbus 里显示封面（`%APPDATA%\Ludonimbus\art\<key>\`）。
+> - 和设计不同：加入 Steam 的对话框里不逐个挑封面，而是「自动配封面」开关；想自己挑在详情页「更换封面」。移除游戏时不再询问，直接删掉 Ludonimbus 建的快捷方式（确认框里写明）。
+> - 还没做：封面上传到云端跨设备复用（放到 C 一起做）。Steam 运行时写入 `grid\` 能否立即显示还要实测，目前提示「Steam 重新打开后更新」。
 
 ### 3.1 流程
 
@@ -186,10 +202,10 @@ SteamGridDB API 需要 Key。两个选项：
 
 | 项目 | 类型 | 说明 |
 |---|---|---|
-| SteamGridDB Key 用户填还是内置 | **待决定** | 见 3.3 |
-| 先做 B+D 还是先做 A | **待决定** | 见第 0 节 |
+| SteamGridDB Key 用户填还是内置 | 已决定 | 用户自己填，存在凭据管理器里；没有 Key 时可以用本地图片 |
+| 先做 B+D 还是先做 A | 已决定 | 先 A（0.3），再 B+D（0.4） |
 | 百度网盘开放平台 | 待验证 | 个人开发者能否满足需求、上传配额、限速；需要发布者注册应用 |
-| Ludusavi 全量扫描 | 待验证 | 耗时、隔离配置里 roots 怎么生成 |
+| Ludusavi 全量扫描 | 已验证 | 本机 72 个游戏约 15～50 秒；用隔离配置加 `--try-manifest-update`，不需要额外写 roots 就能找到 Steam 和用户目录里的存档 |
 | 非 Steam 快捷方式的截图目录 ID、`screenshots.vdf` 怎么更新 | 待验证 | 见 4.2 |
 | `localconfig.vdf` 里的游戏时间字段、会不会被 Steam 覆盖 | 待验证 | 见 4.1 |
 | Steam 运行时写入 `grid\` 封面能否显示 | 待验证 | 见 3.2 |

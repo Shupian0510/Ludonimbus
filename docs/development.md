@@ -34,11 +34,12 @@ cargo test --workspace --exclude ludonimbus-app
 cargo run -p ludonimbus-cli -- status
 cargo run -p ludonimbus-cli -- steam shortcuts
 cargo run -p ludonimbus-cli -- snapshots fe-fortunes-weave
+cargo run -p ludonimbus-cli -- discover --ludusavi --folder D:\Games   # 扫描本机能添加的游戏
 ```
 
 日志在 `%APPDATA%\Ludonimbus\logs\`：`runner.log`（从 Steam 启动时）、`sync.log`、`watcher.log`（托盘后台监视）、`agent.log`（本机接口）、`steam-plugin.log`（安装 / 更新插件）。
 
-手动测试清单：[testing-v0.1.md](testing-v0.1.md)、[testing-v0.2.md](testing-v0.2.md)、[testing-v0.3.md](testing-v0.3.md)。
+手动测试清单：[testing-v0.1.md](testing-v0.1.md)、[testing-v0.2.md](testing-v0.2.md)、[testing-v0.3.md](testing-v0.3.md)、[testing-v0.4.md](testing-v0.4.md)。
 
 ## 发布新版本
 
@@ -49,6 +50,34 @@ cargo run -p ludonimbus-cli -- snapshots fe-fortunes-weave
 ```
 
 每次推送到 main 还会自动打一个开发版安装包（Actions 构建产物，保留 14 天）。完整说明见 [release-process.md](release-process.md)。
+
+## 内置存档规则
+
+`adapters/` 里的三个文件编译进程序，按顺序读，同一个程序匹配到多条规则时选最具体的（路径层数多、带 `sibling` / `args` 条件的优先），一样具体时先读到的优先：
+
+| 文件 | 内容 | 维护方式 |
+|---|---|---|
+| `builtin.yaml` | 重编译 / 移植游戏 | 手写，存档位置要按源码或 PCGamingWiki 核对 |
+| `emulators.yaml` | 模拟器（`kind: emulator`） | 手写；按游戏同步的写 `gameId` + `gameSaves`，识别游戏 ID 的代码在 [`emulators.rs`](../crates/core/src/emulators.rs) |
+| `recomplauncher.yaml` | RecompLauncher 目录里的重编译游戏 | 生成，不要手改；要修正某个游戏就在 `builtin.yaml` 写同 key 的规则 |
+
+更新 `recomplauncher.yaml`（需要 Python 3.9+，只用标准库）：
+
+```powershell
+python scripts/import-recomplauncher.py                    # 下载 https://recomplauncher.com/pc-catalog.json
+python scripts/import-recomplauncher.py pc-catalog.json    # 或用已下载的文件
+cargo test -p ludonimbus-core adapters                     # 检查规则能解析、根目录都认识
+```
+
+脚本只取目录里开发者在 recomplauncher.json 声明的存档位置，以及 N64Recomp 游戏（`<应用文件夹>/saves`），丢掉 macOS / Linux 路径、整个游戏目录和带 `..` 的路径；生成的规则带 `skipJunk`，扫描时会排除程序、光盘镜像、日志和缓存。RecompLauncher 的 `{install}` 是发布包根目录，exe 在子文件夹里时 `match` 写相对路径，Ludonimbus 据此把 `{install}` 设成发布包根目录。
+
+`roots` 可以用 `|` 列几个候选位置（第一个存在的；都不存在时用最后一个），用来同时支持便携版和安装版。模拟器自己的设置和数据决定的位置在 `emulators::config_roots` 里每台电脑单独读取：Cemu 的 `<mlc_path>`，以及 Ryujinx 每个游戏的存档。
+
+**Ryujinx 按游戏**（[`switch.rs`](../crates/core/src/switch.rs)）：存档在 `bis/user/save/<编号>`，编号按创建顺序在每台电脑上分配，记在存档索引 `bis/system/save/8000000000000000/0/imkvdb.arc`（`IMKV` 头 + `IMEN` 条目，键是 0x40 字节的存档属性：程序 ID、用户 ID 高位 / 低位、类型，值的前 8 字节是编号）。规则里用两个动态根目录：`{nxsave-<标题 ID>}` 是当前用户档案（`system/Profiles.json` 的 `last_opened`）的这个游戏的存档，`{nxdevice-<标题 ID>}` 是设备存档，都指向编号文件夹里的 `0`（已提交的那份）。这台电脑没有时先指向一个不存在的 `ludonimbus-new-…` 文件夹（扫描什么也找不到）；恢复前 `emulators::prepare_restore` 按 Ryujinx 的方式新建：索引加一条、`lastPublishedId` 加一、写 `ExtraData0/1`（属性、所有者、大小照这台电脑上同一游戏的其他存档，没有就 1 GB），索引的 `0` 和 `1` 两份都改，旧索引先复制到 `local-backups/ryujinx-save-index`。Ryujinx 运行时会把索引留在内存里，所以要新建存档时如果它开着就报错。恢复后 `finish_restore` 把 `0` 复制到 `1`（工作副本），不管 Ryujinx 打开存档时从哪份同步都能看到恢复的文件。
+
+标题 ID：文件名里的 16 位十六进制；NSP 里的 `.cnmt.xml` 或票据（`.tik`）文件名；最后用 `prod.keys` 里的 `header_key` 解密 NSP / XCI 里 NCA 头（AES-128-XTS，扇区号大端作 tweak）读程序 ID。更新和 DLC 的 ID 归到本体（低 13 位清零）。
+
+**模拟器数据目录扫描**（[`emugames.rs`](../crates/core/src/emugames.rs)，`discover::emulator_games`）：在 Steam 快捷方式和库里的模拟器、扫描到的文件夹里的模拟器，以及每个模拟器的默认数据目录里，逐个列出有存档的游戏，`saves` 用规则的 `gameSaves` 填好，和带游戏文件的快捷方式得到的完全一样（所以能按规则 + 存档模板判断是否已添加）。名称来自存档或模拟器（GCI 注释、Wii `banner.bin`、Cemu 游戏列表 / `meta.xml`、PARAM.SFO、Ryujinx `games/<ID>/gui/metadata.json`）；Ryujinx `Config.json` 的 `game_dirs`、Dolphin `Dolphin.ini` 的 `ISOPath*`、Cemu 游戏列表能找到游戏文件时填上启动参数。同一个模拟器的库条目不能重复同步同一批文件：整体同步（`saves` 为空）和逐个游戏二选一，同一个游戏只能一个条目（`games::check_emulator_overlap`）。
 
 ## Google Drive / 百度网盘
 
@@ -62,7 +91,7 @@ crates/cli           ludonimbus 命令行
 crates/runner        ludonimbus-run，Steam 快捷方式实际启动的程序
 app/                 桌面应用（Tauri 2 + React + TypeScript），含给 Steam 插件用的本机接口
 plugin-millennium/   Steam 插件（Millennium：Lua 后端 + TypeScript 前端）
-adapters/            内置存档规则
+adapters/            内置存档规则（游戏、模拟器、从 RecompLauncher 目录生成的规则）
 docs/                设计文档、测试清单、主页
 scripts/             构建与发布脚本
 ```

@@ -1,0 +1,1504 @@
+# 由 scripts/import-recomplauncher.py 生成，不要手动修改。
+# 想修正某个游戏：在 builtin.yaml 里写一条同 key 的规则（手写规则优先）。
+#
+# 来源：RecompLauncher 的游戏目录（pc-catalog.json，2026-11-23）
+#   - 开发者在 recomplauncher.json 里声明的存档位置：111 个
+#   - N64Recomp 游戏（存档在 <应用文件夹>/saves）：21 个
+# RecompLauncher：https://recomplauncher.com/  https://github.com/elripalda/RecompLauncher
+#
+# {install} 是发布包的根目录：exe 在子文件夹里时 match 写的是相对路径。
+
+- key: "dusklight"
+  name: "The Legend of Zelda: Twilight Princess"
+  platform: "Dusklight（GameCube）"
+  recomplauncher: ["dusklight"]
+  match: { exe: ["dusklight.exe"] }
+  saves:
+    - "{install}/data/USA"
+    - "{install}/data/EUR"
+    - "{install}/data/JAP"
+    - "{install}/data/MemoryCard*.raw"
+    - "{install}/data/*.gci"
+    - "{install}/data/states.json"
+    - "{appdata}/TwilitRealm/Dusklight/USA"
+    - "{appdata}/TwilitRealm/Dusklight/EUR"
+    - "{appdata}/TwilitRealm/Dusklight/JAP"
+    - "{appdata}/TwilitRealm/Dusklight/MemoryCard*.raw"
+    - "{appdata}/TwilitRealm/Dusklight/*.gci"
+    - "{appdata}/TwilitRealm/Dusklight/states.json"
+    - "{appdata}/TwilitRealm/Dusk/USA"
+    - "{appdata}/TwilitRealm/Dusk/EUR"
+    - "{appdata}/TwilitRealm/Dusk/JAP"
+    - "{appdata}/TwilitRealm/Dusk/MemoryCard*.raw"
+    - "{appdata}/TwilitRealm/Dusk/*.gci"
+    - "{appdata}/TwilitRealm/Dusk/states.json"
+  waitFor: ["dusklight.exe"]
+  skipJunk: true
+
+- key: "odysseyrecomp"
+  name: "Super Mario Odyssey"
+  platform: "Odyssey Recomp（Switch）"
+  recomplauncher: ["odysseyrecomp"]
+  match: { exe: ["OdysseyRecomp.exe"] }
+  saves:
+    - "{install}/save"
+    - "{install}/odyssey.ini"
+  waitFor: ["OdysseyRecomp.exe"]
+  skipJunk: true
+
+- key: "zelda64recomp"
+  name: "The Legend of Zelda: Majora's Mask"
+  platform: "Zelda 64: Recompiled（N64）"
+  recomplauncher: ["zelda64recomp"]
+  match: { exe: ["Zelda64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Zelda64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Zelda64Recompiled.exe"]
+  skipJunk: true
+
+- key: "banjorecomp"
+  name: "Banjo-Kazooie"
+  platform: "Banjo: Recompiled（N64）"
+  recomplauncher: ["banjorecomp"]
+  match: { exe: ["BanjoRecompiled.exe"] }
+  saves:
+    - "{localappdata}/BanjoRecompiled/saves"
+    - "{install}/saves"
+  waitFor: ["BanjoRecompiled.exe"]
+  skipJunk: true
+
+- key: "donkey-kong-64-recompiled"
+  name: "Donkey Kong 64"
+  platform: "Donkey Kong 64: Recompiled（N64）"
+  recomplauncher: ["donkey-kong-64-recompiled"]
+  match: { exe: ["DK64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/DK64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["DK64Recompiled.exe"]
+  skipJunk: true
+
+- key: "astral-chain-pc-recomp"
+  name: "Astral Chain"
+  platform: "Astral Chain Recomp（Switch）"
+  recomplauncher: ["astral-chain-pc-recomp"]
+  match: { exe: ["Astral Chain/astralchain.exe"] }
+  saves:
+    - "{install}/Astral Chain/profile/save"
+    - "{install}/Astral Chain/profile/account.uid"
+  waitFor: ["astralchain.exe"]
+  skipJunk: true
+
+- key: "infamous2-port"
+  name: "inFAMOUS 2"
+  platform: "inFAMOUS 2 Native PC Port（PS3）"
+  recomplauncher: ["infamous2-port"]
+  saves:
+    - "{install}/game/gamedata/dev_hdd0/home/00000001/savedata"
+    - "{install}/input.toml"
+    - "{install}/settings.ini"
+    - "{install}/mods.ini"
+    - "{install}/spots.ini"
+  skipJunk: true
+
+- key: "plarecomp"
+  name: "Pokemon Legends: Arceus"
+  platform: "PLARecomp（Switch）"
+  recomplauncher: ["plarecomp"]
+  match: { exe: ["PLA.exe"] }
+  saves:
+    - "{install}/user/save"
+  waitFor: ["PLA.exe"]
+  skipJunk: true
+
+- key: "akibot"
+  name: "Astro Bot"
+  platform: "AkiBot（PS5）"
+  recomplauncher: ["akibot"]
+  match: { exe: ["AkiBot.exe"] }
+  saves:
+    - "{install}/Build/RunHybrid/_sd"
+    - "{install}/Build/RunHybrid/_sd_mem"
+    - "{install}/Build/RunHybrid/_trophy"
+    - "{install}/Build/akibot-settings.json"
+  waitFor: ["AkiBot.exe"]
+  skipJunk: true
+
+- key: "brothership-recomp"
+  name: "Mario & Luigi: Brothership"
+  platform: "Brothership-Recomp（Switch）"
+  recomplauncher: ["brothership-recomp"]
+  match: { exe: ["BrothershipRecomp.exe"] }
+  saves:
+    - "{localappdata}/brothership-recomp/save"
+    - "{appdata}/brothership-recomp/save"
+  waitFor: ["BrothershipRecomp.exe"]
+  skipJunk: true
+
+- key: "fefw-recomp"
+  name: "Fire Emblem: Fortune’s Weave"
+  platform: "FEFW Recomp（Switch 2）"
+  recomplauncher: ["fefw-recomp"]
+  match: { exe: ["fefw.exe"] }
+  saves:
+    - "{install}/save"
+  waitFor: ["fefw.exe"]
+  skipJunk: true
+
+- key: "starfox64recomp"
+  name: "Star Fox 64"
+  platform: "Star Fox 64 Recompiled（N64）"
+  recomplauncher: ["starfox64recomp"]
+  match: { exe: ["Starfox64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Starfox64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Starfox64Recompiled.exe"]
+  skipJunk: true
+
+- key: "eidos"
+  name: "Pokemon Black / Pokemon White"
+  platform: "Eidos（DS）"
+  recomplauncher: ["eidos"]
+  match: { exe: ["eidos.exe"] }
+  saves:
+    - "{appdata}/eidos/saves"
+    - "{localappdata}/eidos/saves"
+  waitFor: ["eidos.exe"]
+  skipJunk: true
+
+- key: "heylisten"
+  name: "The Legend of Zelda: Ocarina of Time"
+  platform: "HeyListen（Switch 2）"
+  recomplauncher: ["heylisten"]
+  saves:
+    - "{install}/HeyListen/user/save"
+    - "{localappdata}/heylisten/save"
+    - "{install}/HeyListen/hookshot_options.ini"
+  skipJunk: true
+
+- key: "marvel-ultimate-alliance-3-recomp"
+  name: "Marvel Ultimate Alliance 3: The Black Order"
+  platform: "MUA3 Recomp（Switch）"
+  recomplauncher: ["marvel-ultimate-alliance-3-recomp"]
+  match: { exe: ["mua3launcher.exe"] }
+  saves:
+    - "{install}/save"
+    - "{install}/larecomp.ini"
+  waitFor: ["mua3launcher.exe"]
+  skipJunk: true
+
+- key: "demonssoulspc"
+  name: "Demon's Souls"
+  platform: "Demon's Souls PC（PS5）"
+  recomplauncher: ["demonssoulspc"]
+  match: { exe: ["DemonsSoulsPC.exe"] }
+  saves:
+    - "{install}/Build/RunHybrid/_sd"
+    - "{install}/Build/RunHybrid/_sd_mem"
+    - "{install}/Build/RunHybrid/_trophy"
+    - "{install}/Build/dspc-settings.json"
+  waitFor: ["DemonsSoulsPC.exe"]
+  skipJunk: true
+
+- key: "kirby-forgotten-land-recompiled"
+  name: "Kirby and the Forgotten Land"
+  platform: "Kirby and the Forgotten Land Recompiled（Switch）"
+  recomplauncher: ["kirby-forgotten-land-recompiled"]
+  match: { exe: ["ForgottenLandRecomp.exe"] }
+  saves:
+    - "{install}/save"
+  waitFor: ["ForgottenLandRecomp.exe"]
+  skipJunk: true
+
+- key: "xc2-recomp-2"
+  name: "Xenoblade Chronicles 2"
+  platform: "XC2 Recomp（Switch）"
+  recomplauncher: ["xc2-recomp-2"]
+  match: { exe: ["game/xc2.exe"] }
+  saves:
+    - "{install}/game/profile"
+  waitFor: ["xc2.exe"]
+  skipJunk: true
+
+- key: "pla-recomp-2"
+  name: "Pokémon Legends: Arceus"
+  platform: "PL:A Recomp（Switch）"
+  recomplauncher: ["pla-recomp-2"]
+  match: { exe: ["PLARecomp.exe"] }
+  saves:
+    - "{install}/save"
+    - "{localappdata}/plarecomp/save"
+  waitFor: ["PLARecomp.exe"]
+  skipJunk: true
+
+- key: "mlbts-native"
+  name: "MLB The Show 26"
+  platform: "Fastball: MLB The Show 26 for PC（Switch）"
+  recomplauncher: ["mlbts-native"]
+  match: { exe: ["MLBTS/mlb.exe"] }
+  saves:
+    - "{install}/MLBTS/profile"
+  waitFor: ["mlb.exe"]
+  skipJunk: true
+
+- key: "mk7recomp"
+  name: "Mario Kart 7"
+  platform: "Mario Kart 7 Recompiled（3DS）"
+  recomplauncher: ["mk7recomp"]
+  match: { exe: ["mario-kart-7.exe"] }
+  saves:
+    - "{appdata}/mario-kart-7/user/savedata"
+    - "{appdata}/mario-kart-7/user/extdata"
+    - "{appdata}/mario-kart-7/user/nand/system-save"
+    - "{appdata}/mario-kart-7/states"
+    - "{appdata}/mario-kart-7/cheats"
+    - "{localappdata}/mario-kart-7/user/savedata"
+    - "{localappdata}/mario-kart-7/user/extdata"
+    - "{localappdata}/mario-kart-7/user/nand/system-save"
+    - "{localappdata}/mario-kart-7/states"
+    - "{localappdata}/mario-kart-7/cheats"
+    - "{localappdata}/mario-kart-7/settings.toml"
+  waitFor: ["mario-kart-7.exe"]
+  skipJunk: true
+
+- key: "metrofuse"
+  name: "Metroid Fusion"
+  platform: "MetroFuse（GBA）"
+  recomplauncher: ["metrofuse"]
+  match: { exe: ["MetroFuse.exe"] }
+  saves:
+    - "{appdata}/MetroFuse/MetroFuse/saves"
+    - "{appdata}/MetroFuse/MetroFuse/states"
+    - "{localappdata}/MetroFuse/MetroFuse/saves"
+    - "{localappdata}/MetroFuse/MetroFuse/states"
+  waitFor: ["MetroFuse.exe"]
+  skipJunk: true
+
+- key: "spr-recomp-project"
+  name: "Splatoon Raiders"
+  platform: "SPR Recomp（Switch 2）"
+  recomplauncher: ["spr-recomp-project"]
+  match: { exe: ["game/spr-recomp.exe"] }
+  saves:
+    - "{install}/game/profile"
+  waitFor: ["spr-recomp.exe"]
+  skipJunk: true
+
+- key: "bm64recomp"
+  name: "Bomberman 64"
+  platform: "Bomberman 64: Recompiled（N64）"
+  recomplauncher: ["bm64recomp"]
+  match: { exe: ["BM64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/BM64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["BM64Recompiled.exe"]
+  skipJunk: true
+
+- key: "infamous2-recomp"
+  name: "Infamous 2"
+  platform: "infamous2-recomp（PS3）"
+  recomplauncher: ["infamous2-recomp"]
+  match: { exe: ["inFamous2Launcher.exe"] }
+  saves:
+    - "{install}/gamedata/dev_hdd0/home/00000001/savedata"
+  waitFor: ["inFamous2Launcher.exe"]
+  skipJunk: true
+
+- key: "cvlod-recomp"
+  name: "Castlevania: Legacy of Darkness"
+  platform: "CVLoD Recomp（N64）"
+  recomplauncher: ["cvlod-recomp"]
+  match: { exe: ["LodRecomp.exe"] }
+  saves:
+    - "{appdata}/LodRecomp/saves"
+    - "{install}/saves"
+  waitFor: ["LodRecomp.exe"]
+  skipJunk: true
+
+- key: "metrozero"
+  name: "Metroid: Zero Mission"
+  platform: "MetroZero（GBA）"
+  recomplauncher: ["metrozero"]
+  match: { exe: ["MetroZero.exe"] }
+  saves:
+    - "{appdata}/MetroZero/MetroZero/saves"
+    - "{appdata}/MetroZero/MetroZero/states"
+    - "{localappdata}/MetroZero/MetroZero/saves"
+    - "{localappdata}/MetroZero/MetroZero/states"
+  waitFor: ["MetroZero.exe"]
+  skipJunk: true
+
+- key: "sm2port"
+  name: "Spider-Man 2"
+  platform: "Spider-Man 2 - PC Port（Xbox）"
+  recomplauncher: ["sm2port"]
+  match: { exe: ["sm2.exe"] }
+  saves:
+    - "{install}/xbox_hdd"
+  waitFor: ["sm2.exe"]
+  skipJunk: true
+
+- key: "dissidia012-pc"
+  name: "Dissidia 012 Duodecim Final Fantasy"
+  platform: "Dissidia012-PC（PSP）"
+  recomplauncher: ["dissidia012-pc"]
+  match: { exe: ["D012Native.exe"] }
+  saves:
+    - "{install}/data/ms0/PSP/SAVEDATA"
+  waitFor: ["D012Native.exe"]
+  skipJunk: true
+
+- key: "crashwoc-nuworld"
+  name: "Crash Bandicoot: The Wrath of Cortex"
+  platform: "CrashWOC: NuWorld（PS2）"
+  recomplauncher: ["crashwoc-nuworld"]
+  match: { exe: ["NuWorld.exe"] }
+  saves:
+    - "{appdata}/crashwoc-nuworld"
+    - "{localappdata}/crashwoc-nuworld"
+  waitFor: ["NuWorld.exe"]
+  skipJunk: true
+
+- key: "megaman64recompiled"
+  name: "Mega Man 64"
+  platform: "Mega Man 64 Recompiled（N64）"
+  recomplauncher: ["megaman64recompiled"]
+  match: { exe: ["MegaMan64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/MegaMan64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["MegaMan64Recompiled.exe"]
+  skipJunk: true
+
+- key: "wwfnomercyrecomp"
+  name: "WWF No Mercy"
+  platform: "No Mercy Recomp（N64）"
+  recomplauncher: ["wwfnomercyrecomp"]
+  match: { exe: ["NoMercyRecompiled.exe"] }
+  saves:
+    - "{localappdata}/NoMercyRecompiled/saves"
+    - "{install}/saves"
+  waitFor: ["NoMercyRecompiled.exe"]
+  skipJunk: true
+
+- key: "resistance3port"
+  name: "Resistance 3"
+  platform: "Resistance 3 Port（PS3）"
+  recomplauncher: ["resistance3port"]
+  saves:
+    - "{install}/gamedata/dev_hdd0/home/00000001/savedata"
+    - "{install}/settings.ini"
+    - "{install}/controls.txt"
+  skipJunk: true
+
+- key: "supersaga"
+  name: "Mario & Luigi: Superstar Saga"
+  platform: "SuperSaga（GBA）"
+  recomplauncher: ["supersaga"]
+  match: { exe: ["SuperSaga.exe"] }
+  saves:
+    - "{appdata}/SuperSaga/SuperSaga/saves"
+    - "{appdata}/SuperSaga/SuperSaga/states"
+    - "{localappdata}/SuperSaga/SuperSaga/saves"
+    - "{localappdata}/SuperSaga/SuperSaga/states"
+  waitFor: ["SuperSaga.exe"]
+  skipJunk: true
+
+- key: "mario-all-stars-world-recomp"
+  name: "Super Mario All-Stars + Super Mario World"
+  platform: "Mario All-Stars + World Recomp（SNES）"
+  recomplauncher: ["mario-all-stars-world-recomp"]
+  match: { exe: ["MarioAllStarsWorldRecomp.exe"] }
+  saves:
+    - "{install}/saves"
+    - "{install}/config.ini"
+    - "{install}/mario-controller.ini"
+  waitFor: ["MarioAllStarsWorldRecomp.exe"]
+  skipJunk: true
+
+- key: "resistance2port"
+  name: "Resistance 2"
+  platform: "Resistance 2 Port（PS3）"
+  recomplauncher: ["resistance2port"]
+  saves:
+    - "{install}/gamedata/dev_hdd0/home/00000001/savedata"
+    - "{install}/settings.ini"
+    - "{install}/controls.txt"
+  skipJunk: true
+
+- key: "dragon-quest-ix-modern"
+  name: "Dragon Quest IX: Sentinels of the Starry Skies"
+  platform: "Dragon Quest IX Modern（DS）"
+  recomplauncher: ["dragon-quest-ix-modern"]
+  match: { exe: ["game/dqix.exe"] }
+  saves:
+    - "{install}/game/dqix.sav"
+    - "{install}/game/save-backups"
+    - "{install}/game/settings.ini"
+    - "{install}/game/controls.ini"
+  waitFor: ["dqix.exe"]
+  skipJunk: true
+
+- key: "snprecomp"
+  name: "Sin and Punishment"
+  platform: "Sin and Punishment Recomp（N64）"
+  recomplauncher: ["snprecomp"]
+  match: { exe: ["SnPRecompiled.exe"] }
+  saves:
+    - "{localappdata}/snprecomp/saves"
+    - "{install}/saves"
+  waitFor: ["SnPRecompiled.exe"]
+  skipJunk: true
+
+- key: "star-fox-assault-recomp"
+  name: "Star Fox Assault"
+  platform: "Star Fox Assault Recomp（GameCube）"
+  recomplauncher: ["star-fox-assault-recomp"]
+  match: { exe: ["Star Fox Assault Recomp.exe"] }
+  saves:
+    - "{install}/user-data/native-run/saves/memcard_a.raw"
+  waitFor: ["Star Fox Assault Recomp.exe"]
+  skipJunk: true
+
+- key: "rush2recompiled"
+  name: "Rush 2: Extreme Racing USA"
+  platform: "Rush 2 Recompiled（N64）"
+  recomplauncher: ["rush2recompiled"]
+  match: { exe: ["Rush2Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Rush2Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Rush2Recompiled.exe"]
+  skipJunk: true
+
+- key: "botw-vr-recomp"
+  name: "The Legend of Zelda: Breath of the Wild"
+  platform: "BOTW VR Recomp（Switch）"
+  recomplauncher: ["botw-vr-recomp"]
+  match: { exe: ["savagewind.exe"] }
+  saves:
+    - "{install}/save"
+    - "{install}/save-profiles"
+    - "{install}/save_profile.txt"
+    - "{localappdata}/savagewind/save"
+    - "{localappdata}/savagewind/save-profiles"
+    - "{localappdata}/savagewind/save_profile.txt"
+  waitFor: ["savagewind.exe"]
+  skipJunk: true
+
+- key: "sanctuaryport"
+  name: "Diablo III"
+  platform: "SanctuaryPort（PS4）"
+  recomplauncher: ["sanctuaryport"]
+  match: { exe: ["SanctuaryPort.exe"] }
+  saves:
+    - "{install}/user/savedata"
+    - "{localappdata}/sanctuaryport/user/savedata"
+  waitFor: ["SanctuaryPort.exe"]
+  skipJunk: true
+
+- key: "midnight-club-3-redub"
+  name: "Midnight Club 3: DUB Edition Remix"
+  platform: "Midnight Club 3: ReDUB（Xbox）"
+  recomplauncher: ["midnight-club-3-redub"]
+  match: { exe: ["work-remix/build-windows-x86_64/dist/mcdub3remix.exe"] }
+  saves:
+    - "{install}/work-remix/save"
+  waitFor: ["mcdub3remix.exe"]
+  skipJunk: true
+
+- key: "adventure-pants-recomp"
+  name: "The Fancy Pants Adventures"
+  platform: "Adventure Pants Recomp（Xbox 360）"
+  recomplauncher: ["adventure-pants-recomp"]
+  match: { exe: ["AdventurePantsRecomp.exe"] }
+  saves:
+    - "{documents}/AdventurePantsRecomp"
+  waitFor: ["AdventurePantsRecomp.exe"]
+  skipJunk: true
+
+- key: "harvestmoon64recomp"
+  name: "Harvest Moon 64"
+  platform: "Harvest Moon 64 Recomp（N64）"
+  recomplauncher: ["harvestmoon64recomp"]
+  match: { exe: ["HarvestMoon64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/HarvestMoon64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["HarvestMoon64Recompiled.exe"]
+  skipJunk: true
+
+- key: "hulk-ultimate-destruction-recomp-xbox-ver"
+  name: "The Incredible Hulk: Ultimate Destruction"
+  platform: "Hulk Recompiled（Xbox）"
+  recomplauncher: ["hulk-ultimate-destruction-recomp-xbox-ver"]
+  match: { exe: ["Hulk Recompiled.exe"] }
+  saves:
+    - "{install}/game/hdd/E"
+    - "{install}/game/settings.toml"
+  waitFor: ["Hulk Recompiled.exe"]
+  skipJunk: true
+
+- key: "kirby-epic-yarn-recomp"
+  name: "Kirby's Epic Yarn"
+  platform: "Kirby's Epic Yarn Recompiled（Wii）"
+  recomplauncher: ["kirby-epic-yarn-recomp"]
+  match: { exe: ["Kirby-Bridge.exe"] }
+  saves:
+    - "{install}/Game/local/user/nand/title/00010000/524b3545/data"
+  waitFor: ["Kirby-Bridge.exe"]
+  skipJunk: true
+
+- key: "lza-recomp"
+  name: "Pokémon Legends: Z-A"
+  platform: "PL:Z-A Recomp（Switch）"
+  recomplauncher: ["lza-recomp"]
+  match: { exe: ["ZARecomp.exe"] }
+  saves:
+    - "{install}/save"
+    - "{localappdata}/zarecomp/save"
+  waitFor: ["ZARecomp.exe"]
+  skipJunk: true
+
+- key: "goemon64recomp"
+  name: "Mystical Ninja Starring Goemon (Nintendo 64)"
+  platform: "Goemon64 Recomp（N64）"
+  recomplauncher: ["goemon64recomp"]
+  match: { exe: ["Goemon64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Goemon64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Goemon64Recompiled.exe"]
+  skipJunk: true
+
+- key: "gow-betrayal-remastered"
+  name: "God of War: Betrayal"
+  platform: "God of War: Betrayal Remastered"
+  recomplauncher: ["gow-betrayal-remastered"]
+  match: { exe: ["GodOfWar.exe", "bin/gow_port.exe"] }
+  saves:
+    - "{localappdata}/gow-betrayal-port"
+  waitFor: ["GodOfWar.exe", "gow_port.exe"]
+  skipJunk: true
+
+- key: "doa-xtreme-3rd"
+  name: "Dead or Alive Xtreme 3 Scarlet"
+  platform: "Dead or Alive Xtreme 3 Scarlet（Switch）"
+  recomplauncher: ["doa-xtreme-3rd"]
+  match: { exe: ["DOAX3Launcher.exe"] }
+  saves:
+    - "{install}/save"
+  waitFor: ["DOAX3Launcher.exe"]
+  skipJunk: true
+
+- key: "quest64-recomp"
+  name: "Quest 64"
+  platform: "Quest 64 Recomp（N64）"
+  recomplauncher: ["quest64-recomp"]
+  match: { exe: ["Quest64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Quest64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Quest64Recompiled.exe"]
+  skipJunk: true
+
+- key: "circlemoon"
+  name: "Castlevania: Circle of the Moon"
+  platform: "CircleMoon（GBA）"
+  recomplauncher: ["circlemoon"]
+  match: { exe: ["CircleMoon.exe"] }
+  saves:
+    - "{appdata}/CircleMoon/CircleMoon/saves"
+    - "{appdata}/CircleMoon/CircleMoon/states"
+    - "{localappdata}/CircleMoon/CircleMoon/saves"
+    - "{localappdata}/CircleMoon/CircleMoon/states"
+  waitFor: ["CircleMoon.exe"]
+  skipJunk: true
+
+- key: "ss-delta"
+  name: "Soul Sacrifice Delta"
+  platform: "SS Delta"
+  recomplauncher: ["ss-delta"]
+  match: { exe: ["ss-delta.exe"] }
+  saves:
+    - "{install}/fs/ux0/user/00/savedata"
+    - "{install}/fs/ux0/user/01/savedata"
+    - "{install}/fs/ux0/user/02/savedata"
+    - "{install}/fs/ux0/user/03/savedata"
+    - "{install}/ss-delta.ini"
+  waitFor: ["ss-delta.exe"]
+  skipJunk: true
+
+- key: "mindovermutant-wiicompiled"
+  name: "Crash: Mind over Mutant"
+  platform: "Crash: Mind over Mutant - Wiicompiled（Wii）"
+  recomplauncher: ["mindovermutant-wiicompiled"]
+  match: { exe: ["mom-launcher.exe"] }
+  saves:
+    - "{appdata}/net.ghostesp.mom-launcher/profile/nand"
+  waitFor: ["mom-launcher.exe"]
+  skipJunk: true
+
+- key: "transformers-armada-recomp"
+  name: "Transformers"
+  platform: "Transformers Armada Recomp（PS2）"
+  recomplauncher: ["transformers-armada-recomp"]
+  saves:
+    - "{install}/saves/mc0"
+    - "{install}/saves/mc1"
+    - "{install}/settings.ini"
+  skipJunk: true
+
+- key: "triunit-recomp"
+  name: "Mortal Kombat, Mortal Kombat II, Mortal Kombat 3"
+  platform: "TriUnit Recomp（街机）"
+  recomplauncher: ["triunit-recomp"]
+  match: { exe: ["triunit.exe"] }
+  saves:
+    - "{install}/build/native/manual-temporary-8-20261025/profile/cmos.bin"
+    - "{install}/build/native/manual-temporary-8-20261025/profile/launcher.ini"
+    - "{install}/saves"
+    - "{install}/build/native/mk2-native-v1/product/profiles/player/cmos.bin"
+    - "{install}/build/native/mk2-native-v1/profile/launcher.ini"
+    - "{install}/build/native/mk2-native-v1/product/saves"
+    - "{install}/build/native/mk3-native/product/profiles/player/cmos.bin"
+    - "{install}/build/native/mk3-native/product/saves"
+    - "{install}/build/native/mk3-native/profile/launcher.ini"
+    - "{install}/build/native/launcher-profile/launcher.cfg"
+  waitFor: ["triunit.exe"]
+  skipJunk: true
+
+- key: "snowboardkids2-recomp"
+  name: "Snowboard Kids 2"
+  platform: "Snowboard Kids 2 Recomp（N64）"
+  recomplauncher: ["snowboardkids2-recomp"]
+  match: { exe: ["SnowboardKids2Recompiled.exe"] }
+  saves:
+    - "{localappdata}/SnowboardKids2Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["SnowboardKids2Recompiled.exe"]
+  skipJunk: true
+
+- key: "wcwnworevengerecomp"
+  name: "WCW/nWo Revenge"
+  platform: "Revenge Recomp（N64）"
+  recomplauncher: ["wcwnworevengerecomp"]
+  match: { exe: ["RevengeRecompiled.exe"] }
+  saves:
+    - "{localappdata}/RevengeRecompiled/saves"
+    - "{install}/saves"
+  waitFor: ["RevengeRecompiled.exe"]
+  skipJunk: true
+
+- key: "tera-recomp"
+  name: "Pokemon Scarlet and Violet"
+  platform: "Tera Recomp（Switch）"
+  recomplauncher: ["tera-recomp"]
+  match: { exe: ["game/totk.exe"] }
+  saves:
+    - "{install}/game/profile"
+  waitFor: ["totk.exe"]
+  skipJunk: true
+
+- key: "mua3-native"
+  name: "Marvel Ultimate Alliance 3: The Black Order"
+  platform: "MUA3 Native（Switch）"
+  recomplauncher: ["mua3-native"]
+  match: { exe: ["mua3.exe"] }
+  saves:
+    - "{install}/save"
+    - "{install}/mua3.ini"
+  waitFor: ["mua3.exe"]
+  skipJunk: true
+
+- key: "pilotwings-64-recomp"
+  name: "Pilotwings 64"
+  platform: "Pilotwings 64 Recomp（N64）"
+  recomplauncher: ["pilotwings-64-recomp"]
+  match: { exe: ["Pilotwings64Recomp.exe"] }
+  saves:
+    - "{localappdata}/Pilotwings64Recomp/saves"
+    - "{install}/saves"
+  waitFor: ["Pilotwings64Recomp.exe"]
+  skipJunk: true
+
+- key: "wwfwrestlemania2000recomp"
+  name: "WWF WrestleMania 2000"
+  platform: "WrestleMania 2000 Recomp（N64）"
+  recomplauncher: ["wwfwrestlemania2000recomp"]
+  match: { exe: ["Wm2kRecompiled.exe"] }
+  saves:
+    - "{localappdata}/Wm2kRecompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Wm2kRecompiled.exe"]
+  skipJunk: true
+
+- key: "fe-fates-se-recomp"
+  name: "Fire Emblem Fates: Special Edition"
+  platform: "Fire Emblem Fates Special Edition Recomp（3DS）"
+  recomplauncher: ["fe-fates-se-recomp"]
+  match: { exe: ["Fates Launcher.exe"] }
+  saves:
+    - "{appdata}/zakuro/user"
+    - "{appdata}/zakuro/states"
+    - "{appdata}/zakuro/settings.toml"
+  waitFor: ["Fates Launcher.exe"]
+  skipJunk: true
+
+- key: "ssx-recomp"
+  name: "SSX"
+  platform: "SSX (2012) Recomp（Xbox 360）"
+  recomplauncher: ["ssx-recomp"]
+  match: { exe: ["source/dist/SSX/ssx.exe", "ssx-recomp.exe"] }
+  saves:
+    - "{install}/source/dist/SSX/userdata/B13EBABEBABEBABE/4541096D/00000001"
+    - "{install}/source/dist/SSX/userdata/tuning"
+    - "{install}/source/dist/SSX/userdata/achievements/4541096D.toml"
+    - "{install}/source/dist/SSX/ssx.toml"
+  waitFor: ["ssx.exe", "ssx-recomp.exe"]
+  skipJunk: true
+
+- key: "knid"
+  name: "Kirby: Nightmare in Dream Land"
+  platform: "KNID（GBA）"
+  recomplauncher: ["knid"]
+  match: { exe: ["KNID.exe"] }
+  saves:
+    - "{appdata}/KNID/KNID/saves"
+    - "{appdata}/KNID/KNID/states"
+    - "{localappdata}/KNID/KNID/saves"
+    - "{localappdata}/KNID/KNID/states"
+  waitFor: ["KNID.exe"]
+  skipJunk: true
+
+- key: "supersmashbros3dsrecomp"
+  name: "Super Smash Bros. for Nintendo 3DS"
+  platform: "Super Smash Bros. 3DS Recompiled（3DS）"
+  recomplauncher: ["supersmashbros3dsrecomp"]
+  match: { exe: ["smash-3ds.exe"] }
+  saves:
+    - "{appdata}/super-smash-bros-3ds/user/savedata"
+    - "{appdata}/super-smash-bros-3ds/user/extdata"
+    - "{appdata}/super-smash-bros-3ds/user/nand/system-save"
+    - "{appdata}/super-smash-bros-3ds/states"
+    - "{appdata}/super-smash-bros-3ds/cheats"
+    - "{localappdata}/super-smash-bros-3ds/user/savedata"
+    - "{localappdata}/super-smash-bros-3ds/user/extdata"
+    - "{localappdata}/super-smash-bros-3ds/user/nand/system-save"
+    - "{localappdata}/super-smash-bros-3ds/states"
+    - "{localappdata}/super-smash-bros-3ds/cheats"
+    - "{localappdata}/super-smash-bros-3ds/settings.toml"
+  waitFor: ["smash-3ds.exe"]
+  skipJunk: true
+
+- key: "mighty-morphin-power-rangers-the-movie-recomp"
+  name: "Mighty Morphin Power Rangers: The Movie"
+  platform: "Mighty Morphin Power Rangers: The Movie（SNES）"
+  recomplauncher: ["mighty-morphin-power-rangers-the-movie-recomp"]
+  match: { exe: ["MightyMorphinPowerRangersTheMovieSNESRecomp.exe"] }
+  saves:
+    - "{localappdata}/PowerRangersMovieRecomp/saves"
+  waitFor: ["MightyMorphinPowerRangersTheMovieSNESRecomp.exe"]
+  skipJunk: true
+
+- key: "wcwvsnwoworldtourrecomp"
+  name: "WCW vs. nWo: World Tour"
+  platform: "World Tour Recomp（N64）"
+  recomplauncher: ["wcwvsnwoworldtourrecomp"]
+  match: { exe: ["WCWRecompiled.exe"] }
+  saves:
+    - "{localappdata}/WCWRecompiled/saves"
+    - "{install}/saves"
+  waitFor: ["WCWRecompiled.exe"]
+  skipJunk: true
+
+- key: "aerogauge-recomp"
+  name: "AeroGauge"
+  platform: "AeroGauge Recomp（N64）"
+  recomplauncher: ["aerogauge-recomp"]
+  match: { exe: ["aerogauge_modern.exe"] }
+  saves:
+    - "{localappdata}/AeroGaugeRecomp/saves"
+    - "{install}/saves"
+  waitFor: ["aerogauge_modern.exe"]
+  skipJunk: true
+
+- key: "dead-nation-ps4-recomp"
+  name: "Dead Nation: Apocalypse Edition"
+  platform: "Dead Nation Recompiled（PS4）"
+  recomplauncher: ["dead-nation-ps4-recomp"]
+  match: { exe: ["deadnation.exe"] }
+  saves:
+    - "{install}/save/savedata"
+    - "{install}/save/settings.ini"
+  waitFor: ["deadnation.exe"]
+  skipJunk: true
+
+- key: "batmanbeginsrecomp"
+  name: "Batman Begins"
+  platform: "Batman Begins Recomp（Xbox）"
+  recomplauncher: ["batmanbeginsrecomp"]
+  match: { exe: ["BatmanBegins.exe"] }
+  saves:
+    - "{install}/hdd/E/UDATA"
+  waitFor: ["BatmanBegins.exe"]
+  skipJunk: true
+
+- key: "bounce-re"
+  name: "Bounce"
+  platform: "Bounce RE"
+  recomplauncher: ["bounce-re"]
+  match: { exe: ["Bounce.exe"] }
+  saves:
+    - "{install}/save"
+  waitFor: ["Bounce.exe"]
+  skipJunk: true
+
+- key: "digimon-world-3-definitive-edition"
+  name: "Digimon World 3"
+  platform: "Digimon World 3: Definitive Edition（PS1）"
+  recomplauncher: ["digimon-world-3-definitive-edition"]
+  match: { exe: ["dw2003-launcher.exe"] }
+  saves:
+    - "{install}/recomp"
+    - "{localappdata}/dw2003/recomp"
+    - "{appdata}/dw2003/recomp"
+  waitFor: ["dw2003-launcher.exe"]
+  skipJunk: true
+
+- key: "cadence-pc-recomp"
+  name: "Cadence of Hyrule"
+  platform: "Cadence of Recomp（Switch）"
+  recomplauncher: ["cadence-pc-recomp"]
+  match: { exe: ["game/cadence.exe"] }
+  saves:
+    - "{install}/game/profile/save"
+  waitFor: ["cadence.exe"]
+  skipJunk: true
+
+- key: "anarchy-reigns-supreme"
+  name: "Anarchy Reigns"
+  platform: "Anarchy Reigns Supreme（Xbox 360）"
+  recomplauncher: ["anarchy-reigns-supreme"]
+  match: { exe: ["out/build/ARRecomp/ARLauncher.exe"] }
+  saves:
+    - "{install}/run/user/content/00000001"
+    - "{install}/run/user/key_bindings.txt"
+    - "{install}/run/user/mouse_settings.txt"
+  waitFor: ["ARLauncher.exe"]
+  skipJunk: true
+
+- key: "godzilla-save-the-earth-xbox-static-recompilation"
+  name: "Godzilla: Save the Earth"
+  platform: "Godzilla: STE Recomp（Xbox）"
+  recomplauncher: ["godzilla-save-the-earth-xbox-static-recompilation"]
+  match: { exe: ["godzilla_ste_recomp.exe"] }
+  saves:
+    - "{install}/saves/UDATA"
+    - "{localappdata}/GodzillaSTE/UDATA"
+    - "{install}/gz_settings.ini"
+    - "{install}/gz_controls.ini"
+  waitFor: ["godzilla_ste_recomp.exe"]
+  skipJunk: true
+
+- key: "jurassic-the-hunted-recompiled"
+  name: "Jurassic: The Hunted"
+  platform: "Jurassic: The Hunted Recompiled（Xbox 360）"
+  recomplauncher: ["jurassic-the-hunted-recompiled"]
+  match: { exe: ["jurassichunted.exe"] }
+  saves:
+    - "{localappdata}/JurassicTheHuntedRecomp/B13EBABEBABEBABE"
+    - "{localappdata}/JurassicTheHuntedRecomp/41560870"
+    - "{localappdata}/JurassicTheHuntedRecomp/achievements"
+    - "{install}/jurassichunted.toml"
+  waitFor: ["jurassichunted.exe"]
+  skipJunk: true
+
+- key: "dq9recompiled"
+  name: "Dragon Quest IX: Sentinels of the Starry Skies"
+  platform: "DQ9Recompiled（DS）"
+  recomplauncher: ["dq9recompiled"]
+  match: { exe: ["DQ9Recompiled.exe"] }
+  saves:
+    - "{install}/recompdata/saves"
+    - "{install}/recompdata/savestates"
+    - "{install}/recompdata/settings.toml"
+    - "{install}/recompdata/generated-identity.bin"
+  waitFor: ["DQ9Recompiled.exe"]
+  skipJunk: true
+
+- key: "agrabahport"
+  name: "Disney's Aladdin"
+  platform: "AgrabahPort（SNES）"
+  recomplauncher: ["agrabahport"]
+  match: { exe: ["build/AgrabahPort.exe", "AgrabahPort.exe"] }
+  saves:
+    - "{install}/saves"
+    - "{localappdata}/AgrabahPort/saves"
+  waitFor: ["AgrabahPort.exe"]
+  skipJunk: true
+
+- key: "project-helix"
+  name: "Fear Effect and Fear Effect 2: Retro Helix"
+  platform: "Fear Effect Remastered（PS1）"
+  recomplauncher: ["project-helix"]
+  saves:
+    - "{install}/Fear Effect/memcards"
+    - "{install}/Fear Effect/states"
+    - "{install}/Fear Effect/fe1port.ini"
+    - "{install}/Fear Effect 2/memcards"
+    - "{install}/Fear Effect 2/states"
+    - "{install}/Fear Effect 2/fe2port.ini"
+  skipJunk: true
+
+- key: "mincap"
+  name: "The Legend of Zelda: The Minish Cap"
+  platform: "MinCap（GBA）"
+  recomplauncher: ["mincap"]
+  match: { exe: ["MinCap.exe"] }
+  saves:
+    - "{appdata}/MinCap/MinCap/saves"
+    - "{appdata}/MinCap/MinCap/states"
+    - "{localappdata}/MinCap/MinCap/saves"
+    - "{localappdata}/MinCap/MinCap/states"
+  waitFor: ["MinCap.exe"]
+  skipJunk: true
+
+- key: "shinobi-ps2-recomp"
+  name: "Shinobi"
+  platform: "Shinobi (PS2) Recomp（PS2）"
+  recomplauncher: ["shinobi-ps2-recomp"]
+  match: { exe: ["Shinobi Launcher.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["Shinobi Launcher.exe"]
+  skipJunk: true
+
+- key: "openmerc"
+  name: "Soldier of Fortune"
+  platform: "openMERC（PC）"
+  recomplauncher: ["openmerc"]
+  match: { exe: ["openMerc.exe"] }
+  saves:
+    - "{install}/openmerc/user"
+  waitFor: ["openMerc.exe"]
+  skipJunk: true
+
+- key: "spongebobrecomp"
+  name: "SpongeBob SquarePants: Revenge of the Flying Dutchman"
+  platform: "Spongebob Squarepants: Revenge of the Flying Dutchman（GameCube）"
+  recomplauncher: ["spongebobrecomp"]
+  match: { exe: ["SpongeBobRecompRunner.exe"] }
+  saves:
+    - "{localappdata}/SpongeBobRecomp/GC"
+    - "{localappdata}/SpongeBobRecomp/StateSaves"
+    - "{localappdata}/SpongeBobRecomp/config.ini"
+  waitFor: ["SpongeBobRecompRunner.exe"]
+  skipJunk: true
+
+- key: "arms-rearmed"
+  name: "ARMS"
+  platform: "ARMS Rearmed（Switch）"
+  recomplauncher: ["arms-rearmed"]
+  match: { exe: ["armslauncher.exe"] }
+  saves:
+    - "{install}/save"
+    - "{install}/larecomp.ini"
+  waitFor: ["armslauncher.exe"]
+  skipJunk: true
+
+- key: "hmmmgc"
+  name: "Harvest Moon: Magical Melody"
+  platform: "Harvest Moon: Magical Melody PC（GameCube）"
+  recomplauncher: ["hmmmgc"]
+  match: { exe: ["HarvestMoonMM.exe"] }
+  saves:
+    - "{localappdata}/HarvestMoonMM/Native/USA/Card A"
+  waitFor: ["HarvestMoonMM.exe"]
+  skipJunk: true
+
+- key: "resogun-recomp"
+  name: "Resogun"
+  platform: "Resogun Recomp（PS4）"
+  recomplauncher: ["resogun-recomp"]
+  match: { exe: ["resogun.exe"] }
+  saves:
+    - "{install}/save/savedata"
+    - "{install}/save/trophies.dat"
+    - "{install}/save/settings.ini"
+  waitFor: ["resogun.exe"]
+  skipJunk: true
+
+- key: "sssv-recomp"
+  name: "Space Station Silicon Valley"
+  platform: "SSSV Recomp（N64）"
+  recomplauncher: ["sssv-recomp"]
+  match: { exe: ["SSSVRecompiled.exe"] }
+  saves:
+    - "{localappdata}/SSSVRecompiled/saves"
+    - "{install}/saves"
+  waitFor: ["SSSVRecompiled.exe"]
+  skipJunk: true
+
+- key: "blackthorne-snes-recomp"
+  name: "Blackthorne"
+  platform: "Blackthorne Recomp（SNES）"
+  recomplauncher: ["blackthorne-snes-recomp"]
+  match: { exe: ["BlackthorneRecomp.exe"] }
+  saves:
+    - "{install}/config.ini"
+    - "{install}/keybinds.ini"
+  waitFor: ["BlackthorneRecomp.exe"]
+  skipJunk: true
+
+- key: "parasite-eve-ii-pc"
+  name: "Parasite Eve II"
+  platform: "Parasite Eve II PC（PS1）"
+  recomplauncher: ["parasite-eve-ii-pc"]
+  match: { exe: ["parasite-eve-ii-pc.exe"] }
+  saves:
+    - "{appdata}/parasite-eve-ii-port/parasite-eve-ii"
+    - "{localappdata}/parasite-eve-ii-port/parasite-eve-ii"
+  waitFor: ["parasite-eve-ii-pc.exe"]
+  skipJunk: true
+
+- key: "goemon64recomp3d"
+  name: "Mystical Ninja Starring Goemon"
+  platform: "Goemon 64: Recompiled 3D（N64）"
+  recomplauncher: ["goemon64recomp3d"]
+  match: { exe: ["Goemon64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Goemon64Recompiled/saves"
+    - "{appdata}/Goemon64Recompiled/saves"
+  waitFor: ["Goemon64Recompiled.exe"]
+  skipJunk: true
+
+- key: "deception-iv-nightmareprincess-recomp"
+  name: "Deception IV: The Nightmare Princess"
+  platform: "Deception IV: The Nightmare Princess recomp（PS4）"
+  recomplauncher: ["deception-iv-nightmareprincess-recomp"]
+  match: { exe: ["deception.exe"] }
+  saves:
+    - "{install}/save/savedata"
+    - "{install}/save/settings.ini"
+  waitFor: ["deception.exe"]
+  skipJunk: true
+
+- key: "valkyrierecomp-2"
+  name: "Valkyrie Profile"
+  platform: "ValkyrieRecomp – Undub edition（PS1）"
+  recomplauncher: ["valkyrierecomp-2"]
+  match: { exe: ["ValkyrieRecomp.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["ValkyrieRecomp.exe"]
+  skipJunk: true
+
+- key: "valkyria-chronicles-3-recomp"
+  name: "Valkyria Chronicles III"
+  platform: "Valkyria Chronicles III Recompiled（PSP）"
+  recomplauncher: ["valkyria-chronicles-3-recomp"]
+  match: { exe: ["VC3Launcher.exe"] }
+  saves:
+    - "{install}/memstick/PSP/SAVEDATA"
+    - "{install}/vc3recomp.ini"
+  waitFor: ["VC3Launcher.exe"]
+  skipJunk: true
+
+- key: "final-fantasy-8-recomp"
+  name: "Final Fantasy VIII"
+  platform: "Final Fantasy VIII Recompiled（PS1）"
+  recomplauncher: ["final-fantasy-8-recomp"]
+  match: { exe: ["Final_Fantasy_VIII_Recompiled.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["Final_Fantasy_VIII_Recompiled.exe"]
+  skipJunk: true
+
+- key: "zero-tolerance"
+  name: "Zero Tolerance"
+  platform: "Zero Tolerance（Mega Drive）"
+  recomplauncher: ["zero-tolerance"]
+  match: { exe: ["zt.exe"] }
+  saves:
+    - "{appdata}/ZeroTolerance/zt/save*.bin"
+    - "{localappdata}/ZeroTolerance/zt/save*.bin"
+  waitFor: ["zt.exe"]
+  skipJunk: true
+
+- key: "wmxix-static-recomp"
+  name: "WWE WrestleMania XIX"
+  platform: "WMXIX Static Recomp（GameCube）"
+  recomplauncher: ["wmxix-static-recomp"]
+  saves:
+    - "{localappdata}/WMXIX/GC"
+    - "{localappdata}/WMXIX/StateSaves"
+  skipJunk: true
+
+- key: "inthehunt"
+  name: "In the Hunt"
+  platform: "In the Hunt（街机）"
+  recomplauncher: ["inthehunt"]
+  match: { exe: ["InTheHunt.exe"] }
+  saves:
+    - "{install}/.local/world/native-settings.ini"
+  waitFor: ["InTheHunt.exe"]
+  skipJunk: true
+
+- key: "krustys-super-fun-house-pc-port"
+  name: "Krusty's Super Fun House"
+  platform: "Krusty’s Super Fun House Recomp（SNES）"
+  recomplauncher: ["krustys-super-fun-house-pc-port"]
+  match: { exe: ["KrustysSuperFunHouseRecomp.exe"] }
+  saves:
+    - "{install}/config.ini"
+    - "{install}/keybinds.ini"
+    - "{install}/mods/preloaded/state.toml"
+  waitFor: ["KrustysSuperFunHouseRecomp.exe"]
+  skipJunk: true
+
+- key: "phantom-spider-re"
+  name: "Phantom Spider"
+  platform: "Phantom Spider RE"
+  recomplauncher: ["phantom-spider-re"]
+  match: { exe: ["PhantomSpider.exe"] }
+  saves:
+    - "{install}/save"
+  waitFor: ["PhantomSpider.exe"]
+  skipJunk: true
+
+- key: "dx-rust"
+  name: "Deus Ex"
+  platform: "DX RUST（PC）"
+  recomplauncher: ["dx-rust"]
+  match: { exe: ["dxview.exe"] }
+  saves:
+    - "{install}/Save"
+    - "{install}/TNMSave"
+    - "{install}/settings.txt"
+    - "{install}/keybinds.txt"
+    - "{install}/padbinds.txt"
+  waitFor: ["dxview.exe"]
+  skipJunk: true
+
+- key: "chuchu-rocket-re-nyastered"
+  name: "ChuChu Rocket!"
+  platform: "ChuChu Rocket! Re-Nyastered（Dreamcast）"
+  recomplauncher: ["chuchu-rocket-re-nyastered"]
+  match: { exe: ["ccr.exe"] }
+  saves:
+    - "{appdata}/ChuChuRocketReNyastered/assets/progress.bin"
+    - "{appdata}/ChuChuRocketReNyastered/assets/challenge.bin"
+    - "{appdata}/ChuChuRocketReNyastered/assets/options.bin"
+  waitFor: ["ccr.exe"]
+  skipJunk: true
+
+- key: "tokyojungle"
+  name: "Tokyo Jungle"
+  platform: "Tokyo Jungle（PS3）"
+  recomplauncher: ["tokyojungle"]
+  match: { exe: ["TokyoJungle.exe"] }
+  saves:
+    - "{install}/engine/savedata"
+    - "{install}/engine/controls.ini"
+  waitFor: ["TokyoJungle.exe"]
+  skipJunk: true
+
+- key: "tsbnsnesrecomp"
+  name: "The Simpsons: Bart's Nightmare"
+  platform: "The Simpsons: Bart's Nightmare Recomp（SNES）"
+  recomplauncher: ["tsbnsnesrecomp"]
+  match: { exe: ["TheSimpsonsBartsNightmareSNESRecomp.exe"] }
+  saves:
+    - "{install}/build/saves"
+    - "{install}/build/config.ini"
+    - "{install}/build/keybinds.ini"
+  waitFor: ["TheSimpsonsBartsNightmareSNESRecomp.exe"]
+  skipJunk: true
+
+- key: "vpw64recomp"
+  name: "Virtual Pro Wrestling 64"
+  platform: "VPW64 Recomp（N64）"
+  recomplauncher: ["vpw64recomp"]
+  match: { exe: ["Vpw64Recompiled.exe"] }
+  saves:
+    - "{localappdata}/Vpw64Recompiled/saves"
+    - "{install}/saves"
+  waitFor: ["Vpw64Recompiled.exe"]
+  skipJunk: true
+
+- key: "army-men-sarges-heroes-recomp"
+  name: "Army Men: Sarge's Heroes"
+  platform: "Army Men: Sarge's Heroes — Recompiled（Dreamcast）"
+  recomplauncher: ["army-men-sarges-heroes-recomp"]
+  match: { exe: ["army-men-sarges-heroes-recomp.exe"] }
+  saves:
+    - "{appdata}/dreamcomp/armymensh/vmu_a1.bin"
+    - "{appdata}/dreamcomp/armymensh/settings.ini"
+    - "{appdata}/dreamcomp/armymensh_pal_en60/vmu_a1.bin"
+  waitFor: ["army-men-sarges-heroes-recomp.exe"]
+  skipJunk: true
+
+- key: "fbsnesrecomp"
+  name: "Flashback: The Quest for Identity"
+  platform: "FBSNESRecomp（SNES）"
+  recomplauncher: ["fbsnesrecomp"]
+  match: { exe: ["FlashbackTheQuestForIdentitySNESRecomp.exe"] }
+  saves:
+    - "{install}/build/saves"
+    - "{install}/build/config.ini"
+    - "{install}/build/keybinds.ini"
+  waitFor: ["FlashbackTheQuestForIdentitySNESRecomp.exe"]
+  skipJunk: true
+
+- key: "mlb2k7-recomp"
+  name: "Major League Baseball 2K7"
+  platform: "MLB 2K7 Recomp（Xbox 360）"
+  recomplauncher: ["mlb2k7-recomp"]
+  match: { exe: ["MLB2K7Recomp.exe"] }
+  saves:
+    - "{documents}/MLB2K7Recomp"
+  waitFor: ["MLB2K7Recomp.exe"]
+  skipJunk: true
+
+- key: "baroque-ps1-recompiled"
+  name: "Baroque"
+  platform: "Baroque PS1 Recompiled（PS1）"
+  recomplauncher: ["baroque-ps1-recompiled"]
+  match: { exe: ["build-release/Baroque_Recompiled.exe", "Baroque_Recompiled.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["Baroque_Recompiled.exe"]
+  skipJunk: true
+
+- key: "zoidsassaultrecomp"
+  name: "Zoids Assault"
+  platform: "Zoids Assault Recomp（Xbox 360）"
+  recomplauncher: ["zoidsassaultrecomp"]
+  saves:
+    - "{documents}/zoidsassault/B13EBABEBABEBABE/415407D1"
+  skipJunk: true
+
+- key: "p3d-pc"
+  name: "p3d"
+  platform: "Persona 3 Dancing in Moonlight（PS4）"
+  recomplauncher: ["p3d-pc"]
+  match: { exe: ["p3d_launcher.exe", "bin/p3d_engine.exe", "p3d.exe"] }
+  saves:
+    - "{install}/user/**"
+    - "{install}/p3d.ini"
+  waitFor: ["p3d_launcher.exe", "p3d_engine.exe", "p3d.exe"]
+  skipJunk: true
+
+- key: "tobal2recomp"
+  name: "Tobal 2"
+  platform: "Tobal 2 Recompiled（PS1）"
+  recomplauncher: ["tobal2recomp"]
+  match: { exe: ["build-release/Tobal_2_Recompiled.exe", "Tobal_2_Recompiled.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["Tobal_2_Recompiled.exe"]
+  skipJunk: true
+
+- key: "mechassault2-recomp"
+  name: "MechAssault 2: Lone Wolf"
+  platform: "MechAssault 2 PC（Xbox）"
+  recomplauncher: ["mechassault2-recomp"]
+  match: { exe: ["ma2.exe"] }
+  saves:
+    - "{documents}/MechAssault2"
+  waitFor: ["ma2.exe"]
+  skipJunk: true
+
+- key: "ssx-recomp-2"
+  name: "SSX"
+  platform: "SSX Recompiled（Xbox 360）"
+  recomplauncher: ["ssx-recomp-2"]
+  match: { exe: ["out/build/ARRecomp/ARRecomp.exe"] }
+  saves:
+    - "{install}/out/build/ARRecomp/user/content/00000001"
+    - "{install}/out/build/ARRecomp/user/key_bindings.ini"
+  waitFor: ["ARRecomp.exe"]
+  skipJunk: true
+
+- key: "ampedup"
+  name: "Amped: Freestyle Snowboarding"
+  platform: "AMPEDUP!（Xbox）"
+  recomplauncher: ["ampedup"]
+  match: { exe: ["AMPEDUP!.exe"] }
+  saves:
+    - "{install}/profile/saves/UDATA/4d530005"
+    - "{install}/profile/saves/TDATA/4d530005"
+  waitFor: ["AMPEDUP!.exe"]
+  skipJunk: true
+
+- key: "super-stardust-ultra-vr-pc"
+  name: "Super Stardust Ultra VR"
+  platform: "Super Stardust Ultra VR (PS4) - Recompiled to PC（PS4）"
+  recomplauncher: ["super-stardust-ultra-vr-pc"]
+  match: { exe: ["stardust.exe"] }
+  saves:
+    - "{install}/save/savedata"
+    - "{install}/save/trophies.dat"
+    - "{install}/save/settings.ini"
+  waitFor: ["stardust.exe"]
+  skipJunk: true
+
+- key: "aggressive-inline-static-recomp"
+  name: "Aggressive Inline"
+  platform: "Aggressive Inline Static Recomp（GameCube）"
+  recomplauncher: ["aggressive-inline-static-recomp"]
+  match: { exe: ["gile-launcher.exe"] }
+  saves:
+    - "{localappdata}/AggressiveInlineRecomp/GC"
+  waitFor: ["gile-launcher.exe"]
+  skipJunk: true
+
+- key: "rpbb-static-recomp"
+  name: "Rocket Power: Beach Bandits"
+  platform: "Rocket Power Beach Bandits Static Recomp（GameCube）"
+  recomplauncher: ["rpbb-static-recomp"]
+  match: { exe: ["rpbb-launcher.exe"] }
+  saves:
+    - "{localappdata}/RocketPowerRecomp/GC"
+  waitFor: ["rpbb-launcher.exe"]
+  skipJunk: true
+
+- key: "templefrog"
+  name: "Frogger's Adventures: Temple of the Frog"
+  platform: "TempleFrog（GBA）"
+  recomplauncher: ["templefrog"]
+  match: { exe: ["TempleFrog.exe"] }
+  saves:
+    - "{install}/saves"
+    - "{install}/TempleFrog-data/saves"
+    - "{localappdata}/TempleFrog/saves"
+  waitFor: ["TempleFrog.exe"]
+  skipJunk: true
+
+- key: "lost-via-recomp"
+  name: "Lost: Via Domus"
+  platform: "Lost: Via Domus（Xbox 360）"
+  recomplauncher: ["lost-via-recomp"]
+  match: { exe: ["source/port/out/build/win-amd64-relwithdebinfo/lost.exe"] }
+  saves:
+    - "{documents}/lost"
+  waitFor: ["lost.exe"]
+  skipJunk: true
+
+- key: "opennighthawk"
+  name: "F-117A Nighthawk Stealth Fighter 2.0"
+  platform: "OpenNighthawk（PC）"
+  recomplauncher: ["opennighthawk"]
+  match: { exe: ["f117a.exe"] }
+  saves:
+    - "{appdata}/OpenNighthawk/save"
+    - "{appdata}/OpenNighthawk/save.fixset"
+    - "{install}/f117a.ini"
+  waitFor: ["f117a.exe"]
+  skipJunk: true
+
+- key: "nbaunrivaledrc"
+  name: "NBA Unrivaled"
+  platform: "NBA Unrivaled Recompiled（Xbox 360）"
+  recomplauncher: ["nbaunrivaledrc"]
+  match: { exe: ["nbaunrivaled.exe"] }
+  saves:
+    - "{localappdata}/NBAUnrivaled/user"
+  waitFor: ["nbaunrivaled.exe"]
+  skipJunk: true
+
+- key: "silly-reencounter"
+  name: "Serious Sam: The Next Encounter"
+  platform: "Silly ReEncounter（GameCube）"
+  recomplauncher: ["silly-reencounter"]
+  match: { exe: ["SillyReEncounter-Game.exe"] }
+  saves:
+    - "{install}/saves"
+    - "{install}/settings.ini"
+  waitFor: ["SillyReEncounter-Game.exe"]
+  skipJunk: true
+
+- key: "dgenerationport"
+  name: "D/Generation"
+  platform: "D/Generation Port（PC）"
+  recomplauncher: ["dgenerationport"]
+  match: { exe: ["dgen.exe"] }
+  saves:
+    - "{install}/Saves"
+    - "{install}/dgen.ini"
+  waitFor: ["dgen.exe"]
+  skipJunk: true
+
+- key: "chasm-reverse"
+  name: "Chasm: The Rift"
+  platform: "PanzerChasm（PC）"
+  recomplauncher: ["chasm-reverse"]
+  match: { exe: ["PanzerChasm.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["PanzerChasm.exe"]
+  skipJunk: true
+
+- key: "links2004-xberecomp"
+  name: "Links 2004"
+  platform: "Links 2004 XBE Recomp（Xbox）"
+  recomplauncher: ["links2004-xberecomp"]
+  match: { exe: ["Links2004.exe"] }
+  saves:
+    - "{install}/settings.toml"
+  waitFor: ["Links2004.exe"]
+  skipJunk: true
+
+- key: "uncharted-waters-new-horizons-snes-static-recomp"
+  name: "Uncharted Waters: New Horizons"
+  platform: "Uncharted Waters: New Horizons Recomp（SNES）"
+  recomplauncher: ["uncharted-waters-new-horizons-snes-static-recomp"]
+  saves:
+    - "{install}/Saves"
+  skipJunk: true
+
+- key: "mojo-ps2-recomp"
+  name: "MOJO!"
+  platform: "MOJO! PS2 Recomp（PS2）"
+  recomplauncher: ["mojo-ps2-recomp"]
+  match: { exe: ["MOJO.exe"] }
+  saves:
+    - "{install}/userdata/saves/*.ps2"
+    - "{install}/userdata/saves/keys.ini"
+    - "{install}/userdata/settings.json"
+  waitFor: ["MOJO.exe"]
+  skipJunk: true
+
+- key: "kether-static-recomp"
+  name: "Kether"
+  platform: "Kether（CD-i）"
+  recomplauncher: ["kether-static-recomp"]
+  match: { exe: ["kether.exe"] }
+  saves:
+    - "{install}/saves"
+  waitFor: ["kether.exe"]
+  skipJunk: true
+
+- key: "project-sunburn"
+  name: "Holiday Island"
+  platform: "Project Sunburn（PC）"
+  recomplauncher: ["project-sunburn"]
+  match: { exe: ["Project Sunburn.exe"] }
+  saves:
+    - "{documents}/Project Sunburn/Saves"
+  waitFor: ["Project Sunburn.exe"]
+  skipJunk: true
+
+- key: "mlbbobble-recomp"
+  name: "MLB Bobblehead Pros and MLB Bobblehead Battle"
+  platform: "MLB Bobblehead Recomp（Xbox 360）"
+  recomplauncher: ["mlbbobble-recomp"]
+  match: { exe: ["MLB Bobblehead Launcher.exe"] }
+  saves:
+    - "{documents}/bobbleheadpros"
+  waitFor: ["MLB Bobblehead Launcher.exe"]
+  skipJunk: true

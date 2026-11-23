@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AccountInfo, api, CloudKind, errorText, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
+import { SgdbKeyForm } from "./ArtPicker";
 import { BaiduOption, MigrateBanner, S3Option, WebDavOption } from "./CloudForms";
 import { SteamPluginPanel } from "./SteamPlugin";
 import { Badge, Button, Icon, Spinner, useUi } from "./ui";
@@ -309,6 +310,8 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
 
       <SteamPluginPanel />
 
+      <SgdbPanel />
+
       <section className="panel form">
         <div className="panel-head">
           <Icon name="settings" />
@@ -340,5 +343,48 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
       </section>
       {update && <UpdateDialog info={update} onClose={() => setUpdate(null)} />}
     </div>
+  );
+}
+
+/** SteamGridDB API key for picking artwork. */
+function SgdbPanel() {
+  const ui = useUi();
+  const [status, setStatus] = useState<{ hasKey: boolean; keyPage: string } | null>(null);
+  const load = useCallback(() => api.sgdbStatus().then(setStatus, () => setStatus(null)), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  if (!status) return null;
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <Icon name="library" />
+        <h3>封面（SteamGridDB）</h3>
+        {status.hasKey && <Badge tone="ok">已设置</Badge>}
+      </div>
+      {status.hasKey ? (
+        <div className="row space">
+          <p className="muted small">添加游戏、加入 Steam 时可以从 SteamGridDB 自动配封面，也可以在游戏详情页里「更换封面」自己挑。</p>
+          <Button
+            small
+            kind="ghost"
+            icon="trash"
+            onClick={async () => {
+              try {
+                await api.sgdbClearKey();
+                ui.toast("已删除 SteamGridDB API Key");
+                await load();
+              } catch (e) {
+                ui.toast(errorText(e), "bad");
+              }
+            }}
+          >
+            删除 Key
+          </Button>
+        </div>
+      ) : (
+        <SgdbKeyForm keyPage={status.keyPage} onSaved={load} />
+      )}
+    </section>
   );
 }

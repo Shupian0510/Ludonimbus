@@ -40,8 +40,11 @@ Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：从 Stea
 - **版本历史**：每个版本都记录时间、设备和来源，可以恢复、导出 zip、锁定、写备注。旧版本自动清理，手动备份永久保留。
 - **冲突时两份都留**：两台电脑都改过存档时让你选择用哪一份，没选的那份也留在版本历史里。
 - **离线也能玩**：连不上云端就直接启动游戏，存档先保存在本机，联网后自动补传。
+- **添加游戏不用自己找存档**：扫描 Steam 里的非 Steam 游戏、Epic / GOG / Xbox 安装的游戏、模拟器里有存档的游戏、你指定的游戏文件夹，以及本机已经有存档的上万款 PC 游戏，勾选后批量添加。Steam 云已经在同步的游戏会单独列出，不会重复管理。认不出的游戏可以「玩一下再找」：启动游戏存一次档，Ludonimbus 会列出刚才被写入的文件夹。
+- **自动找到游戏位置**：只找到存档的游戏，会去 Epic、GOG、Xbox、EA、Ubisoft 等平台的安装目录里找游戏程序；找不到时可以从各平台的安装目录直接选。
+- **一键加入 Steam**：不在 Steam 里的游戏（包括 Xbox 应用 / PC Game Pass 的游戏）点一下就能加进 Steam，可以批量加入，从第一次启动起就自动同步存档。封面、背景、Logo 和图标可以从 SteamGridDB 自动配好或自己挑，也可以用本地图片。
 - **云盘随你选**：Google Drive（一键登录）、群晖等 NAS、坚果云、Nextcloud、阿里云 OSS / 腾讯云 COS 等对象存储；百度网盘、阿里云盘、夸克等可以通过 OpenList / AList 接入。换云盘时一键把历史版本复制过去。
-- **Steam 风格的界面**：网格 / 列表游戏库，直接使用你在 Steam 里设置的封面、横幅和 Logo。
+- **Steam 风格的界面**：网格 / 列表游戏库，直接使用你在 Steam 里设置的封面、横幅和 Logo；不在 Steam 里的游戏也能配封面。
 
 ## 下载与安装
 
@@ -60,8 +63,8 @@ Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：从 Stea
    - **WebDAV**：群晖 / 威联通等 NAS、坚果云、Nextcloud，或者 [OpenList](https://github.com/OpenListTeam/OpenList) / AList（可以挂载百度网盘、阿里云盘、夸克等）。填地址、用户名和密码，先点「测试连接」。
    - **S3 兼容存储**：NAS 上的 MinIO，或阿里云 OSS、腾讯云 COS、Cloudflare R2。
    - **文件夹**：OneDrive / Google Drive 电脑版同步的文件夹、NAS 共享目录、移动硬盘。
-2. **添加游戏**：「添加游戏 → Steam 快捷方式」，选择你加进 Steam 的游戏。内置规则支持的游戏会自动识别存档位置，其他游戏可以从 Ludusavi 数据库搜索或手动指定。
-3. **开启 Steam 自动同步**：在游戏详情页打开「Steam 自动同步」。需要暂时关闭 Steam，Ludonimbus 会自动关闭并重新打开它。
+2. **添加游戏**：「添加游戏 → 扫描本机」会列出找到的游戏，知道存档位置的直接勾选添加；不知道的点「指定存档」，按提示找到存档文件夹。放在别处的游戏点「扫描文件夹…」。
+3. **开启 Steam 自动同步**：已经在 Steam 里的游戏，在详情页打开「Steam 自动同步」；还不在 Steam 里的，点「加入 Steam…」。修改 Steam 快捷方式需要暂时关闭 Steam，Ludonimbus 会自动关闭并重新打开它。
 4. **照常玩**：以后从 Steam 启动游戏就行。
 
 关闭窗口后 Ludonimbus 会留在系统托盘。不通过 Steam、直接打开游戏时，它也会在游戏退出后自动备份。
@@ -78,20 +81,44 @@ Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：从 Stea
 
 ## 支持的游戏
 
-**内置规则**（自动识别存档位置）：
+**重编译 / 移植游戏**（按游戏程序自动识别，140 多个）：
 
-| 游戏 | 运行方式 | 存档位置 |
+- 核对过存档位置的热门项目：Ship of Harkinian、2 Ship 2 Harkinian、Ghostship、Starship、SpaghettiKart、sm64ex、sm64coopdx、Perfect Dark、Unleashed Recompiled、OpenGOAL（Jak 1–3）、Super Mario Bros. Remastered、Longshot（时之笛）、fefw recomp（火焰纹章：万缕千丝）、Lantern Engine（Bloodborne）。
+- 其余来自 [RecompLauncher](https://recomplauncher.com/) 的游戏目录：开发者声明了存档位置的项目，以及 Zelda 64: Recompiled、Banjo: Recompiled、Donkey Kong 64: Recompiled 等 N64Recomp 游戏。
+- 用 RecompLauncher 安装的游戏，扫描本机时会直接列出来；RecompLauncher 建的 Steam 快捷方式也能认出。
+
+**模拟器**：
+
+| 模拟器 | 平台 | 同步方式 |
 |---|---|---|
-| 塞尔达传说：时之笛 | Longshot | `%APPDATA%\Longshot\save` |
-| 火焰纹章：万缕千丝 | fefw recomp | `<游戏目录>\save` |
-| Bloodborne | Lantern Engine（shadPS4） | `<游戏目录>\user\savedata\1\CUSA00207` |
+| Dolphin | GameCube / Wii | 按游戏（GameCube 需要用 GCI 文件夹记忆卡，这是 Dolphin 的默认设置） |
+| Cemu | Wii U | 按游戏；会读取你在 Cemu 里设置的 MLC 文件夹 |
+| Azahar、Citra、Lime3DS | 3DS | 按游戏 |
+| RPCS3 | PS3 | 按游戏 |
+| shadPS4 | PS4 | 按游戏 |
+| PPSSPP | PSP | 按游戏 |
+| Vita3K | PS Vita | 按游戏 |
+| RetroArch | 多平台 | 按游戏（按游戏文件名） |
+| Ryujinx | Switch | 按游戏；每台电脑上找到当前用户档案的存档，换电脑后没有就自动新建（需要先关闭 Ryujinx） |
+| Eden、Citron、Sudachi、Suyu、yuzu | Switch | 整个模拟器（存档和本机的用户档案绑定，分开同步换电脑后会对不上） |
+| PCSX2 | PS2 | 整个模拟器（记忆卡是所有游戏共用的） |
+| DuckStation | PS1 | 整个模拟器 |
+| Xenia | Xbox 360 | 整个模拟器 |
+
+「按游戏」的模拟器：
+
+- 「扫描本机」会把模拟器里有存档的游戏逐个列出来（来源「模拟器里的存档」），不需要先建 Steam 快捷方式。能找到游戏文件时（Ryujinx、Dolphin 的游戏文件夹，Cemu 的游戏列表），加入 Steam 后直接启动这个游戏。
+- Steam 快捷方式里带上游戏文件（例如 Steam ROM Manager 生成的快捷方式）时，Ludonimbus 从光盘镜像、游戏文件夹或 NSP / XCI 读出游戏 ID，只同步这个游戏的存档。
+- 只打开模拟器本身的快捷方式，会把整个模拟器的存档一起同步。同一个模拟器只能二选一：整个同步，或者逐个游戏同步。
+
+便携版和安装版都能找到；只同步存档，不碰密钥、固件和缓存。
 
 **其他游戏**：
 
-- 普通 PC 游戏可以从 [Ludusavi](https://github.com/mtkennerly/ludusavi) 的数据库里搜索，覆盖上万款游戏。
-- 也可以手动指定存档文件夹。
+- 普通 PC 游戏的存档位置来自 [Ludusavi](https://github.com/mtkennerly/ludusavi) 的数据库，覆盖上万款游戏，扫描本机时会自动匹配。
+- 数据库里没有的游戏，可以从常见位置里挑、「玩一下再找」，或者手动指定存档文件夹。
 
-欢迎为 [`adapters/builtin.yaml`](adapters/builtin.yaml) 补充更多模拟器和游戏的规则。
+欢迎为 [`adapters/builtin.yaml`](adapters/builtin.yaml)（游戏）和 [`adapters/emulators.yaml`](adapters/emulators.yaml)（模拟器）补充规则。
 
 ## 工作原理
 
@@ -112,6 +139,7 @@ ludonimbus-run：从你的云盘拉取较新的存档
 - **存档只在你的电脑和你的云盘之间传输**，开发者没有服务器，也收集不到任何数据。
 - **Google Drive 只能访问 Ludonimbus 自己创建的文件**，存档在你 Drive 里的「Ludonimbus」文件夹，网页版也能直接查看和下载。
 - **WebDAV / S3 的密码只保存在本机**的 Windows 凭据管理器里，不会写进配置文件，断开时删除。
+- **SteamGridDB 使用你自己的 API Key**：只在选封面时把游戏名发给 SteamGridDB 搜索，Key 保存在 Windows 凭据管理器里。不填 Key 也可以用本地图片。
 - **Steam 插件只负责显示**：它通过本机接口向托盘里的 Ludonimbus 询问状态，接口只监听本机，并且需要每次启动随机生成的令牌，不接触你的网盘账号。
 - 详见[隐私政策](https://shupian0510.github.io/Ludonimbus/privacy.html)。
 
@@ -133,6 +161,18 @@ ludonimbus-run：从你的云盘拉取较新的存档
 <summary><b>能用百度网盘、阿里云盘或夸克吗？</b></summary>
 
 百度网盘一键登录已经开发完成，正在等待百度开放平台审核，通过后会在新版本中开放。在此之前，以及阿里云盘、夸克（没有面向个人开发者的官方接口），都可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面。速度和稳定性取决于对应网盘和 OpenList 的驱动。坚果云自带 WebDAV，可以直接连接。
+</details>
+
+<details>
+<summary><b>Xbox 应用（PC Game Pass）的游戏能用吗？</b></summary>
+
+能加进 Steam。Xbox 游戏自己的程序受系统保护，其他程序不能直接启动，Ludonimbus 会用游戏文件夹里的 `gamelaunchhelper.exe` 启动它，并等游戏本身退出后再上传存档。手动选择时也请选 `Content` 文件夹里的 `gamelaunchhelper.exe`。Xbox 游戏一般自带 Xbox 云存档；Ludusavi 数据库里有存档位置的，Ludonimbus 也会再同步一份并保留版本历史。
+</details>
+
+<details>
+<summary><b>扫描时为什么有些游戏显示「Steam 云已经在同步」？</b></summary>
+
+这些游戏现在装在 Steam 里，Steam 云存档已经在同步它们，不需要 Ludonimbus 再管。如果你在 Steam 里卸载了它、改在别的平台玩，它会出现在「可以直接添加」里。
 </details>
 
 <details>
@@ -162,10 +202,11 @@ ludonimbus-run：从你的云盘拉取较新的存档
 
 - [x] WebDAV（NAS、坚果云、Nextcloud、OpenList）、S3 兼容存储，换云盘时一键复制存档
 - [ ] 百度网盘一键登录（已开发完成，等待百度审核）
-- [ ] 更方便地添加游戏：扫描本机已安装的游戏和已有的存档；认不出的游戏一步步引导你找到存档
-- [ ] 不在 Steam 里的游戏一键加入 Steam，自动开启云存档，从 SteamGridDB 挑选封面
+- [x] 更方便地添加游戏：扫描本机已安装的游戏和已有的存档；认不出的游戏一步步引导你找到存档
+- [x] 不在 Steam 里的游戏一键加入 Steam，自动开启云存档，从 SteamGridDB 挑选封面
 - [ ] 同步 Steam 截图和游戏时间，换电脑也能找回
-- [ ] 更多模拟器规则（Ryujinx / Eden、RPCS3、Dolphin、RetroArch、PCSX2 …）
+- [x] 更多模拟器和重编译游戏的存档规则：19 个模拟器（大部分按游戏同步，包括 Ryujinx），140 多个重编译 / 移植游戏
+- [x] 扫描模拟器里有存档的游戏，没有 Steam 快捷方式也能逐个添加
 
 **以后再做**
 
@@ -180,6 +221,7 @@ ludonimbus-run：从你的云盘拉取较新的存档
 ## 致谢
 
 - [Ludusavi](https://github.com/mtkennerly/ludusavi)（MIT）：存档位置数据库与查找，安装包附带它的官方程序。
+- [RecompLauncher](https://recomplauncher.com/)：重编译游戏的存档位置来自它的游戏目录。
 - [Millennium](https://github.com/SteamClientHomebrew/Millennium)（MIT）：Steam 客户端插件框架。Ludonimbus 不附带它，只在你点「一键安装」时从官方发布页下载。
 - [Tauri](https://tauri.app/)
 
@@ -198,8 +240,12 @@ ludonimbus-run：从你的云盘拉取较新的存档
 - **Saves survive reinstalls**: saves are tracked relative to the game folder and restored on the first launch after reinstalling, moving the game or switching PCs.
 - **Version history and conflict handling**: every snapshot records time and device; conflicts keep both sides.
 - **Offline friendly**: if the cloud is unreachable the game starts anyway and saves are uploaded later.
+- **Add games without hunting for saves**: "Add game → Scan this PC" lists non-Steam shortcuts, games installed by Epic, GOG and the Xbox app, games with saves inside emulators, and any of the thousands of PC games in Ludusavi's database that have saves on this PC. Games Steam Cloud already syncs are listed apart. For unknown games, "play and find" lists the folders the game writes to when you save once.
+- **Finds where games are installed**: games found by their saves are looked up in Epic, GOG, Xbox, EA, Ubisoft and other store folders.
+- **One-click add to Steam**: add games that are not in Steam (Xbox app / PC Game Pass games included, started through their `gamelaunchhelper.exe`) one by one or in bulk, with cloud saves on from the first launch and artwork from [SteamGridDB](https://www.steamgriddb.com/) (your own API key) or local images.
+- **Recomps and emulators recognised**: built-in rules for 140+ recomps and ports (many from [RecompLauncher](https://recomplauncher.com/)'s catalog) and 19 emulators. Dolphin, Cemu, Azahar/Citra, RPCS3, shadPS4, PPSSPP, Vita3K, RetroArch and Ryujinx sync each game on its own: games with saves in the emulator are listed by the scan, and shortcuts that open a game sync just that game's saves.
 - **Your own storage**: Google Drive (Ludonimbus can only see files it created), any WebDAV server (NAS, Nextcloud, OpenList…), S3-compatible storage, or any folder. Switching clouds copies your whole history over. There are no developer servers.
 
-**Install**: Windows 10/11 64-bit. Download `Ludonimbus_x.y.z_x64-setup.exe` from [Releases](https://github.com/Shupian0510/Ludonimbus/releases/latest); the app updates itself afterwards. Then connect a cloud in Settings, add your Steam shortcuts and turn on "Steam auto-sync" for each game.
+**Install**: Windows 10/11 64-bit. Download `Ludonimbus_x.y.z_x64-setup.exe` from [Releases](https://github.com/Shupian0510/Ludonimbus/releases/latest); the app updates itself afterwards. Then connect a cloud in Settings, add games with "Add game → Scan this PC", and turn on "Steam auto-sync" for games already in Steam or click "Add to Steam" for the others.
 
 Built on [Ludusavi](https://github.com/mtkennerly/ludusavi)'s save database. Licensed under [MIT](LICENSE). Developer notes: [`docs/development.md`](docs/development.md).

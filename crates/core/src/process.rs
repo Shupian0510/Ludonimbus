@@ -144,7 +144,9 @@ pub fn launch_and_wait(
     if !wait_for.is_empty() {
         // Already watched the game run and exit above: nothing to wait for.
         let handoff = !game_ever_seen && (!tracked || main_lifetime < Duration::from_secs(20));
-        let appear_window = if handoff { Duration::from_secs(8) } else { Duration::ZERO };
+        // The Xbox app may check the license or update before the game starts.
+        let wait = if crate::xbox::is_launch_helper(exe) { 30 } else { 8 };
+        let appear_window = if handoff { Duration::from_secs(wait) } else { Duration::ZERO };
         let appear_deadline = Instant::now() + appear_window;
         let mut seen = is_running(wait_for);
         while !seen && Instant::now() < appear_deadline {

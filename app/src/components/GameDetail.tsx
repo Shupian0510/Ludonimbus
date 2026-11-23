@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
 import { api, errorText, GameView, LocalFile, Outcome, Overview, StatusReport } from "../api";
 import { bytes, dateTime, healthText, outcomeText, relTime } from "../format";
+import { AddToSteam } from "./AddToSteam";
+import { ArtPicker } from "./ArtPicker";
+import { PlatformFolders } from "./PlatformFolders";
 import { StatusBadge } from "./Library";
-import { Badge, Button, Icon, Toggle, useUi } from "./ui";
+import { withSteamClosed } from "./steamAction";
+import { Badge, Button, Icon, Modal, Toggle, useUi } from "./ui";
 import { Versions } from "./Versions";
 
 type Tab = "versions" | "files" | "config";
+
+/** Xbox app games start through this; their own programs are protected. */
+const XBOX_HELPER = /gamelaunchhelper\.exe$/i;
+const XBOX_DIR = /[\\/](XboxGames|WindowsApps|ModifiableWindowsApps)[\\/]/i;
 
 export function GameDetail({
   game,
@@ -29,6 +37,22 @@ export function GameDetail({
   const [versionsKey, setVersionsKey] = useState(0);
   const [heroFailed, setHeroFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
+  const [dialog, setDialog] = useState<"art" | "steam" | null>(null);
+  useEffect(() => setHeroFailed(false), [game.art.hero]);
+  useEffect(() => setLogoFailed(false), [game.art.logo]);
+
+  const xboxProtected = !!game.exe && XBOX_DIR.test(game.exe) && !XBOX_HELPER.test(game.exe);
+  const switchToXboxHelper = async () => {
+    const content = game.exe?.match(/^(.*?[\\/]Content)[\\/]/i)?.[1];
+    try {
+      if (!content) throw new Error("没有找到这个游戏的 Content 文件夹");
+      await api.setGameExe(game.key, `${content}\\gamelaunchhelper.exe`);
+      ui.toast("已改用 gamelaunchhelper.exe");
+      await onChanged();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
 
   const after = async (o?: Outcome) => {
     if (o) ui.toast(outcomeText(o, game.name), o.kind === "conflict" ? "warn" : o.kind === "offline" || o.kind === "queued" ? "info" : "ok");
@@ -85,17 +109,34 @@ export function GameDetail({
     await onChanged();
   };
 
+  const removeFromSteam = async () => {
+    const ok = await ui.confirm({
+      title: "从 Steam 移除快捷方式？",
+      text: "删除 Ludonimbus 创建的这个 Steam 快捷方式（连同它的封面）。游戏、存档和 Ludonimbus 里的记录都不受影响，以后可以再加入。",
+      confirm: "移除",
+      danger: true,
+    });
+    if (!ok) return;
+    await steamAction((close) => api.steamRemoveGame(game.key, close), "已从 Steam 移除");
+  };
+
   const relocate = async () => {
     try {
       const found = await api.relocateAuto(game.key);
       if (found) {
         const ok = await ui.confirm({
-          title: "找到了新的位置",
-          text: (
+          title: game.exe ? "找到了新的位置" : "找到了游戏位置",
+          text: game.exe ? (
             <>
               <p>在原位置附近找到了：</p>
               <code className="path">{found}</code>
               <p className="muted">改用这个位置吗？如果新文件夹里没有存档，下次启动时会自动从云端恢复。</p>
+            </>
+          ) : (
+            <>
+              <p>在本机找到了「{game.name}」的游戏程序：</p>
+              <code className="path">{found}</code>
+              <p className="muted">使用这个位置吗？之后就能判断游戏是否在运行，也可以加入 Steam。</p>
             </>
           ),
           confirm: "使用这个位置",
@@ -113,7 +154,7 @@ export function GameDetail({
         ui.toast("已更新游戏位置");
         await onChanged();
       } else if (!found) {
-        ui.toast("没有自动找到新位置，也没有选择文件", "info");
+        ui.toast(game.exe ? "没有自动找到新位置，也没有选择文件" : "没有在 Steam、Xbox、Epic、GOG 和已安装的程序里找到这个游戏", "info");
       }
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -131,6 +172,9 @@ export function GameDetail({
         <div className="hero-shade" />
         <button className="back" onClick={onBack}>
           <Icon name="back" /> 游戏库
+        </button>
+        <button className="hero-edit" onClick={() => setDialog("art")}>
+          <Icon name="edit" size={14} /> 更换封面
         </button>
         <div className="hero-title">
           {game.art.logo && !logoFailed ? (
@@ -224,6 +268,27 @@ export function GameDetail({
                 开启后，Steam 快捷方式会通过 Ludonimbus 启动游戏：启动前拉取云端存档，退出后上传。快捷方式里只记录游戏 id，游戏路径由 Ludonimbus 管理，模拟器更新不需要改 Steam。
               </p>
             )}
+            {!game.steam && game.health.state !== "noSteam" && (
+              <>
+                <p className="muted small">
+                  {game.exe && game.exeExists
+                    ? "一键在 Steam 里创建快捷方式：从 Steam 启动就会自动同步存档，还能用 Steam 的游戏时长、截图和手柄设置。"
+                    : "设置好游戏程序后，可以一键加入 Steam。"}
+                </p>
+                <div className="row">
+                  <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
+                    加入 Steam…
+                  </Button>
+                </div>
+              </>
+            )}
+            {game.steam?.created && (
+              <div className="row">
+                <Button small kind="ghost" icon="trash" onClick={removeFromSteam}>
+                  从 Steam 移除快捷方式
+                </Button>
+              </div>
+            )}
           </section>
 
           <section className="panel">
@@ -233,6 +298,21 @@ export function GameDetail({
               {game.exe && (game.exeExists ? <Badge tone="ok">正常</Badge> : <Badge tone="warn">找不到</Badge>)}
             </div>
             {game.exe ? <code className="path">{game.exe}</code> : <p className="muted">未设置游戏程序</p>}
+            {xboxProtected && game.exeExists && (
+              <>
+                <p className="health health-warn">
+                  这是 Xbox 应用安装的游戏，它自己的程序受保护，不能直接启动（从 Steam 或 Ludonimbus 启动都会失败）。请改用同一文件夹里的 gamelaunchhelper.exe。
+                </p>
+                <div className="row">
+                  <Button small kind="primary" icon="check" onClick={switchToXboxHelper}>
+                    改用 gamelaunchhelper.exe
+                  </Button>
+                </div>
+              </>
+            )}
+            {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && (
+              <p className="muted small">通过 Xbox 应用的启动程序打开游戏，Ludonimbus 会等游戏本身退出后再上传存档。</p>
+            )}
             {game.exe && !game.exeExists && (
               <p className="health health-warn">
                 原来的位置不存在了（比如解压了新版本到别的文件夹）。从 Steam 启动时也会提示你，或者现在处理：
@@ -240,7 +320,7 @@ export function GameDetail({
             )}
             <div className="row">
               <Button small icon="locate" onClick={relocate}>
-                {game.exeExists ? "更换位置…" : "重新定位"}
+                {!game.exe ? "自动查找…" : game.exeExists ? "更换位置…" : "重新定位"}
               </Button>
               {game.exe && game.exeExists && (
                 <Button small kind="ghost" icon="folder" onClick={() => run(() => api.openPath(game.exe!))}>
@@ -248,6 +328,19 @@ export function GameDetail({
                 </Button>
               )}
             </div>
+            {(!game.exe || !game.exeExists) && (
+              <PlatformFolders
+                onPick={async (exe) => {
+                  try {
+                    await api.setGameExe(game.key, exe);
+                    ui.toast("已设置游戏位置");
+                    await onChanged();
+                  } catch (e) {
+                    ui.toast(errorText(e), "bad");
+                  }
+                }}
+              />
+            )}
           </section>
         </div>
 
@@ -269,6 +362,25 @@ export function GameDetail({
         {tab === "files" && <Files game={game} />}
         {tab === "config" && <Config game={game} onChanged={onChanged} onRemoved={onRemoved} />}
       </div>
+
+      {dialog === "art" && (
+        <Modal title={`更换封面：${game.name}`} onClose={() => setDialog(null)} wide>
+          <ArtPicker gameKey={game.key} name={game.name} current={game.art} onApplied={onChanged} />
+          {game.steam && <p className="muted small">Steam 里的封面在 Steam 重新打开后更新。</p>}
+        </Modal>
+      )}
+      {dialog === "steam" && (
+        <Modal title={`把「${game.name}」加入 Steam`} onClose={() => setDialog(null)}>
+          <AddToSteam
+            games={[{ key: game.key, name: game.name }]}
+            onCancel={() => setDialog(null)}
+            onDone={async () => {
+              setDialog(null);
+              await onChanged();
+            }}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -350,14 +462,18 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
   };
 
   const remove = async () => {
+    const created = !!game.steam?.created;
     const ok = await ui.confirm({
       title: `从 Ludonimbus 移除「${game.name}」？`,
-      text: "只会从本机的 Ludonimbus 里移除，云端的存档和版本历史都会保留，以后重新添加就能找回。",
+      text: created
+        ? "只会从本机的 Ludonimbus 里移除，云端的存档和版本历史都会保留，以后重新添加就能找回。Ludonimbus 创建的 Steam 快捷方式也会一起删除。"
+        : "只会从本机的 Ludonimbus 里移除，云端的存档和版本历史都会保留，以后重新添加就能找回。",
       confirm: "移除",
       danger: true,
     });
     if (!ok) return;
     try {
+      if (created && (await withSteamClosed(ui, (close) => api.steamRemoveGame(game.key, close).then(() => true))) === null) return;
       await api.removeGame(game.key);
       ui.toast("已移除");
       await onRemoved();

@@ -67,7 +67,8 @@ pub fn runner_phase(key: &str) -> Option<String> {
 /// Process names that mean "this game is running".
 pub fn watch_names(g: &config::GameEntry) -> Vec<String> {
     let mut names: Vec<String> = spec::effective(g).wait_for.iter().map(|s| s.to_lowercase()).collect();
-    if let Some(exe) = &g.exe {
+    // Every Xbox app game has the same launch helper: only its own processes count.
+    if let Some(exe) = g.exe.as_deref().filter(|e| !ludonimbus_core::xbox::is_launch_helper(e)) {
         names.push(util::file_name_lower(exe));
     }
     names

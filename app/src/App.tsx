@@ -236,6 +236,10 @@ export default function App() {
               setPage({ name: "game", key });
             }
           }}
+          onChanged={async (keys) => {
+            await reload();
+            for (const k of keys) check(k);
+          }}
         />
       )}
     </div>

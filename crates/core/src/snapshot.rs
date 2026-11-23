@@ -429,10 +429,17 @@ pub fn resolve_logical(roots: &BTreeMap<String, PathBuf>, logical: &str) -> Resu
 /// local save files that are not part of it. Callers must protect the
 /// current saves first (pre-restore snapshot).
 pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<()> {
-    let (current, roots) = scan(game).unwrap_or_else(|_| {
+    let (current, mut roots) = scan(game).unwrap_or_else(|_| {
         let s = spec::effective(game);
         (Vec::new(), spec::resolve_roots(game, &s).unwrap_or_default())
     });
+    let adapter = game.adapter.as_deref().and_then(crate::adapters::find);
+    if let Some(a) = adapter {
+        // Saves an emulator numbers per PC may have to be created first.
+        let mut used: Vec<String> = meta.files.iter().filter_map(|f| f.path.split('/').next().map(str::to_string)).collect();
+        used.dedup();
+        crate::emulators::prepare_restore(a, &mut roots, &used)?;
+    }
     let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
     // Resolve every destination first so nothing is written if a root is missing.
     let mut plan = Vec::with_capacity(meta.files.len());
@@ -470,6 +477,9 @@ pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<(
         if !keep.contains(&f.logical.to_lowercase()) {
             let _ = std::fs::remove_file(&f.abs);
         }
+    }
+    if let Some(a) = adapter {
+        crate::emulators::finish_restore(a, &roots)?;
     }
     Ok(())
 }
