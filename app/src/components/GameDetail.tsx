@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, GameView, LocalFile, Outcome, Overview, StatusReport } from "../api";
 import { bytes, dateTime, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
+import { sceneIs } from "../scene";
 import { AddToSteam } from "./AddToSteam";
 import { ArtPicker } from "./ArtPicker";
 import { PlatformFolders } from "./PlatformFolders";
@@ -36,11 +37,11 @@ export function GameDetail({
   const ui = useUi();
   const t = useT();
   const g = t.game;
-  const [tab, setTab] = useState<Tab>("versions");
+  const [tab, setTab] = useState<Tab>(sceneIs("game-settings") ? "config" : "versions");
   const [versionsKey, setVersionsKey] = useState(0);
   const [heroFailed, setHeroFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
-  const [dialog, setDialog] = useState<"art" | "steam" | null>(null);
+  const [dialog, setDialog] = useState<"art" | "steam" | null>(sceneIs("art-picker") ? "art" : null);
   useEffect(() => setHeroFailed(false), [game.art.hero]);
   useEffect(() => setLogoFailed(false), [game.art.logo]);
 

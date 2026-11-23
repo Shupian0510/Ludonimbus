@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport, UpdateInfo } from "./api";
 import { AddGame } from "./components/AddGame";
 import { Onboarding } from "./components/Onboarding";
+import { scene, SCENE_ADD, SCENE_GAME, SCENE_SETTINGS } from "./scene";
 import { Devices } from "./components/Devices";
 import { GameDetail } from "./components/GameDetail";
 import { Library } from "./components/Library";
@@ -127,11 +128,23 @@ export default function App() {
     guideChecked.current = true;
     api.onboarding().then(
       (o) => {
-        const preview = !inTauri && new URLSearchParams(location.search).has("guide");
+        const preview = !inTauri && (new URLSearchParams(location.search).has("guide") || (scene() ?? "").startsWith("guide-"));
         if (!o.doneAt && (preview || (overview.cloud.kind === "none" && overview.games.length === 0))) setGuide(true);
       },
       () => undefined,
     );
+  }, [overview]);
+
+  // Browser preview: ?scene=… opens a screen directly (docs screenshots).
+  const sceneApplied = useRef(false);
+  useEffect(() => {
+    if (!overview || sceneApplied.current) return;
+    sceneApplied.current = true;
+    const s = scene();
+    if (!s) return;
+    if (SCENE_GAME[s]) setPage({ name: "game", key: SCENE_GAME[s] });
+    else if (s in SCENE_SETTINGS) setPage({ name: "settings" });
+    else if (SCENE_ADD[s]) setAdding(true);
   }, [overview]);
 
   const finishGuide = async (usage: string[], next: "library" | "scan" | "settings") => {
@@ -255,7 +268,13 @@ export default function App() {
       </main>
 
       {showUpdate && update && <UpdateDialog info={update} onClose={() => setShowUpdate(false)} />}
-      {guide && <Onboarding onFinish={finishGuide} onChanged={refresh} />}
+      {guide && (
+        <Onboarding
+          initialStep={(scene() ?? "").startsWith("guide-") ? scene()!.slice("guide-".length) : undefined}
+          onFinish={finishGuide}
+          onChanged={refresh}
+        />
+      )}
 
       {adding && overview && (
         <AddGame

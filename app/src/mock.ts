@@ -18,6 +18,10 @@ const mockLang = (() => {
 })();
 const L = (zh: string, en: string) => (mockLang === "en" ? en : zh);
 
+// ?scene=… (docs screenshots) adjusts the sample data to the screen shown.
+const mockScene = new URLSearchParams(location.search).get("scene") ?? "";
+const noCloudScene = ["settings-cloud", "settings-cloud-quark"].includes(mockScene) || mockScene.startsWith("guide-");
+
 const now = Date.now();
 const ago = (min: number) => new Date(now - min * 60000).toISOString();
 const art = (appid: number, kind: string) => `/mock-art/${appid}${kind}`;
@@ -226,8 +230,17 @@ const delay = <T,>(v: T, ms = 250) => new Promise<T>((r) => setTimeout(() => r(v
 export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
   const key = args.key as string;
   switch (cmd) {
-    case "get_overview":
-      return delay(overview, 150);
+    case "get_overview": {
+      if (!mockScene) return delay(overview, 150);
+      const o: Overview = JSON.parse(JSON.stringify(overview));
+      if (noCloudScene) o.cloud = { kind: "none", label: null, error: null };
+      if (mockScene === "settings-cloud-folder") o.cloud = { kind: "localFolder", label: "D:\\Cloud\\Ludonimbus", error: null };
+      if (mockScene === "game-detail-pending") {
+        const g = o.games.find((x) => x.key === "zelda-oot-longshot")!;
+        g.pending = 2;
+      }
+      return delay(o, 150);
+    }
     case "get_language": {
       // ?lang=en / ?lang=zh-CN picks the language of the browser preview (docs screenshots).
       const fromUrl = new URLSearchParams(location.search).get("lang");
@@ -240,7 +253,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     }
     case "get_onboarding":
       // ?guide shows the first-run guide in the browser preview.
-      return delay({ doneAt: new URLSearchParams(location.search).has("guide") ? null : ago(60), usage: [] });
+      return delay({ doneAt: new URLSearchParams(location.search).has("guide") || mockScene.startsWith("guide-") ? null : ago(60), usage: [] });
     case "finish_onboarding":
       return delay(undefined, 50);
     case "set_language":
@@ -251,6 +264,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       }
       return delay(undefined, 50);
     case "check_game":
+      if (mockScene === "game-detail-pending" && key === "zelda-oot-longshot")
+        return delay({ ...checks[key], status: "offline", message: L("云端暂时无法访问：网络连接超时", "The cloud can't be reached right now: connection timed out") }, 400);
       return delay(checks[key], 400);
     case "sync_game":
     case "backup_game":
@@ -297,8 +312,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           icon: g.art.icon,
         })),
       );
-    case "get_settings":
-      return delay({
+    case "get_settings": {
+      const s = {
         deviceId: "d-mock",
         deviceName: "DESKTOP-MAIN",
         retention: { keepRecent: 20, keepDailyDays: 30 },
@@ -314,8 +329,13 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         runnerPath: "C:\\Users\\me\\AppData\\Local\\Ludonimbus\\ludonimbus-run.exe",
         runnerExists: true,
         ludusavi: "ludusavi 0.31.0",
-        version: "0.1.0",
-      });
+        version: "0.5.0",
+      } as Record<string, unknown>;
+      if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
+      if (noCloudScene) s.cloud = { kind: "none" };
+      if (mockScene === "settings-cloud-folder") s.cloud = { kind: "localFolder", path: "D:\\Cloud\\Ludonimbus" };
+      return delay(s);
+    }
     case "cloud_test":
       return delay({ label: "https://dav.jianguoyun.com/dav/Ludonimbus", used: 1.2e9, total: 3e9 });
     case "cloud_connect":
@@ -345,6 +365,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "cloud_dismiss_previous":
       return delay(undefined);
     case "cloud_account":
+      if (mockScene === "settings-cloud-folder") return delay({ label: "D:\\Cloud\\Ludonimbus", used: null, total: null });
       return delay({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":
       return delay([
@@ -358,6 +379,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "ludusavi_preview":
       return delay(["C:\\Users\\me\\AppData\\LocalLow\\Team Cherry\\Hollow Knight\\user1.dat"]);
     case "check_update":
+      if (mockScene) return delay({ current: "0.5.0", available: false, version: null, notes: null, date: null });
       return delay(
         { current: "0.1.0", available: true, version: "0.1.1", notes: "### 中文\n\n- 修复：示例更新说明\n- 新增：示例功能\n\n### English\n\n- Fixed: sample release note\n- New: sample feature", date: new Date().toISOString() },
         600,
@@ -411,7 +433,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "folder_to_pattern":
       return delay(args.path as string);
     case "sgdb_status":
-      return delay({ hasKey: true, keyPage: "https://www.steamgriddb.com/profile/preferences/api" });
+      return delay({ hasKey: !["settings-sgdb", "guide-art"].includes(mockScene), keyPage: "https://www.steamgriddb.com/profile/preferences/api" });
     case "sgdb_set_key":
     case "sgdb_clear_key":
       return delay(undefined);

@@ -102,7 +102,7 @@ export function SteamPluginPanel() {
         : p.installing;
 
   return (
-    <section className="panel form">
+    <section className="panel form" id="settings-steam-plugin">
       <div className="panel-head">
         <Icon name="steam" />
         <h3>{p.title}</h3>

@@ -25,7 +25,10 @@ type Step = (typeof STEPS)[number];
 export function Onboarding({
   onFinish,
   onChanged,
+  initialStep,
 }: {
+  /** Browser preview (docs screenshots): start at this step. */
+  initialStep?: string;
   /** `next`: what to open after the guide closes. */
   onFinish: (usage: Usage[], next: "library" | "scan" | "settings") => void;
   onChanged: () => Promise<void>;
@@ -33,8 +36,10 @@ export function Onboarding({
   const ui = useUi();
   const { t, lang, setPref } = useI18n();
   const o = t.onboarding;
-  const [step, setStep] = useState<Step>("welcome");
-  const [usage, setUsage] = useState<Set<Usage>>(new Set());
+  const [step, setStep] = useState<Step>(STEPS.find((s) => s === initialStep) ?? "welcome");
+  const [usage, setUsage] = useState<Set<Usage>>(
+    new Set(initialStep === "usage" ? ["emulators", "multiDevice"] : initialStep === "done" ? ["emulators", "steamThirdParty"] : []),
+  );
   const [settings, setSettings] = useState<Settings | null>(null);
   const [otherCloud, setOtherCloud] = useState(false);
   const [sgdb, setSgdb] = useState<{ hasKey: boolean; keyPage: string } | null>(null);

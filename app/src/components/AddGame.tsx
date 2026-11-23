@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AdapterInfo, api, CloudGame, errorText, Found, Overview, ShortcutView, SteamAccount } from "../api";
 import { bytes } from "../format";
 import { currentLang, msg, useT } from "../i18n";
+import { scene, SCENE_ADD, sceneIs } from "../scene";
 import { AddToSteam, SteamCandidate } from "./AddToSteam";
 import { PlatformFolders } from "./PlatformFolders";
 import { FinderGame, SaveFinder } from "./SaveFinder";
@@ -24,7 +25,7 @@ export function AddGame({
 }) {
   const t = useT();
   const a = t.addGame;
-  const [tab, setTab] = useState<Tab>("scan");
+  const [tab, setTab] = useState<Tab>(SCENE_ADD[scene() ?? ""] ?? "scan");
   return (
     <Modal title={t.library.add} onClose={onClose} wide>
       <div className="tabs tabs-tight">
@@ -384,6 +385,8 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
       setQuick([]);
     });
     if (!ludusaviCache) scanLudusavi();
+    // Browser preview (docs screenshot): a scanned games folder.
+    if (sceneIs("add-game-scan-folder")) api.scanFolder("D:\\Games").then(setFolders, () => undefined);
   }, []);
 
   const scanFolder = async () => {
@@ -413,6 +416,19 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
     for (const f of items) g[groupOf(f, library)].push(f);
     return g;
   }, [items, library]);
+
+  // Browser preview (docs screenshots): open the save finder / "Add to Steam" once the list is there.
+  const sceneOpened = useRef(false);
+  useEffect(() => {
+    if (sceneOpened.current || !quick || !ludusavi) return;
+    if (sceneIs("save-finder")) {
+      const f = items.find((x) => groupOf(x, library) === "needs");
+      if (f) setFinder(f);
+    } else if (sceneIs("add-to-steam")) {
+      setToSteam(items.filter(steamable).slice(0, 3).map((f) => ({ key: f.id, name: f.name })));
+    } else return;
+    sceneOpened.current = true;
+  }, [quick, ludusavi, items, library]);
 
   const remember = (pairs: { f: Found; key: string; name: string }[]) => {
     if (!pairs.length) return;

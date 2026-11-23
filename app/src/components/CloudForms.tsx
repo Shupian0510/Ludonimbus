@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgress, OpenListInfo, S3Config, Settings, WebDavConfig } from "../api";
 import { bytes } from "../format";
 import { Messages, msg, useI18n, useT } from "../i18n";
+import { scene, sceneIs } from "../scene";
 import { Button, Toggle, useUi } from "./ui";
 
 type Preset<T> = { label: string; apply: (c: T) => T; hint: string };
@@ -128,16 +129,20 @@ export function WebDavOption({
   const current = settings.cloud.kind === "webDav" ? settings.cloud : null;
   const start = preset ? webdavPresets(t).find((p) => p.label === preset) : undefined;
   const blank: WebDavConfig = { kind: "webDav", url: "", username: "", folder: "Ludonimbus" };
-  const [open, setOpen] = useState(!!current);
-  const [cfg, setCfg] = useState<WebDavConfig>(current ?? (start ? start.apply(blank) : blank));
+  // Browser preview (docs screenshot): the form filled in with the first preset.
+  const demo = !preset && sceneIs("settings-cloud-webdav") ? webdavPresets(t)[0] : undefined;
+  const [open, setOpen] = useState(!!current || !!demo);
+  const [cfg, setCfg] = useState<WebDavConfig>(
+    current ?? (start ? start.apply(blank) : demo ? { ...demo.apply(blank), username: "player@example.com" } : blank),
+  );
   const [password, setPassword] = useState("");
-  const [hint, setHint] = useState<string | null>(start && !current ? start.hint : null);
+  const [hint, setHint] = useState<string | null>(start && !current ? start.hint : demo ? demo.hint : null);
   const { busy, result, test, connect } = useConnect(settings, done);
   const saved = current != null && current.url === cfg.url && current.username === cfg.username;
   const ready = cfg.url.trim() !== "" && !cfg.url.includes("<") && !cfg.folder.includes("<") && (password !== "" || saved);
 
   return (
-    <div className="cloud-option">
+    <div className="cloud-option" id={preset ? undefined : "cloud-webdav"}>
       <div className="cloud-option-head">
         <b>{start ? `${start.label} (WebDAV)` : "WebDAV"}</b>
         <span className="muted small">{start ? start.hint : c.webdavIntro}</span>
@@ -203,12 +208,15 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
   const t = useT();
   const c = t.cloud;
   const current = settings.cloud.kind === "s3" ? settings.cloud : null;
-  const [open, setOpen] = useState(!!current);
+  // Browser preview (docs screenshot): the form filled in with the R2 preset.
+  const demo = sceneIs("settings-cloud-s3") ? s3Presets(t)[3] : undefined;
+  const blankS3: S3Config = { kind: "s3", endpoint: "", region: "", bucket: "", prefix: "Ludonimbus", accessKeyId: "", pathStyle: false };
+  const [open, setOpen] = useState(!!current || !!demo);
   const [cfg, setCfg] = useState<S3Config>(
-    current ?? { kind: "s3", endpoint: "", region: "", bucket: "", prefix: "Ludonimbus", accessKeyId: "", pathStyle: false },
+    current ?? (demo ? { ...demo.apply(blankS3), bucket: "ludonimbus-saves", accessKeyId: "0123456789abcdef" } : blankS3),
   );
   const [secret, setSecret] = useState("");
-  const [hint, setHint] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(demo ? demo.hint : null);
   const { busy, result, test, connect } = useConnect(settings, done);
   const saved = current != null && current.endpoint === cfg.endpoint && current.accessKeyId === cfg.accessKeyId;
   const ready =
@@ -217,7 +225,7 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
   return (
     <div className="cloud-option">
       <div className="cloud-option-head">
-        <b>{t.cloudNames.s3}</b>
+        <b id="cloud-s3">{t.cloudNames.s3}</b>
         <span className="muted small">{c.s3Intro}</span>
       </div>
       {!open ? (
@@ -581,7 +589,7 @@ export function CloudOptions({
   const k = settings.cloud.kind;
   // Baidu needs an app approved on the Baidu open platform: builds without
   // one hide the option (except for development, or when already connected).
-  const baidu = settings.baiduBuiltin || k === "baiduPan" || import.meta.env.DEV;
+  const baidu = settings.baiduBuiltin || k === "baiduPan" || (import.meta.env.DEV && !scene());
   const folderNote = guide?.multiDevice ? t.onboarding.cloud.folderMultiDevice : undefined;
   const all = {
     google: <GoogleOption key={`google-${k}`} settings={settings} done={done} />,
@@ -669,7 +677,7 @@ export function QuarkOption({ settings, done }: { settings: Settings; done: (msg
   const pct = progress && progress.total > 0 ? Math.floor((progress.done / progress.total) * 100) : 0;
 
   return (
-    <div className="cloud-option">
+    <div className="cloud-option" id="cloud-quark">
       <div className="cloud-option-head">
         <b>
           {t.cloudNames.quark} <span className="badge badge-muted">{q.experimental}</span>

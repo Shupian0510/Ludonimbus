@@ -8,6 +8,7 @@ import { Badge, Button, Icon, Spinner, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 import { LANGS, LangPref, msg, useI18n, useT } from "../i18n";
 import { DISCORD_URL, docsUrl, GITHUB_URL } from "../links";
+import { scene, SCENE_SETTINGS } from "../scene";
 
 export function cloudName(kind: CloudKind): string {
   return msg().cloudNames[kind];
@@ -63,6 +64,12 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
   useEffect(() => {
     load().catch((e) => ui.toast(errorText(e), "bad"));
   }, [load, ui]);
+
+  // Browser preview: ?scene=… scrolls to its section (docs screenshots).
+  useEffect(() => {
+    const target = SCENE_SETTINGS[scene() ?? ""];
+    if (s && target) setTimeout(() => document.getElementById(target)?.scrollIntoView({ block: "start" }), 400);
+  }, [s]);
 
   if (!s) {
     return (
@@ -122,7 +129,7 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
         </div>
       </header>
 
-      <section className="panel">
+      <section className="panel" id="settings-cloud">
         <div className="panel-head">
           <Icon name="cloud" />
           <h3>{st.cloud}</h3>
@@ -297,7 +304,7 @@ function SgdbPanel() {
   }, [load]);
   if (!status) return null;
   return (
-    <section className="panel">
+    <section className="panel" id="settings-sgdb">
       <div className="panel-head">
         <Icon name="library" />
         <h3>{st.sgdbTitle}</h3>
@@ -343,7 +350,7 @@ function LanguagePanel() {
     }
   };
   return (
-    <section className="panel form">
+    <section className="panel form" id="settings-language">
       <div className="panel-head">
         <Icon name="settings" />
         <h3>{t.settings.language}</h3>
