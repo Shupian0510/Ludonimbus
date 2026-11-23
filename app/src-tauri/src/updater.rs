@@ -48,7 +48,7 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
         }),
         Err(e) => {
             logger::log("updater", format!("check failed: {e}"));
-            Err(format!("检查更新失败：{e}"))
+            Err(ludonimbus_core::tr!("检查更新失败：{e}", "Couldn't check for updates: {e}"))
         }
     }
 }
@@ -59,15 +59,15 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     // launched from Steam is running.
     if let Ok(cfg) = config::load() {
         if let Some(g) = cfg.games.iter().find(|g| watcher::runner_active(&g.key)) {
-            return Err(format!("「{}」正在运行，请退出游戏后再更新", g.name));
+            return Err(ludonimbus_core::tr!("「{}」正在运行，请退出游戏后再更新", "\"{}\" is running. Quit the game before updating", g.name));
         }
     }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()
         .await
-        .map_err(|e| format!("检查更新失败：{e}"))?
-        .ok_or_else(|| "已经是最新版本".to_string())?;
+        .map_err(|e| ludonimbus_core::tr!("检查更新失败：{e}", "Couldn't check for updates: {e}"))?
+        .ok_or_else(|| ludonimbus_core::tr!("已经是最新版本", "Already up to date"))?;
     logger::log("updater", format!("installing {}", update.version));
     let mut downloaded: u64 = 0;
     let app2 = app.clone();
@@ -82,7 +82,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| {
             logger::log("updater", format!("install failed: {e}"));
-            format!("更新失败：{e}")
+            ludonimbus_core::tr!("更新失败：{e}", "Update failed: {e}")
         })?;
     // On Windows the installer takes over and exits the app; elsewhere restart.
     app.restart();

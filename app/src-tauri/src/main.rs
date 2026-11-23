@@ -9,9 +9,23 @@ mod steam_plugin;
 mod updater;
 mod watcher;
 
+use ludonimbus_core::{config, tr};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, Runtime, WindowEvent};
+
+fn tray_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
+    let open = MenuItem::with_id(app, "open", tr!("打开 Ludonimbus", "Open Ludonimbus"), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr!("退出", "Quit"), true, None::<&str>)?;
+    Menu::with_items(app, &[&open, &quit])
+}
+
+/// Rebuild the tray menu in the current language (after it changes in Settings).
+pub fn relabel_tray<R: Runtime>(app: &AppHandle<R>) {
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), tray_menu(app)) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
 
 pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
@@ -27,9 +41,9 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol("ludoart", art::handle)
         .setup(|app| {
-            let open = MenuItem::with_id(app, "open", "打开 Ludonimbus", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &quit])?;
+            // Reading the configuration applies the interface language.
+            let _ = config::load();
+            let menu = tray_menu(app.handle())?;
             let mut tray = TrayIconBuilder::with_id("main")
                 .tooltip("Ludonimbus")
                 .menu(&menu)
@@ -98,6 +112,10 @@ fn main() {
             commands::steam_repair,
             commands::get_settings,
             commands::save_settings,
+            commands::get_language,
+            commands::set_language,
+            commands::get_onboarding,
+            commands::finish_onboarding,
             commands::cloud_use_folder,
             commands::cloud_connect_google,
             commands::cloud_disconnect,

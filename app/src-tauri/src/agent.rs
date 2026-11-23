@@ -177,6 +177,7 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             "app": "ludonimbus",
             "version": ludonimbus_core::APP_VERSION,
             "apiVersion": API_VERSION,
+            "lang": ludonimbus_core::i18n::current().code(),
         })),
         (Method::Get, ["v1", "steam", "apps", appid]) => {
             let appid: u32 = appid.parse().map_err(|_| ApiError::new(400, "bad appid"))?;
@@ -227,6 +228,8 @@ struct GameStatus {
     conflict: bool,
     last_error: Option<String>,
     checked_at: Option<DateTime<Utc>>,
+    /// Interface language picked in Ludonimbus ("zh-CN" or "en"), for the plugin's texts.
+    lang: &'static str,
 }
 
 fn phase(g: &GameEntry) -> &'static str {
@@ -250,7 +253,7 @@ fn phase(g: &GameEntry) -> &'static str {
 fn find_by_key(cfg: &config::AppConfig, key: &str) -> Result<GameEntry, ApiError> {
     cfg.game(key)
         .cloned()
-        .ok_or_else(|| ApiError::new(404, format!("Ludonimbus 里没有这个游戏（{key}）")))
+        .ok_or_else(|| ApiError::new(404, ludonimbus_core::tr!("Ludonimbus 里没有这个游戏（{key}）", "This game isn't in Ludonimbus ({key})")))
 }
 
 fn find_game(cfg: &config::AppConfig, appid: u32, account: Option<&str>) -> Option<GameEntry> {
@@ -307,6 +310,7 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
         conflict: st.conflict.is_some(),
         last_error: st.last_error.clone(),
         checked_at: report.as_ref().map(|r| r.checked_at),
+        lang: ludonimbus_core::i18n::current().code(),
     };
     Ok(serde_json::to_value(body).map_err(anyhow::Error::from)?)
 }
@@ -318,9 +322,9 @@ fn start_sync(app: &AppHandle, key: &str) -> ApiResult {
     let cfg = config::load()?;
     let g = find_by_key(&cfg, key)?;
     if watcher::runner_active(key) || process::is_running(&watcher::watch_names(&g)) {
-        return Err(ApiError::new(409, "游戏正在运行，退出游戏后会自动同步"));
+        return Err(ApiError::new(409, ludonimbus_core::tr!("游戏正在运行，退出游戏后会自动同步", "The game is running; saves sync after you quit")));
     }
-    let guard = busy::begin(key).ok_or_else(|| ApiError::new(409, "正在同步"))?;
+    let guard = busy::begin(key).ok_or_else(|| ApiError::new(409, ludonimbus_core::tr!("正在同步", "Syncing")))?;
     let app = app.clone();
     std::thread::spawn(move || {
         let _guard = guard;

@@ -21,6 +21,19 @@ pub struct AppConfig {
     /// The cloud used before the last switch, until its data has been copied
     /// to the new one (or the user declined).
     pub previous_cloud: Option<CloudConfig>,
+    /// Interface language: "system" (Windows display language), "zh-CN" or "en".
+    pub language: String,
+    /// First-run guide. Stays on this PC.
+    pub onboarding: Onboarding,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Onboarding {
+    /// When the guide was finished or closed; `None` = not seen yet.
+    pub done_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// What the user said they use Ludonimbus for (emulators, recomps, steamThirdParty, multiDevice).
+    pub usage: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -34,6 +47,8 @@ impl Default for AppConfig {
             network_timeout_secs: 8,
             games: Vec::new(),
             previous_cloud: None,
+            language: "system".into(),
+            onboarding: Onboarding::default(),
         }
     }
 }
@@ -56,7 +71,7 @@ impl DeviceConfig {
         let name = std::env::var("COMPUTERNAME")
             .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "我的电脑".to_string());
+            .unwrap_or_else(|| crate::tr!("我的电脑", "My PC"));
         DeviceConfig {
             id: format!("d-{}", ulid::Ulid::new().to_string().to_lowercase()),
             name,
@@ -221,7 +236,7 @@ impl AppConfig {
 
     pub fn require_game(&self, key: &str) -> Result<&GameEntry> {
         self.game(key)
-            .ok_or_else(|| anyhow!("找不到游戏「{key}」，请先在 Ludonimbus 里添加"))
+            .ok_or_else(|| anyhow!(crate::tr!("找不到游戏「{key}」，请先在 Ludonimbus 里添加", "Game \"{key}\" not found. Add it in Ludonimbus first")))
     }
 }
 
@@ -238,9 +253,12 @@ fn read_file() -> Result<Option<AppConfig>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("无法读取配置文件 {}", path.display()))?;
+        .with_context(|| crate::tr!("无法读取配置文件 {}", "Can't read the configuration file {}", path.display()))?;
     let cfg: AppConfig = serde_json::from_str(&text)
-        .with_context(|| format!("配置文件格式错误 {}", path.display()))?;
+        .with_context(|| crate::tr!("配置文件格式错误 {}", "The configuration file is malformed: {}", path.display()))?;
+    // Every program reads the configuration first, so this keeps texts made
+    // in Rust in the user's language (also after it changes in Settings).
+    crate::i18n::set(&cfg.language);
     Ok(Some(cfg))
 }
 

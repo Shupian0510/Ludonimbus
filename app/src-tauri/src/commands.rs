@@ -106,7 +106,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
         name: g.name.clone(),
         adapter: g.adapter.clone(),
         adapter_name: adapter.map(|a| a.name.clone()),
-        platform: adapter.and_then(|a| a.platform.clone()),
+        platform: adapter.and_then(|a| a.platform_label()),
         exe: g.exe.as_ref().map(|p| p.display().to_string()),
         exe_exists: g.exe.as_ref().is_some_and(|p| p.is_file()),
         install: spec::install_dir(g).map(|p| p.display().to_string()),
@@ -165,7 +165,7 @@ fn cloud_view(cfg: &AppConfig) -> CloudView {
         CloudConfig::GoogleDrive { account, .. } => ("googleDrive", account.clone().or(Some("Google Drive".into()))),
         CloudConfig::WebDav { url, folder, .. } => ("webDav", Some(format!("{}/{}", url.trim_end_matches('/'), folder))),
         CloudConfig::S3 { bucket, prefix, .. } => ("s3", Some(format!("{bucket}/{prefix}"))),
-        CloudConfig::BaiduPan { account, .. } => ("baiduPan", account.clone().or(Some("百度网盘".into()))),
+        CloudConfig::BaiduPan { account, .. } => ("baiduPan", account.clone().or(Some(ludonimbus_core::tr!("百度网盘", "Baidu Netdisk")))),
     };
     let error = match cloud::open(cfg) {
         Ok(_) => None,
@@ -225,10 +225,10 @@ pub async fn check_game(key: String) -> CmdResult<StatusReport> {
 pub async fn sync_game(key: String, resolution: String) -> CmdResult<Outcome> {
     blocking(move || {
         if watcher::runner_active(&key) {
-            bail!("游戏正在运行，退出游戏后会自动同步");
+            bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后会自动同步", "The game is running; saves sync after you quit"));
         }
         let Some(_busy) = busy::begin(&key) else {
-            bail!("正在同步，请稍候");
+            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
         };
         let res = match resolution.as_str() {
             "local" => Resolution::UseLocal,
@@ -279,11 +279,11 @@ pub async fn get_snapshot(key: String, id: String) -> CmdResult<SnapshotMeta> {
 pub async fn restore_snapshot(key: String, id: String) -> CmdResult<Outcome> {
     blocking(move || {
         if watcher::runner_active(&key) {
-            bail!("游戏正在运行，请先退出游戏再恢复存档");
+            bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
         }
         with_game(&key, |ctx, g| {
             if process::is_running(&watcher::watch_names(g)) {
-                bail!("游戏正在运行，请先退出游戏再恢复存档");
+                bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
             }
             sync::restore(ctx, g, &id)
         })
@@ -306,7 +306,7 @@ pub async fn export_snapshot(key: String, id: String) -> CmdResult<Option<String
     blocking(move || {
         let file_name = format!("{key}-{id}.zip");
         let Some(dest) = rfd::FileDialog::new()
-            .set_title("导出存档版本")
+            .set_title(ludonimbus_core::tr!("导出存档版本", "Export save version"))
             .set_file_name(&file_name)
             .add_filter("Zip", &["zip"])
             .save_file()
@@ -384,7 +384,7 @@ pub async fn open_save_folder(key: String) -> CmdResult<()> {
                 return Ok(());
             }
         }
-        bail!("还没有找到存档文件夹")
+        bail!(ludonimbus_core::tr!("还没有找到存档文件夹", "No save folder found yet"))
     })
     .await
 }
@@ -429,7 +429,7 @@ pub struct ShortcutView {
 pub async fn steam_shortcuts(account: String) -> CmdResult<Vec<ShortcutView>> {
     blocking(move || {
         let cfg = config::load()?;
-        let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+        let root = steam::root(&cfg).ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有找到 Steam", "Steam not found")))?;
         Ok(games::shortcut_candidates(&cfg, &account)?
             .into_iter()
             .map(|c| {
@@ -489,7 +489,7 @@ pub async fn add_from_cloud(key: String, account: Option<String>, appid: Option<
             .list_games()?
             .into_iter()
             .find(|g| g.key == key)
-            .ok_or_else(|| anyhow!("云端找不到这个游戏"))?;
+            .ok_or_else(|| anyhow!(ludonimbus_core::tr!("云端找不到这个游戏", "This game wasn't found in the cloud")))?;
         let g = games::add_from_cloud(&cg, account.as_deref(), appid, exe.map(PathBuf::from))?;
         Ok(g.key)
     })
@@ -526,7 +526,7 @@ pub async fn update_game(key: String, patch: GamePatch) -> CmdResult<()> {
             }
             if let Some(s) = saves {
                 if s.is_empty() && g.adapter.is_none() && g.ludusavi_title.is_none() {
-                    bail!("至少需要一个存档位置");
+                    bail!(ludonimbus_core::tr!("至少需要一个存档位置", "At least one save location is needed"));
                 }
                 g.saves = s;
             }
@@ -580,8 +580,8 @@ pub async fn set_game_exe(key: String, path: String) -> CmdResult<()> {
 pub async fn pick_exe(start: Option<String>) -> CmdResult<Option<String>> {
     blocking(move || {
         let mut d = rfd::FileDialog::new()
-            .set_title("选择游戏程序")
-            .add_filter("程序", &["exe", "bat", "cmd", "lnk"]);
+            .set_title(ludonimbus_core::tr!("选择游戏程序", "Choose the game's program"))
+            .add_filter(ludonimbus_core::tr!("程序", "Programs"), &["exe", "bat", "cmd", "lnk"]);
         if let Some(s) = start.map(PathBuf::from).and_then(|p| p.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf)) {
             d = d.set_directory(s);
         }
@@ -593,7 +593,7 @@ pub async fn pick_exe(start: Option<String>) -> CmdResult<Option<String>> {
 #[tauri::command]
 pub async fn pick_folder(title: Option<String>, start: Option<String>) -> CmdResult<Option<String>> {
     blocking(move || {
-        let mut d = rfd::FileDialog::new().set_title(title.unwrap_or_else(|| "选择文件夹".into()));
+        let mut d = rfd::FileDialog::new().set_title(title.unwrap_or_else(|| ludonimbus_core::tr!("选择文件夹", "Choose a folder")));
         if let Some(s) = start.map(PathBuf::from).and_then(|p| p.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf)) {
             d = d.set_directory(s);
         }
@@ -621,7 +621,7 @@ pub async fn folder_to_pattern(path: String, exe: Option<String>) -> CmdResult<S
 
 pub(crate) fn with_steam_closed<T>(close_steam: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
     let cfg = config::load()?;
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有找到 Steam", "Steam not found")))?;
     let was_running = steam::is_running();
     if was_running {
         if !close_steam {
@@ -739,6 +739,50 @@ pub struct SettingsPatch {
     steam_account: Option<String>,
 }
 
+/// First-run guide state.
+#[tauri::command]
+pub async fn get_onboarding() -> CmdResult<config::Onboarding> {
+    blocking(|| Ok(config::load()?.onboarding)).await
+}
+
+/// The guide was finished or closed; `usage` is what the user said they use Ludonimbus for.
+#[tauri::command]
+pub async fn finish_onboarding(usage: Vec<String>) -> CmdResult<()> {
+    blocking(move || {
+        config::update(|c| {
+            c.onboarding.done_at = Some(chrono::Utc::now());
+            c.onboarding.usage = usage;
+            Ok(())
+        })
+    })
+    .await
+}
+
+/// The interface language picked in Settings ("system", "zh-CN" or "en").
+#[tauri::command]
+pub async fn get_language() -> CmdResult<String> {
+    blocking(|| Ok(config::load()?.language)).await
+}
+
+#[tauri::command]
+pub async fn set_language(app: tauri::AppHandle, language: String) -> CmdResult<()> {
+    let language = match language.as_str() {
+        "zh-CN" | "en" => language,
+        _ => "system".to_string(),
+    };
+    blocking(move || {
+        config::update(|c| {
+            c.language = language.clone();
+            Ok(())
+        })?;
+        ludonimbus_core::i18n::set(&language);
+        Ok(())
+    })
+    .await?;
+    crate::relabel_tray(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_settings(patch: SettingsPatch) -> CmdResult<()> {
     blocking(move || {
@@ -784,7 +828,7 @@ fn previous_name(c: &CloudConfig) -> String {
     if detail.is_empty() {
         cloud::kind_name(c).to_string()
     } else {
-        format!("{}（{detail}）", cloud::kind_name(c))
+        ludonimbus_core::tr!("{}（{detail}）", "{} ({detail})", cloud::kind_name(c))
     }
 }
 
@@ -807,8 +851,8 @@ fn secret_for(new: &CloudConfig, secret: &str) -> Result<Option<String>> {
     match cloud::secrets::load_for(new)? {
         Some(s) => Ok(Some(s)),
         None => match new {
-            CloudConfig::WebDav { .. } => bail!("请填写 WebDAV 密码"),
-            CloudConfig::S3 { .. } => bail!("请填写 Secret Key"),
+            CloudConfig::WebDav { .. } => bail!(ludonimbus_core::tr!("请填写 WebDAV 密码", "Enter the WebDAV password")),
+            CloudConfig::S3 { .. } => bail!(ludonimbus_core::tr!("请填写 Secret Key", "Enter the Secret Key")),
             _ => Ok(None),
         },
     }
@@ -817,7 +861,7 @@ fn secret_for(new: &CloudConfig, secret: &str) -> Result<Option<String>> {
 fn check_store_config(c: &CloudConfig) -> Result<()> {
     match c {
         CloudConfig::WebDav { .. } | CloudConfig::S3 { .. } => Ok(()),
-        _ => bail!("这里只能连接 WebDAV 或 S3 兼容存储"),
+        _ => bail!(ludonimbus_core::tr!("这里只能连接 WebDAV 或 S3 兼容存储", "Only WebDAV or S3-compatible storage can be connected here")),
     }
 }
 
@@ -917,7 +961,7 @@ pub async fn cloud_connect_google(client_id: String, client_secret: String) -> C
             client_secret
         };
         let client = oauth::GoogleClient::resolve(&client_id, &secret)
-            .ok_or_else(|| anyhow!("请先填写 Google OAuth Client ID"))?;
+            .ok_or_else(|| anyhow!(ludonimbus_core::tr!("请先填写 Google OAuth Client ID", "Enter the Google OAuth Client ID first")))?;
         let auth = oauth::authorize(&client, std::time::Duration::from_secs(300))?;
         oauth::store_refresh_token(&auth.refresh_token)?;
         let label = auth.email.clone().unwrap_or_else(|| "Google Drive".into());

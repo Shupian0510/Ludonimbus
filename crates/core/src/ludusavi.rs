@@ -44,16 +44,17 @@ fn command(exe: &Path) -> Command {
 }
 
 fn run_json(mut cmd: Command) -> Result<Value> {
-    let out = cmd.output().context("无法运行 Ludusavi")?;
+    let out = cmd.output().context(crate::tr!("无法运行 Ludusavi", "Couldn't run Ludusavi"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Ludusavi may print log lines before the JSON document.
     let start = stdout.find('{').ok_or_else(|| {
-        anyhow!(
+        anyhow!(crate::tr!(
             "Ludusavi 没有返回结果：{}",
+            "Ludusavi returned nothing: {}",
             String::from_utf8_lossy(&out.stderr).trim()
-        )
+        ))
     })?;
-    serde_json::from_str(&stdout[start..]).context("无法解析 Ludusavi 的输出")
+    serde_json::from_str(&stdout[start..]).context(crate::tr!("无法解析 Ludusavi 的输出", "Couldn't read Ludusavi's output"))
 }
 
 pub fn version() -> Option<String> {
@@ -71,7 +72,7 @@ pub fn version() -> Option<String> {
 
 /// Search game titles in Ludusavi's manifest.
 pub fn search(query: &str) -> Result<Vec<String>> {
-    let exe = exe_path().ok_or_else(|| anyhow!("没有找到 ludusavi.exe"))?;
+    let exe = exe_path().ok_or_else(|| anyhow!(crate::tr!("没有找到 ludusavi.exe", "ludusavi.exe not found")))?;
     let input = json!({
         "requests": [ { "findTitle": { "names": [query], "fuzzy": true, "multiple": true } } ]
     });
@@ -91,7 +92,7 @@ pub fn find_titles(names: &[String]) -> Result<Vec<Option<String>>> {
     if names.is_empty() {
         return Ok(Vec::new());
     }
-    let exe = exe_path().ok_or_else(|| anyhow!("没有找到 ludusavi.exe"))?;
+    let exe = exe_path().ok_or_else(|| anyhow!(crate::tr!("没有找到 ludusavi.exe", "ludusavi.exe not found")))?;
     let requests: Vec<Value> = names
         .iter()
         .map(|n| json!({ "findTitle": { "names": [n], "normalized": true } }))
@@ -116,14 +117,14 @@ pub struct ScanGame {
 /// Every game in Ludusavi's database that has saves on this PC. Takes about a
 /// minute (it checks tens of thousands of games).
 pub fn scan_all() -> Result<Vec<ScanGame>> {
-    let exe = exe_path().ok_or_else(|| anyhow!("没有找到 ludusavi.exe"))?;
+    let exe = exe_path().ok_or_else(|| anyhow!(crate::tr!("没有找到 ludusavi.exe", "ludusavi.exe not found")))?;
     let mut cmd = command(&exe);
     cmd.args(["backup", "--preview", "--api"]);
     parse_scan(&run_json(cmd)?)
 }
 
 pub fn parse_scan(v: &Value) -> Result<Vec<ScanGame>> {
-    let games = v.get("games").and_then(Value::as_object).ok_or_else(|| anyhow!("Ludusavi 没有返回游戏列表"))?;
+    let games = v.get("games").and_then(Value::as_object).ok_or_else(|| anyhow!(crate::tr!("Ludusavi 没有返回游戏列表", "Ludusavi returned no game list")))?;
     let mut out = Vec::new();
     for (title, g) in games {
         let files: Vec<(String, u64)> = g

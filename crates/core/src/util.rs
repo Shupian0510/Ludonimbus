@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("无法创建目录 {}", parent.display()))?;
+            .with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
     }
     let tmp = path.with_extension(format!(
         "{}.lntmp",
         path.extension().and_then(|e| e.to_str()).unwrap_or("")
     ));
-    std::fs::write(&tmp, bytes).with_context(|| format!("无法写入 {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("无法替换 {}", path.display()))?;
+    std::fs::write(&tmp, bytes).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| crate::tr!("无法替换 {}", "Can't replace {}", path.display()))?;
     Ok(())
 }
 

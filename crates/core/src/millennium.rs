@@ -88,14 +88,14 @@ fn read_config(root: &Path) -> Result<Value> {
     match std::fs::read(&path) {
         Ok(bytes) => {
             let v: Value = serde_json::from_slice(&bytes)
-                .with_context(|| format!("Millennium 配置文件格式异常：{}", path.display()))?;
+                .with_context(|| crate::tr!("Millennium 配置文件格式异常：{}", "Millennium's configuration file is malformed: {}", path.display()))?;
             if !v.is_object() {
-                bail!("Millennium 配置文件格式异常：{}", path.display());
+                bail!(crate::tr!("Millennium 配置文件格式异常：{}", "Millennium's configuration file is malformed: {}", path.display()));
             }
             Ok(v)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
-        Err(e) => Err(e).with_context(|| format!("无法读取 {}", path.display())),
+        Err(e) => Err(e).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display())),
     }
 }
 
@@ -134,7 +134,7 @@ pub fn set_enabled(root: &Path, enabled: bool) -> Result<()> {
 /// Copy the bundled plugin into Steam. Safe while Steam runs: Millennium
 /// reads the file when it loads plugins, so it takes effect on the next start.
 pub fn install_plugin(root: &Path, bundled: &Path) -> Result<()> {
-    let bytes = std::fs::read(bundled).with_context(|| format!("找不到插件文件 {}", bundled.display()))?;
+    let bytes = std::fs::read(bundled).with_context(|| crate::tr!("找不到插件文件 {}", "Plugin file not found: {}", bundled.display()))?;
     util::atomic_write(&plugin_path(root), &bytes)
 }
 
@@ -142,7 +142,7 @@ pub fn install_plugin(root: &Path, bundled: &Path) -> Result<()> {
 pub fn remove_plugin(root: &Path) -> Result<()> {
     let p = plugin_path(root);
     if p.exists() {
-        std::fs::remove_file(&p).with_context(|| format!("无法删除 {}", p.display()))?;
+        std::fs::remove_file(&p).with_context(|| crate::tr!("无法删除 {}", "Can't delete {}", p.display()))?;
     }
     set_enabled(root, false)
 }
@@ -174,13 +174,13 @@ pub fn latest_release() -> Result<Release> {
         .get(LATEST_RELEASE_API)
         .set("Accept", "application/vnd.github+json")
         .call()
-        .map_err(|e| anyhow!("无法获取 Millennium 的最新版本：{e}"))?
+        .map_err(|e| anyhow!(crate::tr!("无法获取 Millennium 的最新版本：{e}", "Couldn't get the latest Millennium version: {e}")))?
         .into_json()?;
     parse_release(&v)
 }
 
 fn parse_release(v: &Value) -> Result<Release> {
-    let tag = v["tag_name"].as_str().ok_or_else(|| anyhow!("GitHub 返回的版本信息不完整"))?;
+    let tag = v["tag_name"].as_str().ok_or_else(|| anyhow!(crate::tr!("GitHub 返回的版本信息不完整", "GitHub returned incomplete release information")))?;
     let assets = v["assets"].as_array().cloned().unwrap_or_default();
     let find = |suffix: &str| {
         assets
@@ -188,14 +188,14 @@ fn parse_release(v: &Value) -> Result<Release> {
             .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix)))
             .cloned()
     };
-    let zip = find("-windows-x86_64.zip").ok_or_else(|| anyhow!("Millennium {tag} 没有 Windows 安装包"))?;
-    let sha = find("-windows-x86_64.sha256").ok_or_else(|| anyhow!("Millennium {tag} 没有校验文件"))?;
+    let zip = find("-windows-x86_64.zip").ok_or_else(|| anyhow!(crate::tr!("Millennium {tag} 没有 Windows 安装包", "Millennium {tag} has no Windows package")))?;
+    let sha = find("-windows-x86_64.sha256").ok_or_else(|| anyhow!(crate::tr!("Millennium {tag} 没有校验文件", "Millennium {tag} has no checksum file")))?;
     let url = |a: &Value| a["browser_download_url"].as_str().map(str::to_string);
     Ok(Release {
         tag: tag.to_string(),
         zip_name: zip["name"].as_str().unwrap_or_default().to_string(),
-        zip_url: url(&zip).ok_or_else(|| anyhow!("缺少下载地址"))?,
-        sha256_url: url(&sha).ok_or_else(|| anyhow!("缺少校验文件地址"))?,
+        zip_url: url(&zip).ok_or_else(|| anyhow!(crate::tr!("缺少下载地址", "Missing download address")))?,
+        sha256_url: url(&sha).ok_or_else(|| anyhow!(crate::tr!("缺少校验文件地址", "Missing checksum file address")))?,
         size: zip["size"].as_u64().unwrap_or(0),
     })
 }
@@ -204,7 +204,7 @@ fn parse_release(v: &Value) -> Result<Release> {
 pub fn parse_sha256(text: &str) -> Result<String> {
     let hex = text.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
     if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("Millennium 校验文件格式异常");
+        bail!(crate::tr!("Millennium 校验文件格式异常", "Millennium's checksum file is malformed"));
     }
     Ok(hex)
 }
@@ -217,7 +217,7 @@ pub fn download(release: &Release, dir: &Path, progress: &dyn Fn(u64, u64)) -> R
         &agent
             .get(&release.sha256_url)
             .call()
-            .map_err(|e| anyhow!("无法下载 Millennium 校验文件：{e}"))?
+            .map_err(|e| anyhow!(crate::tr!("无法下载 Millennium 校验文件：{e}", "Couldn't download Millennium's checksum file: {e}")))?
             .into_string()?,
     )?;
     std::fs::create_dir_all(dir)?;
@@ -225,24 +225,24 @@ pub fn download(release: &Release, dir: &Path, progress: &dyn Fn(u64, u64)) -> R
     let resp = agent
         .get(&release.zip_url)
         .call()
-        .map_err(|e| anyhow!("无法下载 Millennium：{e}"))?;
+        .map_err(|e| anyhow!(crate::tr!("无法下载 Millennium：{e}", "Couldn't download Millennium: {e}")))?;
     let total = resp
         .header("Content-Length")
         .and_then(|s| s.parse().ok())
         .unwrap_or(release.size);
     let mut reader = resp.into_reader().take(MAX_DOWNLOAD + 1);
-    let mut file = std::fs::File::create(&dest).with_context(|| format!("无法写入 {}", dest.display()))?;
+    let mut file = std::fs::File::create(&dest).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", dest.display()))?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     let mut done: u64 = 0;
     loop {
-        let n = reader.read(&mut buf).context("下载 Millennium 时连接中断")?;
+        let n = reader.read(&mut buf).context(crate::tr!("下载 Millennium 时连接中断", "The connection dropped while downloading Millennium"))?;
         if n == 0 {
             break;
         }
         done += n as u64;
         if done > MAX_DOWNLOAD {
-            bail!("Millennium 安装包大小异常");
+            bail!(crate::tr!("Millennium 安装包大小异常", "The Millennium package has an unexpected size"));
         }
         hasher.update(&buf[..n]);
         file.write_all(&buf[..n])?;
@@ -253,7 +253,7 @@ pub fn download(release: &Release, dir: &Path, progress: &dyn Fn(u64, u64)) -> R
     let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     if actual != expected {
         let _ = std::fs::remove_file(&dest);
-        bail!("Millennium 安装包校验失败（SHA-256 不一致），请稍后重试");
+        bail!(crate::tr!("Millennium 安装包校验失败（SHA-256 不一致），请稍后重试", "The Millennium package failed its check (SHA-256 mismatch). Try again later"));
     }
     Ok(dest)
 }
@@ -263,19 +263,19 @@ pub fn download(release: &Release, dir: &Path, progress: &dyn Fn(u64, u64)) -> R
 /// Windows build or that would write outside the Steam folder.
 pub fn extract(zip_path: &Path, root: &Path) -> Result<()> {
     let file = std::fs::File::open(zip_path)?;
-    let mut zip = zip::ZipArchive::new(file).context("Millennium 安装包已损坏")?;
+    let mut zip = zip::ZipArchive::new(file).context(crate::tr!("Millennium 安装包已损坏", "The Millennium package is damaged"))?;
     let mut names = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let entry = zip.by_index(i)?;
         let rel = entry
             .enclosed_name()
-            .ok_or_else(|| anyhow!("Millennium 安装包包含不安全的路径：{}", entry.name()))?;
+            .ok_or_else(|| anyhow!(crate::tr!("Millennium 安装包包含不安全的路径：{}", "The Millennium package contains an unsafe path: {}", entry.name())))?;
         names.push(rel.to_string_lossy().replace('\\', "/").to_ascii_lowercase());
     }
     let has_bootstrap = names.iter().any(|n| n == "wsock32.dll");
     let has_core = names.iter().any(|n| n == "millennium/lib/millennium.dll");
     if !has_bootstrap || !has_core {
-        bail!("Millennium 安装包的内容和预期不一致，已取消安装");
+        bail!(crate::tr!("Millennium 安装包的内容和预期不一致，已取消安装", "The Millennium package doesn't contain what was expected; install cancelled"));
     }
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
@@ -291,7 +291,7 @@ pub fn extract(zip_path: &Path, root: &Path) -> Result<()> {
         let mut bytes = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut bytes)?;
         std::fs::write(&out, &bytes).with_context(|| {
-            format!("无法写入 {}（Steam 或杀毒软件可能正在占用这个文件）", out.display())
+            crate::tr!("无法写入 {}（Steam 或杀毒软件可能正在占用这个文件）", "Can't write {} (Steam or antivirus software may be using it)", out.display())
         })?;
     }
     Ok(())

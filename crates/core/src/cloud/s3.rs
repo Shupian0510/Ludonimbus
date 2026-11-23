@@ -130,7 +130,7 @@ pub fn authorization(r: &SignInput) -> String {
 }
 
 fn file_sha256(path: &Path) -> Result<String> {
-    let mut f = std::fs::File::open(path).with_context(|| format!("无法读取 {}", path.display()))?;
+    let mut f = std::fs::File::open(path).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display()))?;
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
     loop {
@@ -163,23 +163,23 @@ fn fail(e: ureq::Error) -> anyhow::Error {
         ureq::Error::Status(code, resp) => {
             let (c, msg) = s3_error(&resp.into_string().unwrap_or_default());
             match c.as_str() {
-                "InvalidAccessKeyId" => anyhow!("Access Key 不对（{c}）"),
-                "SignatureDoesNotMatch" => anyhow!("Secret Key 不对（{c}）"),
-                "NoSuchBucket" => anyhow!("Bucket 不存在（{c}）"),
-                "AccessDenied" => anyhow!("没有权限访问这个 Bucket（{c}），请检查密钥的权限"),
+                "InvalidAccessKeyId" => anyhow!(crate::tr!("Access Key 不对（{c}）", "The Access Key is wrong ({c})")),
+                "SignatureDoesNotMatch" => anyhow!(crate::tr!("Secret Key 不对（{c}）", "The Secret Key is wrong ({c})")),
+                "NoSuchBucket" => anyhow!(crate::tr!("Bucket 不存在（{c}）", "The bucket doesn't exist ({c})")),
+                "AccessDenied" => anyhow!(crate::tr!("没有权限访问这个 Bucket（{c}），请检查密钥的权限", "No permission to access this bucket ({c}). Check the key's permissions")),
                 "AuthorizationHeaderMalformed" | "PermanentRedirect" | "IllegalLocationConstraintException" => {
-                    anyhow!("区域（Region）或访问方式不对（{c}）：{msg}")
+                    anyhow!(crate::tr!("区域（Region）或访问方式不对（{c}）：{msg}", "Wrong region or access style ({c}): {msg}"))
                 }
-                "SlowDown" | "ServiceUnavailable" | "InternalError" => anyhow!(Unavailable(format!("S3 服务繁忙（{c}）"))),
-                _ if code >= 500 => anyhow!(Unavailable(format!("S3 服务器错误 {code}"))),
-                _ if c.is_empty() => anyhow!("S3 返回错误 {code}：{msg}"),
-                _ => anyhow!("S3 返回错误 {code}（{c}）：{msg}"),
+                "SlowDown" | "ServiceUnavailable" | "InternalError" => anyhow!(Unavailable(crate::tr!("S3 服务繁忙（{c}）", "The S3 service is busy ({c})"))),
+                _ if code >= 500 => anyhow!(Unavailable(crate::tr!("S3 服务器错误 {code}", "S3 server error {code}"))),
+                _ if c.is_empty() => anyhow!(crate::tr!("S3 返回错误 {code}：{msg}", "S3 returned error {code}: {msg}")),
+                _ => anyhow!(crate::tr!("S3 返回错误 {code}（{c}）：{msg}", "S3 returned error {code} ({c}): {msg}")),
             }
         }
         ureq::Error::Transport(t) => {
             let msg = t.to_string();
             if msg.to_lowercase().contains("certificate") {
-                anyhow!("无法验证 S3 服务器的 HTTPS 证书：{msg}")
+                anyhow!(crate::tr!("无法验证 S3 服务器的 HTTPS 证书：{msg}", "Couldn't verify the S3 server's HTTPS certificate: {msg}"))
             } else {
                 anyhow!(Unavailable(msg))
             }
@@ -201,21 +201,21 @@ impl S3 {
     ) -> Result<Self> {
         let raw = endpoint.trim();
         let with_scheme = if raw.contains("://") { raw.to_string() } else { format!("https://{raw}") };
-        let u = Url::parse(&with_scheme).map_err(|_| anyhow!("Endpoint 格式不对，例如 https://oss-cn-hangzhou.aliyuncs.com"))?;
+        let u = Url::parse(&with_scheme).map_err(|_| anyhow!(crate::tr!("Endpoint 格式不对，例如 https://oss-cn-hangzhou.aliyuncs.com", "The endpoint looks wrong; it should look like https://oss-cn-hangzhou.aliyuncs.com")))?;
         if !matches!(u.scheme(), "http" | "https") {
-            bail!("Endpoint 需要以 http:// 或 https:// 开头");
+            bail!(crate::tr!("Endpoint 需要以 http:// 或 https:// 开头", "The endpoint needs to start with http:// or https://"));
         }
-        let host = u.host_str().ok_or_else(|| anyhow!("Endpoint 缺少服务器名"))?;
+        let host = u.host_str().ok_or_else(|| anyhow!(crate::tr!("Endpoint 缺少服务器名", "The endpoint has no server name")))?;
         let host = match u.port() {
             Some(p) => format!("{host}:{p}"),
             None => host.to_string(),
         };
         let bucket = bucket.trim();
         if bucket.is_empty() {
-            bail!("请填写 Bucket 名称");
+            bail!(crate::tr!("请填写 Bucket 名称", "Enter the bucket name"));
         }
         if key_id.trim().is_empty() {
-            bail!("请填写 Access Key");
+            bail!(crate::tr!("请填写 Access Key", "Enter the Access Key"));
         }
         Ok(S3 {
             scheme: u.scheme().to_string(),
@@ -318,7 +318,7 @@ impl S3 {
 
 /// Parse one `ListObjectsV2` page into entries below `prefix`.
 pub fn parse_list(xml: &str, prefix: &str) -> Result<(Vec<Entry>, Option<String>)> {
-    let doc = roxmltree::Document::parse(xml).context("S3 返回的不是有效的 XML")?;
+    let doc = roxmltree::Document::parse(xml).context(crate::tr!("S3 返回的不是有效的 XML", "S3 returned invalid XML"))?;
     let text = |n: roxmltree::Node, name: &str| {
         n.children()
             .find(|c| c.tag_name().name() == name)
@@ -412,9 +412,9 @@ impl Store for S3 {
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
         let r = self
             .get(&self.bulk, path)?
-            .ok_or_else(|| anyhow!("云端找不到文件 {path}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
         let tmp = dest.with_extension("download");
-        let mut out = std::fs::File::create(&tmp).with_context(|| format!("无法写入 {}", tmp.display()))?;
+        let mut out = std::fs::File::create(&tmp).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
         std::io::copy(&mut r.into_reader(), &mut out).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
         drop(out);
         std::fs::rename(&tmp, dest)?;
@@ -432,7 +432,7 @@ impl Store for S3 {
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
         let hash = file_sha256(src)?;
-        let f = std::fs::File::open(src).with_context(|| format!("无法读取 {}", src.display()))?;
+        let f = std::fs::File::open(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
         let len = f.metadata()?.len();
         self.request(&self.bulk, "PUT", &self.key(path), &[], &hash)
             .set("Content-Type", "application/octet-stream")

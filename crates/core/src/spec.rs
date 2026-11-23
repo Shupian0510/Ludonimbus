@@ -120,15 +120,15 @@ pub fn expand(template: &str, known: &BTreeMap<String, PathBuf>) -> Result<PathB
         let end = rest[start..]
             .find('}')
             .map(|e| start + e)
-            .ok_or_else(|| anyhow!("路径模板缺少 }}：{template}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("路径模板缺少 }}：{template}", "The path template is missing }}: {template}")))?;
         let token = &rest[start + 1..end];
         if let Some(var) = token.strip_prefix("env:") {
-            let v = std::env::var(var).map_err(|_| anyhow!("环境变量 {var} 不存在"))?;
+            let v = std::env::var(var).map_err(|_| anyhow!(crate::tr!("环境变量 {var} 不存在", "The environment variable {var} doesn't exist")))?;
             out.push_str(&v);
         } else if let Some(p) = resolve_root_name(token, known) {
             out.push_str(&p.to_string_lossy());
         } else {
-            bail!("未知的根目录 {{{token}}}");
+            bail!(crate::tr!("未知的根目录 {{{token}}}", "Unknown root {{{token}}}"));
         }
         rest = &rest[end + 1..];
     }
@@ -172,7 +172,7 @@ pub fn expand_root(template: &str, known: &BTreeMap<String, PathBuf>) -> Result<
             Err(e) => err = Some(e),
         }
     }
-    last.ok_or_else(|| err.unwrap_or_else(|| anyhow!("根目录为空：{template}")))
+    last.ok_or_else(|| err.unwrap_or_else(|| anyhow!(crate::tr!("根目录为空：{template}", "The root is empty: {template}"))))
 }
 
 /// Look up a root by name, including dynamic `drive-x` roots used for
@@ -210,11 +210,11 @@ pub fn resolve_roots(game: &GameEntry, spec: &SaveSpec) -> Result<BTreeMap<Strin
 pub fn split_pattern(pattern: &str) -> Result<(String, String)> {
     let p = pattern.trim().replace('\\', "/");
     if !p.starts_with('{') {
-        bail!("存档路径必须以 {{根目录}} 开头，例如 {{install}}/save/**：{pattern}");
+        bail!(crate::tr!("存档路径必须以 {{根目录}} 开头，例如 {{install}}/save/**：{pattern}", "Save paths must start with a {{root}}, e.g. {{install}}/save/**: {pattern}"));
     }
     let end = p
         .find('}')
-        .ok_or_else(|| anyhow!("存档路径缺少 }}：{pattern}"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("存档路径缺少 }}：{pattern}", "The save path is missing }}: {pattern}")))?;
     let root = p[1..end].to_string();
     let rest = p[end + 1..].trim_start_matches('/').to_string();
     Ok((root, rest))

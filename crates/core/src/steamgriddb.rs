@@ -60,18 +60,18 @@ fn get(key: &str, path: &str, query: &[(&str, &str)]) -> Result<Value> {
     let url = url::Url::parse_with_params(&format!("{API}{path}"), query)?;
     match agent().get(url.as_str()).set("Authorization", &format!("Bearer {key}")).call() {
         Ok(r) => {
-            let v: Value = r.into_json().context("SteamGridDB 返回了无法识别的内容")?;
+            let v: Value = r.into_json().context(crate::tr!("SteamGridDB 返回了无法识别的内容", "SteamGridDB returned something unexpected"))?;
             if v["success"].as_bool() == Some(false) {
-                bail!("SteamGridDB：{}", v["errors"]);
+                bail!(crate::tr!("SteamGridDB：{}", "SteamGridDB: {}", v["errors"]));
             }
             Ok(v)
         }
         Err(ureq::Error::Status(401, _)) | Err(ureq::Error::Status(403, _)) => {
-            bail!("SteamGridDB API Key 无效，请在设置里重新填写")
+            bail!(crate::tr!("SteamGridDB API Key 无效，请在设置里重新填写", "The SteamGridDB API key is invalid. Enter it again in Settings"))
         }
         Err(ureq::Error::Status(404, _)) => Ok(serde_json::json!({ "data": [] })),
-        Err(ureq::Error::Status(code, _)) => bail!("SteamGridDB 返回错误 {code}"),
-        Err(ureq::Error::Transport(t)) => bail!("连不上 SteamGridDB：{t}"),
+        Err(ureq::Error::Status(code, _)) => bail!(crate::tr!("SteamGridDB 返回错误 {code}", "SteamGridDB returned error {code}")),
+        Err(ureq::Error::Transport(t)) => bail!(crate::tr!("连不上 SteamGridDB：{t}", "Can't reach SteamGridDB: {t}")),
     }
 }
 
@@ -111,7 +111,7 @@ pub fn images(key: &str, game_id: u64, kind: &str) -> Result<Vec<SgdbImage>> {
         "hero" => ("heroes", None),
         "logo" => ("logos", None),
         "icon" => ("icons", None),
-        _ => bail!("未知的图片类型 {kind}"),
+        _ => bail!(crate::tr!("未知的图片类型 {kind}", "Unknown image type {kind}")),
     };
     let mut query = vec![("types", "static"), ("nsfw", "false"), ("humor", "false")];
     if let Some(d) = dims {
@@ -143,15 +143,15 @@ pub fn images(key: &str, game_id: u64, kind: &str) -> Result<Vec<SgdbImage>> {
 
 /// Download an image (from SteamGridDB's CDN) to a temporary file.
 pub fn download(url: &str) -> Result<PathBuf> {
-    let parsed = url::Url::parse(url).map_err(|_| anyhow!("图片地址无效"))?;
+    let parsed = url::Url::parse(url).map_err(|_| anyhow!(crate::tr!("图片地址无效", "Invalid image address")))?;
     let host = parsed.host_str().unwrap_or("");
     if parsed.scheme() != "https" || !(host == "steamgriddb.com" || host.ends_with(".steamgriddb.com")) {
-        bail!("只能从 SteamGridDB 下载图片");
+        bail!(crate::tr!("只能从 SteamGridDB 下载图片", "Images can only be downloaded from SteamGridDB"));
     }
     let resp = agent()
         .get(url)
         .call()
-        .map_err(|e| anyhow!("下载图片失败：{e}"))?;
+        .map_err(|e| anyhow!(crate::tr!("下载图片失败：{e}", "Couldn't download the image: {e}")))?;
     let ext = match resp.content_type() {
         "image/jpeg" => "jpg",
         "image/webp" => "webp",

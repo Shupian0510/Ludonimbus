@@ -77,7 +77,7 @@ fn rules_end_to_end() {
     let cands = games::shortcut_candidates(&config::load().unwrap(), "42").unwrap();
     let c = cands.iter().find(|c| c.appid == galaxy).unwrap();
     assert_eq!(c.adapter.as_deref(), Some("dolphin"));
-    assert_eq!(c.adapter_name.as_deref(), Some("Dolphin（RMGE01）"));
+    assert!(matches!(c.adapter_name.as_deref(), Some("Dolphin（RMGE01）" | "Dolphin (RMGE01)")), "{:?}", c.adapter_name);
     assert_eq!(c.saves, vec!["{emu}/Wii/title/0001000?/524d4745/data/**".to_string()]);
 
     let g = games::add_from_shortcut("42", galaxy, new_game()).unwrap();
@@ -87,7 +87,7 @@ fn rules_end_to_end() {
 
     // The emulator on its own would sync that game again: refused.
     let err = games::add_from_shortcut("42", plain, new_game()).unwrap_err().to_string();
-    assert!(err.contains("Super Mario Galaxy") && err.contains("单独同步"), "{err}");
+    assert!(err.contains("Super Mario Galaxy") && (err.contains("单独同步") || err.contains("on their own")), "{err}");
 
     // Its data folder has another game: found without a shortcut, with its
     // own saves; the game already added is marked.
@@ -99,7 +99,7 @@ fn rules_end_to_end() {
     assert_eq!(added.added_key.as_deref(), Some("super-mario-galaxy"));
     let skyward = emu_games.iter().find(|f| f.saves != g.saves).unwrap();
     assert_eq!((skyward.source.as_str(), skyward.adapter.as_deref()), ("emulator", Some("dolphin")));
-    assert_eq!(skyward.adapter_name.as_deref(), Some("Dolphin（SOUE）"));
+    assert!(matches!(skyward.adapter_name.as_deref(), Some("Dolphin（SOUE）" | "Dolphin (SOUE)")), "{:?}", skyward.adapter_name);
     assert_eq!(skyward.save_files, 1);
     let s = games::add_found(skyward, FoundChoice { name: "Skyward Sword".into(), ..Default::default() }).unwrap();
     assert_eq!((s.adapter.as_deref(), s.exe.as_deref()), (Some("dolphin"), Some(dolphin.as_path())));

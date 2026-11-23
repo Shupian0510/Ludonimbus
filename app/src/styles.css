@@ -1584,3 +1584,210 @@ details.scan-group[open] > summary {
   flex-wrap: nowrap;
   align-items: flex-start;
 }
+
+/* First-run guide ----------------------------------------------------------- */
+.modal.onboarding {
+  width: min(760px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+}
+.onboarding-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px 6px 22px;
+}
+.onboarding-head .steps {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+.onboarding-head .dot {
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.onboarding-head .dot.done {
+  background: var(--accent-2);
+}
+.onboarding-head .dot.on {
+  background: var(--accent);
+}
+.onboarding-body {
+  padding: 8px 26px 18px;
+  overflow-y: auto;
+  min-height: 360px;
+}
+.onboarding-body h2 {
+  font-size: 22px;
+  margin: 6px 0 6px;
+}
+.onboarding-foot {
+  align-items: center;
+}
+.onboarding-foot .grow {
+  flex: 1;
+}
+.ob-welcome {
+  text-align: center;
+  padding-top: 10px;
+}
+.ob-logo {
+  width: 72px;
+  height: 72px;
+}
+.ob-lead {
+  color: var(--text-2);
+  max-width: 560px;
+  margin: 0 auto 18px;
+  line-height: 1.6;
+}
+.ob-points {
+  list-style: none;
+  padding: 0;
+  margin: 0 auto;
+  max-width: 520px;
+  display: grid;
+  gap: 10px;
+  text-align: left;
+}
+.ob-points li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+}
+.ob-points li svg {
+  color: var(--ok);
+  margin-top: 2px;
+  flex: none;
+}
+.ob-points li div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ob-lang {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+}
+.ob-usages {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+}
+.ob-usage {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+.ob-usage:hover {
+  border-color: #3f5873;
+  background: var(--panel-2);
+}
+.ob-usage.on {
+  border-color: var(--accent);
+  background: rgba(102, 192, 244, 0.1);
+}
+.ob-usage-icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(102, 192, 244, 0.12);
+  color: var(--accent);
+}
+.ob-usage-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.ob-tick {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.ob-usage.on .ob-tick {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+.ob-steps {
+  margin: 10px 0 12px;
+  padding-left: 22px;
+  line-height: 1.8;
+  color: var(--text-2);
+}
+.ob-summary,
+.ob-tips {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  display: grid;
+  gap: 8px;
+}
+.ob-summary li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+}
+.ob-summary li.ok {
+  color: var(--text);
+}
+.ob-summary li.ok svg {
+  color: var(--ok);
+}
+.ob-tips li {
+  position: relative;
+  padding-left: 16px;
+  color: var(--text-2);
+  line-height: 1.55;
+}
+.ob-tips li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.ob-support {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid #3a4f2c;
+  background: linear-gradient(90deg, rgba(94, 194, 106, 0.12), rgba(102, 192, 244, 0.08));
+}
+.ob-support > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

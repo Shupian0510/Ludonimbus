@@ -214,7 +214,7 @@ pub fn prepare_restore(a: &Adapter, roots: &mut BTreeMap<String, PathBuf>, used:
             continue;
         }
         if is_running(a) {
-            anyhow::bail!("请先关闭 {}：这台电脑上还没有这个游戏的存档，要在 {} 的存档索引里新建", a.name, a.name);
+            anyhow::bail!(crate::tr!("请先关闭 {}：这台电脑上还没有这个游戏的存档，要在 {} 的存档索引里新建", "Close {} first: this PC has no save for this game yet, and one has to be created in {}'s save index", a.name, a.name));
         }
         let p = switch::create_save(&emu, kind, title)?;
         roots.insert(name.clone(), p);

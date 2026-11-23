@@ -722,7 +722,7 @@ pub fn game_folders(cfg: &AppConfig) -> Vec<GameFolder> {
     for letter in b'C'..=b'Z' {
         let drive = PathBuf::from(format!("{}:\\", letter as char));
         list.push(("GOG", drive.join("GOG Games")));
-        list.push(("游戏文件夹", drive.join("Games")));
+        list.push((if crate::i18n::is_en() { "Games folder" } else { "游戏文件夹" }, drive.join("Games")));
     }
 
     let mut seen = HashSet::new();

@@ -126,7 +126,7 @@ impl<S: Store> CloudProvider for Repo<S> {
         let bytes = self
             .store
             .read(&join(&[&snapshots_dir(game), &format!("{id}.json")]))?
-            .ok_or_else(|| anyhow!("找不到快照 {id}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("找不到快照 {id}", "Snapshot {id} not found")))?;
         Ok(serde_json::from_slice(&bytes)?)
     }
 

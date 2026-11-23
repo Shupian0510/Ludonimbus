@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, GameView, LocalFile, Outcome, Overview, StatusReport } from "../api";
 import { bytes, dateTime, healthText, outcomeText, relTime } from "../format";
+import { msg, useT } from "../i18n";
 import { AddToSteam } from "./AddToSteam";
 import { ArtPicker } from "./ArtPicker";
 import { PlatformFolders } from "./PlatformFolders";
@@ -33,6 +34,8 @@ export function GameDetail({
   onRemoved: () => Promise<void>;
 }) {
   const ui = useUi();
+  const t = useT();
+  const g = t.game;
   const [tab, setTab] = useState<Tab>("versions");
   const [versionsKey, setVersionsKey] = useState(0);
   const [heroFailed, setHeroFailed] = useState(false);
@@ -45,9 +48,9 @@ export function GameDetail({
   const switchToXboxHelper = async () => {
     const content = game.exe?.match(/^(.*?[\\/]Content)[\\/]/i)?.[1];
     try {
-      if (!content) throw new Error("没有找到这个游戏的 Content 文件夹");
+      if (!content) throw new Error(msg().game.noContent);
       await api.setGameExe(game.key, `${content}\\gamelaunchhelper.exe`);
-      ui.toast("已改用 gamelaunchhelper.exe");
+      ui.toast(msg().game.switchedHelper);
       await onChanged();
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -73,10 +76,10 @@ export function GameDetail({
 
   const backupNow = async () => {
     const comment = await ui.prompt({
-      title: "备份当前存档",
-      text: "手动备份会永久保留（不受自动清理影响）。可以写一句备注，比如「打 Boss 前」。",
-      placeholder: "备注（可选）",
-      confirm: "备份",
+      title: g.backupTitle,
+      text: g.backupText,
+      placeholder: g.backupPlaceholder,
+      confirm: g.backup,
     });
     if (comment === null) return;
     await run(() => api.backup(game.key, comment), after);
@@ -88,16 +91,13 @@ export function GameDetail({
       await f(false);
       ui.toast(okText);
     } catch (e) {
-      const msg = errorText(e);
-      if (!msg.includes("STEAM_RUNNING")) {
-        ui.toast(msg, "bad");
+      const text = errorText(e);
+      if (!text.includes("STEAM_RUNNING")) {
+        ui.toast(text, "bad");
         return;
       }
-      const ok = await ui.confirm({
-        title: "需要暂时关闭 Steam",
-        text: "Steam 运行时会覆盖对快捷方式的修改。Ludonimbus 会先关闭 Steam，改好后再自动重新打开。",
-        confirm: "关闭 Steam 并继续",
-      });
+      const m = msg().steamAction;
+      const ok = await ui.confirm({ title: m.title, text: m.text, confirm: m.confirm });
       if (!ok) return;
       try {
         await f(true);
@@ -111,13 +111,13 @@ export function GameDetail({
 
   const removeFromSteam = async () => {
     const ok = await ui.confirm({
-      title: "从 Steam 移除快捷方式？",
-      text: "删除 Ludonimbus 创建的这个 Steam 快捷方式（连同它的封面）。游戏、存档和 Ludonimbus 里的记录都不受影响，以后可以再加入。",
-      confirm: "移除",
+      title: g.removeSteamTitle,
+      text: g.removeSteamText,
+      confirm: t.steamPlugin.remove,
       danger: true,
     });
     if (!ok) return;
-    await steamAction((close) => api.steamRemoveGame(game.key, close), "已从 Steam 移除");
+    await steamAction((close) => api.steamRemoveGame(game.key, close), msg().game.removedSteam);
   };
 
   const relocate = async () => {
@@ -125,25 +125,25 @@ export function GameDetail({
       const found = await api.relocateAuto(game.key);
       if (found) {
         const ok = await ui.confirm({
-          title: game.exe ? "找到了新的位置" : "找到了游戏位置",
+          title: game.exe ? g.foundNewTitle : g.foundTitle,
           text: game.exe ? (
             <>
-              <p>在原位置附近找到了：</p>
+              <p>{g.foundNear}</p>
               <code className="path">{found}</code>
-              <p className="muted">改用这个位置吗？如果新文件夹里没有存档，下次启动时会自动从云端恢复。</p>
+              <p className="muted">{g.foundNearHint}</p>
             </>
           ) : (
             <>
-              <p>在本机找到了「{game.name}」的游戏程序：</p>
+              <p>{g.foundExe(game.name)}</p>
               <code className="path">{found}</code>
-              <p className="muted">使用这个位置吗？之后就能判断游戏是否在运行，也可以加入 Steam。</p>
+              <p className="muted">{g.foundExeHint}</p>
             </>
           ),
-          confirm: "使用这个位置",
+          confirm: g.useLocation,
         });
         if (ok) {
           await api.setGameExe(game.key, found);
-          ui.toast("已更新游戏位置");
+          ui.toast(msg().game.locationUpdated);
           await onChanged();
           return;
         }
@@ -151,10 +151,10 @@ export function GameDetail({
       const picked = await api.pickExe(game.exe);
       if (picked) {
         await api.setGameExe(game.key, picked);
-        ui.toast("已更新游戏位置");
+        ui.toast(msg().game.locationUpdated);
         await onChanged();
       } else if (!found) {
-        ui.toast(game.exe ? "没有自动找到新位置，也没有选择文件" : "没有在 Steam、Xbox、Epic、GOG 和已安装的程序里找到这个游戏", "info");
+        ui.toast(game.exe ? msg().game.notFoundMoved : msg().game.notFoundAnywhere, "info");
       }
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -171,10 +171,10 @@ export function GameDetail({
         {hero && <img className="hero-img" src={hero} alt="" onError={() => setHeroFailed(true)} />}
         <div className="hero-shade" />
         <button className="back" onClick={onBack}>
-          <Icon name="back" /> 游戏库
+          <Icon name="back" /> {t.library.title}
         </button>
         <button className="hero-edit" onClick={() => setDialog("art")}>
-          <Icon name="edit" size={14} /> 更换封面
+          <Icon name="edit" size={14} /> {g.changeArt}
         </button>
         <div className="hero-title">
           {game.art.logo && !logoFailed ? (
@@ -186,21 +186,21 @@ export function GameDetail({
       </div>
 
       <div className="actionbar">
-        <Button kind="primary" icon="sync" onClick={() => syncNow()} disabled={game.running || conflict} busyText="同步中…">
-          立即同步
+        <Button kind="primary" icon="sync" onClick={() => syncNow()} disabled={game.running || conflict} busyText={g.syncing}>
+          {g.syncNow}
         </Button>
         <Button icon="upload" onClick={backupNow} disabled={game.running}>
-          备份当前存档
+          {g.backupTitle}
         </Button>
         <Button icon="folder" onClick={() => run(() => api.openSaveFolder(game.key))}>
-          打开存档文件夹
+          {g.openSaves}
         </Button>
         <div className="actionbar-status">
           <StatusBadge game={game} check={check} checking={checking} />
           <span className="muted">
-            上次同步 {relTime(game.lastSyncAt)}
+            {g.lastSync(relTime(game.lastSyncAt))}
             {game.lastSyncedDevice ? ` · ${game.lastSyncedDevice}` : ""}
-            {check ? ` · 本地 ${check.localFiles} 个文件，${bytes(check.localSize)}` : ""}
+            {check ? ` · ${g.local(check.localFiles, bytes(check.localSize))}` : ""}
           </span>
         </div>
       </div>
@@ -210,17 +210,22 @@ export function GameDetail({
           <div className="banner banner-warn conflict">
             <Icon name="warn" />
             <div>
-              <b>本机和云端都有新的存档改动</b>
+              <b>{g.conflictTitle}</b>
               <p>
-                云端最新：{check.head.deviceName} 于 {dateTime(check.head.createdAt)} 保存（{bytes(check.head.totalSize)}）。本机：
-                {check.localFiles} 个文件，{bytes(check.localSize)}。没选的那份也会留在版本历史里。
+                {g.conflictText(
+                  check.head.deviceName,
+                  dateTime(check.head.createdAt),
+                  bytes(check.head.totalSize),
+                  check.localFiles,
+                  bytes(check.localSize),
+                )}
               </p>
             </div>
             <div className="conflict-actions">
               <Button kind="primary" onClick={() => syncNow("cloud")}>
-                使用云端存档
+                {g.useCloud}
               </Button>
-              <Button onClick={() => syncNow("local")}>使用本机存档</Button>
+              <Button onClick={() => syncNow("local")}>{g.useLocal}</Button>
             </div>
           </div>
         )}
@@ -231,12 +236,12 @@ export function GameDetail({
         )}
         {game.lastError && check?.status !== "offline" && (
           <div className="banner banner-bad">
-            <Icon name="warn" /> 上次同步出错：{game.lastError}
+            <Icon name="warn" /> {g.lastError(game.lastError)}
           </div>
         )}
         {game.pending > 0 && (
           <div className="banner banner-info">
-            <Icon name="cloud" /> 有 {game.pending} 个版本等待上传（云端恢复访问后自动上传）。
+            <Icon name="cloud" /> {g.pending(game.pending)}
           </div>
         )}
 
@@ -244,14 +249,14 @@ export function GameDetail({
           <section className="panel">
             <div className="panel-head">
               <Icon name="steam" />
-              <h3>Steam 自动同步</h3>
+              <h3>{g.steamTitle}</h3>
               {game.steam && (
                 <Toggle
                   checked={game.steam.enabled}
                   onChange={(v) =>
                     steamAction(
                       (close) => api.steamSetEnabled(game.key, v, close),
-                      v ? "已启用：从 Steam 启动时会自动同步存档" : "已恢复原来的 Steam 快捷方式",
+                      v ? msg().game.steamOn : msg().game.steamOff,
                     )
                   }
                 />
@@ -259,25 +264,21 @@ export function GameDetail({
             </div>
             <p className={`health health-${health.tone}`}>{health.text}</p>
             {health.fixable && (
-              <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), "快捷方式已修复")}>
-                一键修复
+              <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
+                {g.repair}
               </Button>
             )}
             {game.steam && (
-              <p className="muted small">
-                开启后，Steam 快捷方式会通过 Ludonimbus 启动游戏：启动前拉取云端存档，退出后上传。快捷方式里只记录游戏 id，游戏路径由 Ludonimbus 管理，模拟器更新不需要改 Steam。
-              </p>
+              <p className="muted small">{g.steamHint}</p>
             )}
             {!game.steam && game.health.state !== "noSteam" && (
               <>
                 <p className="muted small">
-                  {game.exe && game.exeExists
-                    ? "一键在 Steam 里创建快捷方式：从 Steam 启动就会自动同步存档，还能用 Steam 的游戏时长、截图和手柄设置。"
-                    : "设置好游戏程序后，可以一键加入 Steam。"}
+                  {game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe}
                 </p>
                 <div className="row">
                   <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
-                    加入 Steam…
+                    {g.addSteam}
                   </Button>
                 </div>
               </>
@@ -285,7 +286,7 @@ export function GameDetail({
             {game.steam?.created && (
               <div className="row">
                 <Button small kind="ghost" icon="trash" onClick={removeFromSteam}>
-                  从 Steam 移除快捷方式
+                  {g.removeSteam}
                 </Button>
               </div>
             )}
@@ -294,37 +295,33 @@ export function GameDetail({
           <section className="panel">
             <div className="panel-head">
               <Icon name="locate" />
-              <h3>游戏位置</h3>
-              {game.exe && (game.exeExists ? <Badge tone="ok">正常</Badge> : <Badge tone="warn">找不到</Badge>)}
+              <h3>{g.location}</h3>
+              {game.exe && (game.exeExists ? <Badge tone="ok">{g.ok}</Badge> : <Badge tone="warn">{g.missing}</Badge>)}
             </div>
-            {game.exe ? <code className="path">{game.exe}</code> : <p className="muted">未设置游戏程序</p>}
+            {game.exe ? <code className="path">{game.exe}</code> : <p className="muted">{g.noExe}</p>}
             {xboxProtected && game.exeExists && (
               <>
-                <p className="health health-warn">
-                  这是 Xbox 应用安装的游戏，它自己的程序受保护，不能直接启动（从 Steam 或 Ludonimbus 启动都会失败）。请改用同一文件夹里的 gamelaunchhelper.exe。
-                </p>
+                <p className="health health-warn">{g.xboxProtected}</p>
                 <div className="row">
                   <Button small kind="primary" icon="check" onClick={switchToXboxHelper}>
-                    改用 gamelaunchhelper.exe
+                    {g.useHelper}
                   </Button>
                 </div>
               </>
             )}
             {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && (
-              <p className="muted small">通过 Xbox 应用的启动程序打开游戏，Ludonimbus 会等游戏本身退出后再上传存档。</p>
+              <p className="muted small">{g.xboxHelper}</p>
             )}
             {game.exe && !game.exeExists && (
-              <p className="health health-warn">
-                原来的位置不存在了（比如解压了新版本到别的文件夹）。从 Steam 启动时也会提示你，或者现在处理：
-              </p>
+              <p className="health health-warn">{g.moved}</p>
             )}
             <div className="row">
               <Button small icon="locate" onClick={relocate}>
-                {!game.exe ? "自动查找…" : game.exeExists ? "更换位置…" : "重新定位"}
+                {!game.exe ? g.findAuto : game.exeExists ? g.change : g.relocate}
               </Button>
               {game.exe && game.exeExists && (
                 <Button small kind="ghost" icon="folder" onClick={() => run(() => api.openPath(game.exe!))}>
-                  打开所在文件夹
+                  {g.openFolder}
                 </Button>
               )}
             </div>
@@ -333,7 +330,7 @@ export function GameDetail({
                 onPick={async (exe) => {
                   try {
                     await api.setGameExe(game.key, exe);
-                    ui.toast("已设置游戏位置");
+                    ui.toast(msg().game.locationSet);
                     await onChanged();
                   } catch (e) {
                     ui.toast(errorText(e), "bad");
@@ -346,13 +343,13 @@ export function GameDetail({
 
         <div className="tabs">
           <button className={tab === "versions" ? "on" : ""} onClick={() => setTab("versions")}>
-            版本历史
+            {g.tabVersions}
           </button>
           <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>
-            存档文件
+            {g.tabFiles}
           </button>
           <button className={tab === "config" ? "on" : ""} onClick={() => setTab("config")}>
-            设置
+            {g.tabConfig}
           </button>
         </div>
 
@@ -364,13 +361,13 @@ export function GameDetail({
       </div>
 
       {dialog === "art" && (
-        <Modal title={`更换封面：${game.name}`} onClose={() => setDialog(null)} wide>
+        <Modal title={g.artTitle(game.name)} onClose={() => setDialog(null)} wide>
           <ArtPicker gameKey={game.key} name={game.name} current={game.art} onApplied={onChanged} />
-          {game.steam && <p className="muted small">Steam 里的封面在 Steam 重新打开后更新。</p>}
+          {game.steam && <p className="muted small">{g.artSteamNote}</p>}
         </Modal>
       )}
       {dialog === "steam" && (
-        <Modal title={`把「${game.name}」加入 Steam`} onClose={() => setDialog(null)}>
+        <Modal title={g.addSteamTitle(game.name)} onClose={() => setDialog(null)}>
           <AddToSteam
             games={[{ key: game.key, name: game.name }]}
             onCancel={() => setDialog(null)}
@@ -387,13 +384,14 @@ export function GameDetail({
 
 function Files({ game }: { game: GameView }) {
   const ui = useUi();
+  const t = useT();
   const [data, setData] = useState<{ files: LocalFile[]; roots: Record<string, string> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     api.localFiles(game.key).then(setData, (e) => setError(errorText(e)));
   }, [game.key]);
   if (error) return <div className="banner banner-bad">{error}</div>;
-  if (!data) return <div className="muted pad">读取中…</div>;
+  if (!data) return <div className="muted pad">{t.versions.reading}</div>;
   return (
     <div className="panel">
       <div className="roots">
@@ -407,14 +405,14 @@ function Files({ game }: { game: GameView }) {
         ))}
       </div>
       {data.files.length === 0 ? (
-        <p className="muted">没有找到存档文件。可以在「设置」里检查存档位置。</p>
+        <p className="muted">{t.game.noFiles}</p>
       ) : (
         <table className="files">
           <thead>
             <tr>
-              <th>文件</th>
-              <th>大小</th>
-              <th>修改时间</th>
+              <th>{t.game.colFile}</th>
+              <th>{t.game.colSize}</th>
+              <th>{t.game.colModified}</th>
             </tr>
           </thead>
           <tbody>
@@ -436,6 +434,8 @@ function Files({ game }: { game: GameView }) {
 
 function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () => Promise<void>; onRemoved: () => Promise<void> }) {
   const ui = useUi();
+  const t = useT();
+  const c = t.game.config;
   const [name, setName] = useState(game.name);
   const [saves, setSaves] = useState(game.customSaves ? game.saves.join("\n") : "");
   const [exclude, setExclude] = useState(game.exclude.join("\n"));
@@ -447,7 +447,7 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
   const save = async () => {
     try {
       await api.updateGame(game.key, { name, saves: lines(saves), exclude: lines(exclude), waitFor: lines(waitFor), args });
-      ui.toast("已保存");
+      ui.toast(msg().game.config.saved);
       await onChanged();
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -455,7 +455,7 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
   };
 
   const addFolder = async () => {
-    const dir = await api.pickFolder("选择存档文件夹", game.install);
+    const dir = await api.pickFolder(msg().saveFinder.pickTitle, game.install);
     if (!dir) return;
     const p = await api.folderToPattern(dir, game.exe);
     setSaves((s) => (s.trim() ? `${s.trim()}\n${p}` : p));
@@ -464,18 +464,16 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
   const remove = async () => {
     const created = !!game.steam?.created;
     const ok = await ui.confirm({
-      title: `从 Ludonimbus 移除「${game.name}」？`,
-      text: created
-        ? "只会从本机的 Ludonimbus 里移除，云端的存档和版本历史都会保留，以后重新添加就能找回。Ludonimbus 创建的 Steam 快捷方式也会一起删除。"
-        : "只会从本机的 Ludonimbus 里移除，云端的存档和版本历史都会保留，以后重新添加就能找回。",
-      confirm: "移除",
+      title: c.removeTitle(game.name),
+      text: c.removeText + (created ? c.removeSteamToo : ""),
+      confirm: t.steamPlugin.remove,
       danger: true,
     });
     if (!ok) return;
     try {
       if (created && (await withSteamClosed(ui, (close) => api.steamRemoveGame(game.key, close).then(() => true))) === null) return;
       await api.removeGame(game.key);
-      ui.toast("已移除");
+      ui.toast(msg().game.config.removed);
       await onRemoved();
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -485,11 +483,11 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
   return (
     <div className="panel form">
       <label>
-        <span>名称</span>
+        <span>{t.saveFinder.name}</span>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
       <label>
-        <span>自动同步</span>
+        <span>{c.autoSync}</span>
         <div className="row">
           <Toggle
             checked={game.autoSync}
@@ -497,11 +495,11 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
               api.updateGame(game.key, { autoSync: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
             }
           />
-          <span className="muted small">关闭后，启动/退出游戏时不再同步（手动操作仍可用）。</span>
+          <span className="muted small">{c.autoSyncHint}</span>
         </div>
       </label>
       <label>
-        <span>上传时机</span>
+        <span>{c.uploadWhen}</span>
         <div>
           <div className="row">
             <Toggle
@@ -511,58 +509,56 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
                 api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
               }
             />
-            <span>游戏进程退出就上传，不等启动器关闭</span>
+            <span>{c.uploadOnExit}</span>
           </div>
           <p className="muted small">
-            {game.hasGameProcess
-              ? `适合启动器会一直开着的游戏。开启后，${(game.waitFor.length ? game.waitFor : game.defaultWaitFor).join("、")} 一退出就上传；关闭启动器时会再检查一次。`
-              : "需要先在下面的「游戏进程」里填写游戏真正的进程名。"}
+            {game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess}
           </p>
         </div>
       </label>
       <label>
-        <span>存档位置</span>
+        <span>{c.saves}</span>
         <textarea
           className="input mono"
           rows={3}
           value={saves}
-          placeholder={game.defaultSaves.length ? `使用内置规则：\n${game.defaultSaves.join("\n")}` : "{install}/save/**"}
+          placeholder={game.defaultSaves.length ? c.builtinSaves(game.defaultSaves) : "{install}/save/**"}
           onChange={(e) => setSaves(e.target.value)}
         />
         <div className="row">
           <Button small icon="folder" onClick={addFolder}>
-            添加文件夹…
+            {c.addFolder}
           </Button>
-          <span className="muted small">
-            每行一个，以 {"{install}"}（游戏目录）、{"{appdata}"}、{"{localappdata}"}、{"{documents}"}、{"{home}"} 开头。留空则使用内置规则。
-          </span>
+          <span className="muted small">{c.savesHint}</span>
         </div>
       </label>
       <label>
-        <span>排除</span>
+        <span>{c.exclude}</span>
         <textarea className="input mono" rows={2} value={exclude} placeholder="{install}/save/cache/**" onChange={(e) => setExclude(e.target.value)} />
       </label>
       <label>
-        <span>游戏进程</span>
-        <textarea className="input mono" rows={2} value={waitFor} placeholder={
-            game.defaultWaitFor.length
-              ? `使用内置规则：${game.defaultWaitFor.join("、")}`
-              : "例如 game.exe（游戏真正的进程名，用来判断游戏是否还在运行）"
-          } onChange={(e) => setWaitFor(e.target.value)} />
+        <span>{c.process}</span>
+        <textarea
+          className="input mono"
+          rows={2}
+          value={waitFor}
+          placeholder={game.defaultWaitFor.length ? c.builtinProcess(game.defaultWaitFor) : c.processPlaceholder}
+          onChange={(e) => setWaitFor(e.target.value)}
+        />
       </label>
       <label>
-        <span>启动参数</span>
+        <span>{c.args}</span>
         <input className="input mono" value={args} onChange={(e) => setArgs(e.target.value)} />
       </label>
       <div className="row space">
         <Button kind="primary" onClick={save}>
-          保存设置
+          {c.save}
         </Button>
         <Button kind="danger" icon="trash" onClick={remove}>
-          从 Ludonimbus 移除
+          {c.remove}
         </Button>
       </div>
-      <p className="muted small">游戏 id：{game.key}（多台设备靠它找到同一份云端存档）</p>
+      <p className="muted small">{c.gameId(game.key)}</p>
     </div>
   );
 }

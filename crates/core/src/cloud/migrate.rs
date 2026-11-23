@@ -35,8 +35,8 @@ pub fn copy_all(
     extra_games: &[String],
     mut progress: impl FnMut(&Progress),
 ) -> Result<Report> {
-    from.account().context("无法访问原来的云盘")?;
-    to.account().context("无法访问新的云盘")?;
+    from.account().context(crate::tr!("无法访问原来的云盘", "Can't reach the old cloud"))?;
+    to.account().context(crate::tr!("无法访问新的云盘", "Can't reach the new cloud"))?;
     let mut report = Report::default();
 
     let mut keys: BTreeSet<String> = extra_games.iter().cloned().collect();

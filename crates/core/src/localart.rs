@@ -29,13 +29,13 @@ pub fn all(key: &str) -> Vec<(String, PathBuf)> {
 /// Store an image as the game's artwork of one kind (replacing the old one).
 pub fn set(key: &str, kind: &str, src: &Path) -> Result<PathBuf> {
     if !steam::ART_KINDS.contains(&kind) {
-        return Err(anyhow!("未知的图片类型 {kind}"));
+        return Err(anyhow!(crate::tr!("未知的图片类型 {kind}", "Unknown image type {kind}")));
     }
     let d = dir(key);
     std::fs::create_dir_all(&d)?;
     clear(key, kind);
     let dest = d.join(format!("{kind}.{}", steam::image_ext(src)));
-    std::fs::copy(src, &dest).with_context(|| format!("无法保存图片 {}", dest.display()))?;
+    std::fs::copy(src, &dest).with_context(|| crate::tr!("无法保存图片 {}", "Couldn't save the image {}", dest.display()))?;
     Ok(dest)
 }
 

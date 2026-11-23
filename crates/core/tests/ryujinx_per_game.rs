@@ -117,7 +117,7 @@ fn ryujinx_per_game() {
     assert_eq!(f.added_key.as_deref(), Some(g.key.as_str()));
     assert_eq!(f.args, format!("\"{}\"", nsp.display()));
     let other = found.iter().find(|f| f.saves != g.saves).unwrap();
-    assert_eq!(other.name, "Ryujinx（01007EF00011E000）", "no name known");
+    assert!(other.name == "Ryujinx（01007EF00011E000）" || other.name == "Ryujinx (01007EF00011E000)", "no name known: {}", other.name);
     let err = games::add_found(f, FoundChoice::default()).unwrap_err().to_string();
     assert!(err.contains("MONSTER HUNTER"), "{err}");
 
@@ -168,5 +168,5 @@ fn ryujinx_per_game() {
     let err = games::add_from_shortcut("42", plain, NewGame { name: None, adapter: None, saves: vec![], key: None, ludusavi_title: None })
         .unwrap_err()
         .to_string();
-    assert!(err.contains("单独同步"), "{err}");
+    assert!(err.contains("单独同步") || err.contains("on their own"), "{err}");
 }

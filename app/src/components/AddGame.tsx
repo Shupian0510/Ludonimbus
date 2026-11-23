@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AdapterInfo, api, CloudGame, errorText, Found, Overview, ShortcutView, SteamAccount } from "../api";
 import { bytes } from "../format";
+import { currentLang, msg, useT } from "../i18n";
 import { AddToSteam, SteamCandidate } from "./AddToSteam";
 import { PlatformFolders } from "./PlatformFolders";
 import { FinderGame, SaveFinder } from "./SaveFinder";
@@ -21,21 +22,23 @@ export function AddGame({
   /** Games added from the scan list, which stays open. */
   onChanged: (keys: string[]) => void | Promise<void>;
 }) {
+  const t = useT();
+  const a = t.addGame;
   const [tab, setTab] = useState<Tab>("scan");
   return (
-    <Modal title="添加游戏" onClose={onClose} wide>
+    <Modal title={t.library.add} onClose={onClose} wide>
       <div className="tabs tabs-tight">
         <button className={tab === "scan" ? "on" : ""} onClick={() => setTab("scan")}>
-          <Icon name="search" size={16} /> 扫描本机
+          <Icon name="search" size={16} /> {a.tabScan}
         </button>
         <button className={tab === "cloud" ? "on" : ""} onClick={() => setTab("cloud")}>
-          <Icon name="cloud" size={16} /> 云端已有
+          <Icon name="cloud" size={16} /> {a.tabCloud}
         </button>
         <button className={tab === "ludusavi" ? "on" : ""} onClick={() => setTab("ludusavi")}>
-          <Icon name="library" size={16} /> Ludusavi 数据库
+          <Icon name="library" size={16} /> {t.library.ludusavi}
         </button>
         <button className={tab === "manual" ? "on" : ""} onClick={() => setTab("manual")}>
-          <Icon name="edit" size={16} /> 手动添加
+          <Icon name="edit" size={16} /> {a.tabManual}
         </button>
       </div>
       {tab === "scan" && <ScanLocal overview={overview} onChanged={onChanged} onOpen={onAdded} />}
@@ -55,7 +58,7 @@ function useAccounts() {
       (r) => {
         setAccounts(r.accounts);
         setAccount(r.selected);
-        if (!r.root) setError("没有找到 Steam");
+        if (!r.root) setError(msg().addToSteam.noSteam);
       },
       (e) => setError(errorText(e)),
     );
@@ -64,12 +67,13 @@ function useAccounts() {
 }
 
 function AccountPicker({ accounts, account, setAccount }: { accounts: SteamAccount[]; account: string | null; setAccount: (a: string) => void }) {
+  const t = useT();
   if (accounts.length < 2) return null;
   return (
     <select className="input select" value={account ?? ""} onChange={(e) => setAccount(e.target.value)}>
       {accounts.map((a) => (
         <option key={a.id} value={a.id}>
-          {a.persona ?? a.accountName ?? a.id}（{a.shortcutCount} 个非 Steam 游戏）
+          {a.persona ?? a.accountName ?? a.id}{t.settings.shortcutCount(a.shortcutCount)}
         </option>
       ))}
     </select>
@@ -78,6 +82,8 @@ function AccountPicker({ accounts, account, setAccount }: { accounts: SteamAccou
 
 function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: string) => void }) {
   const ui = useUi();
+  const t = useT();
+  const a = t.addGame;
   const [games, setGames] = useState<CloudGame[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [linking, setLinking] = useState<CloudGame | null>(null);
@@ -93,7 +99,7 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
     if (account) api.steamShortcuts(account).then(setShortcuts, () => setShortcuts([]));
   }, [account]);
 
-  if (overview.cloud.kind === "none") return <div className="banner banner-info">请先在设置里连接云盘。</div>;
+  if (overview.cloud.kind === "none") return <div className="banner banner-info">{a.connectFirst}</div>;
   if (error) return <div className="banner banner-bad">{error}</div>;
   if (!games) {
     return (
@@ -104,8 +110,8 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
   }
   if (games.length === 0) {
     return (
-      <Empty icon="cloud" title="没有需要关联的游戏">
-        <p className="muted">云端的游戏都已经在本机添加过了。</p>
+      <Empty icon="cloud" title={a.cloudNoneTitle}>
+        <p className="muted">{a.cloudNoneText}</p>
       </Empty>
     );
   }
@@ -118,7 +124,7 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
         if (!exe) return;
       }
       const key = await api.addFromCloud(cg.key, s?.account ?? null, s?.appid ?? null, exe);
-      ui.toast(`已关联「${cg.name}」，同步一次就会把云端存档拉下来`);
+      ui.toast(msg().addGame.linked(cg.name));
       onAdded(key);
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -130,12 +136,10 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
     return (
       <div className="add-list">
         <button className="link" onClick={() => setLinking(null)}>
-          ← 返回
+          {a.back}
         </button>
         <div className="row space">
-          <p>
-            把云端的 <b>{linking.name}</b> 关联到本机哪个 Steam 快捷方式？
-          </p>
+          <p>{a.linkWhich(linking.name)}</p>
           <AccountPicker accounts={accounts} account={account} setAccount={setAccount} />
         </div>
         {free.map((s) => (
@@ -146,13 +150,13 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
               <code className="path small">{s.exe}</code>
             </div>
             <Button kind="primary" onClick={() => link(linking, s)}>
-              关联
+              {a.link}
             </Button>
           </div>
         ))}
         <div className="row">
           <Button icon="folder" onClick={() => link(linking, null)}>
-            不在 Steam 里，直接选择游戏程序…
+            {a.notInSteam}
           </Button>
         </div>
       </div>
@@ -161,16 +165,16 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
 
   return (
     <div className="add-list">
-      <p className="muted small">其他设备上传过、但本机还没添加的游戏。关联到本机的游戏后，就能把存档拉下来。</p>
+      <p className="muted small">{a.cloudIntro}</p>
       {games.map((g) => (
         <div key={g.key} className="add-item">
           <div className="add-cover fallback">{g.name.slice(0, 1)}</div>
           <div className="add-info">
             <b>{g.name}</b>
-            <span className="muted small">{g.adapter ? `内置规则：${g.adapter}` : g.saves.join("、")}</span>
+            <span className="muted small">{g.adapter ? a.builtinRule(g.adapter) : g.saves.join(", ")}</span>
           </div>
           <Button kind="primary" onClick={() => setLinking(g)}>
-            关联到本机…
+            {a.linkHere}
           </Button>
         </div>
       ))}
@@ -180,6 +184,8 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
 
 function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
   const ui = useUi();
+  const t = useT();
+  const a = t.addGame;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<string[] | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -197,11 +203,11 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
     }
   };
 
-  const pick = async (t: string) => {
-    setPicked(t);
+  const pick = async (title: string) => {
+    setPicked(title);
     setFiles(null);
     try {
-      setFiles(await api.ludusaviPreview(t));
+      setFiles(await api.ludusaviPreview(title));
     } catch (e) {
       ui.toast(errorText(e), "bad");
       setFiles([]);
@@ -212,7 +218,7 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
     if (!picked) return;
     try {
       const key = await api.addCustom(picked, null, [], picked);
-      ui.toast(`已添加「${picked}」`);
+      ui.toast(msg().addGame.added(picked));
       onAdded(key);
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -221,21 +227,21 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
 
   return (
     <div className="add-list">
-      <p className="muted small">Ludusavi 收录了上万款 PC 游戏的存档位置（来自 PCGamingWiki）。适合普通 PC 游戏；模拟器游戏请用「Steam 快捷方式」或「手动添加」。第一次搜索会下载数据库，稍等片刻。</p>
+      <p className="muted small">{a.ludusaviIntro}</p>
       <div className="row">
-        <input className="input" placeholder="输入游戏英文名，例如 Hollow Knight" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
+        <input className="input" placeholder={a.ludusaviPlaceholder} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
         <Button kind="primary" icon="search" onClick={search}>
-          搜索
+          {t.art.search}
         </Button>
       </div>
-      {results && results.length === 0 && <p className="muted">没有找到。</p>}
-      {results?.map((t) => (
-        <div key={t} className={`add-item compact${picked === t ? " picked" : ""}`}>
+      {results && results.length === 0 && <p className="muted">{t.saveFinder.noneFound}</p>}
+      {results?.map((title) => (
+        <div key={title} className={`add-item compact${picked === title ? " picked" : ""}`}>
           <div className="add-info">
-            <b>{t}</b>
+            <b>{title}</b>
           </div>
-          <Button small onClick={() => pick(t)}>
-            查看存档
+          <Button small onClick={() => pick(title)}>
+            {a.viewSaves}
           </Button>
         </div>
       ))}
@@ -245,7 +251,7 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
           {!files ? (
             <Spinner />
           ) : files.length === 0 ? (
-            <p className="muted">本机没有找到这个游戏的存档（可能还没玩过或没安装）。仍然可以添加，以后找到存档时会自动同步。</p>
+            <p className="muted">{a.noLocalSaves}</p>
           ) : (
             <ul className="file-list">
               {files.slice(0, 30).map((f) => (
@@ -253,11 +259,11 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
                   <code>{f}</code>
                 </li>
               ))}
-              {files.length > 30 && <li className="muted">…共 {files.length} 个文件</li>}
+              {files.length > 30 && <li className="muted">{a.moreFiles(files.length)}</li>}
             </ul>
           )}
           <Button kind="primary" icon="plus" onClick={add}>
-            添加「{picked}」
+            {a.addNamed(picked)}
           </Button>
         </div>
       )}
@@ -268,23 +274,12 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
 // ---------------------------------------------------------------------------
 // Scan this PC
 
-const SOURCE: Record<Found["source"], string> = {
-  steam: "Steam 快捷方式",
-  epic: "Epic",
-  gog: "GOG",
-  xbox: "Xbox",
-  recomplauncher: "RecompLauncher",
-  emulator: "模拟器里的存档",
-  ludusavi: "找到存档",
-  folder: "文件夹",
-};
 
 /** Ludusavi's full scan is slow; keep its result while the app runs. */
 let ludusaviCache: Found[] | null = null;
 
 const normExe = (p: string | null) => (p ? p.replace(/\//g, "\\").toLowerCase() : null);
 
-const STORE: Record<string, string> = { epic: "Epic", gog: "GOG", xbox: "Xbox", registry: "已安装的程序", folder: "游戏文件夹" };
 
 /**
  * One list from all scans: a game started the same way (exe and launch
@@ -355,6 +350,8 @@ const BIG_SAVES = 200 * 1024 * 1024;
 
 function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChanged: (keys: string[]) => void | Promise<void>; onOpen: (key: string) => void }) {
   const ui = useUi();
+  const t = useT();
+  const a = t.addGame;
   const [quick, setQuick] = useState<Found[] | null>(null);
   const [folders, setFolders] = useState<Found[]>([]);
   const [ludusavi, setLudusavi] = useState<Found[] | null>(ludusaviCache);
@@ -390,13 +387,13 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
   }, []);
 
   const scanFolder = async () => {
-    const dir = await api.pickFolder("选择放游戏的文件夹（例如 D:\\Games）");
+    const dir = await api.pickFolder(msg().addGame.pickGamesFolder);
     if (!dir) return;
     try {
       const list = await api.scanFolder(dir);
       const known = new Set(folders.map((f) => f.id));
       setFolders([...folders, ...list.filter((f) => !known.has(f.id))]);
-      ui.toast(list.length ? `在 ${dir} 里找到 ${list.length} 个游戏` : "这个文件夹里没有找到游戏程序", list.length ? "ok" : "warn");
+      ui.toast(list.length ? msg().addGame.foundIn(dir, list.length) : msg().addGame.noneIn, list.length ? "ok" : "warn");
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
@@ -408,7 +405,7 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
     const merged = mergeFound([quick ?? [], folders], ludusavi ?? []);
     for (const f of merged) if (added[f.id]) f.addedKey = added[f.id];
     const q = filter.trim().toLowerCase();
-    return merged.filter((f) => !q || f.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    return merged.filter((f) => !q || f.name.toLowerCase().includes(q)).sort((x, y) => x.name.localeCompare(y.name, currentLang()));
   }, [quick, folders, ludusavi, added, filter]);
 
   const groups = useMemo(() => {
@@ -436,12 +433,12 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
       try {
         done.push({ f, key: await api.addFound(f), name: f.name });
       } catch (e) {
-        failed.push(`${f.name}：${errorText(e)}`);
+        failed.push(`${f.name}: ${errorText(e)}`);
       }
     }
     setSelected(new Set());
     remember(done);
-    if (done.length) ui.toast(`已添加 ${done.length} 个游戏`);
+    if (done.length) ui.toast(msg().addGame.addedMany(done.length));
     if (failed.length) ui.toast(failed.join("\n"), "bad");
   };
 
@@ -456,9 +453,9 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
     return (
       <div className="add-list">
         <button className="link" onClick={() => setToSteam(null)}>
-          ← 返回列表
+          {t.saveFinder.backToList}
         </button>
-        <h3>加入 Steam</h3>
+        <h3>{t.addToSteam.add}</h3>
         <AddToSteam
           games={toSteam}
           onCancel={() => setToSteam(null)}
@@ -480,7 +477,7 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
         onBack={() => setFinder(null)}
         onDone={async (c) => {
           const key = await api.addFound(finder, { name: c.name, saves: c.saves, ludusaviTitle: c.ludusaviTitle });
-          ui.toast(`已添加「${c.name}」`);
+          ui.toast(msg().addGame.added(c.name));
           remember([{ f: finder, key, name: c.name }]);
           setFinder(null);
         }}
@@ -495,35 +492,35 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
       <div className="add-info" onClick={() => kind === "check" && toggle(f.id)}>
         <div className="row">
           <b>{f.name}</b>
-          <Badge tone="muted">{SOURCE[f.source]}</Badge>
-          {f.adapterName && <Badge tone="ok">已识别：{f.adapterName}</Badge>}
-          {!f.adapterName && f.ludusaviTitle && <Badge tone="info">Ludusavi 知道存档位置</Badge>}
-          {f.storeGame && <Badge tone="muted">Steam 已安装</Badge>}
-          {f.source === "ludusavi" && f.installStore && f.exe && <Badge tone="ok">找到游戏位置（{STORE[f.installStore] ?? f.installStore}）</Badge>}
-          {f.saveBytes > BIG_SAVES && <Badge tone="warn">存档很大，可能含有缓存</Badge>}
+          <Badge tone="muted">{a.source[f.source]}</Badge>
+          {f.adapterName && <Badge tone="ok">{a.recognized(f.adapterName)}</Badge>}
+          {!f.adapterName && f.ludusaviTitle && <Badge tone="info">{a.ludusaviKnows}</Badge>}
+          {f.storeGame && <Badge tone="muted">{a.steamInstalled}</Badge>}
+          {f.source === "ludusavi" && f.installStore && f.exe && <Badge tone="ok">{a.foundLocation(a.store[f.installStore] ?? f.installStore)}</Badge>}
+          {f.saveBytes > BIG_SAVES && <Badge tone="warn">{a.bigSaves}</Badge>}
         </div>
         {f.exe && <code className="path small">{f.exe}</code>}
         {f.saveFiles > 0 && (
           <span className="muted small">
-            本机有 {f.saveFiles} 个存档文件 · {bytes(f.saveBytes)}
+            {a.localSaves(f.saveFiles)} · {bytes(f.saveBytes)}
             {f.saveSample[0] ? ` · ${f.saveSample[0]}` : ""}
           </span>
         )}
         {kind === "check" && f.source === "ludusavi" && !f.exe && !f.storeGame && (
-          <span className="muted small">没有找到游戏程序（可能已卸载）。存档照样能同步，以后可以在详情页设置游戏位置。</span>
+          <span className="muted small">{a.noProgram}</span>
         )}
         {group === "cloud" && (
-          <span className="muted small">{f.storeGame ? "Steam 已安装这个游戏，Steam 云在同步它的存档" : "存档都在 Steam 云的文件夹里"}</span>
+          <span className="muted small">{f.storeGame ? a.steamCloudInstalled : a.steamCloudFolder}</span>
         )}
       </div>
       {kind === "finder" && (
         <Button small icon="search" onClick={() => setFinder(f)}>
-          指定存档…
+          {a.pickSaves}
         </Button>
       )}
       {kind === "added" && f.addedKey && (
         <Button small onClick={() => onOpen(f.addedKey!)}>
-          查看
+          {a.view}
         </Button>
       )}
     </div>
@@ -535,10 +532,10 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
   return (
     <div className="add-list scan">
       <div className="row space">
-        <p className="muted small">Steam 里的非 Steam 游戏、Epic / GOG / Xbox 安装的游戏，以及 Ludusavi 在本机找到存档的游戏。放在别处的游戏可以扫描文件夹。</p>
+        <p className="muted small">{a.scanIntro}</p>
         <div className="row">
           <Button small icon="folder" onClick={scanFolder}>
-            扫描文件夹…
+            {a.scanFolder}
           </Button>
         </div>
       </div>
@@ -547,13 +544,13 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
         <div className="banner banner-info">
           <Icon name="steam" />
           <span>
-            {pendingSteam.length === 1 ? `「${pendingSteam[0].name}」还不在 Steam 里。` : `刚添加的 ${pendingSteam.length} 个游戏还不在 Steam 里。`}
-            加入后从 Steam 启动就会自动同步存档。
+            {pendingSteam.length === 1 ? a.notInSteamOne(pendingSteam[0].name) : a.notInSteamMany(pendingSteam.length)}
+            {a.notInSteamHint}
           </span>
           <Button small kind="primary" onClick={() => setToSteam(pendingSteam.map((r) => ({ key: r.key, name: r.name })))}>
-            加入 Steam…
+            {t.game.addSteam}
           </Button>
-          <button className="icon-btn" title="不用了" onClick={() => setRecent([])}>
+          <button className="icon-btn" title={t.cloud.migrate.no} onClick={() => setRecent([])}>
             <Icon name="x" size={14} />
           </button>
         </div>
@@ -561,14 +558,14 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
 
       {scanning && (
         <div className="scan-progress">
-          <span className="spinner" /> 正在用 Ludusavi 查找本机所有游戏的存档，大约需要半分钟…
+          <span className="spinner" /> {a.scanning}
         </div>
       )}
       {ludusaviError && (
         <div className="banner banner-bad">
-          Ludusavi 扫描失败：{ludusaviError}
+          {a.scanFailed(ludusaviError)}
           <Button small onClick={scanLudusavi}>
-            重试
+            {t.common.retry}
           </Button>
         </div>
       )}
@@ -578,30 +575,30 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
           <Spinner />
         </div>
       ) : items.length === 0 && !scanning && !filter ? (
-        <Empty icon="search" title="没有找到游戏">
-          <p className="muted">可以扫描放游戏的文件夹，或者用「手动添加」。</p>
+        <Empty icon="search" title={a.noneTitle}>
+          <p className="muted">{a.noneText}</p>
         </Empty>
       ) : (
         <>
-          {items.length > 8 && <input className="input" placeholder="筛选游戏名" value={filter} onChange={(e) => setFilter(e.target.value)} />}
+          {items.length > 8 && <input className="input" placeholder={a.filter} value={filter} onChange={(e) => setFilter(e.target.value)} />}
 
           {groups.ready.length > 0 && (
             <section className="scan-group">
               <div className="row space">
-                <h4>可以直接添加（{groups.ready.length}）</h4>
+                <h4>{a.groupReady(groups.ready.length)}</h4>
                 <button className="link small" onClick={() => setSelected(allReady ? new Set() : new Set([...selected, ...readyIds]))}>
-                  {allReady ? "全不选" : "全选"}
+                  {allReady ? a.selectNone : a.selectAll}
                 </button>
               </div>
-              <p className="muted small">已经知道存档在哪里：内置规则或 Ludusavi 数据库。</p>
+              <p className="muted small">{a.groupReadyHint}</p>
               {groups.ready.map((f) => row(f, "check"))}
             </section>
           )}
 
           {groups.needs.length > 0 && (
             <section className="scan-group">
-              <h4>需要指定存档位置（{groups.needs.length}）</h4>
-              <p className="muted small">Ludonimbus 还不知道这些游戏把存档放在哪里，点「指定存档」一步步找。</p>
+              <h4>{a.groupNeeds(groups.needs.length)}</h4>
+              <p className="muted small">{a.groupNeedsHint}</p>
               {groups.needs.map((f) => row(f, "finder"))}
             </section>
           )}
@@ -609,7 +606,8 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
           {groups.cloud.length > 0 && (
             <details className="scan-group">
               <summary>
-                Steam 云已经在同步（{groups.cloud.length}）<span className="muted small"> — 一般不需要再添加，想跨平台备份也可以勾选</span>
+                {a.groupCloud(groups.cloud.length)}
+                <span className="muted small"> — {a.groupCloudHint}</span>
               </summary>
               {groups.cloud.map((f) => row(f, "check", "cloud"))}
             </details>
@@ -618,7 +616,8 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
           {groups.registry.length > 0 && (
             <details className="scan-group">
               <summary>
-                存档在注册表里（{groups.registry.length}）<span className="muted small"> — 暂不支持同步注册表</span>
+                {a.groupRegistry(groups.registry.length)}
+                <span className="muted small"> — {a.groupRegistryHint}</span>
               </summary>
               {groups.registry.map((f) => row(f, "none"))}
             </details>
@@ -626,7 +625,7 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
 
           {groups.added.length > 0 && (
             <details className="scan-group">
-              <summary>已经添加（{groups.added.length}）</summary>
+              <summary>{a.groupAdded(groups.added.length)}</summary>
               {groups.added.map((f) => row(f, "added"))}
             </details>
           )}
@@ -635,9 +634,9 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
 
       {selected.size > 0 && (
         <div className="scan-foot">
-          <span>已选 {selected.size} 个游戏</span>
-          <Button kind="primary" icon="plus" onClick={addSelected} busyText="正在添加…">
-            添加到 Ludonimbus
+          <span>{a.selected(selected.size)}</span>
+          <Button kind="primary" icon="plus" onClick={addSelected} busyText={a.adding}>
+            {a.addToLudonimbus}
           </Button>
         </div>
       )}
@@ -661,6 +660,8 @@ function nameFromExe(exe: string): string {
 
 function Manual({ onAdded }: { onAdded: (key: string) => void }) {
   const ui = useUi();
+  const t = useT();
+  const a = t.addGame;
   const [game, setGame] = useState<FinderGame | null>(null);
   const [rule, setRule] = useState<AdapterInfo | null>(null);
   const [name, setName] = useState("");
@@ -679,19 +680,19 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
 
   const add = async (n: string, saves: string[], title: string | null) => {
     const key = await api.addCustom(n, game?.exe ?? null, saves, title);
-    ui.toast(`已添加「${n}」`);
+    ui.toast(msg().addGame.added(n));
     onAdded(key);
   };
 
   if (!game) {
     return (
       <div className="form">
-        <p className="muted small">先选择游戏程序：Ludonimbus 用它判断游戏是否在运行、在游戏目录附近找存档，以后也能一键加入 Steam。模拟器请选择模拟器程序，会自动套用内置规则。</p>
+        <p className="muted small">{a.manualIntro}</p>
         <div className="row">
           <Button kind="primary" icon="folder" onClick={pick}>
-            选择游戏程序…
+            {a.pickProgram}
           </Button>
-          <Button onClick={() => setGame({ name: "", exe: null, install: null })}>没有程序，直接指定存档</Button>
+          <Button onClick={() => setGame({ name: "", exe: null, install: null })}>{a.noProgramButton}</Button>
         </div>
         <PlatformFolders onPick={chooseExe} />
       </div>
@@ -701,27 +702,23 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
     return (
       <div className="form">
         <button className="link" onClick={() => setGame(null)}>
-          ← 返回
+          {a.back}
         </button>
         <div className="banner banner-ok">
-          <Icon name="check" /> 识别为 {rule.label}，会使用内置的存档规则，不用自己找存档。
+          <Icon name="check" /> {a.recognizedAs(rule.label)}
         </div>
-        {rule.emulator && (
-          <p className="muted small">
-            直接选模拟器程序时，模拟器里所有游戏的存档会一起同步。想按游戏分开同步：在 Steam 里给每个游戏建一个带游戏文件的快捷方式（例如用 Steam ROM Manager），再从「扫描本机」添加，Ludonimbus 会认出是哪个游戏。
-          </p>
-        )}
+        {rule.emulator && <p className="muted small">{a.emulatorWhole}</p>}
         <label>
-          <span>名称</span>
+          <span>{t.saveFinder.name}</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
         <label>
-          <span>游戏程序</span>
+          <span>{t.saveFinder.program}</span>
           <code className="path">{game.exe}</code>
         </label>
         <div className="row">
           <Button kind="primary" icon="plus" onClick={() => add(name.trim(), [], null).catch((e) => ui.toast(errorText(e), "bad"))} disabled={!name.trim()}>
-            添加
+            {t.saveFinder.add}
           </Button>
         </div>
       </div>

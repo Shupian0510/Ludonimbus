@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { msg, useT } from "../i18n";
 
 // ---------------------------------------------------------------------------
 // Icons (inline, 1.6px strokes)
@@ -53,6 +54,7 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   play: <path d="M7 4l13 8-13 8z" />,
+  star: <path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 16.9l-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z" />,
   locate: (
     <>
       <circle cx="12" cy="12" r="7" />
@@ -170,6 +172,7 @@ export function Modal({
   wide?: boolean;
   footer?: ReactNode;
 }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -180,7 +183,7 @@ export function Modal({
       <div className={`modal${wide ? " modal-wide" : ""}`}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+          <button className="icon-btn" onClick={onClose} aria-label={t.common.close}>
             <Icon name="x" />
           </button>
         </div>
@@ -223,6 +226,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [ask, setAsk] = useState<Ask | null>(null);
   const [input, setInput] = useState("");
   const seq = useRef(0);
+  const t = useT();
 
   const toast = useCallback((text: string, tone: Toast["tone"] = "ok") => {
     const id = ++seq.current;
@@ -233,7 +237,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const confirm = useCallback<UiApi["confirm"]>(
     (o) =>
       new Promise((resolve) =>
-        setAsk({ title: o.title, text: o.text, confirm: o.confirm ?? "确定", danger: o.danger, resolve: (v) => resolve(v !== null) }),
+        setAsk({ title: o.title, text: o.text, confirm: o.confirm ?? msg().common.ok, danger: o.danger, resolve: (v) => resolve(v !== null) }),
       ),
     [],
   );
@@ -245,7 +249,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
         setAsk({
           title: o.title,
           text: o.text,
-          confirm: o.confirm ?? "确定",
+          confirm: o.confirm ?? msg().common.ok,
           input: { placeholder: o.placeholder ?? "", value: o.value ?? "" },
           resolve,
         });
@@ -276,7 +280,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
           footer={
             <>
               <Button kind="ghost" onClick={() => close(null)}>
-                取消
+                {t.common.cancel}
               </Button>
               <Button kind={ask.danger ? "danger" : "primary"} onClick={() => close(ask.input ? input : "")}>
                 {ask.confirm}

@@ -3,6 +3,21 @@
 // reviewed without the Rust side. Never loaded inside the app.
 import type { Found, GameView, Outcome, Overview, SnapshotSummary, StatusReport } from "./api";
 
+// Sample data in the preview's language (?lang=, the saved choice, or the browser's).
+const mockLang = (() => {
+  const fromUrl = new URLSearchParams(location.search).get("lang");
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem("ln.lang");
+  } catch {
+    /* ignore */
+  }
+  const pref = fromUrl ?? saved ?? "system";
+  if (pref === "en" || pref === "zh-CN") return pref;
+  return (navigator.language ?? "").toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+})();
+const L = (zh: string, en: string) => (mockLang === "en" ? en : zh);
+
 const now = Date.now();
 const ago = (min: number) => new Date(now - min * 60000).toISOString();
 const art = (appid: number, kind: string) => `/mock-art/${appid}${kind}`;
@@ -28,7 +43,7 @@ const snapshots: Record<string, SnapshotSummary[]> = {
   "zelda-oot-longshot": [
     snap("01OOT5", 35, "DESKTOP-MAIN", "auto-exit", 1258291, 14),
     snap("01OOT4", 60 * 26, "GPD-Win-Mini", "auto-exit", 1240000, 14),
-    snap("01OOT3", 60 * 50, "DESKTOP-MAIN", "manual", 1100000, 12, { comment: "进入水之神殿前", locked: true }),
+    snap("01OOT3", 60 * 50, "DESKTOP-MAIN", "manual", 1100000, 12, { comment: L("进入水之神殿前", "Before the Water Temple"), locked: true }),
     snap("01OOT2", 60 * 75, "DESKTOP-MAIN", "pre-restore", 1090000, 12),
     snap("01OOT1", 60 * 24 * 4, "DESKTOP-MAIN", "auto-exit", 800000, 10),
   ],
@@ -101,12 +116,12 @@ const overview: Overview = {
   steamFound: true,
   steamRunning: true,
   games: [
-    game("zelda-oot-longshot", "塞尔达传说：时之笛", 4079546474, "Longshot（原生重制）", "C:\\Users\\me\\AppData\\Local\\Programs\\LongshotLauncher\\LongshotLauncher.exe", ["{data}/save/**"]),
-    game("fe-fortunes-weave", "火焰纹章：万缕千丝", 2661209017, "fefw recomp", "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", ["{install}/save/**"], {
+    game("zelda-oot-longshot", L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), 4079546474, L("Longshot（原生重制）", "Longshot (native port)"), "C:\\Users\\me\\AppData\\Local\\Programs\\LongshotLauncher\\LongshotLauncher.exe", ["{data}/save/**"]),
+    game("fe-fortunes-weave", L("火焰纹章：万缕千丝", "Fire Emblem: Fortune's Weave"), 2661209017, "fefw recomp", "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", ["{install}/save/**"], {
       art: { cover: art(2661209017, "p.jpg"), wide: null, hero: art(2661209017, "_hero.png"), logo: art(2661209017, "_logo.png"), icon: art(2661209017, "_icon.png") },
       health: { state: "changed", exe: "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", launchOptions: "" },
     }),
-    game("bloodborne-lantern", "Bloodborne", 4000695018, "Lantern Engine（shadPS4）", "C:\\Users\\me\\Desktop\\Switch\\Bloodborne\\BloodbornePC\\Bloodborne.exe", ["{install}/user/savedata/1/CUSA00207/**"], {
+    game("bloodborne-lantern", "Bloodborne", 4000695018, L("Lantern Engine（shadPS4）", "Lantern Engine (shadPS4)"), "C:\\Users\\me\\Desktop\\Switch\\Bloodborne\\BloodbornePC\\Bloodborne.exe", ["{install}/user/savedata/1/CUSA00207/**"], {
       art: { cover: art(4000695018, "p.png"), wide: null, hero: art(4000695018, "_hero.jpg"), logo: art(4000695018, "_logo.png"), icon: art(4000695018, "_icon.png") },
       conflict: { cloudId: "01BB2", cloudDevice: "GPD-Win-Mini", cloudCreatedAt: ago(300), localHash: "y", detectedAt: ago(10) },
     }),
@@ -172,12 +187,12 @@ function found(id: string, name: string, source: Found["source"], extra: Partial
 }
 
 const quickScan: Found[] = [
-  found("steam:12345678:4079546474", "塞尔达传说：时之笛", "steam", { exe: overview.games[0].exe, adapter: "zelda-oot-longshot", adapterName: "Longshot", addedKey: "zelda-oot-longshot", steamAccount: "12345678", steamAppid: 4079546474 }),
+  found("steam:12345678:4079546474", L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), "steam", { exe: overview.games[0].exe, adapter: "zelda-oot-longshot", adapterName: "Longshot", addedKey: "zelda-oot-longshot", steamAccount: "12345678", steamAppid: 4079546474 }),
   found("steam:12345678:4000695018", "Bloodborne", "steam", { exe: overview.games[2].exe, adapter: "bloodborne-lantern", adapterName: "Lantern Engine", addedKey: "bloodborne-lantern", steamAccount: "12345678", steamAppid: 4000695018 }),
-  found("steam:12345678:3112233445", "Ryujinx", "steam", { exe: "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe", adapter: "ryujinx", adapterName: "Ryujinx（整个模拟器的存档）", steamAccount: "12345678", steamAppid: 3112233445 }),
-  found("steam:12345678:3220011223", "超级马力欧银河", "steam", { exe: "D:\\Emulators\\Dolphin-x64\\Dolphin.exe", args: '-b -e "D:\\ROMs\\Wii\\Super Mario Galaxy.rvz"', adapter: "dolphin", adapterName: "Dolphin（RMGE01）", saves: ["{emu}/Wii/title/0001000?/524d4745/data/**"], steamAccount: "12345678", steamAppid: 3220011223 }),
-  found("emulator:ryujinx:default:0100770008DD8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "emulator", { exe: "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe", args: '"C:\\Users\\me\\Desktop\\Switch\\Games\\ROMS\\MONSTER HUNTER GENERATIONS ULTIMATE [0100770008dd8000][v0].nsp"', adapter: "ryujinx", adapterName: "Ryujinx（0100770008DD8000）", saves: ["{nxsave-0100770008dd8000}/**", "{nxdevice-0100770008dd8000}/**"], saveFiles: 4, saveBytes: 6.2e6, saveSample: ["C:\\Users\\me\\AppData\\Roaming\\Ryujinx\\bis\\user\\save\\0000000000000003\\0\\system"] }),
-  found("emulator:dolphin:gc:GALE01", "Super Smash Bros. Melee", "emulator", { adapter: "dolphin", adapterName: "Dolphin（GALE01）", saves: ["{emu}/GC/*/Card ?/01-GALE-*.gci"], saveFiles: 1, saveBytes: 4.0e4, saveSample: ["C:\\Users\\me\\Documents\\Dolphin Emulator\\GC\\USA\\Card A\\01-GALE-SuperSmashBros0110290334.gci"] }),
+  found("steam:12345678:3112233445", "Ryujinx", "steam", { exe: "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe", adapter: "ryujinx", adapterName: L("Ryujinx（整个模拟器的存档）", "Ryujinx (whole emulator)"), steamAccount: "12345678", steamAppid: 3112233445 }),
+  found("steam:12345678:3220011223", L("超级马力欧银河", "Super Mario Galaxy"), "steam", { exe: "D:\\Emulators\\Dolphin-x64\\Dolphin.exe", args: '-b -e "D:\\ROMs\\Wii\\Super Mario Galaxy.rvz"', adapter: "dolphin", adapterName: L("Dolphin（RMGE01）", "Dolphin (RMGE01)"), saves: ["{emu}/Wii/title/0001000?/524d4745/data/**"], steamAccount: "12345678", steamAppid: 3220011223 }),
+  found("emulator:ryujinx:default:0100770008DD8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "emulator", { exe: "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe", args: '"C:\\Users\\me\\Desktop\\Switch\\Games\\ROMS\\MONSTER HUNTER GENERATIONS ULTIMATE [0100770008dd8000][v0].nsp"', adapter: "ryujinx", adapterName: L("Ryujinx（0100770008DD8000）", "Ryujinx (0100770008DD8000)"), saves: ["{nxsave-0100770008dd8000}/**", "{nxdevice-0100770008dd8000}/**"], saveFiles: 4, saveBytes: 6.2e6, saveSample: ["C:\\Users\\me\\AppData\\Roaming\\Ryujinx\\bis\\user\\save\\0000000000000003\\0\\system"] }),
+  found("emulator:dolphin:gc:GALE01", "Super Smash Bros. Melee", "emulator", { adapter: "dolphin", adapterName: L("Dolphin（GALE01）", "Dolphin (GALE01)"), saves: ["{emu}/GC/*/Card ?/01-GALE-*.gci"], saveFiles: 1, saveBytes: 4.0e4, saveSample: ["C:\\Users\\me\\Documents\\Dolphin Emulator\\GC\\USA\\Card A\\01-GALE-SuperSmashBros0110290334.gci"] }),
   found("recomplauncher:zelda64recomp", "The Legend of Zelda: Majora's Mask", "recomplauncher", { exe: "D:\\RecompLauncher\\Library\\zelda64recomp\\Zelda64Recompiled.exe", install: "D:\\RecompLauncher\\Library\\zelda64recomp", adapter: "zelda64recomp", adapterName: "The Legend of Zelda: Majora's Mask" }),
   found("steam:87654321:3998877665", "Star Rail Launcher", "steam", { exe: "D:\\Games\\StarRail\\launcher.exe", steamAccount: "87654321", steamAppid: 3998877665 }),
   found("epic:Salt", "Celeste", "epic", { exe: "D:\\Games\\Celeste\\Celeste.exe", install: "D:\\Games\\Celeste", ludusaviTitle: "Celeste", addedKey: "celeste" }),
@@ -213,6 +228,28 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
   switch (cmd) {
     case "get_overview":
       return delay(overview, 150);
+    case "get_language": {
+      // ?lang=en / ?lang=zh-CN picks the language of the browser preview (docs screenshots).
+      const fromUrl = new URLSearchParams(location.search).get("lang");
+      if (fromUrl) return fromUrl;
+      try {
+        return localStorage.getItem("ln.lang") ?? "system";
+      } catch {
+        return "system";
+      }
+    }
+    case "get_onboarding":
+      // ?guide shows the first-run guide in the browser preview.
+      return delay({ doneAt: new URLSearchParams(location.search).has("guide") ? null : ago(60), usage: [] });
+    case "finish_onboarding":
+      return delay(undefined, 50);
+    case "set_language":
+      try {
+        localStorage.setItem("ln.lang", args.language as string);
+      } catch {
+        /* ignore */
+      }
+      return delay(undefined, 50);
     case "check_game":
       return delay(checks[key], 400);
     case "sync_game":
@@ -269,7 +306,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         steamRoot: "C:\\Program Files (x86)\\Steam",
         steamAccount: "12345678",
         cloud: { kind: "googleDrive", clientId: "", clientSecret: "", folder: "Ludonimbus", account: "player@example.com" },
-        previousCloud: { kind: "localFolder", name: "本地 / 同步文件夹（D:\\Cloud\\Ludonimbus）" },
+        previousCloud: { kind: "localFolder", name: L("本地 / 同步文件夹（D:\\Cloud\\Ludonimbus）", "Local / synced folder (D:\\Cloud\\Ludonimbus)") },
         googleBuiltin: true,
         baiduBuiltin: false,
         baiduAppName: "Ludonimbus",
@@ -286,7 +323,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "cloud_migrate":
       return delay({ games: 3, copied: 42, skipped: 0, bytes: 6.4e8 }, 1500);
     case "cloud_connect_baidu":
-      return delay("玩家", 4000);
+      return delay(L("玩家", "player"), 4000);
     case "cloud_cancel_login":
       return delay(undefined);
     case "cloud_dismiss_previous":
@@ -306,7 +343,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(["C:\\Users\\me\\AppData\\LocalLow\\Team Cherry\\Hollow Knight\\user1.dat"]);
     case "check_update":
       return delay(
-        { current: "0.1.0", available: true, version: "0.1.1", notes: "- 修复：示例更新说明\n- 新增：示例功能", date: new Date().toISOString() },
+        { current: "0.1.0", available: true, version: "0.1.1", notes: "### 中文\n\n- 修复：示例更新说明\n- 新增：示例功能\n\n### English\n\n- Fixed: sample release note\n- New: sample feature", date: new Date().toISOString() },
         600,
       );
     case "steam_plugin_status":
@@ -342,19 +379,19 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay((args.found as Found).addedKey ?? (args.name as string).toLowerCase().replace(/[^a-z0-9]+/g, "-"), 300);
     case "detect_adapter": {
       const exe = (args.exe as string).toLowerCase();
-      if (exe.endsWith("dolphin.exe")) return delay({ key: "dolphin", name: "Dolphin", label: "Dolphin（整个模拟器的存档）", emulator: true });
-      if (exe.endsWith("soh.exe")) return delay({ key: "soh", name: "塞尔达传说：时之笛", label: "塞尔达传说：时之笛", emulator: false });
+      if (exe.endsWith("dolphin.exe")) return delay({ key: "dolphin", name: "Dolphin", label: L("Dolphin（整个模拟器的存档）", "Dolphin (whole emulator)"), emulator: true });
+      if (exe.endsWith("soh.exe")) return delay({ key: "soh", name: L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), label: L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), emulator: false });
       return delay(null);
     }
     case "savefind_suggest":
       return delay([
-        { path: "C:\\Users\\me\\AppData\\LocalLow\\Indie Studio\\Some Indie", files: 3, bytes: 48213, modified: ago(60 * 20), sample: ["save0.dat", "settings.json"], reason: "名字和游戏相近" },
-        { path: "D:\\Games\\Some Indie\\saves", files: 2, bytes: 20480, modified: ago(60 * 24 * 3), sample: ["slot1.sav"], reason: "在游戏目录里" },
+        { path: "C:\\Users\\me\\AppData\\LocalLow\\Indie Studio\\Some Indie", files: 3, bytes: 48213, modified: ago(60 * 20), sample: ["save0.dat", "settings.json"], reason: L("名字和游戏相近", "similar name") },
+        { path: "D:\\Games\\Some Indie\\saves", files: 2, bytes: 20480, modified: ago(60 * 24 * 3), sample: ["slot1.sav"], reason: L("在游戏目录里", "in the game folder") },
       ]);
     case "savefind_watch_start":
       return delay(undefined);
     case "savefind_watch_stop":
-      return delay([{ path: "C:\\Users\\me\\Saved Games\\Some Indie", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: "刚才被写入" }], 600);
+      return delay([{ path: "C:\\Users\\me\\Saved Games\\Some Indie", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: L("刚才被写入", "just written") }], 600);
     case "folder_to_pattern":
       return delay(args.path as string);
     case "sgdb_status":

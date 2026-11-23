@@ -195,7 +195,7 @@ impl GoogleDrive {
         v["id"]
             .as_str()
             .map(str::to_string)
-            .ok_or_else(|| anyhow!("创建文件夹失败"))
+            .ok_or_else(|| anyhow!(crate::tr!("创建文件夹失败", "Couldn't create the folder")))
     }
 
     fn root_id(&self, create: bool) -> Result<Option<String>> {
@@ -281,7 +281,7 @@ impl GoogleDrive {
             .map_err(describe)?;
         let location = resp
             .header("Location")
-            .ok_or_else(|| anyhow!("Google Drive 没有返回上传地址"))?
+            .ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?
             .to_string();
         let v: Value = self
             .bulk
@@ -293,7 +293,7 @@ impl GoogleDrive {
         v["id"]
             .as_str()
             .map(str::to_string)
-            .ok_or_else(|| anyhow!("上传失败：没有返回文件 id"))
+            .ok_or_else(|| anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")))
     }
 
     fn update_content(&self, file_id: &str, mime: &str, body: &[u8]) -> Result<()> {
@@ -429,16 +429,16 @@ impl CloudProvider for GoogleDrive {
     fn get_meta(&self, game: &str, id: &str) -> Result<SnapshotMeta> {
         let folder = self
             .folder_id(&["games", game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!("云端没有这个游戏的快照"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))?;
         let f = self
             .find_file(&folder, &format!("{id}.json"))?
-            .ok_or_else(|| anyhow!("找不到快照 {id}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("找不到快照 {id}", "Snapshot {id} not found")))?;
         Ok(serde_json::from_slice(&self.download_bytes(&f.id)?)?)
     }
 
     fn upload(&self, meta: &SnapshotMeta, zip: &Path) -> Result<()> {
         let folder = self.writable_folder(&["games", &meta.game, "snapshots"])?;
-        let body = std::fs::read(zip).with_context(|| format!("无法读取 {}", zip.display()))?;
+        let body = std::fs::read(zip).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", zip.display()))?;
         let (props, desc) = Self::summary_props(meta);
         // Full metadata first, then the zip (its appProperties make it visible).
         self.create_file(
@@ -461,10 +461,10 @@ impl CloudProvider for GoogleDrive {
     fn download(&self, game: &str, id: &str, dest: &Path) -> Result<()> {
         let folder = self
             .folder_id(&["games", game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!("云端没有这个游戏的快照"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))?;
         let f = self
             .find_file(&folder, &format!("{id}.zip"))?
-            .ok_or_else(|| anyhow!("找不到快照文件 {id}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("找不到快照文件 {id}", "Snapshot file {id} not found")))?;
         let resp = self
             .bulk
             .get(&format!("{API}/files/{}?alt=media", f.id))
@@ -491,7 +491,7 @@ impl CloudProvider for GoogleDrive {
     fn update_meta(&self, meta: &SnapshotMeta) -> Result<()> {
         let folder = self
             .folder_id(&["games", &meta.game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!("云端没有这个游戏的快照"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))?;
         let (props, desc) = Self::summary_props(meta);
         if let Some(f) = self.find_file(&folder, &format!("{}.zip", meta.id))? {
             self.patch_meta(&f.id, json!({ "appProperties": props, "description": desc }))?;

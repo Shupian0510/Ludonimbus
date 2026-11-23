@@ -348,7 +348,7 @@ fn baidu_cloud() {
     // Cancelling the sign-in stops the wait.
     let cancelled = AtomicBool::new(true);
     let err = cloud::baidu_sign_in(&client("Ludonimbus"), &ep, |_| {}, &cancelled, timeout).unwrap_err();
-    assert!(format!("{err:#}").contains("取消"), "{err:#}");
+    assert!(format!("{err:#}").contains("取消") || format!("{err:#}").contains("cancelled"), "{err:#}");
     mock.lock().unwrap().device_polls = 0;
 
     // Device-code sign-in: pending twice, then approved; the connection test
@@ -360,7 +360,7 @@ fn baidu_cloud() {
     assert_eq!(code.user_code, "ABCD1234");
     assert!(code.browser_url().ends_with("/device?code=ABCD1234"));
     assert_eq!(name, "玩家");
-    assert_eq!(account.label, "百度网盘 · 我的应用数据/Ludonimbus");
+    assert!(account.label == "百度网盘 · 我的应用数据/Ludonimbus" || account.label == "Baidu Netdisk · 我的应用数据/Ludonimbus", "{}", account.label);
     assert_eq!(account.total, Some(2_199_023_255_552));
     assert_eq!(mock.lock().unwrap().device_polls, 3);
 
@@ -404,7 +404,7 @@ fn baidu_cloud() {
     let stale = BaiduPan::new(client("Ludonimbus"), ep.clone(), token, TokenSink::Memory, timeout);
     mock.lock().unwrap().access.clear();
     let err = stale.list("games").unwrap_err();
-    assert!(format!("{err:#}").contains("重新连接"), "{err:#}");
+    assert!(format!("{err:#}").contains("重新连接") || format!("{err:#}").contains("Reconnect"), "{err:#}");
 
     // The whole layout on top of it, filled by copying a folder cloud.
     let local = Repo::new(ludonimbus_core::cloud::local::LocalFolder::new(tmp.path().join("local-cloud")));

@@ -4,7 +4,7 @@
 import { definePlugin, Field, Millennium } from 'millennium';
 import { useEffect, useState } from 'react';
 import { PlayBarStatus } from './playbar';
-import { parseReply } from './status';
+import { parseReply, setLang, t } from './status';
 
 const bars = new Map<Document, PlayBarStatus>();
 
@@ -33,17 +33,18 @@ function attachExisting(): void {
 }
 
 const QuickAccess = () => {
-	const [state, setState] = useState('正在连接 Ludonimbus…');
+	const [state, setState] = useState(t().connecting);
 	useEffect(() => {
 		backend
 			.ping()
 			.then((raw) => {
-				const v = parseReply(raw) as { version?: string };
-				setState(v.version ? `已连接 Ludonimbus ${v.version}` : 'Ludonimbus 未运行，打开它后显示云存档状态');
+				const v = parseReply(raw) as { version?: string; lang?: string };
+				setLang(v.lang);
+				setState(v.version ? t().connected(v.version) : t().notRunningLong);
 			})
-			.catch(() => setState('Ludonimbus 未运行，打开它后显示云存档状态'));
+			.catch(() => setState(t().notRunningLong));
 	}, []);
-	return <Field label="Ludonimbus 云存档" description={state} />;
+	return <Field label={t().label} description={state} />;
 };
 
 export default definePlugin(() => {
@@ -51,7 +52,7 @@ export default definePlugin(() => {
 	attachExisting();
 
 	return {
-		title: 'Ludonimbus 云存档',
+		title: t().label,
 		icon: <div style={{ width: 16, height: 16 }}>☁</div>,
 		content: <QuickAccess />,
 	};

@@ -30,21 +30,21 @@ fn entry(user: &str) -> Result<keyring::Entry> {
 pub fn store(user: &str, secret: &str) -> Result<()> {
     entry(user)?
         .set_password(secret)
-        .context("无法把密码保存到 Windows 凭据管理器")
+        .context(crate::tr!("无法把密码保存到 Windows 凭据管理器", "Couldn't save the password to Windows Credential Manager"))
 }
 
 pub fn load(user: &str) -> Result<Option<String>> {
     match entry(user)?.get_password() {
         Ok(s) => Ok(Some(s)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow!("无法读取保存的密码：{e}")),
+        Err(e) => Err(anyhow!(crate::tr!("无法读取保存的密码：{e}", "Couldn't read the saved password: {e}"))),
     }
 }
 
 pub fn clear(user: &str) -> Result<()> {
     match entry(user)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(anyhow!("无法删除保存的密码：{e}")),
+        Err(e) => Err(anyhow!(crate::tr!("无法删除保存的密码：{e}", "Couldn't delete the saved password: {e}"))),
     }
 }
 

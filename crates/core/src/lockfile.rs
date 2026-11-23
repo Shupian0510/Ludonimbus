@@ -42,7 +42,7 @@ impl FileLock {
                         }
                     }
                     if start.elapsed() > timeout {
-                        bail!("等待文件锁超时：{}", path.display());
+                        bail!(crate::tr!("等待文件锁超时：{}", "Timed out waiting for the file lock: {}", path.display()));
                     }
                     std::thread::sleep(Duration::from_millis(40));
                 }

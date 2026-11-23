@@ -64,7 +64,7 @@ fn segments(path: &str) -> impl Iterator<Item = &str> {
 
 /// Parse a `207 Multi-Status` body.
 pub fn parse_multistatus(xml: &str) -> Result<Vec<DavItem>> {
-    let doc = roxmltree::Document::parse(xml).context("WebDAV 服务器返回的不是有效的 XML")?;
+    let doc = roxmltree::Document::parse(xml).context(crate::tr!("WebDAV 服务器返回的不是有效的 XML", "The WebDAV server returned invalid XML"))?;
     let dav = |n: &roxmltree::Node, name: &str| n.is_element() && n.tag_name().name() == name && n.tag_name().namespace() == Some("DAV:");
     let mut out = Vec::new();
     for resp in doc.descendants().filter(|n| dav(n, "response")) {
@@ -120,21 +120,21 @@ fn fail(e: ureq::Error) -> anyhow::Error {
         ureq::Error::Status(code, resp) => {
             let body: String = resp.into_string().unwrap_or_default().chars().take(300).collect();
             match code {
-                401 => anyhow!("WebDAV 用户名或密码不对（401）"),
-                403 => anyhow!("WebDAV 服务器拒绝了操作（403），请检查账号是否有这个文件夹的读写权限"),
-                404 => anyhow!("WebDAV 地址不存在（404），请检查地址和文件夹"),
-                405 => anyhow!("WebDAV 服务器不支持这个操作（405），请确认地址指向的是 WebDAV 服务"),
-                507 => anyhow!("WebDAV 空间不足（507）"),
-                429 | 503 => anyhow!(Unavailable(format!("WebDAV 服务器繁忙或请求太频繁（{code}）"))),
-                c if c >= 500 => anyhow!(Unavailable(format!("WebDAV 服务器错误 {c}"))),
-                c => anyhow!("WebDAV 返回错误 {c}：{body}"),
+                401 => anyhow!(crate::tr!("WebDAV 用户名或密码不对（401）", "Wrong WebDAV username or password (401)")),
+                403 => anyhow!(crate::tr!("WebDAV 服务器拒绝了操作（403），请检查账号是否有这个文件夹的读写权限", "The WebDAV server refused (403). Check that the account can read and write this folder")),
+                404 => anyhow!(crate::tr!("WebDAV 地址不存在（404），请检查地址和文件夹", "The WebDAV address doesn't exist (404). Check the address and folder")),
+                405 => anyhow!(crate::tr!("WebDAV 服务器不支持这个操作（405），请确认地址指向的是 WebDAV 服务", "The WebDAV server doesn't support this (405). Make sure the address points to a WebDAV service")),
+                507 => anyhow!(crate::tr!("WebDAV 空间不足（507）", "Not enough space on the WebDAV server (507)")),
+                429 | 503 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器繁忙或请求太频繁（{code}）", "The WebDAV server is busy or got too many requests ({code})"))),
+                c if c >= 500 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器错误 {c}", "WebDAV server error {c}"))),
+                c => anyhow!(crate::tr!("WebDAV 返回错误 {c}：{body}", "WebDAV returned error {c}: {body}")),
             }
         }
         ureq::Error::Transport(t) => {
             let msg = t.to_string();
             let lower = msg.to_lowercase();
             if lower.contains("certificate") || lower.contains("unknownissuer") {
-                anyhow!("无法验证 WebDAV 服务器的 HTTPS 证书（可能是自签名证书）。请给服务器配置受信任的证书（例如 Let's Encrypt），或在局域网内改用 http:// 地址。详细信息：{msg}")
+                anyhow!(crate::tr!("无法验证 WebDAV 服务器的 HTTPS 证书（可能是自签名证书）。请给服务器配置受信任的证书（例如 Let's Encrypt），或在局域网内改用 http:// 地址。详细信息：{msg}", "Couldn't verify the WebDAV server's HTTPS certificate (it may be self-signed). Give the server a trusted certificate (for example Let's Encrypt), or use an http:// address on your local network. Details: {msg}"))
             } else {
                 anyhow!(Unavailable(msg))
             }
@@ -144,12 +144,12 @@ fn fail(e: ureq::Error) -> anyhow::Error {
 
 impl WebDav {
     pub fn new(url: &str, username: &str, password: &str, folder: &str, timeout: Duration) -> Result<Self> {
-        let mut server = Url::parse(url.trim()).map_err(|_| anyhow!("WebDAV 地址格式不对，应类似 https://example.com/dav/"))?;
+        let mut server = Url::parse(url.trim()).map_err(|_| anyhow!(crate::tr!("WebDAV 地址格式不对，应类似 https://example.com/dav/", "The WebDAV address looks wrong; it should look like https://example.com/dav/")))?;
         if !matches!(server.scheme(), "http" | "https") {
-            bail!("WebDAV 地址需要以 http:// 或 https:// 开头");
+            bail!(crate::tr!("WebDAV 地址需要以 http:// 或 https:// 开头", "The WebDAV address needs to start with http:// or https://"));
         }
         if server.host_str().is_none() {
-            bail!("WebDAV 地址缺少服务器名");
+            bail!(crate::tr!("WebDAV 地址缺少服务器名", "The WebDAV address has no server name"));
         }
         server.set_query(None);
         server.set_fragment(None);
@@ -237,7 +237,7 @@ impl WebDav {
                 self.mkcol(&u)?;
             }
             if self.propfind(&root, "0", PROPFIND_LIST)?.is_none() {
-                bail!("无法在 WebDAV 服务器上创建文件夹 {}", self.folder.join("/"));
+                bail!(crate::tr!("无法在 WebDAV 服务器上创建文件夹 {}", "Couldn't create the folder {} on the WebDAV server", self.folder.join("/")));
             }
         }
         self.known_dirs.lock().unwrap().insert(String::new());
@@ -293,7 +293,7 @@ impl WebDav {
                     .set("Content-Type", "application/octet-stream")
                     .send_bytes(b),
                 Body::File(p) => {
-                    let f = std::fs::File::open(p).with_context(|| format!("无法读取 {}", p.display()))?;
+                    let f = std::fs::File::open(p).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", p.display()))?;
                     let len = f.metadata()?.len();
                     // An explicit length avoids chunked uploads, which some
                     // WebDAV servers reject.
@@ -410,9 +410,9 @@ impl Store for WebDav {
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
         let r = self
             .get(&self.bulk, path)?
-            .ok_or_else(|| anyhow!("云端找不到文件 {path}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
         let tmp = dest.with_extension("download");
-        let mut out = std::fs::File::create(&tmp).with_context(|| format!("无法写入 {}", tmp.display()))?;
+        let mut out = std::fs::File::create(&tmp).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
         std::io::copy(&mut r.into_reader(), &mut out).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
         drop(out);
         std::fs::rename(&tmp, dest)?;

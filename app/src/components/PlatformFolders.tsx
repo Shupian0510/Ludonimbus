@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, GameFolder } from "../api";
+import { useT } from "../i18n";
 
 let cache: GameFolder[] | null = null;
 
@@ -8,6 +9,7 @@ let cache: GameFolder[] | null = null;
  * Epic, GOG, EA, Ubisoft): each opens the exe picker there.
  */
 export function PlatformFolders({ onPick }: { onPick: (exe: string) => void }) {
+  const t = useT();
   const [folders, setFolders] = useState<GameFolder[]>(cache ?? []);
   useEffect(() => {
     if (cache) return;
@@ -22,7 +24,7 @@ export function PlatformFolders({ onPick }: { onPick: (exe: string) => void }) {
   if (folders.length === 0) return null;
   return (
     <div className="preset-row">
-      <span className="muted small">从游戏平台的安装目录选：</span>
+      <span className="muted small">{t.platformFolders.label}</span>
       {folders.map((f) => (
         <button
           key={f.path}
@@ -37,7 +39,7 @@ export function PlatformFolders({ onPick }: { onPick: (exe: string) => void }) {
         </button>
       ))}
       {folders.some((f) => f.label.startsWith("Xbox")) && (
-        <span className="muted small">Xbox 游戏请选游戏文件夹 Content 里的 gamelaunchhelper.exe（游戏自己的程序受保护，选不了）。</span>
+        <span className="muted small">{t.platformFolders.xbox}</span>
       )}
     </div>
   );

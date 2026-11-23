@@ -29,7 +29,7 @@ pub fn parse(bytes: &[u8]) -> Result<Value> {
 
 fn need(b: &[u8], pos: usize, n: usize) -> Result<()> {
     if pos + n > b.len() {
-        bail!("VDF 文件意外结束");
+        bail!(crate::tr!("VDF 文件意外结束", "The VDF file ended unexpectedly"));
     }
     Ok(())
 }
@@ -40,7 +40,7 @@ fn read_cstr(b: &[u8], pos: &mut usize) -> Result<Vec<u8>> {
         .iter()
         .position(|&c| c == 0)
         .map(|i| start + i)
-        .ok_or_else(|| anyhow!("VDF 字符串没有结束符"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("VDF 字符串没有结束符", "A VDF string has no terminator")))?;
     *pos = end + 1;
     Ok(b[start..end].to_vec())
 }
@@ -75,7 +75,7 @@ fn parse_map(b: &[u8], pos: &mut usize) -> Result<Value> {
                 *pos += 8;
                 Value::U64(v)
             }
-            other => bail!("不支持的 VDF 类型 0x{other:02x}"),
+            other => bail!(crate::tr!("不支持的 VDF 类型 0x{other:02x}", "Unsupported VDF type 0x{other:02x}")),
         };
         entries.push((key, val));
     }

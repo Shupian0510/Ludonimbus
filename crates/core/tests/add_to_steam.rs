@@ -96,5 +96,6 @@ fn add_found_game_to_steam() {
 
     // A game without a program cannot be added to Steam.
     let g = games::add_custom("No Exe", None, vec!["{appdata}/NoExe/**".into()], None, None).unwrap();
-    assert!(games::add_to_steam(&g.key, "42").unwrap_err().to_string().contains("游戏程序"));
+    let e = games::add_to_steam(&g.key, "42").unwrap_err().to_string();
+    assert!(e.contains("游戏程序") || e.contains("no program"), "{e}");
 }

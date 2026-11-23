@@ -160,7 +160,7 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
                     .case_insensitive(true)
                     .literal_separator(true)
                     .build()
-                    .with_context(|| format!("无效的通配符：{variant}"))?,
+                    .with_context(|| crate::tr!("无效的通配符：{variant}", "Invalid wildcard: {variant}"))?,
             );
         }
     }
@@ -215,7 +215,7 @@ pub fn scan(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, PathBu
     }
 
     if spec.saves.is_empty() {
-        bail!("「{}」还没有设置存档位置", game.name);
+        bail!(crate::tr!("「{}」还没有设置存档位置", "\"{}\" has no save location yet", game.name));
     }
 
     // Exclusions grouped by root.
@@ -233,7 +233,7 @@ pub fn scan(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, PathBu
     for pattern in &spec.saves {
         let (root, rest) = spec::split_pattern(pattern)?;
         let base = spec::resolve_root_name(&root, &roots)
-            .ok_or_else(|| anyhow!("无法确定根目录 {{{root}}}（游戏路径未设置？）"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("无法确定根目录 {{{root}}}（游戏路径未设置？）", "Can't resolve the root {{{root}}} (is the game location set?)")))?;
         // Walk from the longest literal prefix to avoid scanning huge trees.
         let comps: Vec<&str> = rest.split('/').filter(|c| !c.is_empty()).collect();
         let literal: Vec<&str> = comps
@@ -284,7 +284,7 @@ pub fn scan(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, PathBu
 }
 
 fn hash_file(p: &Path) -> Result<String> {
-    let mut f = File::open(p).with_context(|| format!("无法读取 {}", p.display()))?;
+    let mut f = File::open(p).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", p.display()))?;
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; 256 * 1024];
     loop {
@@ -377,7 +377,7 @@ pub fn build(
 
 fn write_zip(zip_path: &Path, local: &LocalState, meta: &SnapshotMeta) -> Result<()> {
     let file = File::create(zip_path)
-        .with_context(|| format!("无法创建 {}", zip_path.display()))?;
+        .with_context(|| crate::tr!("无法创建 {}", "Can't create {}", zip_path.display()))?;
     let mut zw = zip::ZipWriter::new(file);
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -385,7 +385,7 @@ fn write_zip(zip_path: &Path, local: &LocalState, meta: &SnapshotMeta) -> Result
     for f in &local.files {
         zw.start_file(format!("files/{}", f.logical), opts)?;
         let mut src = File::open(&f.abs)
-            .with_context(|| format!("无法读取存档文件 {}", f.abs.display()))?;
+            .with_context(|| crate::tr!("无法读取存档文件 {}", "Can't read the save file {}", f.abs.display()))?;
         std::io::copy(&mut src, &mut zw)?;
     }
     zw.start_file("snapshot.json", opts)?;
@@ -399,7 +399,7 @@ pub fn read_meta(zip_path: &Path) -> Result<SnapshotMeta> {
     let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
     let mut entry = archive
         .by_name("snapshot.json")
-        .map_err(|_| anyhow!("快照文件损坏：缺少 snapshot.json"))?;
+        .map_err(|_| anyhow!(crate::tr!("快照文件损坏：缺少 snapshot.json", "The snapshot is damaged: snapshot.json is missing")))?;
     let mut s = String::new();
     entry.read_to_string(&mut s)?;
     Ok(serde_json::from_str(&s)?)
@@ -411,7 +411,7 @@ fn validate_logical(p: &str) -> Result<()> {
         && !p.contains(':')
         && p.split('/').all(|c| !c.is_empty() && c != "." && c != "..");
     if !ok {
-        bail!("快照中包含不安全的路径：{p}");
+        bail!(crate::tr!("快照中包含不安全的路径：{p}", "The snapshot contains an unsafe path: {p}"));
     }
     Ok(())
 }
@@ -419,9 +419,9 @@ fn validate_logical(p: &str) -> Result<()> {
 /// Resolve a logical path against this device's roots.
 pub fn resolve_logical(roots: &BTreeMap<String, PathBuf>, logical: &str) -> Result<PathBuf> {
     validate_logical(logical)?;
-    let (root, rest) = logical.split_once('/').ok_or_else(|| anyhow!("无效路径 {logical}"))?;
+    let (root, rest) = logical.split_once('/').ok_or_else(|| anyhow!(crate::tr!("无效路径 {logical}", "Invalid path {logical}")))?;
     let base = spec::resolve_root_name(root, roots)
-        .ok_or_else(|| anyhow!("本机没有根目录 {{{root}}}，无法恢复 {logical}"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("本机没有根目录 {{{root}}}，无法恢复 {logical}", "This PC has no root {{{root}}}, so {logical} can't be restored")))?;
     Ok(rest.split('/').fold(base, |p, c| p.join(c)))
 }
 
@@ -450,7 +450,7 @@ pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<(
     for (fe, dest) in &plan {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("无法创建目录 {}", parent.display()))?;
+                .with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
         }
         let tmp = dest.with_file_name(format!(
             "{}.lntmp",
@@ -459,13 +459,13 @@ pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<(
         {
             let mut entry = archive
                 .by_name(&format!("files/{}", fe.path))
-                .map_err(|_| anyhow!("快照中缺少文件 {}", fe.path))?;
+                .map_err(|_| anyhow!(crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", fe.path)))?;
             let mut out = File::create(&tmp)
-                .with_context(|| format!("无法写入 {}", tmp.display()))?;
+                .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
             std::io::copy(&mut entry, &mut out)?;
             out.flush()?;
         }
-        std::fs::rename(&tmp, dest).with_context(|| format!("无法替换 {}", dest.display()))?;
+        std::fs::rename(&tmp, dest).with_context(|| crate::tr!("无法替换 {}", "Can't replace {}", dest.display()))?;
         if fe.mtime > 0 {
             if let Ok(f) = std::fs::OpenOptions::new().write(true).open(dest) {
                 let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(fe.mtime as u64);

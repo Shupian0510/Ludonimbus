@@ -2,10 +2,24 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { api, errorText, inTauri, UpdateInfo } from "../api";
 import { bytes } from "../format";
+import { currentLang, useT } from "../i18n";
 import { Button, Modal, useUi } from "./ui";
+
+/**
+ * Release notes hold both halves of the changelog ("### 中文" and
+ * "### English"); show the one matching the interface language.
+ */
+export function localNotes(notes: string): string {
+  const zh = notes.indexOf("### 中文");
+  const en = notes.indexOf("### English");
+  if (zh < 0 || en < 0) return notes;
+  const [start, end] = currentLang() === "zh-CN" ? [zh, en > zh ? en : notes.length] : [en, zh > en ? zh : notes.length];
+  return notes.slice(start, end).replace(/^### .*\n+/, "").trim();
+}
 
 export function UpdateDialog({ info, onClose }: { info: UpdateInfo; onClose: () => void }) {
   const ui = useUi();
+  const t = useT();
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
 
@@ -30,21 +44,21 @@ export function UpdateDialog({ info, onClose }: { info: UpdateInfo; onClose: () 
 
   return (
     <Modal
-      title={`新版本 ${info.version} 可用`}
+      title={t.update.title(info.version)}
       onClose={() => !installing && onClose()}
       footer={
         <>
           <Button kind="ghost" onClick={onClose} disabled={installing}>
-            以后再说
+            {t.common.later}
           </Button>
           <Button kind="primary" icon="download" onClick={install} disabled={installing}>
-            {installing ? "正在更新…" : "更新并重启"}
+            {installing ? t.update.installing : t.update.install}
           </Button>
         </>
       }
     >
-      <p className="muted small">当前版本 {info.current}</p>
-      {info.notes ? <div className="release-notes">{info.notes}</div> : <p className="muted">这个版本没有附更新说明。</p>}
+      <p className="muted small">{t.update.current(info.current)}</p>
+      {info.notes ? <div className="release-notes">{localNotes(info.notes)}</div> : <p className="muted">{t.update.noNotes}</p>}
       {installing && (
         <div className="update-progress">
           <div className="bar">
@@ -52,13 +66,13 @@ export function UpdateDialog({ info, onClose }: { info: UpdateInfo; onClose: () 
           </div>
           <span className="muted small">
             {progress
-              ? `已下载 ${bytes(progress.downloaded)}${progress.total ? ` / ${bytes(progress.total)}` : ""}`
-              : "正在连接…"}
-            {pct === 100 ? " · 正在安装，完成后会自动重启" : ""}
+              ? t.update.downloaded(bytes(progress.downloaded), progress.total ? bytes(progress.total) : null)
+              : t.update.connecting}
+            {pct === 100 ? t.update.installingNow : ""}
           </span>
         </div>
       )}
-      <p className="muted small">更新会关闭 Ludonimbus，安装完成后自动重新打开。安装包经过签名校验，存档和设置不受影响。</p>
+      <p className="muted small">{t.update.note}</p>
     </Modal>
   );
 }

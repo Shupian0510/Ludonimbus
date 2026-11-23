@@ -6,7 +6,7 @@
 // often, so a MutationObserver puts the item back whenever it disappears.
 
 import { playSectionClasses } from 'millennium';
-import { describe, isGame, parseReply, Reply, View } from './status';
+import { describe, isGame, parseReply, Reply, t, View } from './status';
 
 const MARK = 'data-ludonimbus';
 const STYLE_ID = 'ludonimbus-style';
@@ -233,14 +233,14 @@ export class PlayBarStatus {
 		text.className = ['ludonimbus-text', cls('GameStatRight')].filter(Boolean).join(' ');
 		const label = d.createElement('div');
 		label.className = ['ludonimbus-label', cls('PlayBarLabel')].filter(Boolean).join(' ');
-		label.textContent = 'Ludonimbus 云存档';
+		label.textContent = t().label;
 		const detail = d.createElement('div');
 		detail.className = ['ludonimbus-detail', cls('PlayBarDetailLabel')].filter(Boolean).join(' ');
 		text.append(label, detail);
 
 		const sync = d.createElement('button');
 		sync.className = 'ludonimbus-sync';
-		sync.title = '立即同步';
+		sync.title = t().syncNow;
 		sync.innerHTML = SYNC_SVG;
 		sync.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -256,6 +256,11 @@ export class PlayBarStatus {
 		const item = wrap.classList.contains('ludonimbus-stat') ? wrap : (wrap.firstElementChild as HTMLElement);
 		const detail = item.querySelector('.ludonimbus-detail');
 		if (detail && detail.textContent !== view.text) detail.textContent = view.text;
+		// The language may only be known after the first reply.
+		const label = item.querySelector('.ludonimbus-label');
+		if (label && label.textContent !== t().label) label.textContent = t().label;
+		const sync = item.querySelector<HTMLElement>('.ludonimbus-sync');
+		if (sync && sync.title !== t().syncNow) sync.title = t().syncNow;
 		if (item.title !== view.tip) item.title = view.tip;
 		item.dataset.tone = view.tone;
 		item.dataset.busy = view.busy ? '1' : '0';

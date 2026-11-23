@@ -38,7 +38,7 @@ pub async fn scan_folder(path: String) -> CmdResult<Vec<Found>> {
     blocking(move || {
         let dir = PathBuf::from(&path);
         if !dir.is_dir() {
-            bail!("文件夹不存在：{path}");
+            bail!(ludonimbus_core::tr!("文件夹不存在：{path}", "The folder doesn't exist: {path}"));
         }
         Ok(discover::folder_scan(&config::load()?, &dir))
     })
@@ -119,7 +119,7 @@ pub async fn savefind_watch_start(exe: Option<String>, args: Option<String>, ins
             if let Some(dir) = exe.parent() {
                 cmd.current_dir(dir);
             }
-            cmd.spawn().map_err(|e| anyhow!("无法启动 {}：{e}", exe.display()))?;
+            cmd.spawn().map_err(|e| anyhow!(ludonimbus_core::tr!("无法启动 {}：{e}", "Couldn't start {}: {e}", exe.display())))?;
         }
         Ok(())
     })
@@ -130,7 +130,7 @@ pub async fn savefind_watch_start(exe: Option<String>, args: Option<String>, ins
 #[tauri::command]
 pub async fn savefind_watch_stop() -> CmdResult<Vec<Candidate>> {
     blocking(|| {
-        let watch = WATCH.lock().unwrap().take().ok_or_else(|| anyhow!("没有正在进行的记录"))?;
+        let watch = WATCH.lock().unwrap().take().ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有正在进行的记录", "No recording in progress")))?;
         Ok(watch.finish())
     })
     .await
@@ -163,7 +163,7 @@ pub async fn sgdb_set_key(key: String) -> CmdResult<()> {
     blocking(move || {
         let key = key.trim().to_string();
         if key.is_empty() {
-            bail!("请填写 API Key");
+            bail!(ludonimbus_core::tr!("请填写 API Key", "Enter the API key"));
         }
         sgdb::search(&key, "Celeste")?;
         sgdb::store_key(&key)
@@ -177,7 +177,7 @@ pub async fn sgdb_clear_key() -> CmdResult<()> {
 }
 
 fn key() -> Result<String> {
-    sgdb::load_key()?.ok_or_else(|| anyhow!("请先在设置里填写 SteamGridDB API Key"))
+    sgdb::load_key()?.ok_or_else(|| anyhow!(ludonimbus_core::tr!("请先在设置里填写 SteamGridDB API Key", "Enter a SteamGridDB API key in Settings first")))
 }
 
 #[tauri::command]
@@ -212,8 +212,8 @@ pub async fn art_set_file(key: String, kind: String, path: String) -> CmdResult<
 pub async fn pick_image() -> CmdResult<Option<String>> {
     blocking(|| {
         Ok(rfd::FileDialog::new()
-            .set_title("选择图片")
-            .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+            .set_title(ludonimbus_core::tr!("选择图片", "Choose an image"))
+            .add_filter(ludonimbus_core::tr!("图片", "Images"), &["png", "jpg", "jpeg", "webp"])
             .pick_file()
             .map(|p| p.display().to_string()))
     })

@@ -70,6 +70,29 @@ pub struct Adapter {
 }
 
 impl Adapter {
+    /// `platform` in the interface language. The rule files are written in
+    /// Chinese; the few words they use are translated here.
+    pub fn platform_label(&self) -> Option<String> {
+        let p = self.platform.as_deref()?;
+        if !crate::i18n::is_en() {
+            return Some(p.to_string());
+        }
+        let mut s = p.to_string();
+        for (zh, en) in [
+            ("含 torzu 等分支", "incl. forks such as torzu"),
+            ("多平台模拟器", "Multi-platform emulator"),
+            ("模拟器", "emulator"),
+            ("原生重制", "native remake"),
+            ("同人重制", "fan remake"),
+            ("移植", "port"),
+            ("（", " ("),
+            ("）", ")"),
+        ] {
+            s = s.replace(zh, en);
+        }
+        Some(s)
+    }
+
     pub fn is_emulator(&self) -> bool {
         self.kind == Kind::Emulator
     }
@@ -254,8 +277,8 @@ pub fn label(adapter: &Adapter, game: Option<&crate::emulators::EmuGame>) -> Str
         return adapter.name.clone();
     }
     match game {
-        Some(g) => format!("{}（{}）", adapter.name, g.id),
-        None => format!("{}（整个模拟器的存档）", adapter.name),
+        Some(g) => crate::tr!("{}（{}）", "{} ({})", adapter.name, g.id),
+        None => crate::tr!("{}（整个模拟器的存档）", "{} (whole emulator)", adapter.name),
     }
 }
 

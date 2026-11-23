@@ -150,8 +150,8 @@ pub fn read_shortcuts(root: &Path, account: &str) -> Result<(vdf::Value, Vec<Sho
             Vec::new(),
         ));
     }
-    let bytes = std::fs::read(&path).with_context(|| format!("无法读取 {}", path.display()))?;
-    let doc = vdf::parse(&bytes).with_context(|| format!("无法解析 {}", path.display()))?;
+    let bytes = std::fs::read(&path).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display()))?;
+    let doc = vdf::parse(&bytes).with_context(|| crate::tr!("无法解析 {}", "Can't parse {}", path.display()))?;
     let list = doc
         .get("shortcuts")
         .map(|s| s.entries().iter().map(|(k, v)| to_shortcut(k, v)).collect())
@@ -253,7 +253,7 @@ fn save_doc(root: &Path, account: &str, doc: &vdf::Value) -> Result<()> {
 pub fn add_shortcut(root: &Path, account: &str, sc: &NewShortcut) -> Result<u32> {
     ensure_steam_closed(root)?;
     if !root.join("userdata").join(account).is_dir() {
-        bail!("找不到 Steam 账号 {account}");
+        bail!(crate::tr!("找不到 Steam 账号 {account}", "Steam account {account} not found"));
     }
     let (mut doc, existing) = read_shortcuts(root, account)?;
     let exe_field = util::quote(&sc.exe);
@@ -269,7 +269,7 @@ pub fn add_shortcut(root: &Path, account: &str, sc: &NewShortcut) -> Result<u32>
     let list = doc
         .get_mut("shortcuts")
         .and_then(vdf::Value::entries_mut)
-        .ok_or_else(|| anyhow!("shortcuts.vdf 格式异常"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("shortcuts.vdf 格式异常", "shortcuts.vdf is malformed")))?;
     let index = list
         .iter()
         .filter_map(|(k, _)| std::str::from_utf8(k).ok()?.parse::<usize>().ok())
@@ -313,7 +313,7 @@ pub fn remove_shortcut(root: &Path, account: &str, appid: u32) -> Result<bool> {
     let list = doc
         .get_mut("shortcuts")
         .and_then(vdf::Value::entries_mut)
-        .ok_or_else(|| anyhow!("shortcuts.vdf 格式异常"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("shortcuts.vdf 格式异常", "shortcuts.vdf is malformed")))?;
     list.retain(|(_, v)| v.get("appid").and_then(vdf::Value::int).map(|i| i as u32) != Some(appid));
     for (i, (k, _)) in list.iter_mut().enumerate() {
         *k = i.to_string().into_bytes();
@@ -392,12 +392,12 @@ pub fn image_ext(path: &Path) -> &'static str {
 /// Copy an image into Steam's grid folder as the given kind of artwork.
 /// Steam picks up new files after a restart. Returns the written path.
 pub fn write_art(root: &Path, account: &str, appid: u32, kind: &str, src: &Path) -> Result<PathBuf> {
-    let suffix = art_suffix(kind).ok_or_else(|| anyhow!("未知的图片类型 {kind}"))?;
+    let suffix = art_suffix(kind).ok_or_else(|| anyhow!(crate::tr!("未知的图片类型 {kind}", "Unknown image type {kind}")))?;
     let grid = grid_dir(root, account);
     std::fs::create_dir_all(&grid)?;
     remove_art(root, account, appid, kind);
     let dest = grid.join(format!("{appid}{suffix}.{}", image_ext(src)));
-    std::fs::copy(src, &dest).with_context(|| format!("无法写入 {}", dest.display()))?;
+    std::fs::copy(src, &dest).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", dest.display()))?;
     Ok(dest)
 }
 
@@ -420,11 +420,11 @@ pub fn shutdown(root: &Path) -> Result<()> {
     std::process::Command::new(&exe)
         .arg("-shutdown")
         .spawn()
-        .with_context(|| format!("无法启动 {}", exe.display()))?;
+        .with_context(|| crate::tr!("无法启动 {}", "Couldn't start {}", exe.display()))?;
     let start = Instant::now();
     while is_running() {
         if start.elapsed() > Duration::from_secs(45) {
-            bail!("Steam 没有在 45 秒内退出，请手动关闭 Steam 后重试");
+            bail!(crate::tr!("Steam 没有在 45 秒内退出，请手动关闭 Steam 后重试", "Steam didn't exit within 45 seconds. Close Steam yourself and try again"));
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -438,7 +438,7 @@ pub fn shutdown(root: &Path) -> Result<()> {
 fn ensure_steam_closed(root: &Path) -> Result<()> {
     let live = detect_root().is_some_and(|r| util::same_path(&r.to_string_lossy(), &root.to_string_lossy()));
     if live && !cfg!(test) && is_running() {
-        bail!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）");
+        bail!(crate::tr!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）", "STEAM_RUNNING: Steam needs to be closed before changing its shortcuts (it overwrites changes while running)"));
     }
     Ok(())
 }
@@ -449,7 +449,7 @@ fn edit_shortcut(root: &Path, account: &str, appid: u32, f: impl FnOnce(&mut vdf
     let (mut doc, _) = read_shortcuts(root, account)?;
     let list = doc
         .get_mut("shortcuts")
-        .ok_or_else(|| anyhow!("shortcuts.vdf 格式异常"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("shortcuts.vdf 格式异常", "shortcuts.vdf is malformed")))?;
     let entry = list
         .entries_mut()
         .and_then(|e| {
@@ -457,7 +457,7 @@ fn edit_shortcut(root: &Path, account: &str, appid: u32, f: impl FnOnce(&mut vdf
                 .map(|(_, v)| v)
                 .find(|v| v.get("appid").and_then(vdf::Value::int).map(|i| i as u32) == Some(appid))
         })
-        .ok_or_else(|| anyhow!("在 Steam 中找不到这个快捷方式（appid {appid}）"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("在 Steam 中找不到这个快捷方式（appid {appid}）", "This shortcut wasn't found in Steam (appid {appid})")))?;
     f(entry);
     save_doc(root, account, &doc)
 }
@@ -465,10 +465,10 @@ fn edit_shortcut(root: &Path, account: &str, appid: u32, f: impl FnOnce(&mut vdf
 /// Point a shortcut at `ludonimbus-run --game <key>`. Returns the original fields.
 pub fn wrap(root: &Path, account: &str, appid: u32, key: &str, runner: &Path) -> Result<OriginalShortcut> {
     if !runner.is_file() {
-        bail!("找不到启动包装器 {}", runner.display());
+        bail!(crate::tr!("找不到启动包装器 {}", "The launch wrapper {} is missing", runner.display()));
     }
     let sc = find_shortcut(root, account, appid)?
-        .ok_or_else(|| anyhow!("在 Steam 中找不到这个快捷方式（appid {appid}）"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("在 Steam 中找不到这个快捷方式（appid {appid}）", "This shortcut wasn't found in Steam (appid {appid})")))?;
     let original = OriginalShortcut {
         exe: sc.exe.clone(),
         start_dir: sc.start_dir.clone(),
@@ -492,7 +492,7 @@ pub fn unwrap(root: &Path, account: &str, appid: u32, game: &GameEntry, original
         .as_ref()
         .map(|p| p.to_string_lossy().into_owned())
         .or_else(|| original.map(|o| o.exe.clone()))
-        .ok_or_else(|| anyhow!("不知道原来的游戏程序路径"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("不知道原来的游戏程序路径", "The original program path is unknown")))?;
     let start_dir = game
         .work_dir
         .clone()

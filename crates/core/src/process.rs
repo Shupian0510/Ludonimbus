@@ -63,7 +63,7 @@ pub fn launch_and_wait(
 
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("无法启动 {}", exe.display()))?;
+        .with_context(|| crate::tr!("无法启动 {}", "Couldn't start {}", exe.display()))?;
     log(&format!("started pid {}", child.id()));
 
     #[cfg(windows)]

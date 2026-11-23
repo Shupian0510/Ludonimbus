@@ -13,6 +13,7 @@
 //! - [`steam`]    Steam install, accounts, non-Steam shortcuts, artwork
 //! - [`millennium`] Millennium install and the Ludonimbus Steam plugin
 //! - [`games`]    high-level library operations shared by CLI / runner / app
+//! - [`i18n`]     interface language for texts made in Rust (`tr!`)
 //! - [`xbox`]     Xbox app games: launch helper, real game processes
 
 pub mod adapters;
@@ -22,6 +23,7 @@ pub mod discover;
 pub mod emugames;
 pub mod emulators;
 pub mod games;
+pub mod i18n;
 pub mod localart;
 pub mod lockfile;
 pub mod logger;

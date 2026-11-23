@@ -327,7 +327,7 @@ impl IndexEntry {
 /// Parse `imkvdb.arc` ("IMKV" header, then "IMEN" entries).
 pub fn parse_index(b: &[u8]) -> Result<Vec<IndexEntry>> {
     if b.len() < 12 || &b[0..4] != b"IMKV" {
-        bail!("Ryujinx 的存档索引格式不认识");
+        bail!(crate::tr!("Ryujinx 的存档索引格式不认识", "Ryujinx's save index format isn't recognized"));
     }
     let n = u32_le(b, 8) as usize;
     let mut out = Vec::with_capacity(n);
@@ -338,7 +338,7 @@ pub fn parse_index(b: &[u8]) -> Result<Vec<IndexEntry>> {
             && u32_le(b, at + 4) == 0x40
             && u32_le(b, at + 8) == 0x40;
         if !ok {
-            bail!("Ryujinx 的存档索引格式不认识");
+            bail!(crate::tr!("Ryujinx 的存档索引格式不认识", "Ryujinx's save index format isn't recognized"));
         }
         let mut e = IndexEntry { key: [0; 0x40], value: [0; 0x40] };
         e.key.copy_from_slice(&b[at + 12..at + 12 + 0x40]);
@@ -365,7 +365,7 @@ pub fn write_index(entries: &[IndexEntry]) -> Vec<u8> {
 
 fn read_index(emu: &Path) -> Result<Vec<IndexEntry>> {
     let p = index_dir(emu).join("0").join("imkvdb.arc");
-    parse_index(&std::fs::read(&p).with_context(|| format!("无法读取 {}", p.display()))?)
+    parse_index(&std::fs::read(&p).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", p.display()))?)
 }
 
 /// The profile Ryujinx opened last (`system/Profiles.json`); the default
@@ -437,7 +437,7 @@ fn create_save_with_backup(emu: &Path, kind: SaveKind, title: u64, backups: &Pat
     let idx = index_dir(emu);
     let arc = idx.join("0").join("imkvdb.arc");
     if !arc.is_file() {
-        bail!("Ryujinx 还没有建好存档索引（{}）。请先打开一次 Ryujinx，再同步", arc.display());
+        bail!(crate::tr!("Ryujinx 还没有建好存档索引（{}）。请先打开一次 Ryujinx，再同步", "Ryujinx hasn't created its save index yet ({}). Open Ryujinx once, then sync", arc.display()));
     }
     let mut entries = parse_index(&std::fs::read(&arc)?)?;
     let user = wanted_user(emu, kind);
@@ -513,7 +513,7 @@ fn backup_index(idx: &Path, backups: &Path) -> Result<()> {
     for f in ["imkvdb.arc", "lastPublishedId"] {
         let src = idx.join("0").join(f);
         if src.is_file() {
-            std::fs::copy(&src, dir.join(f)).with_context(|| format!("无法备份 {}", src.display()))?;
+            std::fs::copy(&src, dir.join(f)).with_context(|| crate::tr!("无法备份 {}", "Can't back up {}", src.display()))?;
         }
     }
     Ok(())
@@ -521,8 +521,8 @@ fn backup_index(idx: &Path, backups: &Path) -> Result<()> {
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("lntmp");
-    std::fs::write(&tmp, bytes).with_context(|| format!("无法写入 {}", tmp.display()))?;
-    std::fs::rename(&tmp, path).with_context(|| format!("无法写入 {}", path.display()))?;
+    std::fs::write(&tmp, bytes).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", path.display()))?;
     Ok(())
 }
 
@@ -539,7 +539,7 @@ pub fn mirror_committed(committed: &Path) -> Result<()> {
     }
     let work = save.join("1");
     if work.exists() {
-        std::fs::remove_dir_all(&work).with_context(|| format!("无法更新 {}", work.display()))?;
+        std::fs::remove_dir_all(&work).with_context(|| crate::tr!("无法更新 {}", "Can't update {}", work.display()))?;
     }
     for e in walkdir::WalkDir::new(committed).into_iter().flatten() {
         let Ok(rel) = e.path().strip_prefix(committed) else { continue };
@@ -547,7 +547,7 @@ pub fn mirror_committed(committed: &Path) -> Result<()> {
         if e.file_type().is_dir() {
             std::fs::create_dir_all(&dest)?;
         } else if e.file_type().is_file() {
-            std::fs::copy(e.path(), &dest).with_context(|| format!("无法写入 {}", dest.display()))?;
+            std::fs::copy(e.path(), &dest).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", dest.display()))?;
         }
     }
     Ok(())
@@ -846,7 +846,7 @@ mod tests {
     fn no_index_no_save() {
         let tmp = tempfile::tempdir().unwrap();
         let err = create_save_with_backup(tmp.path(), SaveKind::Account, MHGU, &tmp.path().join("b")).unwrap_err();
-        assert!(err.to_string().contains("先打开一次 Ryujinx"), "{err}");
+        assert!(err.to_string().contains("先打开一次 Ryujinx") || err.to_string().contains("Open Ryujinx once"), "{err}");
     }
 
     /// Reads the title id from the NCA headers of a real dump with the

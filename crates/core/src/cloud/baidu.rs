@@ -156,14 +156,14 @@ fn json_of(res: Result<ureq::Response, ureq::Error>) -> Result<Value> {
     match res {
         Ok(r) => {
             let text = r.into_string().map_err(|e| anyhow!(Unavailable(e.to_string())))?;
-            serde_json::from_str(&text).with_context(|| format!("百度网盘返回了无法识别的内容：{}", text.chars().take(200).collect::<String>()))
+            serde_json::from_str(&text).with_context(|| crate::tr!("百度网盘返回了无法识别的内容：{}", "Baidu Netdisk returned something unexpected: {}", text.chars().take(200).collect::<String>()))
         }
         Err(ureq::Error::Status(code, r)) => {
             let text = r.into_string().unwrap_or_default();
             match serde_json::from_str::<Value>(&text) {
                 Ok(v) if v.is_object() => Ok(v),
-                _ if code >= 500 => Err(anyhow!(Unavailable(format!("百度网盘服务器错误 {code}")))),
-                _ => Err(anyhow!("百度网盘返回错误 {code}：{}", text.chars().take(200).collect::<String>())),
+                _ if code >= 500 => Err(anyhow!(Unavailable(crate::tr!("百度网盘服务器错误 {code}", "Baidu Netdisk server error {code}")))),
+                _ => Err(anyhow!(crate::tr!("百度网盘返回错误 {code}：{}", "Baidu Netdisk returned error {code}: {}", text.chars().take(200).collect::<String>()))),
             }
         }
         Err(ureq::Error::Transport(t)) => Err(anyhow!(Unavailable(t.to_string()))),
@@ -193,18 +193,19 @@ fn errno_error(code: i64, v: &Value, app_name: &str) -> anyhow::Error {
         .unwrap_or("")
         .to_string();
     match code {
-        c if is_token_error(c) => anyhow!("百度网盘登录已失效（{c}），请在设置里重新连接百度网盘"),
-        c if is_rate_limited(c) => anyhow!(Unavailable(format!("百度网盘请求太频繁（{c}），稍后会自动重试"))),
-        6 => anyhow!(Unavailable("百度网盘暂时不允许访问用户数据（6），请 10 分钟后再试".into())),
-        -1 => anyhow!("百度网盘会员权益已过期（-1）"),
-        -10 => anyhow!("百度网盘空间不足（-10）"),
-        20011 => anyhow!("这个百度网盘应用还在审核中，只有前 10 个授权的用户可以使用（20011）"),
-        20013 => anyhow!("百度网盘应用没有这个接口的权限（20013），请在开放平台申请对应接口"),
-        20020 | 31064 | -7 => anyhow!(
-            "百度网盘不允许访问这个位置（{code}）。Ludonimbus 只能读写「我的应用数据/{app_name}」，请确认应用名称和开放平台里登记的一致"
-        ),
-        31326 => anyhow!("百度网盘拒绝了下载请求（31326 防盗链）"),
-        c => anyhow!("百度网盘返回错误 {c}{}", if msg.is_empty() { String::new() } else { format!("：{msg}") }),
+        c if is_token_error(c) => anyhow!(crate::tr!("百度网盘登录已失效（{c}），请在设置里重新连接百度网盘", "The Baidu Netdisk sign-in has expired ({c}). Reconnect Baidu Netdisk in Settings")),
+        c if is_rate_limited(c) => anyhow!(Unavailable(crate::tr!("百度网盘请求太频繁（{c}），稍后会自动重试", "Too many requests to Baidu Netdisk ({c}); retrying automatically later"))),
+        6 => anyhow!(Unavailable(crate::tr!("百度网盘暂时不允许访问用户数据（6），请 10 分钟后再试", "Baidu Netdisk doesn't allow access to user data right now (6). Try again in 10 minutes"))),
+        -1 => anyhow!(crate::tr!("百度网盘会员权益已过期（-1）", "Your Baidu Netdisk membership has expired (-1)")),
+        -10 => anyhow!(crate::tr!("百度网盘空间不足（-10）", "Not enough space on Baidu Netdisk (-10)")),
+        20011 => anyhow!(crate::tr!("这个百度网盘应用还在审核中，只有前 10 个授权的用户可以使用（20011）", "This Baidu Netdisk app is still under review; only its first 10 users can use it (20011)")),
+        20013 => anyhow!(crate::tr!("百度网盘应用没有这个接口的权限（20013），请在开放平台申请对应接口", "The Baidu Netdisk app has no permission for this API (20013). Apply for it on the open platform")),
+        20020 | 31064 | -7 => anyhow!(crate::tr!(
+            "百度网盘不允许访问这个位置（{code}）。Ludonimbus 只能读写「我的应用数据/{app_name}」，请确认应用名称和开放平台里登记的一致",
+            "Baidu Netdisk doesn't allow access to this location ({code}). Ludonimbus can only use \"我的应用数据/{app_name}\"; check that the app name matches the one registered on the open platform"
+        )),
+        31326 => anyhow!(crate::tr!("百度网盘拒绝了下载请求（31326 防盗链）", "Baidu Netdisk refused the download (31326, hotlink protection)")),
+        c => anyhow!(crate::tr!("百度网盘返回错误 {c}{}", "Baidu Netdisk returned error {c}{}", if msg.is_empty() { String::new() } else { crate::tr!("：{msg}", ": {msg}") })),
     }
 }
 
@@ -239,12 +240,12 @@ pub fn start_device(client: &BaiduClient, ep: &Endpoints) -> Result<DeviceCode> 
     )?;
     let v = json_of(agent(Duration::from_secs(20)).get(url.as_str()).call())?;
     if let Some(err) = v["error"].as_str() {
-        bail!("百度网盘授权失败：{err} {}", v["error_description"].as_str().unwrap_or(""));
+        bail!(crate::tr!("百度网盘授权失败：{err} {}", "Baidu Netdisk authorization failed: {err} {}", v["error_description"].as_str().unwrap_or("")));
     }
     let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
     let device_code = s("device_code");
     if device_code.is_empty() {
-        bail!("百度网盘没有返回设备码：{v}");
+        bail!(crate::tr!("百度网盘没有返回设备码：{v}", "Baidu Netdisk returned no device code: {v}"));
     }
     Ok(DeviceCode {
         device_code,
@@ -274,12 +275,12 @@ pub fn poll_device(client: &BaiduClient, ep: &Endpoints, code: &DeviceCode, canc
         let start = Instant::now();
         while start.elapsed() < wait {
             if cancel.load(Ordering::SeqCst) {
-                bail!("已取消百度网盘登录");
+                bail!(crate::tr!("已取消百度网盘登录", "Baidu Netdisk sign-in cancelled"));
             }
             std::thread::sleep(Duration::from_millis(100).min(wait));
         }
         if Instant::now() > deadline {
-            bail!("等待百度网盘授权超时，请重新点击连接{}", if last.is_empty() { String::new() } else { format!("（{last}）") });
+            bail!(crate::tr!("等待百度网盘授权超时，请重新点击连接{}", "Timed out waiting for Baidu Netdisk authorization. Click Connect again{}", if last.is_empty() { String::new() } else { crate::tr!("（{last}）", " ({last})") }));
         }
         let url = url::Url::parse_with_params(
             &format!("{}/oauth/2.0/token", ep.oauth),
@@ -304,13 +305,13 @@ pub fn poll_device(client: &BaiduClient, ep: &Endpoints, code: &DeviceCode, canc
         let err = v["error"].as_str().unwrap_or("").to_string();
         let desc = v["error_description"].as_str().unwrap_or("").to_string();
         if err.is_empty() {
-            bail!("百度网盘返回了无法识别的授权结果：{v}");
+            bail!(crate::tr!("百度网盘返回了无法识别的授权结果：{v}", "Baidu Netdisk returned an unexpected authorization result: {v}"));
         }
         if fatal_device_error(&err) {
             bail!(match err.as_str() {
-                "expired_token" => "授权码已过期，请重新点击连接".to_string(),
-                "access_denied" | "authorization_declined" => "你拒绝了授权".to_string(),
-                _ => format!("百度网盘授权失败：{err} {desc}"),
+                "expired_token" => crate::tr!("授权码已过期，请重新点击连接", "The code has expired. Click Connect again"),
+                "access_denied" | "authorization_declined" => crate::tr!("你拒绝了授权", "You declined the authorization"),
+                _ => crate::tr!("百度网盘授权失败：{err} {desc}", "Baidu Netdisk authorization failed: {err} {desc}"),
             });
         }
         if err == "slow_down" {
@@ -336,7 +337,7 @@ fn refresh(client: &BaiduClient, ep: &Endpoints, refresh_token: &str) -> Result<
     let v = json_of(agent(Duration::from_secs(20)).get(url.as_str()).call())?;
     Token::from_json(&v).ok_or_else(|| {
         logger::log("baidu", format!("refresh failed: {v}"));
-        anyhow!("百度网盘登录已失效，请在设置里重新连接百度网盘")
+        anyhow!(crate::tr!("百度网盘登录已失效，请在设置里重新连接百度网盘", "The Baidu Netdisk sign-in has expired. Reconnect Baidu Netdisk in Settings"))
     })
 }
 
@@ -348,14 +349,14 @@ pub fn user_info(ep: &Endpoints, token: &Token) -> Result<(String, i64)> {
     )?;
     let v = json_of(agent(Duration::from_secs(20)).get(url.as_str()).call())?;
     if errno(&v) != 0 {
-        bail!("无法读取百度网盘账号信息（{}）", errno(&v));
+        bail!(crate::tr!("无法读取百度网盘账号信息（{}）", "Couldn't read the Baidu Netdisk account ({})", errno(&v)));
     }
     let name = v["netdisk_name"]
         .as_str()
         .filter(|s| !s.is_empty())
         .or(v["baidu_name"].as_str())
-        .unwrap_or("百度网盘")
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::tr!("百度网盘", "Baidu Netdisk"));
     Ok((name, v["vip_type"].as_i64().unwrap_or(0)))
 }
 
@@ -572,7 +573,7 @@ impl BaiduPan {
 
     fn put(&self, path: &str, data: &[u8]) -> Result<()> {
         if data.is_empty() {
-            bail!("百度网盘不能上传空文件");
+            bail!(crate::tr!("百度网盘不能上传空文件", "Baidu Netdisk can't upload empty files"));
         }
         self.ensure_parents(path)?;
         let full = self.full(path);
@@ -597,7 +598,7 @@ impl BaiduPan {
         }
         let uploadid = pre["uploadid"].as_str().unwrap_or("").to_string();
         if uploadid.is_empty() {
-            bail!("百度网盘没有返回上传 id：{pre}");
+            bail!(crate::tr!("百度网盘没有返回上传 id：{pre}", "Baidu Netdisk returned no upload id: {pre}"));
         }
         let todo: Vec<usize> = match pre["block_list"].as_array() {
             Some(a) => a.iter().filter_map(|x| x.as_u64().map(|n| n as usize)).collect(),
@@ -605,7 +606,7 @@ impl BaiduPan {
         };
         let host = self.upload_host(&full, &uploadid);
         for i in todo {
-            let chunk = data.chunks(SLICE).nth(i).ok_or_else(|| anyhow!("百度网盘要求了不存在的分片 {i}"))?;
+            let chunk = data.chunks(SLICE).nth(i).ok_or_else(|| anyhow!(crate::tr!("百度网盘要求了不存在的分片 {i}", "Baidu Netdisk asked for a slice that doesn't exist: {i}")))?;
             let seq = i.to_string();
             let boundary = format!("----Ludonimbus{}", ulid::Ulid::new());
             let mut body = Vec::with_capacity(chunk.len() + 256);
@@ -638,7 +639,7 @@ impl BaiduPan {
             })?;
             if let Some(md5) = v["md5"].as_str() {
                 if !md5.eq_ignore_ascii_case(&blocks[i]) {
-                    bail!("百度网盘收到的分片 {i} 校验值不一致，请重试");
+                    bail!(crate::tr!("百度网盘收到的分片 {i} 校验值不一致，请重试", "Baidu Netdisk received slice {i} with a wrong checksum. Please retry"));
                 }
             }
         }
@@ -721,7 +722,7 @@ impl Store for BaiduPan {
     }
 
     fn label(&self) -> String {
-        format!("百度网盘 · 我的应用数据/{}", self.client.app_name)
+        crate::tr!("百度网盘 · 我的应用数据/{}", "Baidu Netdisk · 我的应用数据/{}", self.client.app_name)
     }
 
     fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
@@ -772,9 +773,9 @@ impl Store for BaiduPan {
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
         let r = self
             .open(path, &self.bulk)?
-            .ok_or_else(|| anyhow!("云端找不到文件 {path}"))?;
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
         let tmp = dest.with_extension("download");
-        let mut out = std::fs::File::create(&tmp).with_context(|| format!("无法写入 {}", tmp.display()))?;
+        let mut out = std::fs::File::create(&tmp).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
         std::io::copy(&mut r.into_reader(), &mut out).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
         drop(out);
         std::fs::rename(&tmp, dest)?;
@@ -787,7 +788,7 @@ impl Store for BaiduPan {
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
         // Saves are small (a few MB); reading them whole keeps slicing simple.
-        let data = std::fs::read(src).with_context(|| format!("无法读取 {}", src.display()))?;
+        let data = std::fs::read(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
         self.put(path, &data)
     }
 
@@ -826,7 +827,8 @@ mod tests {
         let v = serde_json::json!({});
         assert!(super::super::is_unavailable(&errno_error(31034, &v, "L")));
         assert!(format!("{}", errno_error(20020, &v, "Ludonimbus")).contains("我的应用数据/Ludonimbus"));
-        assert!(format!("{}", errno_error(-6, &v, "L")).contains("重新连接"));
+        let e = format!("{}", errno_error(-6, &v, "L"));
+        assert!(e.contains("重新连接") || e.contains("Reconnect"), "{e}");
         assert_eq!(errno(&serde_json::json!({"error_code": 31326})), 31326);
         assert_eq!(errno(&serde_json::json!({"md5": "x"})), 0);
     }

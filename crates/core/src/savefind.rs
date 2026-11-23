@@ -125,14 +125,14 @@ pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Ca
             let n = e.file_name().to_string_lossy().into_owned();
             let s = score_name(&n);
             if s > 0 {
-                scored.push((s, e.path(), format!("名字和游戏相近（{}）", root.display())));
+                scored.push((s, e.path(), crate::tr!("名字和游戏相近（{}）", "similar name ({})", root.display())));
             }
             // Company/Game layouts (LocalLow, My Games, AppData).
             if let Ok(rd2) = std::fs::read_dir(e.path()) {
                 for e2 in rd2.flatten().filter(|e| e.path().is_dir()) {
                     let s2 = score_name(&e2.file_name().to_string_lossy());
                     if s2 > 0 {
-                        scored.push((s2 + 5, e2.path(), format!("名字和游戏相近（{}）", e.path().display())));
+                        scored.push((s2 + 5, e2.path(), crate::tr!("名字和游戏相近（{}）", "similar name ({})", e.path().display())));
                     }
                 }
             }
@@ -145,7 +145,7 @@ pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Ca
             }
             let n = e.file_name().to_string_lossy().to_lowercase();
             if ["save", "saves", "savedata", "savegames", "savegame", "saved", "userdata", "profiles", "profile"].contains(&n.as_str()) {
-                scored.push((80, e.path().to_path_buf(), "游戏目录里的存档文件夹".into()));
+                scored.push((80, e.path().to_path_buf(), crate::tr!("游戏目录里的存档文件夹", "save folder in the game folder")));
             }
         }
     }
@@ -216,7 +216,7 @@ impl Watch {
                 }
             }
         })
-        .context("无法开始记录文件变化")?;
+        .context(crate::tr!("无法开始记录文件变化", "Couldn't start recording file changes"))?;
         for r in roots {
             if r.is_dir() {
                 let _ = watcher.watch(r, RecursiveMode::Recursive);
@@ -271,7 +271,7 @@ pub fn folders_from_changes(files: &[PathBuf]) -> Vec<Candidate> {
                 bytes,
                 modified,
                 sample,
-                reason: format!("玩游戏时有 {n} 个文件发生变化"),
+                reason: crate::tr!("玩游戏时有 {n} 个文件发生变化", "{n} files changed while playing"),
             }
         })
         .collect();

@@ -57,7 +57,7 @@ fn b64url(bytes: &[u8]) -> String {
 
 /// Run the browser sign-in. Blocks until the user finishes or `timeout`.
 pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized> {
-    let listener = TcpListener::bind("127.0.0.1:0").context("无法启动本地回调端口")?;
+    let listener = TcpListener::bind("127.0.0.1:0").context(crate::tr!("无法启动本地回调端口", "Couldn't open the local sign-in callback port"))?;
     let port = listener.local_addr()?.port();
     let redirect = format!("http://127.0.0.1:{port}");
     let verifier = Alphanumeric.sample_string(&mut rand::thread_rng(), 64);
@@ -78,13 +78,13 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
             ("prompt", "consent"),
         ],
     )?;
-    opener::open_browser(url.as_str()).context("无法打开浏览器")?;
+    opener::open_browser(url.as_str()).context(crate::tr!("无法打开浏览器", "Couldn't open the browser"))?;
 
     listener.set_nonblocking(true)?;
     let deadline = Instant::now() + timeout;
     let code = loop {
         if Instant::now() > deadline {
-            bail!("等待 Google 登录超时");
+            bail!(crate::tr!("等待 Google 登录超时", "Timed out waiting for the Google sign-in"));
         }
         match listener.accept() {
             Ok((stream, _)) => {
@@ -102,11 +102,11 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
                         .map(|(_, v)| v.into_owned())
                 };
                 let (ok, msg) = if let Some(err) = get("error") {
-                    (false, format!("登录被取消或失败：{err}"))
+                    (false, crate::tr!("登录被取消或失败：{err}", "Sign-in was cancelled or failed: {err}"))
                 } else if get("state").as_deref() != Some(state.as_str()) {
-                    (false, "回调校验失败，请重试".to_string())
+                    (false, crate::tr!("回调校验失败，请重试", "The sign-in callback didn't match. Please try again"))
                 } else if get("code").is_some() {
-                    (true, "Google Drive 已连接，可以关闭此页面并回到 Ludonimbus。".to_string())
+                    (true, crate::tr!("Google Drive 已连接，可以关闭此页面并回到 Ludonimbus。", "Google Drive is connected. You can close this page and go back to Ludonimbus."))
                 } else {
                     // e.g. /favicon.ico
                     let mut s = stream;
@@ -117,7 +117,7 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
                     "<!doctype html><meta charset=utf-8><title>Ludonimbus</title>\
                      <body style=\"font-family:system-ui;background:#171a21;color:#c7d5e0;display:grid;place-items:center;height:100vh;margin:0\">\
                      <div style=\"text-align:center\"><h2>{}</h2><p>{}</p></div>",
-                    if ok { "✅ 完成" } else { "⚠️ 未完成" },
+                    if ok { crate::tr!("✅ 完成", "✅ Done") } else { crate::tr!("⚠️ 未完成", "⚠️ Not finished") },
                     msg
                 );
                 let mut s = stream;
@@ -154,7 +154,7 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
         .into_json()?;
     let refresh_token = resp["refresh_token"]
         .as_str()
-        .ok_or_else(|| anyhow!("Google 没有返回 refresh token"))?
+        .ok_or_else(|| anyhow!(crate::tr!("Google 没有返回 refresh token", "Google returned no refresh token")))?
         .to_string();
     let email = resp["id_token"].as_str().and_then(email_from_id_token);
     Ok(Authorized { refresh_token, email })
@@ -183,7 +183,7 @@ pub fn refresh(agent: &ureq::Agent, client: &GoogleClient, refresh_token: &str) 
         .into_json()?;
     let token = resp["access_token"]
         .as_str()
-        .ok_or_else(|| anyhow!("Google 登录已失效，请在设置里重新连接 Google Drive"))?
+        .ok_or_else(|| anyhow!(crate::tr!("Google 登录已失效，请在设置里重新连接 Google Drive", "The Google sign-in has expired. Reconnect Google Drive in Settings")))?
         .to_string();
     Ok((token, resp["expires_in"].as_u64().unwrap_or(3600)))
 }
@@ -194,11 +194,11 @@ pub fn describe(e: ureq::Error) -> anyhow::Error {
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
             if code == 400 && body.contains("invalid_grant") {
-                anyhow!("Google 登录已失效（{code}），请在设置里重新连接 Google Drive")
+                anyhow!(crate::tr!("Google 登录已失效（{code}），请在设置里重新连接 Google Drive", "The Google sign-in has expired ({code}). Reconnect Google Drive in Settings"))
             } else if code >= 500 {
-                anyhow!(super::Unavailable(format!("Google 服务器错误 {code}")))
+                anyhow!(super::Unavailable(crate::tr!("Google 服务器错误 {code}", "Google server error {code}")))
             } else {
-                anyhow!("Google 返回错误 {code}：{}", body.chars().take(400).collect::<String>())
+                anyhow!(crate::tr!("Google 返回错误 {code}：{}", "Google returned error {code}: {}", body.chars().take(400).collect::<String>()))
             }
         }
         ureq::Error::Transport(t) => anyhow!(super::Unavailable(t.to_string())),
@@ -210,20 +210,20 @@ fn entry() -> Result<keyring::Entry> {
 }
 
 pub fn store_refresh_token(token: &str) -> Result<()> {
-    entry()?.set_password(token).context("无法把登录凭据保存到 Windows 凭据管理器")
+    entry()?.set_password(token).context(crate::tr!("无法把登录凭据保存到 Windows 凭据管理器", "Couldn't save the sign-in to Windows Credential Manager"))
 }
 
 pub fn load_refresh_token() -> Result<Option<String>> {
     match entry()?.get_password() {
         Ok(t) => Ok(Some(t)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow!("无法读取登录凭据：{e}")),
+        Err(e) => Err(anyhow!(crate::tr!("无法读取登录凭据：{e}", "Couldn't read the saved sign-in: {e}"))),
     }
 }
 
 pub fn clear_refresh_token() -> Result<()> {
     match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(anyhow!("无法删除登录凭据：{e}")),
+        Err(e) => Err(anyhow!(crate::tr!("无法删除登录凭据：{e}", "Couldn't delete the saved sign-in: {e}"))),
     }
 }

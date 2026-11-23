@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, GameView, Overview, SnapshotMeta, SnapshotSummary } from "../api";
 import { bytes, dateTime, outcomeText, relTime, triggerLabel } from "../format";
+import { msg, useT } from "../i18n";
 import { Badge, Button, Empty, Icon, useUi } from "./ui";
 
 export function Versions({
@@ -15,6 +16,8 @@ export function Versions({
   onChanged: () => Promise<void>;
 }) {
   const ui = useUi();
+  const t = useT();
+  const v = t.versions;
   const [data, setData] = useState<{ snapshots: SnapshotSummary[]; headId: string | null; lastSyncedId: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -48,16 +51,14 @@ export function Versions({
 
   const restore = async (s: SnapshotSummary) => {
     const ok = await ui.confirm({
-      title: "恢复到这个版本？",
+      title: v.restoreTitle,
       text: (
         <>
-          <p>
-            将把「{game.name}」的存档恢复为 <b>{s.deviceName}</b> 在 <b>{dateTime(s.createdAt)}</b> 保存的版本。
-          </p>
-          <p className="muted">当前存档如果云端还没有，会先自动备份成「恢复前保护」版本，不会丢。</p>
+          <p>{v.restoreText(game.name, s.deviceName, dateTime(s.createdAt))}</p>
+          <p className="muted">{v.restoreSafe}</p>
         </>
       ),
-      confirm: "恢复",
+      confirm: v.restore,
     });
     if (!ok) return;
     try {
@@ -81,25 +82,25 @@ export function Versions({
   };
 
   const editComment = async (s: SnapshotSummary) => {
-    const c = await ui.prompt({ title: "版本备注", text: "给这个版本写一句备注。", value: s.comment, placeholder: "备注" });
+    const c = await ui.prompt({ title: v.commentTitle, text: v.commentText, value: s.comment, placeholder: v.comment });
     if (c === null) return;
-    await act(() => api.setSnapshot(game.key, s.id, { comment: c }), "已保存备注");
+    await act(() => api.setSnapshot(game.key, s.id, { comment: c }), msg().versions.commentSaved);
   };
 
   const remove = async (s: SnapshotSummary) => {
     const ok = await ui.confirm({
-      title: "删除这个版本？",
-      text: `${s.deviceName} 在 ${dateTime(s.createdAt)} 保存的版本会从云端永久删除，无法恢复。`,
-      confirm: "删除",
+      title: v.deleteTitle,
+      text: v.deleteText(s.deviceName, dateTime(s.createdAt)),
+      confirm: v.delete,
       danger: true,
     });
-    if (ok) await act(() => api.deleteSnapshot(game.key, s.id), "已删除");
+    if (ok) await act(() => api.deleteSnapshot(game.key, s.id), msg().versions.deleted);
   };
 
   const exportZip = async (s: SnapshotSummary) => {
     try {
       const p = await api.exportSnapshot(game.key, s.id);
-      if (p) ui.toast(`已导出到 ${p}`);
+      if (p) ui.toast(msg().versions.exported(p));
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
@@ -107,17 +108,17 @@ export function Versions({
 
   if (overview.cloud.kind === "none") {
     return (
-      <Empty icon="cloud" title="还没有连接云盘">
-        <p className="muted">在「设置」里连接 Google Drive 或选择一个同步文件夹后，这里会显示所有设备上传的存档版本。</p>
+      <Empty icon="cloud" title={v.noCloudTitle}>
+        <p className="muted">{v.noCloudText}</p>
       </Empty>
     );
   }
   if (error) return <div className="banner banner-bad">{error}</div>;
-  if (!data) return <div className="muted pad">读取版本历史…</div>;
+  if (!data) return <div className="muted pad">{v.loading}</div>;
   if (data.snapshots.length === 0) {
     return (
-      <Empty icon="cloud" title="云端还没有版本">
-        <p className="muted">点「立即同步」或玩一次游戏后，就会出现第一个版本。</p>
+      <Empty icon="cloud" title={v.emptyTitle}>
+        <p className="muted">{v.emptyText}</p>
       </Empty>
     );
   }
@@ -141,45 +142,45 @@ export function Versions({
                 <span className={`device${mine ? " mine" : ""}`}>
                   <Icon name="devices" size={14} />
                   {s.deviceName}
-                  {mine ? "（本机）" : ""}
+                  {mine ? v.mine : ""}
                 </span>
-                <span className="muted">{triggerLabel[s.trigger] ?? s.trigger}</span>
+                <span className="muted">{triggerLabel(s.trigger)}</span>
                 <span className="muted">
-                  {s.fileCount} 个文件 · {bytes(s.totalSize)}
+                  {t.library.files(s.fileCount)} · {bytes(s.totalSize)}
                 </span>
                 <span className="tags">
-                  {isHead && <Badge tone="info">最新</Badge>}
-                  {isCurrent && <Badge tone="ok">本机当前</Badge>}
-                  {s.locked && <Badge tone="muted">已锁定</Badge>}
+                  {isHead && <Badge tone="info">{v.latest}</Badge>}
+                  {isCurrent && <Badge tone="ok">{v.current}</Badge>}
+                  {s.locked && <Badge tone="muted">{v.locked}</Badge>}
                 </span>
               </button>
               <div className="version-actions">
-                <Button small icon="restore" onClick={() => restore(s)} disabled={disabled || isCurrent} title={isCurrent ? "本机已经是这个版本" : "恢复到这个版本"}>
-                  恢复
+                <Button small icon="restore" onClick={() => restore(s)} disabled={disabled || isCurrent} title={isCurrent ? v.alreadyCurrent : v.restoreThis}>
+                  {v.restore}
                 </Button>
-                <button className="icon-btn" title="导出 zip" onClick={() => exportZip(s)}>
+                <button className="icon-btn" title={v.exportZip} onClick={() => exportZip(s)}>
                   <Icon name="download" size={16} />
                 </button>
-                <button className="icon-btn" title="备注" onClick={() => editComment(s)}>
+                <button className="icon-btn" title={v.comment} onClick={() => editComment(s)}>
                   <Icon name="edit" size={16} />
                 </button>
                 <button
                   className="icon-btn"
-                  title={s.locked ? "解锁（允许被自动清理）" : "锁定（永久保留）"}
-                  onClick={() => act(() => api.setSnapshot(game.key, s.id, { locked: !s.locked }), s.locked ? "已解锁" : "已锁定，会永久保留")}
+                  title={s.locked ? v.unlockTitle : v.lockTitle}
+                  onClick={() => act(() => api.setSnapshot(game.key, s.id, { locked: !s.locked }), s.locked ? v.unlocked : v.lockedToast)}
                 >
                   <Icon name={s.locked ? "lock" : "unlock"} size={16} />
                 </button>
-                <button className="icon-btn danger" title="删除" disabled={s.locked || isHead} onClick={() => remove(s)}>
+                <button className="icon-btn danger" title={v.delete} disabled={s.locked || isHead} onClick={() => remove(s)}>
                   <Icon name="trash" size={16} />
                 </button>
               </div>
             </div>
-            {s.comment && <div className="version-comment">“{s.comment}”</div>}
+            {s.comment && <div className="version-comment">{v.quoted(s.comment)}</div>}
             {open === s.id && (
               <div className="version-files">
                 {!meta[s.id] ? (
-                  <span className="muted">读取中…</span>
+                  <span className="muted">{v.reading}</span>
                 ) : (
                   <table className="files">
                     <tbody>

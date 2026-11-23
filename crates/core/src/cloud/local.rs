@@ -37,8 +37,9 @@ impl Store for LocalFolder {
 
     fn check(&self) -> Result<()> {
         if !self.root.is_dir() {
-            return Err(anyhow!(Unavailable(format!(
+            return Err(anyhow!(Unavailable(crate::tr!(
                 "文件夹不存在或无法访问：{}",
+                "The folder doesn't exist or can't be accessed: {}",
                 self.root.display()
             ))));
         }
@@ -74,14 +75,14 @@ impl Store for LocalFolder {
         match std::fs::read(self.abs(path)) {
             Ok(b) => Ok(Some(b)),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(anyhow!(e).context(format!("无法读取 {path}"))),
+            Err(e) => Err(anyhow!(e).context(crate::tr!("无法读取 {path}", "Can't read {path}"))),
         }
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
         self.check()?;
         let src = self.abs(path);
-        std::fs::copy(&src, dest).with_context(|| format!("找不到快照文件 {}", src.display()))?;
+        std::fs::copy(&src, dest).with_context(|| crate::tr!("找不到快照文件 {}", "Snapshot file not found: {}", src.display()))?;
         Ok(())
     }
 
@@ -97,7 +98,7 @@ impl Store for LocalFolder {
             std::fs::create_dir_all(parent)?;
         }
         let tmp = self.abs(&temp_name(path));
-        std::fs::copy(src, &tmp).context("复制快照到云端文件夹失败")?;
+        std::fs::copy(src, &tmp).context(crate::tr!("复制快照到云端文件夹失败", "Couldn't copy the snapshot to the cloud folder"))?;
         std::fs::rename(&tmp, &dest)?;
         Ok(())
     }
@@ -107,7 +108,7 @@ impl Store for LocalFolder {
         match std::fs::remove_file(self.abs(path)) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(anyhow!(e).context(format!("无法删除 {path}"))),
+            Err(e) => Err(anyhow!(e).context(crate::tr!("无法删除 {path}", "Can't delete {path}"))),
         }
     }
 }

@@ -110,15 +110,21 @@ fn check_emulator_overlap(cfg: &AppConfig, adapter: &Adapter, saves: &[String]) 
     }
     let same: Vec<&GameEntry> = cfg.games.iter().filter(|g| g.adapter.as_deref() == Some(adapter.key.as_str())).collect();
     if let Some(g) = same.iter().find(|g| g.saves.is_empty()) {
-        bail!("{} 里所有游戏的存档已经由「{}」一起同步了，不需要再添加", adapter.name, g.name);
+        bail!(crate::tr!("{} 里所有游戏的存档已经由「{}」一起同步了，不需要再添加", "The saves of every game in {} are already synced together by \"{}\"; no need to add this one", adapter.name, g.name));
     }
     if saves.is_empty() && !same.is_empty() {
-        let names: String = same.iter().take(3).map(|g| format!("「{}」", g.name)).collect();
-        let more = if same.len() > 3 { "等游戏" } else { "" };
+        let names: Vec<String> = same.iter().take(3).map(|g| g.name.clone()).collect();
+        let more = same.len() > 3;
+        if crate::i18n::is_en() {
+            let more = if more { " and others" } else { "" };
+            bail!("{}{more} already sync on their own; syncing all of {} as well would duplicate them. Remove them first to sync the whole emulator", names.join(", "), adapter.name);
+        }
+        let names: String = names.iter().map(|n| format!("「{n}」")).collect();
+        let more = if more { "等游戏" } else { "" };
         bail!("{names}{more}已经单独同步了，再同步整个 {} 会重复。要整体同步，请先移除它们", adapter.name);
     }
     if let Some(g) = same.iter().find(|g| g.saves == saves) {
-        bail!("这个游戏的存档已经由「{}」同步了", g.name);
+        bail!(crate::tr!("这个游戏的存档已经由「{}」同步了", "This game's saves are already synced by \"{}\"", g.name));
     }
     Ok(())
 }
@@ -143,7 +149,7 @@ pub struct ShortcutCandidate {
 }
 
 pub fn shortcut_candidates(cfg: &AppConfig, account: &str) -> Result<Vec<ShortcutCandidate>> {
-    let root = steam::root(cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let root = steam::root(cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     let (_, list) = steam::read_shortcuts(&root, account)?;
     Ok(list
         .into_iter()
@@ -160,7 +166,7 @@ pub fn shortcut_candidates(cfg: &AppConfig, account: &str) -> Result<Vec<Shortcu
                 (true, None) => Path::new(&s.exe)
                     .file_stem()
                     .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "未命名游戏".into()),
+                    .unwrap_or_else(|| crate::tr!("未命名游戏", "Untitled game")),
                 (false, _) => s.name.clone(),
             };
             ShortcutCandidate {
@@ -195,11 +201,11 @@ pub struct NewGame {
 /// Add a game from a Steam shortcut.
 pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<GameEntry> {
     let cfg = config::load()?;
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     let sc = steam::find_shortcut(&root, account, appid)?
-        .ok_or_else(|| anyhow!("找不到这个 Steam 快捷方式"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("找不到这个 Steam 快捷方式", "This Steam shortcut wasn't found")))?;
     if sc.wrapped_key().is_some() {
-        bail!("这个快捷方式已经由 Ludonimbus 接管，但本机配置里没有它。请在 Steam 里把目标改回游戏程序后再添加。");
+        bail!(crate::tr!("这个快捷方式已经由 Ludonimbus 接管，但本机配置里没有它。请在 Steam 里把目标改回游戏程序后再添加。", "Ludonimbus already took over this shortcut, but it's missing from this PC's configuration. Point the shortcut back at the game's program in Steam, then add it again."));
     }
     let exe = PathBuf::from(&sc.exe);
     let rec = recognize(&exe, &sc.launch_options, opts.adapter.as_deref());
@@ -209,14 +215,14 @@ pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<Gam
     let from_rule = opts.saves.is_empty();
     let saves = if from_rule { rec.as_ref().map(Recognized::saves).unwrap_or_default() } else { opts.saves.clone() };
     if adapter.is_none() && saves.is_empty() && opts.ludusavi_title.is_none() {
-        bail!("无法自动识别这个游戏的存档位置，请手动指定存档文件夹");
+        bail!(crate::tr!("无法自动识别这个游戏的存档位置，请手动指定存档文件夹", "Couldn't find this game's save location automatically. Choose the save folder yourself"));
     }
     let name = opts
         .name
         .filter(|n| !n.trim().is_empty())
         .or_else(|| (!looks_corrupted(&sc.name)).then(|| sc.name.clone()))
         .or_else(|| rec.as_ref().map(Recognized::default_name))
-        .unwrap_or_else(|| "未命名游戏".to_string());
+        .unwrap_or_else(|| crate::tr!("未命名游戏", "Untitled game"));
     let install = rec.as_ref().filter(|_| from_rule).and_then(|r| r.install.clone());
     let via_launcher = rec.as_ref().is_some_and(|r| r.via_recomplauncher);
     let work_dir = (!sc.start_dir.trim().is_empty()).then(|| PathBuf::from(&sc.start_dir));
@@ -226,7 +232,7 @@ pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<Gam
             .iter()
             .find(|g| g.steam.as_ref().is_some_and(|l| l.appid == appid && l.account == account))
         {
-            bail!("「{}」已经添加过了", g.name);
+            bail!(crate::tr!("「{}」已经添加过了", "\"{}\" is already added", g.name));
         }
         if let Some(a) = adapter {
             check_emulator_overlap(cfg, a, &saves)?;
@@ -239,7 +245,7 @@ pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<Gam
             .unwrap_or_else(|| slugify(&name));
         let key = if opts.key.is_some() { base } else { unique_key(cfg, &base) };
         if cfg.game(&key).is_some() {
-            bail!("本机已经有一个 id 为 {key} 的游戏");
+            bail!(crate::tr!("本机已经有一个 id 为 {key} 的游戏", "This PC already has a game with id {key}"));
         }
         let entry = GameEntry {
             key,
@@ -290,7 +296,7 @@ pub fn add_custom_with(
     let rec = exe.as_deref().and_then(|e| recognize(e, args, rule)).filter(|_| saves.is_empty());
     let saves = if saves.is_empty() { rec.as_ref().map(Recognized::saves).unwrap_or_default() } else { saves };
     if saves.is_empty() && ludusavi_title.is_none() && rec.is_none() {
-        bail!("请至少指定一个存档位置");
+        bail!(crate::tr!("请至少指定一个存档位置", "Choose at least one save location"));
     }
     config::update(|cfg| {
         if let Some(r) = &rec {
@@ -298,7 +304,7 @@ pub fn add_custom_with(
         }
         let key = match key {
             Some(k) if cfg.game(&k).is_none() => k,
-            Some(k) => bail!("本机已经有一个 id 为 {k} 的游戏"),
+            Some(k) => bail!(crate::tr!("本机已经有一个 id 为 {k} 的游戏", "This PC already has a game with id {k}")),
             None => unique_key(cfg, &slugify(name)),
         };
         let entry = GameEntry {
@@ -343,7 +349,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
     }
     config::update(|cfg| {
         if cfg.game(&cg.key).is_some() {
-            bail!("本机已经添加过「{}」", cg.name);
+            bail!(crate::tr!("本机已经添加过「{}」", "\"{}\" is already added on this PC", cg.name));
         }
         let install = exe
             .as_deref()
@@ -371,7 +377,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
 
 pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> Result<GameEntry> {
     config::update(|cfg| {
-        let g = cfg.game_mut(key).ok_or_else(|| anyhow!("找不到游戏 {key}"))?;
+        let g = cfg.game_mut(key).ok_or_else(|| anyhow!(crate::tr!("找不到游戏 {key}", "Game {key} not found")))?;
         f(g)?;
         Ok(g.clone())
     })
@@ -380,7 +386,7 @@ pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> R
 /// Point a game at a new executable (after an update / move).
 pub fn set_exe(key: &str, exe: &Path) -> Result<GameEntry> {
     if !exe.is_file() {
-        bail!("文件不存在：{}", exe.display());
+        bail!(crate::tr!("文件不存在：{}", "The file doesn't exist: {}", exe.display()));
     }
     // An Xbox app game's own program cannot be started from outside.
     let exe = &crate::xbox::launchable(exe.to_path_buf());
@@ -411,7 +417,7 @@ pub fn remove(key: &str) -> Result<()> {
     let cfg = config::load()?;
     let g = cfg.require_game(key)?;
     if g.steam.as_ref().is_some_and(|l| l.enabled) {
-        bail!("请先关闭这个游戏的 Steam 自动同步（会把快捷方式恢复原样），再移除");
+        bail!(crate::tr!("请先关闭这个游戏的 Steam 自动同步（会把快捷方式恢复原样），再移除", "Turn off Steam auto-sync for this game first (this restores the shortcut), then remove it"));
     }
     config::update(|cfg| {
         cfg.games.retain(|g| g.key != key);
@@ -460,7 +466,7 @@ pub fn add_found(f: &Found, c: FoundChoice) -> Result<GameEntry> {
     // Save places the scan found (e.g. picked in RecompLauncher) when there is no rule.
     let saves = if c.saves.is_empty() && !has_rule { f.saves.clone() } else { c.saves };
     if !has_rule && saves.is_empty() && title.is_none() {
-        bail!("还不知道「{name}」的存档在哪里，请先指定存档位置");
+        bail!(crate::tr!("还不知道「{name}」的存档在哪里，请先指定存档位置", "It's not known yet where \"{name}\" keeps its saves. Choose the save location first"));
     }
     let title = if has_rule || !saves.is_empty() { None } else { title };
     let g = add_custom_with(&name, exe.clone(), &f.args, rule, saves, title, None)?;
@@ -483,9 +489,9 @@ fn add_emulator_game(f: &Found, name: String, exe: Option<PathBuf>) -> Result<Ga
         .as_deref()
         .and_then(adapters::find)
         .filter(|a| a.is_emulator())
-        .ok_or_else(|| anyhow!("不认识「{name}」所在的模拟器"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("不认识「{name}」所在的模拟器", "The emulator of \"{name}\" isn't recognized")))?;
     if f.saves.is_empty() {
-        bail!("还不知道「{name}」的存档在哪里");
+        bail!(crate::tr!("还不知道「{name}」的存档在哪里", "It's not known yet where \"{name}\" keeps its saves"));
     }
     let exe_dir = exe.as_deref().and_then(Path::parent).map(Path::to_path_buf);
     let install = f.install.as_ref().map(PathBuf::from).filter(|i| i.is_dir() && Some(i) != exe_dir.as_ref());
@@ -515,17 +521,17 @@ pub fn add_to_steam(key: &str, account: &str) -> Result<u32> {
     let cfg = config::load()?;
     let g = cfg.require_game(key)?.clone();
     if g.steam.is_some() {
-        bail!("「{}」已经关联了 Steam 快捷方式", g.name);
+        bail!(crate::tr!("「{}」已经关联了 Steam 快捷方式", "\"{}\" is already linked to a Steam shortcut", g.name));
     }
     let exe = g
         .exe
         .clone()
         .filter(|e| e.is_file())
-        .ok_or_else(|| anyhow!("「{}」还没有设置游戏程序，Steam 需要知道启动哪个程序", g.name))?;
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("「{}」还没有设置游戏程序，Steam 需要知道启动哪个程序", "\"{}\" has no program set yet; Steam needs to know which program to start", g.name)))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     let runner = paths::runner_exe();
     if !runner.is_file() {
-        bail!("找不到启动包装器 {}，请重新安装 Ludonimbus", runner.display());
+        bail!(crate::tr!("找不到启动包装器 {}，请重新安装 Ludonimbus", "The launch wrapper {} is missing. Please reinstall Ludonimbus", runner.display()));
     }
     let exe_s = exe.to_string_lossy().into_owned();
     let work_dir = g
@@ -574,11 +580,11 @@ pub fn add_to_steam(key: &str, account: &str) -> Result<u32> {
 pub fn remove_from_steam(key: &str) -> Result<()> {
     let cfg = config::load()?;
     let g = cfg.require_game(key)?.clone();
-    let link = g.steam.clone().ok_or_else(|| anyhow!("这个游戏没有关联 Steam 快捷方式"))?;
+    let link = g.steam.clone().ok_or_else(|| anyhow!(crate::tr!("这个游戏没有关联 Steam 快捷方式", "This game isn't linked to a Steam shortcut")))?;
     if !link.created {
-        bail!("这个 Steam 快捷方式不是 Ludonimbus 创建的，请在 Steam 里删除");
+        bail!(crate::tr!("这个 Steam 快捷方式不是 Ludonimbus 创建的，请在 Steam 里删除", "Ludonimbus didn't create this Steam shortcut. Delete it in Steam"));
     }
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     steam::remove_shortcut(&root, &link.account, link.appid)?;
     update_game(key, |e| {
         e.steam = None;
@@ -607,8 +613,8 @@ pub fn set_art(key: &str, kind: &str, src: &Path) -> Result<()> {
 pub fn steam_enable(key: &str) -> Result<()> {
     let cfg = config::load()?;
     let g = cfg.require_game(key)?;
-    let link = g.steam.clone().ok_or_else(|| anyhow!("这个游戏没有关联 Steam 快捷方式"))?;
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let link = g.steam.clone().ok_or_else(|| anyhow!(crate::tr!("这个游戏没有关联 Steam 快捷方式", "This game isn't linked to a Steam shortcut")))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     let original = steam::wrap(&root, &link.account, link.appid, key, &paths::runner_exe())?;
     update_game(key, |e| {
         if let Some(l) = e.steam.as_mut() {
@@ -626,8 +632,8 @@ pub fn steam_enable(key: &str) -> Result<()> {
 pub fn steam_disable(key: &str) -> Result<()> {
     let cfg = config::load()?;
     let g = cfg.require_game(key)?.clone();
-    let link = g.steam.clone().ok_or_else(|| anyhow!("这个游戏没有关联 Steam 快捷方式"))?;
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let link = g.steam.clone().ok_or_else(|| anyhow!(crate::tr!("这个游戏没有关联 Steam 快捷方式", "This game isn't linked to a Steam shortcut")))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     if steam::find_shortcut(&root, &link.account, link.appid)?.is_some() {
         steam::unwrap(&root, &link.account, link.appid, &g, link.original.as_ref())?;
     }
@@ -646,7 +652,7 @@ pub fn steam_disable(key: &str) -> Result<()> {
 pub fn steam_repair(key: &str) -> Result<()> {
     let cfg = config::load()?;
     let g = cfg.require_game(key)?.clone();
-    let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+    let root = steam::root(&cfg).ok_or_else(|| anyhow!(crate::tr!("没有找到 Steam", "Steam not found")))?;
     match steam::health(&cfg, &g) {
         steam::Health::Ok => Ok(()),
         steam::Health::Changed { exe, launch_options } => {
@@ -676,9 +682,9 @@ pub fn steam_repair(key: &str) -> Result<()> {
             steam_repair(key)
         }
         steam::Health::ShortcutMissing { candidate_appid: None } => {
-            bail!("Steam 里找不到这个游戏的快捷方式了，请在 Steam 中重新添加后再关联")
+            bail!(crate::tr!("Steam 里找不到这个游戏的快捷方式了，请在 Steam 中重新添加后再关联", "The game's shortcut is no longer in Steam. Add it in Steam again, then link it"))
         }
-        steam::Health::NotLinked => bail!("这个游戏没有关联 Steam 快捷方式"),
-        steam::Health::NoSteam => bail!("没有找到 Steam"),
+        steam::Health::NotLinked => bail!(crate::tr!("这个游戏没有关联 Steam 快捷方式", "This game isn't linked to a Steam shortcut")),
+        steam::Health::NoSteam => bail!(crate::tr!("没有找到 Steam", "Steam not found")),
     }
 }

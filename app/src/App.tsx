@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport, UpdateInfo } from "./api";
 import { AddGame } from "./components/AddGame";
+import { Onboarding } from "./components/Onboarding";
 import { Devices } from "./components/Devices";
 import { GameDetail } from "./components/GameDetail";
 import { Library } from "./components/Library";
@@ -9,11 +10,13 @@ import { SettingsPage } from "./components/Settings";
 import { Icon, Spinner, useUi } from "./components/ui";
 import { UpdateDialog } from "./components/Update";
 import { outcomeText } from "./format";
+import { msg, useT } from "./i18n";
 
 export type Page = { name: "library" } | { name: "game"; key: string } | { name: "devices" } | { name: "settings" };
 
 export default function App() {
   const ui = useUi();
+  const t = useT();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [checks, setChecks] = useState<Record<string, StatusReport>>({});
   const [checking, setChecking] = useState<Record<string, boolean>>({});
@@ -22,6 +25,7 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [showUpdate, setShowUpdate] = useState(false);
+  const [guide, setGuide] = useState(false);
   const checkingRef = useRef<Record<string, boolean>>({});
 
   const reload = useCallback(async () => {
@@ -96,7 +100,7 @@ export default function App() {
       }).then((u) => unlisten.push(u));
       listen<{ key: string; name: string; outcome: Outcome | null; error: string | null }>("sync-finished", (e) => {
         const { key, name, outcome, error } = e.payload;
-        if (error) ui.toast(`「${name}」后台同步失败：${error}`, "bad");
+        if (error) ui.toast(msg().app.backgroundSyncFailed(name, error), "bad");
         else if (outcome && outcome.kind !== "upToDate")
           ui.toast(outcomeText(outcome, name), outcome.kind === "conflict" ? "warn" : "ok");
         reload();
@@ -114,6 +118,32 @@ export default function App() {
       clearInterval(recheck);
     };
   }, [refresh, reload, check, checkAll, ui]);
+
+  // First-run guide: only for someone who has not used Ludonimbus yet
+  // (no cloud, no games). The browser preview shows it with ?guide.
+  const guideChecked = useRef(false);
+  useEffect(() => {
+    if (!overview || guideChecked.current) return;
+    guideChecked.current = true;
+    api.onboarding().then(
+      (o) => {
+        const preview = !inTauri && new URLSearchParams(location.search).has("guide");
+        if (!o.doneAt && (preview || (overview.cloud.kind === "none" && overview.games.length === 0))) setGuide(true);
+      },
+      () => undefined,
+    );
+  }, [overview]);
+
+  const finishGuide = async (usage: string[], next: "library" | "scan" | "settings") => {
+    setGuide(false);
+    await api.finishOnboarding(usage).catch(() => undefined);
+    if (next === "scan") {
+      setPage({ name: "library" });
+      setAdding(true);
+    } else if (next === "settings") {
+      setPage({ name: "settings" });
+    }
+  };
 
   // Check for app updates shortly after start, then every 6 hours.
   useEffect(() => {
@@ -140,15 +170,15 @@ export default function App() {
           <span>Ludonimbus</span>
         </div>
         <nav>
-          <NavItem icon="library" label="游戏库" active={page.name === "library" || page.name === "game"} onClick={() => setPage({ name: "library" })} />
-          <NavItem icon="devices" label="设备" active={page.name === "devices"} onClick={() => setPage({ name: "devices" })} />
-          <NavItem icon="settings" label="设置" active={page.name === "settings"} onClick={() => setPage({ name: "settings" })} />
+          <NavItem icon="library" label={t.app.nav.library} active={page.name === "library" || page.name === "game"} onClick={() => setPage({ name: "library" })} />
+          <NavItem icon="devices" label={t.app.nav.devices} active={page.name === "devices"} onClick={() => setPage({ name: "devices" })} />
+          <NavItem icon="settings" label={t.app.nav.settings} active={page.name === "settings"} onClick={() => setPage({ name: "settings" })} />
         </nav>
         <div className="sidebar-foot">
           {update && (
             <button className="update-chip" onClick={() => setShowUpdate(true)}>
               <Icon name="download" size={16} />
-              <span>新版本 {update.version} 可用</span>
+              <span>{t.app.updateAvailable(update.version)}</span>
             </button>
           )}
           {overview && (
@@ -156,29 +186,29 @@ export default function App() {
               <Icon name="cloud" size={16} />
               <span>
                 {overview.cloud.kind === "none"
-                  ? "未连接云盘"
+                  ? t.app.cloud.none
                   : overview.cloud.error
-                    ? "云盘需要重新连接"
+                    ? t.app.cloud.reconnect
                     : overview.cloud.kind === "googleDrive"
                       ? overview.cloud.label ?? "Google Drive"
                       : overview.cloud.kind === "baiduPan"
-                        ? overview.cloud.label ?? "百度网盘"
+                        ? overview.cloud.label ?? t.cloudNames.baiduPan
                         : overview.cloud.kind === "webDav"
-                        ? "WebDAV"
-                        : overview.cloud.kind === "s3"
-                          ? "S3 存储"
-                          : "本地/同步文件夹"}
+                          ? "WebDAV"
+                          : overview.cloud.kind === "s3"
+                            ? t.app.cloud.s3
+                            : t.app.cloud.folder}
               </span>
             </button>
           )}
-          {overview && <div className="device-name">本机：{overview.deviceName}</div>}
+          {overview && <div className="device-name">{t.app.thisDevice(overview.deviceName)}</div>}
         </div>
       </aside>
 
       <main className="main">
         {loadError && (
           <div className="banner banner-bad">
-            <Icon name="warn" /> 加载失败：{loadError}
+            <Icon name="warn" /> {t.app.loadFailed(loadError)}
           </div>
         )}
         {!overview && !loadError && (
@@ -216,13 +246,14 @@ export default function App() {
           />
         )}
         {overview && page.name === "game" && !game && (
-          <div className="center muted">这个游戏已经不在库里了。</div>
+          <div className="center muted">{t.app.gameGone}</div>
         )}
         {page.name === "devices" && <Devices overview={overview} />}
-        {page.name === "settings" && <SettingsPage onChanged={refresh} />}
+        {page.name === "settings" && <SettingsPage onChanged={refresh} onGuide={() => setGuide(true)} />}
       </main>
 
       {showUpdate && update && <UpdateDialog info={update} onClose={() => setShowUpdate(false)} />}
+      {guide && <Onboarding onFinish={finishGuide} onChanged={refresh} />}
 
       {adding && overview && (
         <AddGame

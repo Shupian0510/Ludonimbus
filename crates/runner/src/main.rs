@@ -52,11 +52,11 @@ fn parse_args(args: &[String]) -> Result<(String, Option<Vec<String>>)> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--game" => key = it.next().cloned(),
-            "--" => return Ok((key.ok_or_else(|| anyhow!("缺少 --game"))?, Some(it.cloned().collect()))),
+            "--" => return Ok((key.ok_or_else(|| anyhow!(ludonimbus_core::tr!("缺少 --game", "Missing --game")))?, Some(it.cloned().collect()))),
             _ => {}
         }
     }
-    Ok((key.ok_or_else(|| anyhow!("用法：ludonimbus-run --game <游戏 id>"))?, None))
+    Ok((key.ok_or_else(|| anyhow!(ludonimbus_core::tr!("用法：ludonimbus-run --game <游戏 id>", "Usage: ludonimbus-run --game <game id>")))?, None))
 }
 
 /// Ask a yes/no question.
@@ -81,16 +81,17 @@ fn ensure_exe(game: &mut GameEntry) -> Result<()> {
         .exe
         .as_ref()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "（未设置）".into());
+        .unwrap_or_else(|| ludonimbus_core::tr!("（未设置）", "(not set)"));
     log(format!("{}: exe missing at {old}", game.key));
 
     if let Some(candidate) = relocate::find_candidate(game) {
-        let text = format!(
+        let text = ludonimbus_core::tr!(
             "找不到「{}」原来的位置：\n{old}\n\n在附近找到了：\n{}\n\n是否改用这个位置？（如果新文件夹里没有存档，会自动从云端恢复）",
+            "The old location of \"{}\" is gone:\n{old}\n\nFound nearby:\n{}\n\nUse this location? (If the new folder has no saves, they are restored from the cloud.)",
             game.name,
             candidate.display()
         );
-        if confirm("Ludonimbus · 游戏位置变了", &text) {
+        if confirm(&ludonimbus_core::tr!("Ludonimbus · 游戏位置变了", "Ludonimbus · The game has moved"), &text) {
             *game = games::set_exe(&game.key, &candidate)?;
             log(format!("{}: relocated to {}", game.key, candidate.display()));
             return Ok(());
@@ -104,8 +105,8 @@ fn ensure_exe(game: &mut GameEntry) -> Result<()> {
         .and_then(|p| p.ancestors().find(|a| a.is_dir()))
         .map(Path::to_path_buf);
     let mut dialog = rfd::FileDialog::new()
-        .set_title(format!("找不到「{}」，请选择新的游戏程序", game.name))
-        .add_filter("程序", &["exe", "bat", "cmd", "lnk"]);
+        .set_title(ludonimbus_core::tr!("找不到「{}」，请选择新的游戏程序", "Can't find \"{}\". Choose its program again", game.name))
+        .add_filter(ludonimbus_core::tr!("程序", "Programs"), &["exe", "bat", "cmd", "lnk"]);
     if let Some(d) = start_dir {
         dialog = dialog.set_directory(d);
     }
@@ -115,7 +116,7 @@ fn ensure_exe(game: &mut GameEntry) -> Result<()> {
             log(format!("{}: user picked {}", game.key, p.display()));
             Ok(())
         }
-        None => bail!("已取消：找不到「{}」的游戏程序", game.name),
+        None => bail!(ludonimbus_core::tr!("已取消：找不到「{}」的游戏程序", "Cancelled: the program of \"{}\" wasn't found", game.name)),
     }
 }
 
@@ -134,8 +135,9 @@ enum Choice {
 }
 
 fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &ludonimbus_core::snapshot::SnapshotSummary) -> Choice {
-    let text = format!(
+    let text = ludonimbus_core::tr!(
         "「{}」的存档在本机和云端都有新的改动。\n\n云端：{} 于 {} 保存（{} 个文件，{}）\n本机：{} 个文件，{}\n\n请选择这次要使用哪一份。没选的那份也会保存在版本历史里，随时可以恢复。",
+        "Both this PC and the cloud have new changes to the saves of \"{}\".\n\nCloud: saved by {} at {} ({} files, {})\nThis PC: {} files, {}\n\nChoose which one to use this time. The other one is kept in the version history and can be restored at any time.",
         game.name,
         cloud.device_name,
         cloud.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M"),
@@ -144,11 +146,11 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
         local_files,
         human(local_size),
     );
-    let cloud_label = "使用云端存档".to_string();
-    let local_label = "使用本机存档".to_string();
-    let cancel_label = "暂不启动".to_string();
+    let cloud_label = ludonimbus_core::tr!("使用云端存档", "Use cloud saves");
+    let local_label = ludonimbus_core::tr!("使用本机存档", "Use this PC's saves");
+    let cancel_label = ludonimbus_core::tr!("暂不启动", "Don't start");
     let result = MessageDialog::new()
-        .set_title("Ludonimbus · 存档冲突")
+        .set_title(ludonimbus_core::tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"))
         .set_description(text)
         .set_level(MessageLevel::Warning)
         .set_buttons(MessageButtons::YesNoCancelCustom(
@@ -234,7 +236,10 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(out) => log(format!("{key}: pre-launch {out:?}")),
             Err(e) => {
                 log(format!("{key}: pre-launch sync failed: {e:#}"));
-                let text = format!("启动前同步存档失败：\n{e:#}\n\n仍然启动游戏吗？退出游戏后会再尝试上传。");
+                let text = ludonimbus_core::tr!(
+                    "启动前同步存档失败：\n{e:#}\n\n仍然启动游戏吗？退出游戏后会再尝试上传。",
+                    "Syncing saves before launch failed:\n{e:#}\n\nStart the game anyway? Ludonimbus will try to upload again after you quit."
+                );
                 if !confirm("Ludonimbus", &text) {
                     return Ok(0);
                 }
@@ -297,9 +302,10 @@ fn run(args: &[String]) -> Result<i32> {
             Ok(Outcome::Conflict { cloud, .. }) => {
                 log(format!("{key}: post-exit conflict"));
                 MessageDialog::new()
-                    .set_title("Ludonimbus · 存档冲突")
-                    .set_description(format!(
+                    .set_title(ludonimbus_core::tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"))
+                    .set_description(ludonimbus_core::tr!(
                         "玩游戏期间，{} 也上传了「{}」的新存档。\n\n两份存档都已保存到云端。下次启动时会让你选择使用哪一份，也可以在 Ludonimbus 里处理。",
+                        "While you were playing, {} also uploaded new saves of \"{}\".\n\nBoth are kept in the cloud. You'll be asked which one to use the next time you start the game, or you can sort it out in Ludonimbus.",
                         cloud.device_name, game.name
                     ))
                     .set_level(MessageLevel::Warning)

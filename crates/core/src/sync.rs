@@ -365,9 +365,9 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
         Resolution::UseCloud => return pull(ctx, cloud, game, &local, &list, &head),
         Resolution::UseLocal => {
             if local.is_empty() {
-                bail!("本地没有存档，不能以本地为准");
+                bail!(crate::tr!("本地没有存档，不能以本地为准", "There are no local saves to keep"));
             }
-            return upload_local(ctx, cloud, game, &local, Some(head.id.clone()), Trigger::Manual, "冲突时选择保留本地存档");
+            return upload_local(ctx, cloud, game, &local, Some(head.id.clone()), Trigger::Manual, &crate::tr!("冲突时选择保留本地存档", "Kept this PC's saves in a conflict"));
         }
         Resolution::Auto => {}
     }
@@ -493,7 +493,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
 pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome> {
     let local = snapshot::local_state(game)?;
     if local.is_empty() {
-        bail!("没有找到「{}」的存档文件", game.name);
+        bail!(crate::tr!("没有找到「{}」的存档文件", "No save files of \"{}\" found", game.name));
     }
     let cloud = ctx.cloud()?;
     let head = match cloud.list_snapshots(&game.key) {
@@ -513,7 +513,7 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
         .iter()
         .find(|s| s.id == id)
         .cloned()
-        .ok_or_else(|| anyhow!("云端找不到这个版本"))?;
+        .ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
     let local = snapshot::local_state(game)?;
     let head = mainline_head(&list);
     let outcome = pull(ctx, cloud, game, &local, &list, &target)?;
@@ -522,8 +522,9 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     }
     // Make the restored content the head so the next sync keeps it.
     let restored = snapshot::local_state(game)?;
-    let comment = format!(
+    let comment = crate::tr!(
         "恢复自 {} 在 {} 的版本",
+        "Restored from the version {} saved at {}",
         target.device_name,
         target.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
     );
@@ -592,12 +593,12 @@ pub fn set_snapshot_flags(ctx: &Ctx, game: &GameEntry, id: &str, locked: Option<
 pub fn delete_snapshot(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<()> {
     let cloud = ctx.cloud()?;
     let list = cloud.list_snapshots(&game.key)?;
-    let s = list.iter().find(|s| s.id == id).ok_or_else(|| anyhow!("找不到这个版本"))?;
+    let s = list.iter().find(|s| s.id == id).ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
     if s.locked {
-        bail!("这个版本已锁定，请先解锁");
+        bail!(crate::tr!("这个版本已锁定，请先解锁", "This version is locked. Unlock it first"));
     }
     if mainline_head(&list).is_some_and(|h| h.id == id) {
-        bail!("不能删除最新版本");
+        bail!(crate::tr!("不能删除最新版本", "The latest version can't be deleted"));
     }
     cloud.delete(&game.key, id)
 }

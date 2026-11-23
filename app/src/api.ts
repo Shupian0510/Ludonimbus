@@ -482,6 +482,10 @@ export const api = {
   steamPluginInstall: (closeSteam: boolean) =>
     invoke<{ millenniumInstalled: string | null; steamRestarted: boolean }>("steam_plugin_install", { closeSteam }),
   steamPluginRemove: (closeSteam: boolean) => invoke<void>("steam_plugin_remove", { closeSteam }),
+  language: () => invoke<string>("get_language"),
+  onboarding: () => invoke<{ doneAt: string | null; usage: string[] }>("get_onboarding"),
+  finishOnboarding: (usage: string[]) => invoke<void>("finish_onboarding", { usage }),
+  setLanguage: (language: string) => invoke<void>("set_language", { language }),
   checkUpdate: () => invoke<UpdateInfo>("check_update"),
   installUpdate: () => invoke<void>("install_update"),
 };

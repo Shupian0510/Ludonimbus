@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, SaveCandidate } from "../api";
 import { bytes, relTime } from "../format";
+import { msg, useT } from "../i18n";
 import { Button, Icon, Spinner, useUi } from "./ui";
 
 export interface FinderGame {
@@ -19,8 +20,10 @@ export interface FinderChoice {
 const BIG = 200 * 1024 * 1024;
 
 /** Guided setup for a game whose save location Ludonimbus does not know. */
-export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { game: FinderGame; onBack: () => void; onDone: (c: FinderChoice) => Promise<void>; submitText?: string }) {
+export function SaveFinder({ game, onBack, onDone, submitText }: { game: FinderGame; onBack: () => void; onDone: (c: FinderChoice) => Promise<void>; submitText?: string }) {
   const ui = useUi();
+  const t = useT();
+  const f = t.saveFinder;
   const [name, setName] = useState(game.name);
   const [picked, setPicked] = useState<Map<string, SaveCandidate | null>>(new Map());
   const [suggestions, setSuggestions] = useState<SaveCandidate[] | null>(null);
@@ -68,7 +71,7 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
     try {
       const found = await api.saveWatchStop();
       setWatched(found);
-      if (found.length === 0) ui.toast("没有发现明显的存档变化，可以再试一次，或者手动选择文件夹", "bad");
+      if (found.length === 0) ui.toast(msg().saveFinder.nothingChanged, "bad");
     } catch (e) {
       ui.toast(errorText(e), "bad");
     } finally {
@@ -78,7 +81,7 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
 
   const pickManual = async () => {
     const start = game.install ?? (game.exe ? game.exe.replace(/[\\/][^\\/]*$/, "") : null);
-    const dir = await api.pickFolder("选择存档文件夹", start);
+    const dir = await api.pickFolder(msg().saveFinder.pickTitle, start);
     if (dir) setPicked(new Map(picked).set(dir, null));
   };
 
@@ -100,10 +103,10 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
         <div className="add-info">
           <code className="path small">{c.path}</code>
           <span className="muted small">
-            {c.files} 个文件 · {bytes(c.bytes)}
-            {c.modified ? ` · ${relTime(c.modified)}修改` : ""} · {c.reason}
+            {t.library.files(c.files)} · {bytes(c.bytes)}
+            {c.modified ? ` · ${f.modified(relTime(c.modified))}` : ""} · {c.reason}
           </span>
-          {c.sample.length > 0 && <span className="muted small">例如：{c.sample.join("、")}</span>}
+          {c.sample.length > 0 && <span className="muted small">{f.sample(c.sample)}</span>}
         </div>
       </label>
     ));
@@ -111,39 +114,39 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
   return (
     <div className="finder">
       <button className="link" onClick={onBack}>
-        ← 返回列表
+        {f.backToList}
       </button>
       <div className="form compact">
         <label>
-          <span>名称</span>
-          <input className="input" value={name} placeholder="游戏名称" onChange={(e) => setName(e.target.value)} />
+          <span>{f.name}</span>
+          <input className="input" value={name} placeholder={f.namePlaceholder} onChange={(e) => setName(e.target.value)} />
         </label>
         {game.exe && (
           <label>
-            <span>游戏程序</span>
+            <span>{f.program}</span>
             <code className="path small">{game.exe}</code>
           </label>
         )}
       </div>
 
       <section className="finder-section">
-        <h4>1. 在 Ludusavi 数据库里找</h4>
-        <p className="muted small">收录了上万款 PC 游戏的存档位置。找到就不用自己选文件夹。</p>
+        <h4>{f.s1Title}</h4>
+        <p className="muted small">{f.s1Text}</p>
         <div className="row">
           <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
           <Button small icon="search" onClick={search}>
-            搜索
+            {t.art.search}
           </Button>
         </div>
         {!titles ? (
           <Spinner />
         ) : titles.length === 0 ? (
-          <p className="muted small">没有找到。</p>
+          <p className="muted small">{f.noneFound}</p>
         ) : (
           <div className="chips">
-            {titles.slice(0, 8).map((t) => (
-              <button key={t} className={`chip${title === t ? " on" : ""}`} onClick={() => setTitle(title === t ? null : t)}>
-                {title === t && <Icon name="check" size={12} />} {t}
+            {titles.slice(0, 8).map((tt) => (
+              <button key={tt} className={`chip${title === tt ? " on" : ""}`} onClick={() => setTitle(title === tt ? null : tt)}>
+                {title === tt && <Icon name="check" size={12} />} {tt}
               </button>
             ))}
           </div>
@@ -151,28 +154,26 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
       </section>
 
       <section className="finder-section">
-        <h4>2. 常见的存档位置</h4>
-        <p className="muted small">文档、保存的游戏、AppData 和游戏目录里名字相近的文件夹，最近修改的排在前面。</p>
-        {!suggestions ? <Spinner /> : suggestions.length === 0 ? <p className="muted small">没有找到名字相近的文件夹。</p> : candidateList(suggestions)}
+        <h4>{f.s2Title}</h4>
+        <p className="muted small">{f.s2Text}</p>
+        {!suggestions ? <Spinner /> : suggestions.length === 0 ? <p className="muted small">{f.s2None}</p> : candidateList(suggestions)}
       </section>
 
       <section className="finder-section">
-        <h4>3. 玩一下再找</h4>
-        <p className="muted small">
-          开始记录后{game.exe ? "会启动游戏" : "请自己打开游戏"}，进游戏玩一会儿并存一次档，退出游戏后点「完成」。Ludonimbus 会列出这段时间被写入的文件夹（已排除缓存、日志等）。
-        </p>
+        <h4>{f.s3Title}</h4>
+        <p className="muted small">{f.s3Text(!!game.exe)}</p>
         {watching ? (
           <div className="banner banner-info">
             <span className="spinner" />
-            <span>正在记录文件变化…存档并退出游戏后点完成。</span>
+            <span>{f.watching}</span>
             <Button small kind="primary" icon="check" onClick={stopWatch}>
-              完成
+              {f.done}
             </Button>
           </div>
         ) : (
           <div className="row">
             <Button small icon="play" onClick={startWatch}>
-              {game.exe ? "开始记录并启动游戏" : "开始记录"}
+              {game.exe ? f.startWithGame : f.start}
             </Button>
           </div>
         )}
@@ -180,10 +181,10 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
       </section>
 
       <section className="finder-section">
-        <h4>4. 自己选择文件夹</h4>
+        <h4>{f.s4Title}</h4>
         <div className="row">
           <Button small icon="folder" onClick={pickManual}>
-            选择文件夹…
+            {f.pickFolder}
           </Button>
         </div>
         {[...picked.entries()]
@@ -200,11 +201,11 @@ export function SaveFinder({ game, onBack, onDone, submitText = "添加" }: { ga
 
       <div className="finder-foot">
         <span className="muted small">
-          {picked.size > 0 ? `已选 ${picked.size} 个存档文件夹` : title ? `使用 Ludusavi 数据库：${title}` : "还没有选择存档位置"}
+          {picked.size > 0 ? f.picked(picked.size) : title ? f.usingLudusavi(title) : f.nothingPicked}
         </span>
-        {big && <span className="health health-warn small">选中的文件夹超过 200 MB，可能选到了整个游戏目录</span>}
+        {big && <span className="health health-warn small">{f.big}</span>}
         <Button kind="primary" icon="plus" onClick={submit} disabled={(picked.size === 0 && !title) || !name.trim()}>
-          {submitText}
+          {submitText ?? f.add}
         </Button>
       </div>
     </div>

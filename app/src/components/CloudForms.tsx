@@ -2,63 +2,60 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgress, S3Config, Settings, WebDavConfig } from "../api";
 import { bytes } from "../format";
+import { Messages, msg, useI18n, useT } from "../i18n";
 import { Button, Toggle, useUi } from "./ui";
 
 type Preset<T> = { label: string; apply: (c: T) => T; hint: string };
 
-const WEBDAV_PRESETS: Preset<WebDavConfig>[] = [
-  {
-    label: "坚果云",
-    apply: (c) => ({ ...c, url: "https://dav.jianguoyun.com/dav/" }),
-    hint: "用户名是坚果云账号邮箱；密码要用「账户信息 → 安全选项 → 第三方应用管理」里生成的应用密码，不是登录密码。",
-  },
-  {
-    label: "群晖 NAS",
-    apply: (c) => ({ ...c, url: "https://<NAS 地址>:5006/", folder: "<共享文件夹>/Ludonimbus" }),
-    hint: "先在套件中心安装并启用「WebDAV Server」。文件夹要放在一个你有读写权限的共享文件夹下面。",
-  },
-  {
-    label: "OpenList / AList",
-    apply: (c) => ({ ...c, url: "http://<地址>:5244/dav/", folder: "<挂载的网盘>/Ludonimbus" }),
-    hint: "可以把百度网盘、阿里云盘、夸克等挂载到 OpenList / AList，再用它的 WebDAV 接入。文件夹写在挂载的网盘下面。速度和稳定性取决于对应网盘。",
-  },
-  {
-    label: "Nextcloud",
-    apply: (c) => ({ ...c, url: "https://<服务器>/remote.php/dav/files/<用户名>/" }),
-    hint: "开启了两步验证时，请在 Nextcloud 的安全设置里生成一个应用密码。",
-  },
-];
+function webdavPresets(t: Messages): Preset<WebDavConfig>[] {
+  const p = t.cloud.presets;
+  return [
+    { label: p.jianguoyun.label, apply: (c) => ({ ...c, url: "https://dav.jianguoyun.com/dav/" }), hint: p.jianguoyun.hint },
+    {
+      label: p.synology.label,
+      apply: (c) => ({ ...c, url: `https://<${p.nasAddress}>:5006/`, folder: `<${p.sharedFolder}>/Ludonimbus` }),
+      hint: p.synology.hint,
+    },
+    {
+      label: "OpenList / AList",
+      apply: (c) => ({ ...c, url: `http://<${p.address}>:5244/dav/`, folder: `<${p.mountedDrive}>/Ludonimbus` }),
+      hint: p.openlist.hint,
+    },
+    {
+      label: "Nextcloud",
+      apply: (c) => ({ ...c, url: `https://<${p.server}>/remote.php/dav/files/<${p.username}>/` }),
+      hint: p.nextcloud.hint,
+    },
+  ];
+}
 
-const S3_PRESETS: Preset<S3Config>[] = [
-  {
-    label: "MinIO（NAS）",
-    apply: (c) => ({ ...c, endpoint: "http://<NAS 地址>:9000", region: "", pathStyle: true }),
-    hint: "MinIO 通常需要打开「路径风格访问」。",
-  },
-  {
-    label: "阿里云 OSS",
-    apply: (c) => ({ ...c, endpoint: "https://oss-cn-hangzhou.aliyuncs.com", pathStyle: false }),
-    hint: "Endpoint 换成 Bucket 所在地域的地址。建议用只允许访问这个 Bucket 的 RAM 子账号密钥。",
-  },
-  {
-    label: "腾讯云 COS",
-    apply: (c) => ({ ...c, endpoint: "https://cos.ap-guangzhou.myqcloud.com", region: "ap-guangzhou", pathStyle: false }),
-    hint: "Endpoint 和区域换成 Bucket 所在地域。Bucket 名称要带上 -APPID 后缀。",
-  },
-  {
-    label: "Cloudflare R2",
-    apply: (c) => ({ ...c, endpoint: "https://<账号 ID>.r2.cloudflarestorage.com", region: "auto", pathStyle: false }),
-    hint: "在 R2 里创建 API 令牌，得到 Access Key 和 Secret Key。",
-  },
-];
+function s3Presets(t: Messages): Preset<S3Config>[] {
+  const p = t.cloud.presets;
+  return [
+    { label: p.minio.label, apply: (c) => ({ ...c, endpoint: `http://<${p.nasAddress}>:9000`, region: "", pathStyle: true }), hint: p.minio.hint },
+    { label: p.oss.label, apply: (c) => ({ ...c, endpoint: "https://oss-cn-hangzhou.aliyuncs.com", pathStyle: false }), hint: p.oss.hint },
+    {
+      label: p.cos.label,
+      apply: (c) => ({ ...c, endpoint: "https://cos.ap-guangzhou.myqcloud.com", region: "ap-guangzhou", pathStyle: false }),
+      hint: p.cos.hint,
+    },
+    {
+      label: "Cloudflare R2",
+      apply: (c) => ({ ...c, endpoint: `https://<${p.accountId}>.r2.cloudflarestorage.com`, region: "auto", pathStyle: false }),
+      hint: p.r2.hint,
+    },
+  ];
+}
 
 function useConnect(settings: Settings, done: (msg: string) => Promise<void>) {
   const ui = useUi();
   const [busy, setBusy] = useState<"test" | "connect" | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const describe = (a: AccountInfo) =>
-    `连接成功：${a.label}` + (a.used != null && a.total != null ? ` · 已用 ${bytes(a.used)} / ${bytes(a.total)}` : "");
+  const describe = (a: AccountInfo) => {
+    const m = msg();
+    return m.cloud.testOk(a.label) + (a.used != null && a.total != null ? ` · ${m.settings.used(bytes(a.used), bytes(a.total))}` : "");
+  };
 
   const test = async (cloud: WebDavConfig | S3Config, secret: string) => {
     setBusy("test");
@@ -74,18 +71,15 @@ function useConnect(settings: Settings, done: (msg: string) => Promise<void>) {
 
   const connect = async (cloud: WebDavConfig | S3Config, secret: string, name: string) => {
     if (settings.cloud.kind !== "none") {
-      const ok = await ui.confirm({
-        title: `改用${name}？`,
-        text: "之后会同步到新的云盘。原来云盘里的存档不会被删除，切换后可以一键复制过来。",
-        confirm: "切换",
-      });
+      const m = msg().cloud;
+      const ok = await ui.confirm({ title: m.switchTitle(name), text: m.switchText, confirm: m.switch });
       if (!ok) return;
     }
     setBusy("connect");
     setResult(null);
     try {
       const label = await api.cloudConnect(cloud, secret);
-      await done(`已连接${name}：${label}`);
+      await done(msg().cloud.connected(name, label));
     } catch (e) {
       setResult({ ok: false, text: errorText(e) });
     } finally {
@@ -101,9 +95,10 @@ function isSame(a: CloudConfig, b: CloudConfig) {
 }
 
 function PresetRow<T>({ presets, onPick }: { presets: Preset<T>[]; onPick: (p: Preset<T>) => void }) {
+  const t = useT();
   return (
     <div className="preset-row">
-      <span className="muted small">常用：</span>
+      <span className="muted small">{t.cloud.common}</span>
       {presets.map((p) => (
         <button key={p.label} className="chip" onClick={() => onPick(p)}>
           {p.label}
@@ -118,12 +113,25 @@ function Result({ result }: { result: { ok: boolean; text: string } | null }) {
   return <div className={`health ${result.ok ? "health-ok" : "health-warn"}`}>{result.text}</div>;
 }
 
-export function WebDavOption({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
+export function WebDavOption({
+  settings,
+  done,
+  preset,
+}: {
+  settings: Settings;
+  done: (msg: string) => Promise<void>;
+  /** Start with this preset (its label) filled in, e.g. Jianguoyun in the first-run guide. */
+  preset?: string;
+}) {
+  const t = useT();
+  const c = t.cloud;
   const current = settings.cloud.kind === "webDav" ? settings.cloud : null;
+  const start = preset ? webdavPresets(t).find((p) => p.label === preset) : undefined;
+  const blank: WebDavConfig = { kind: "webDav", url: "", username: "", folder: "Ludonimbus" };
   const [open, setOpen] = useState(!!current);
-  const [cfg, setCfg] = useState<WebDavConfig>(current ?? { kind: "webDav", url: "", username: "", folder: "Ludonimbus" });
+  const [cfg, setCfg] = useState<WebDavConfig>(current ?? (start ? start.apply(blank) : blank));
   const [password, setPassword] = useState("");
-  const [hint, setHint] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(start && !current ? start.hint : null);
   const { busy, result, test, connect } = useConnect(settings, done);
   const saved = current != null && current.url === cfg.url && current.username === cfg.username;
   const ready = cfg.url.trim() !== "" && !cfg.url.includes("<") && !cfg.folder.includes("<") && (password !== "" || saved);
@@ -131,19 +139,19 @@ export function WebDavOption({ settings, done }: { settings: Settings; done: (ms
   return (
     <div className="cloud-option">
       <div className="cloud-option-head">
-        <b>WebDAV</b>
-        <span className="muted small">群晖、威联通等 NAS，坚果云、Nextcloud，或通过 OpenList / AList 接入百度网盘、阿里云盘、夸克等。</span>
+        <b>{start ? `${start.label} (WebDAV)` : "WebDAV"}</b>
+        <span className="muted small">{start ? start.hint : c.webdavIntro}</span>
       </div>
       {!open ? (
         <div className="row">
           <Button icon="cloud" onClick={() => setOpen(true)}>
-            填写 WebDAV 信息…
+            {c.webdavOpen}
           </Button>
         </div>
       ) : (
         <>
           <PresetRow
-            presets={WEBDAV_PRESETS}
+            presets={webdavPresets(t)}
             onPick={(p) => {
               setCfg(p.apply(cfg));
               setHint(p.hint);
@@ -152,37 +160,37 @@ export function WebDavOption({ settings, done }: { settings: Settings; done: (ms
           {hint && <p className="muted small">{hint}</p>}
           <div className="form compact">
             <label>
-              <span>地址</span>
+              <span>{c.url}</span>
               <input className="input mono" value={cfg.url} onChange={(e) => setCfg({ ...cfg, url: e.target.value })} placeholder="https://example.com/dav/" />
             </label>
             <label>
-              <span>用户名</span>
+              <span>{c.username}</span>
               <input className="input" value={cfg.username} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} autoComplete="off" />
             </label>
             <label>
-              <span>密码</span>
+              <span>{c.password}</span>
               <input
                 className="input"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={saved ? "已保存，不修改可以留空" : ""}
+                placeholder={saved ? c.savedKeep : ""}
                 autoComplete="new-password"
               />
             </label>
             <label>
-              <span>文件夹</span>
+              <span>{c.folder}</span>
               <input className="input mono" value={cfg.folder} onChange={(e) => setCfg({ ...cfg, folder: e.target.value })} placeholder="Ludonimbus" />
             </label>
           </div>
-          <p className="muted small">密码保存在 Windows 凭据管理器里。局域网 NAS 没有受信任的 HTTPS 证书时，请用 http:// 地址。</p>
+          <p className="muted small">{c.webdavNote}</p>
           <Result result={result} />
           <div className="row">
-            <Button kind="primary" icon="cloud" onClick={() => connect(cfg, password, " WebDAV")} disabled={!ready || busy !== null || (current != null && isSame(current, cfg) && password === "")}>
-              {busy === "connect" ? "正在连接…" : current ? "保存修改" : "连接"}
+            <Button kind="primary" icon="cloud" onClick={() => connect(cfg, password, "WebDAV")} disabled={!ready || busy !== null || (current != null && isSame(current, cfg) && password === "")}>
+              {busy === "connect" ? c.connecting : current ? c.saveChanges : c.connect}
             </Button>
             <Button onClick={() => test(cfg, password)} disabled={!ready || busy !== null}>
-              {busy === "test" ? "正在测试…" : "测试连接"}
+              {busy === "test" ? c.testing : c.test}
             </Button>
           </div>
         </>
@@ -192,6 +200,8 @@ export function WebDavOption({ settings, done }: { settings: Settings; done: (ms
 }
 
 export function S3Option({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
+  const t = useT();
+  const c = t.cloud;
   const current = settings.cloud.kind === "s3" ? settings.cloud : null;
   const [open, setOpen] = useState(!!current);
   const [cfg, setCfg] = useState<S3Config>(
@@ -207,19 +217,19 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
   return (
     <div className="cloud-option">
       <div className="cloud-option-head">
-        <b>S3 兼容存储</b>
-        <span className="muted small">NAS 上的 MinIO，或阿里云 OSS、腾讯云 COS、Cloudflare R2 等对象存储。</span>
+        <b>{t.cloudNames.s3}</b>
+        <span className="muted small">{c.s3Intro}</span>
       </div>
       {!open ? (
         <div className="row">
           <Button icon="cloud" onClick={() => setOpen(true)}>
-            填写 S3 信息…
+            {c.s3Open}
           </Button>
         </div>
       ) : (
         <>
           <PresetRow
-            presets={S3_PRESETS}
+            presets={s3Presets(t)}
             onPick={(p) => {
               setCfg(p.apply(cfg));
               setHint(p.hint);
@@ -232,15 +242,15 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
               <input className="input mono" value={cfg.endpoint} onChange={(e) => setCfg({ ...cfg, endpoint: e.target.value })} placeholder="https://s3.example.com" />
             </label>
             <label>
-              <span>区域</span>
-              <input className="input mono" value={cfg.region} onChange={(e) => setCfg({ ...cfg, region: e.target.value })} placeholder="可留空（默认 us-east-1）" />
+              <span>{c.region}</span>
+              <input className="input mono" value={cfg.region} onChange={(e) => setCfg({ ...cfg, region: e.target.value })} placeholder={c.regionPlaceholder} />
             </label>
             <label>
               <span>Bucket</span>
               <input className="input mono" value={cfg.bucket} onChange={(e) => setCfg({ ...cfg, bucket: e.target.value })} />
             </label>
             <label>
-              <span>路径前缀</span>
+              <span>{c.prefix}</span>
               <input className="input mono" value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })} placeholder="Ludonimbus" />
             </label>
             <label>
@@ -254,26 +264,26 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
                 type="password"
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
-                placeholder={saved ? "已保存，不修改可以留空" : ""}
+                placeholder={saved ? c.savedKeep : ""}
                 autoComplete="new-password"
               />
             </label>
             <label>
-              <span>路径风格</span>
+              <span>{c.pathStyle}</span>
               <div className="row">
                 <Toggle checked={cfg.pathStyle} onChange={(v) => setCfg({ ...cfg, pathStyle: v })} />
-                <span className="muted small">用 Endpoint/Bucket 的形式访问（MinIO 等需要打开）</span>
+                <span className="muted small">{c.pathStyleHint}</span>
               </div>
             </label>
           </div>
-          <p className="muted small">Secret Key 保存在 Windows 凭据管理器里。</p>
+          <p className="muted small">{c.s3Note}</p>
           <Result result={result} />
           <div className="row">
-            <Button kind="primary" icon="cloud" onClick={() => connect(cfg, secret, " S3 存储")} disabled={!ready || busy !== null || (current != null && isSame(current, cfg) && secret === "")}>
-              {busy === "connect" ? "正在连接…" : current ? "保存修改" : "连接"}
+            <Button kind="primary" icon="cloud" onClick={() => connect(cfg, secret, t.app.cloud.s3)} disabled={!ready || busy !== null || (current != null && isSame(current, cfg) && secret === "")}>
+              {busy === "connect" ? c.connecting : current ? c.saveChanges : c.connect}
             </Button>
             <Button onClick={() => test(cfg, secret)} disabled={!ready || busy !== null}>
-              {busy === "test" ? "正在测试…" : "测试连接"}
+              {busy === "test" ? c.testing : c.test}
             </Button>
           </div>
         </>
@@ -284,6 +294,8 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
 
 export function BaiduOption({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
   const ui = useUi();
+  const t = useT();
+  const b = t.cloud.baidu;
   const current = settings.cloud.kind === "baiduPan" ? settings.cloud : null;
   const needApp = !settings.baiduBuiltin;
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -305,11 +317,8 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
 
   const connect = async () => {
     if (settings.cloud.kind !== "none" && settings.cloud.kind !== "baiduPan") {
-      const ok = await ui.confirm({
-        title: "改用百度网盘？",
-        text: "之后会同步到百度网盘。原来云盘里的存档不会被删除，切换后可以一键复制过来。",
-        confirm: "切换",
-      });
+      const m = msg().cloud;
+      const ok = await ui.confirm({ title: m.switchTitle(msg().cloudNames.baiduPan), text: m.switchText, confirm: m.switch });
       if (!ok) return;
     }
     setWaiting(true);
@@ -317,10 +326,10 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
     setError(null);
     try {
       const name = await api.cloudConnectBaidu(appKey, secretKey, appName);
-      await done(`已连接百度网盘：${name}`);
+      await done(msg().cloud.connected(msg().cloudNames.baiduPan, name));
     } catch (e) {
       const text = errorText(e);
-      if (!text.includes("已取消")) setError(text);
+      if (!text.includes("已取消") && !/cancel/i.test(text)) setError(text);
     } finally {
       setWaiting(false);
       setCode(null);
@@ -330,17 +339,13 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
   return (
     <div className="cloud-option">
       <div className="cloud-option-head">
-        <b>百度网盘</b>
-        <span className="muted small">
-          用百度账号授权登录。存档放在你网盘的「我的应用数据/{folder}」文件夹里，Ludonimbus 只能访问这个文件夹。非会员下载会被百度限速，拉取较大的存档时要多等一会儿。
-        </span>
+        <b>{t.cloudNames.baiduPan}</b>
+        <span className="muted small">{b.intro(folder)}</span>
       </div>
       {(needApp || showAdvanced) && !waiting && (
         <div className="form compact">
           {needApp && (
-            <p className="muted small">
-              当前是开发版，还没有内置百度网盘应用。请按 docs/baidu-netdisk-setup.md 在百度网盘开放平台创建应用，把 AppKey、SecretKey 和应用名称填在这里（正式发布版会内置，用户不需要填）。
-            </p>
+            <p className="muted small">{b.dev}</p>
           )}
           <label>
             <span>AppKey</span>
@@ -351,7 +356,7 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
             <input className="input mono" type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} autoComplete="new-password" />
           </label>
           <label>
-            <span>应用名称</span>
+            <span>{b.appName}</span>
             <input className="input" value={appName} onChange={(e) => setAppName(e.target.value)} placeholder={settings.baiduAppName} />
           </label>
         </div>
@@ -360,19 +365,19 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
         <div className="baidu-login">
           {code ? (
             <>
-              {code.qrcodeUrl && <img className="qr" src={code.qrcodeUrl} alt="百度网盘授权二维码" />}
+              {code.qrcodeUrl && <img className="qr" src={code.qrcodeUrl} alt={b.qrAlt} />}
               <div className="baidu-login-text">
-                <span className="muted small">已在浏览器中打开百度授权页面。登录后如果要求输入授权码，请输入：</span>
+                <span className="muted small">{b.opened}</span>
                 <span className="user-code">{code.userCode}</span>
-                <span className="muted small">也可以用百度网盘 App 扫描二维码。授权完成后这里会自动继续。</span>
+                <span className="muted small">{b.scan}</span>
                 <button className="link small" onClick={() => api.openPath(pageUrl(code)).catch(() => undefined)}>
-                  重新打开授权页面
+                  {b.reopen}
                 </button>
               </div>
             </>
           ) : (
             <span className="muted small">
-              <span className="spinner" /> 正在向百度申请授权码…
+              <span className="spinner" /> {b.requesting}
             </span>
           )}
         </div>
@@ -383,16 +388,16 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
             and the cancel button must not inherit that state. */}
         {waiting ? (
           <Button key="cancel" onClick={() => void api.cloudCancelLogin()}>
-            取消
+            {t.common.cancel}
           </Button>
         ) : (
           <Button key="connect" kind="primary" icon="cloud" onClick={connect} disabled={needApp && (!appKey.trim() || !secretKey.trim())}>
-            {current ? "重新连接百度网盘" : "连接百度网盘"}
+            {current ? b.reconnect : b.connect}
           </Button>
         )}
         {!needApp && !waiting && (
           <button className="link small" onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? "收起" : "使用自己的百度应用（高级）"}
+            {showAdvanced ? t.settings.collapse : b.own}
           </button>
         )}
       </div>
@@ -403,6 +408,8 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
 /** Offer to copy the saves of the cloud used before the last switch. */
 export function MigrateBanner({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
   const ui = useUi();
+  const t = useT();
+  const mg = t.cloud.migrate;
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [running, setRunning] = useState(false);
 
@@ -420,28 +427,22 @@ export function MigrateBanner({ settings, done }: { settings: Settings; done: (m
     setProgress(null);
     try {
       const r = await api.cloudMigrate();
-      await done(
-        r.copied === 0 && r.skipped === 0
-          ? "原来的云盘里没有存档，不需要复制"
-          : `已复制 ${r.copied} 个版本（${bytes(r.bytes)}）` + (r.skipped ? `，${r.skipped} 个已经存在` : ""),
-      );
+      const m = msg().cloud.migrate;
+      await done(r.copied === 0 && r.skipped === 0 ? m.nothing : m.copied(r.copied, bytes(r.bytes), r.skipped));
     } catch (e) {
-      ui.toast(`复制没有完成：${errorText(e)}。可以稍后重试，已复制的不会重复复制。`, "bad");
+      ui.toast(msg().cloud.migrate.failed(errorText(e)), "bad");
     } finally {
       setRunning(false);
     }
   };
 
   const skip = async () => {
-    const ok = await ui.confirm({
-      title: "不复制原来的存档？",
-      text: "原来云盘里的存档会留在原处，Ludonimbus 以后只使用新的云盘。",
-      confirm: "不复制",
-    });
+    const m = msg().cloud.migrate;
+    const ok = await ui.confirm({ title: m.skipTitle, text: m.skipText, confirm: m.skip });
     if (!ok) return;
     try {
       await api.cloudDismissPrevious();
-      await done("好的，原来云盘里的存档保持不变");
+      await done(msg().cloud.migrate.skipped);
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
@@ -452,29 +453,161 @@ export function MigrateBanner({ settings, done }: { settings: Settings; done: (m
   return (
     <div className="migrate-banner">
       <div>
-        <b>要把原来云盘里的存档复制过来吗？</b>
-        <div className="muted small">
-          你刚从 {prev.name} 换到了新的云盘。复制后历史版本都会在新云盘里，原来的云盘不会被修改。
-        </div>
+        <b>{mg.title}</b>
+        <div className="muted small">{mg.text(prev.name)}</div>
         {running && (
           <div className="update-progress">
             <div className="bar">
               <span style={{ width: `${pct}%` }} />
             </div>
             <span className="muted small">
-              {progress && progress.total > 0 ? `正在复制 ${Math.min(progress.done + 1, progress.total)} / ${progress.total}：${progress.game}` : "正在准备…"}
+              {progress && progress.total > 0 ? mg.progress(Math.min(progress.done + 1, progress.total), progress.total, progress.game) : t.steamPlugin.preparing}
             </span>
           </div>
         )}
       </div>
       <div className="row">
         <Button kind="primary" icon="upload" onClick={copy} disabled={running}>
-          {running ? "正在复制…" : "复制存档"}
+          {running ? mg.copying : mg.copy}
         </Button>
         <Button kind="ghost" onClick={skip} disabled={running}>
-          不用了
+          {mg.no}
         </Button>
       </div>
+    </div>
+  );
+}
+
+export function GoogleOption({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
+  const ui = useUi();
+  const t = useT();
+  const st = t.settings;
+  const current = settings.cloud.kind === "googleDrive" ? settings.cloud : null;
+  const [clientId, setClientId] = useState(current?.clientId ?? "");
+  const [clientSecret, setClientSecret] = useState(current?.clientSecret ?? "");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const needClientId = !settings.googleBuiltin;
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      const label = await api.cloudConnectGoogle(clientId, clientSecret);
+      await done(msg().settings.connectedGoogle(label));
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <div className="cloud-option">
+      <div className="cloud-option-head">
+        <b>Google Drive</b>
+        <span className="muted small">{st.googleIntro}</span>
+      </div>
+      {(needClientId || showAdvanced) && (
+        <div className="form compact">
+          {needClientId && <p className="muted small">{st.googleDev}</p>}
+          <label>
+            <span>Client ID</span>
+            <input className="input mono" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="xxxx.apps.googleusercontent.com" />
+          </label>
+          <label>
+            <span>Client secret</span>
+            <input className="input mono" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder="GOCSPX-…" />
+          </label>
+        </div>
+      )}
+      <div className="row">
+        <Button kind="primary" icon="cloud" onClick={connect} disabled={connecting || (needClientId && !clientId.trim())}>
+          {connecting ? st.googleWaiting : current ? st.googleReconnect : st.googleConnect}
+        </Button>
+        {!needClientId && (
+          <button className="link small" onClick={() => setShowAdvanced((v) => !v)}>
+            {showAdvanced ? st.collapse : st.googleOwn}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function FolderOption({ done, note }: { done: (msg: string) => Promise<void>; note?: string }) {
+  const ui = useUi();
+  const t = useT();
+  const pick = async () => {
+    const dir = await api.pickFolder(msg().settings.pickCloudFolder);
+    if (!dir) return;
+    try {
+      await api.cloudUseFolder(dir);
+      await done(msg().settings.folderSet);
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+  return (
+    <div className="cloud-option">
+      <div className="cloud-option-head">
+        <b>{t.cloudNames.localFolder}</b>
+        <span className="muted small">{t.settings.folderIntro}</span>
+      </div>
+      {note && <p className="health health-warn small">{note}</p>}
+      <div className="row">
+        <Button icon="folder" onClick={pick}>
+          {t.saveFinder.pickFolder}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every cloud option. In the first-run guide (`guide`), the ones that suit
+ * the interface language come first and the rest fold under "More clouds".
+ */
+export function CloudOptions({
+  settings,
+  done,
+  guide,
+}: {
+  settings: Settings;
+  done: (msg: string) => Promise<void>;
+  guide?: { multiDevice: boolean };
+}) {
+  const { t, lang } = useI18n();
+  const [more, setMore] = useState(false);
+  const k = settings.cloud.kind;
+  // Baidu needs an app approved on the Baidu open platform: builds without
+  // one hide the option (except for development, or when already connected).
+  const baidu = settings.baiduBuiltin || k === "baiduPan" || import.meta.env.DEV;
+  const folderNote = guide?.multiDevice ? t.onboarding.cloud.folderMultiDevice : undefined;
+  const all = {
+    google: <GoogleOption key={`google-${k}`} settings={settings} done={done} />,
+    folder: <FolderOption key="folder" done={done} note={folderNote} />,
+    baidu: baidu ? <BaiduOption key={`baidu-${k}`} settings={settings} done={done} /> : null,
+    webdav: <WebDavOption key={`webdav-${k}`} settings={settings} done={done} />,
+    jianguoyun: <WebDavOption key={`jgy-${k}`} settings={settings} done={done} preset={t.cloud.presets.jianguoyun.label} />,
+    s3: <S3Option key={`s3-${k}`} settings={settings} done={done} />,
+  };
+  if (!guide) {
+    return <div className="cloud-options">{[all.google, all.folder, all.baidu, all.webdav, all.s3]}</div>;
+  }
+  const [first, rest] =
+    lang === "zh-CN"
+      ? [[all.baidu, all.jianguoyun, all.google], [all.webdav, all.s3, all.folder]]
+      : [[all.google, all.webdav, all.folder], [all.s3, all.baidu]];
+  return (
+    <div className="cloud-options">
+      {first}
+      {more ? (
+        rest
+      ) : (
+        <button className="link small" onClick={() => setMore(true)}>
+          {t.onboarding.cloud.more}
+        </button>
+      )}
     </div>
   );
 }

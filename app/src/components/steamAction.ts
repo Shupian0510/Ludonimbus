@@ -1,4 +1,5 @@
 import { errorText } from "../api";
+import { msg } from "../i18n";
 import { useUi } from "./ui";
 
 type Ui = ReturnType<typeof useUi>;
@@ -12,11 +13,8 @@ export async function withSteamClosed<T>(ui: Ui, f: (closeSteam: boolean) => Pro
     return await f(false);
   } catch (e) {
     if (!errorText(e).includes("STEAM_RUNNING")) throw e;
-    const ok = await ui.confirm({
-      title: "需要暂时关闭 Steam",
-      text: "Steam 运行时会覆盖对快捷方式的修改。Ludonimbus 会先关闭 Steam，改好后再自动重新打开。",
-      confirm: "关闭 Steam 并继续",
-    });
+    const m = msg().steamAction;
+    const ok = await ui.confirm({ title: m.title, text: m.text, confirm: m.confirm });
     if (!ok) return null;
     return await f(true);
   }

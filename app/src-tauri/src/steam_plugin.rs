@@ -119,14 +119,15 @@ fn with_steam_closed<T>(root: &Path, f: impl FnOnce() -> Result<T>) -> Result<(T
 pub async fn steam_plugin_install(app: AppHandle, close_steam: bool) -> CmdResult<InstallResult> {
     blocking(move || {
         let cfg = config::load()?;
-        let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
-        let src = bundled(&app).ok_or_else(|| anyhow!("这个版本的 Ludonimbus 没有附带 Steam 插件"))?;
+        let root = steam::root(&cfg).ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有找到 Steam", "Steam not found")))?;
+        let src = bundled(&app).ok_or_else(|| anyhow!(ludonimbus_core::tr!("这个版本的 Ludonimbus 没有附带 Steam 插件", "This build of Ludonimbus doesn't include the Steam plugin")))?;
         let need_millennium = match millennium::detect(&root) {
             Install::Installed => false,
             Install::Missing => true,
-            Install::Legacy => bail!(
-                "检测到旧版 Millennium（2.x），它不支持这个插件。请先用 Millennium 官方安装程序更新到最新版，再回来启用。"
-            ),
+            Install::Legacy => bail!(ludonimbus_core::tr!(
+                "检测到旧版 Millennium（2.x），它不支持这个插件。请先用 Millennium 官方安装程序更新到最新版，再回来启用。",
+                "An old Millennium (2.x) was found; it doesn't support this plugin. Update to the latest version with Millennium's official installer, then come back and enable it."
+            )),
         };
         // Ask before downloading anything, so Steam is closed only briefly.
         if steam::is_running() && !close_steam {
@@ -173,7 +174,7 @@ pub async fn steam_plugin_install(app: AppHandle, close_steam: bool) -> CmdResul
 pub async fn steam_plugin_remove(close_steam: bool) -> CmdResult<()> {
     blocking(move || {
         let cfg = config::load()?;
-        let root = steam::root(&cfg).ok_or_else(|| anyhow!("没有找到 Steam"))?;
+        let root = steam::root(&cfg).ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有找到 Steam", "Steam not found")))?;
         if steam::is_running() && !close_steam {
             bail!("STEAM_RUNNING");
         }
