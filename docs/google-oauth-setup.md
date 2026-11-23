@@ -22,7 +22,7 @@ Ludonimbus 用 Google 官方的「桌面应用」登录方式连接 Google Drive
    - Authorized domains：`shupian0510.github.io`
    - Logo 先不要上传（上传 Logo 会触发品牌验证）
 
-   主页和隐私政策由仓库的 `docs/index.html`、`docs/privacy.html` 通过 GitHub Pages 发布。
+   主页和隐私政策是文档站（`website/`，由 `.github/workflows/docs.yml` 发布到 GitHub Pages）的首页和 `privacy.html`；隐私政策的正文在 `website/parts/privacy-zh.md` 和 `privacy-en.md`。这两个地址不能改。
 3. 「数据访问 / 范围」里添加：
    - `https://www.googleapis.com/auth/drive.file`（非敏感范围：只能访问本应用创建的文件）
    - `openid`、`.../auth/userinfo.email`（用来显示已登录的账号）
