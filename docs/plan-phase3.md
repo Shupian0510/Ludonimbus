@@ -2,7 +2,7 @@
 
 > **进度（2026-11-23）**
 > - **E0**：已用你的夸克账号跑了两次，功能全部通过，速度数据和结论见 1.4。
-> - **E1 / E2**：已完成。`crates/core/src/openlist.rs`（下载校验、启动停止、管理接口）、`cloud/quark.rs`（直接上传、读之前刷新目录）、扫码登录窗口（`app/src-tauri/src/quark_login.rs`）、设置页和引导里的夸克卡片。本机用 OpenList 本机存储跑通整条链路（`tests/openlist_local.rs`）。用真实账号跑「两台设备」检查（`./scripts/quark-e0.ps1 -TwoDevices`，`tests/quark_live.rs`）已通过。还差在真正的应用里扫码登录一次。
+> - **E1 / E2**：已完成。`crates/core/src/openlist.rs`（下载校验、启动停止、管理接口）、`cloud/quark.rs`（直接上传、读之前刷新目录）、扫码登录窗口（`app/src-tauri/src/quark_login.rs`）、设置页和引导里的夸克卡片。本机用 OpenList 本机存储跑通整条链路（`tests/openlist_local.rs`）。用真实账号跑「两台设备」检查（`./scripts/quark-e0.ps1 -TwoDevices`，`tests/quark_live.rs`）已通过；2026-11-23 你按 [testing-v0.5.md](testing-v0.5.md) 在测试版里实测（语言、首次使用引导、应用里扫码连接夸克、原有功能），没有问题。
 > - **G**：已完成。前端全部文案（含示例数据）、Rust 报错 / 启动前弹窗 / 托盘 / 对话框、Steam 插件都支持中英文，设置里可以切换，立即生效。和 3.3 的差别：Rust 没有用 `rust-i18n` 查表，而是 `tr!("中文", "English")` 写在使用的地方，不会漏翻；命令行只给开发者用、不随安装包发布，暂时保留中文。说明见 [i18n.md](i18n.md)。
 > - **F**：已完成，可以在浏览器预览里用 `?guide` 查看。中文界面下云盘那一步第一个推荐夸克网盘。
 > - **H1**：在单独的会话里完成，在分支 `claude/festive-lamport-f0fc56` 上，还没合并。
