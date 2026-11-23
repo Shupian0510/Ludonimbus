@@ -156,6 +156,9 @@ fn cloud_view(cfg: &AppConfig) -> CloudView {
         CloudConfig::None => ("none", None),
         CloudConfig::LocalFolder { path } => ("localFolder", Some(path.display().to_string())),
         CloudConfig::GoogleDrive { account, .. } => ("googleDrive", account.clone().or(Some("Google Drive".into()))),
+        CloudConfig::WebDav { url, folder, .. } => ("webDav", Some(format!("{}/{}", url.trim_end_matches('/'), folder))),
+        CloudConfig::S3 { bucket, prefix, .. } => ("s3", Some(format!("{bucket}/{prefix}"))),
+        CloudConfig::BaiduPan { account, .. } => ("baiduPan", account.clone().or(Some("百度网盘".into()))),
     };
     let error = match cloud::open(cfg) {
         Ok(_) => None,
@@ -656,12 +659,25 @@ pub struct SettingsView {
     steam_root: Option<String>,
     steam_account: Option<String>,
     cloud: CloudConfig,
+    /// Cloud used before the last switch whose data can still be copied.
+    previous_cloud: Option<PreviousCloud>,
     google_builtin: bool,
+    /// A Baidu Netdisk app is built into this release.
+    baidu_builtin: bool,
+    /// App name (= folder under 「我的应用数据」) of the built-in Baidu app.
+    baidu_app_name: String,
     data_dir: String,
     runner_path: String,
     runner_exists: bool,
     ludusavi: Option<String>,
     version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousCloud {
+    kind: String,
+    name: String,
 }
 
 #[tauri::command]
@@ -670,10 +686,13 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
         let cfg = config::load()?;
         let root = steam::root(&cfg);
         let mut cloud = cfg.cloud.clone();
-        if let CloudConfig::GoogleDrive { client_secret, .. } = &mut cloud {
-            if !client_secret.is_empty() {
+        match &mut cloud {
+            CloudConfig::GoogleDrive { client_secret, .. } | CloudConfig::BaiduPan { secret_key: client_secret, .. }
+                if !client_secret.is_empty() =>
+            {
                 *client_secret = "••••••••".into();
             }
+            _ => {}
         }
         let runner = paths::runner_exe();
         Ok(SettingsView {
@@ -683,8 +702,14 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             network_timeout_secs: cfg.network_timeout_secs,
             steam_account: root.as_deref().and_then(|r| steam::default_account(&cfg, r)),
             steam_root: root.map(|r| r.display().to_string()),
+            previous_cloud: cfg.previous_cloud.as_ref().map(|p| PreviousCloud {
+                kind: cloud::kind_id(p).to_string(),
+                name: previous_name(p),
+            }),
             cloud,
             google_builtin: oauth::GoogleClient::has_builtin(),
+            baidu_builtin: cloud::baidu::BaiduClient::has_builtin(),
+            baidu_app_name: cloud::baidu::BaiduClient::builtin_app_name(),
             data_dir: paths::data_dir().display().to_string(),
             runner_exists: runner.is_file(),
             runner_path: runner.display().to_string(),
@@ -738,27 +763,135 @@ pub async fn save_settings(patch: SettingsPatch) -> CmdResult<()> {
     .await
 }
 
+fn previous_name(c: &CloudConfig) -> String {
+    let detail = match c {
+        CloudConfig::LocalFolder { path } => path.display().to_string(),
+        CloudConfig::GoogleDrive { account, .. } => account.clone().unwrap_or_default(),
+        CloudConfig::WebDav { url, .. } => url.clone(),
+        CloudConfig::S3 { bucket, .. } => bucket.clone(),
+        CloudConfig::BaiduPan { account, .. } => account.clone().unwrap_or_default(),
+        CloudConfig::None => String::new(),
+    };
+    if detail.is_empty() {
+        cloud::kind_name(c).to_string()
+    } else {
+        format!("{}（{detail}）", cloud::kind_name(c))
+    }
+}
+
 #[tauri::command]
 pub async fn cloud_use_folder(path: String) -> CmdResult<()> {
     blocking(move || {
         let p = PathBuf::from(&path);
         std::fs::create_dir_all(&p)?;
-        config::update(|c| {
-            c.cloud = CloudConfig::LocalFolder { path: p.clone() };
-            Ok(())
-        })?;
-        reset_cloud_markers()
+        cloud::switch_to(CloudConfig::LocalFolder { path: p }, None)
     })
     .await
 }
 
-fn reset_cloud_markers() -> Result<()> {
-    state::update(|s| {
-        for g in s.games.values_mut() {
-            g.cloud_def_uploaded = false;
-            g.last_check = None;
-        }
+/// Use the saved secret when the form leaves it empty for the cloud that is
+/// already connected.
+fn secret_for(new: &CloudConfig, secret: &str) -> Result<Option<String>> {
+    if !secret.is_empty() {
+        return Ok(Some(secret.to_string()));
+    }
+    match cloud::secrets::load_for(new)? {
+        Some(s) => Ok(Some(s)),
+        None => match new {
+            CloudConfig::WebDav { .. } => bail!("请填写 WebDAV 密码"),
+            CloudConfig::S3 { .. } => bail!("请填写 Secret Key"),
+            _ => Ok(None),
+        },
+    }
+}
+
+fn check_store_config(c: &CloudConfig) -> Result<()> {
+    match c {
+        CloudConfig::WebDav { .. } | CloudConfig::S3 { .. } => Ok(()),
+        _ => bail!("这里只能连接 WebDAV 或 S3 兼容存储"),
+    }
+}
+
+/// Try WebDAV / S3 settings without saving them.
+#[tauri::command]
+pub async fn cloud_test(cloud: CloudConfig, secret: String) -> CmdResult<AccountInfo> {
+    blocking(move || {
+        check_store_config(&cloud)?;
+        let secret = secret_for(&cloud, &secret)?;
+        let timeout = cloud::timeout(&config::load()?).max(std::time::Duration::from_secs(15));
+        cloud::probe(&cloud, secret.as_deref(), timeout)
     })
+    .await
+}
+
+/// Test WebDAV / S3 settings, then switch to them.
+#[tauri::command]
+pub async fn cloud_connect(cloud: CloudConfig, secret: String) -> CmdResult<String> {
+    blocking(move || {
+        check_store_config(&cloud)?;
+        let secret = secret_for(&cloud, &secret)?;
+        let timeout = cloud::timeout(&config::load()?).max(std::time::Duration::from_secs(15));
+        let account = cloud::probe(&cloud, secret.as_deref(), timeout)?;
+        cloud::switch_to(cloud, secret.as_deref())?;
+        Ok(account.label)
+    })
+    .await
+}
+
+/// Copy all saves from the previous cloud into the current one.
+#[tauri::command]
+pub async fn cloud_migrate(app: tauri::AppHandle) -> CmdResult<cloud::migrate::Report> {
+    use tauri::Emitter;
+    blocking(move || {
+        cloud::migrate_previous(|p| {
+            let _ = app.emit("cloud-migrate-progress", p.clone());
+        })
+    })
+    .await
+}
+
+static LOGIN_CANCEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sign in to Baidu Netdisk (device code). The code and QR code are sent to
+/// the UI as `baidu-device-code` and the approval page opens in the browser.
+#[tauri::command]
+pub async fn cloud_connect_baidu(app: tauri::AppHandle, app_key: String, secret_key: String, app_name: String) -> CmdResult<String> {
+    use std::sync::atomic::Ordering;
+    use tauri::Emitter;
+    LOGIN_CANCEL.store(false, Ordering::SeqCst);
+    blocking(move || {
+        // Keep the stored secret when the UI shows the masked placeholder.
+        let secret = if secret_key.starts_with('•') {
+            match config::load()?.cloud {
+                CloudConfig::BaiduPan { secret_key, .. } => secret_key,
+                _ => String::new(),
+            }
+        } else {
+            secret_key
+        };
+        cloud::connect_baidu(
+            &app_key,
+            &secret,
+            &app_name,
+            |code| {
+                let _ = app.emit("baidu-device-code", code.clone());
+                let _ = opener::open_browser(code.browser_url());
+            },
+            &LOGIN_CANCEL,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cloud_cancel_login() -> CmdResult<()> {
+    LOGIN_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cloud_dismiss_previous() -> CmdResult<()> {
+    blocking(cloud::dismiss_previous).await
 }
 
 #[tauri::command]
@@ -779,16 +912,15 @@ pub async fn cloud_connect_google(client_id: String, client_secret: String) -> C
         let auth = oauth::authorize(&client, std::time::Duration::from_secs(300))?;
         oauth::store_refresh_token(&auth.refresh_token)?;
         let label = auth.email.clone().unwrap_or_else(|| "Google Drive".into());
-        config::update(|c| {
-            c.cloud = CloudConfig::GoogleDrive {
+        cloud::switch_to(
+            CloudConfig::GoogleDrive {
                 client_id: client_id.trim().to_string(),
                 client_secret: secret.trim().to_string(),
                 folder: "Ludonimbus".into(),
                 account: auth.email.clone(),
-            };
-            Ok(())
-        })?;
-        reset_cloud_markers()?;
+            },
+            None,
+        )?;
         Ok(label)
     })
     .await
@@ -796,15 +928,7 @@ pub async fn cloud_connect_google(client_id: String, client_secret: String) -> C
 
 #[tauri::command]
 pub async fn cloud_disconnect() -> CmdResult<()> {
-    blocking(|| {
-        let _ = oauth::clear_refresh_token();
-        config::update(|c| {
-            c.cloud = CloudConfig::None;
-            Ok(())
-        })?;
-        reset_cloud_markers()
-    })
-    .await
+    blocking(cloud::disconnect).await
 }
 
 #[tauri::command]

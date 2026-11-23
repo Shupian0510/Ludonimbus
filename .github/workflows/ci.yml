@@ -76,6 +76,9 @@ jobs:
         env:
           LUDONIMBUS_GOOGLE_CLIENT_ID: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_ID }}
           LUDONIMBUS_GOOGLE_CLIENT_SECRET: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_SECRET }}
+          LUDONIMBUS_BAIDU_APP_KEY: ${{ secrets.LUDONIMBUS_BAIDU_APP_KEY }}
+          LUDONIMBUS_BAIDU_SECRET_KEY: ${{ secrets.LUDONIMBUS_BAIDU_SECRET_KEY }}
+          LUDONIMBUS_BAIDU_APP_NAME: ${{ secrets.LUDONIMBUS_BAIDU_APP_NAME }}
         run: |
           ./scripts/prepare-sidecars.ps1 -Release
           cd app

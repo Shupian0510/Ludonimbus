@@ -5,6 +5,9 @@
 # file in the repository root:
 #   LUDONIMBUS_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
 #   LUDONIMBUS_GOOGLE_CLIENT_SECRET=GOCSPX-xxxx
+#   LUDONIMBUS_BAIDU_APP_KEY=...                (Baidu Netdisk open platform app)
+#   LUDONIMBUS_BAIDU_SECRET_KEY=...
+#   LUDONIMBUS_BAIDU_APP_NAME=Ludonimbus        (the registered app name)
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD=...      (updater signing key password)
 # The updater signing key defaults to %USERPROFILE%\.tauri\ludonimbus.key.
 #
@@ -25,6 +28,11 @@ if ($env:LUDONIMBUS_GOOGLE_CLIENT_ID) {
     Write-Host "Google OAuth client will be built in."
 } else {
     Write-Warning "LUDONIMBUS_GOOGLE_CLIENT_ID is not set: users will have to enter their own Client ID."
+}
+if ($env:LUDONIMBUS_BAIDU_APP_KEY -and $env:LUDONIMBUS_BAIDU_SECRET_KEY) {
+    Write-Host "Baidu Netdisk app will be built in."
+} else {
+    Write-Warning "LUDONIMBUS_BAIDU_APP_KEY / LUDONIMBUS_BAIDU_SECRET_KEY are not set: users will have to enter their own Baidu app."
 }
 
 $defaultKey = Join-Path $env:USERPROFILE ".tauri/ludonimbus.key"

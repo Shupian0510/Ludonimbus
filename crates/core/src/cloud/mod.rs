@@ -8,18 +8,33 @@
 //! ```
 //! Snapshots are immutable and append-only; there is no mutable "head"
 //! pointer, the newest mainline snapshot is the head.
+//!
+//! Google Drive implements [`CloudProvider`] directly (it is id-based and
+//! stores snapshot summaries in file properties). Every other backend only
+//! implements the small path-based [`store::Store`] trait and gets the layout
+//! from [`repo::Repo`].
 
+pub mod baidu;
 pub mod gdrive;
 pub mod local;
+pub mod migrate;
 pub mod oauth;
+pub mod repo;
+pub mod s3;
+pub mod secrets;
+pub mod store;
+pub mod webdav;
 
-use crate::config::{AppConfig, CloudConfig, GameEntry};
+use crate::config::{self, AppConfig, CloudConfig, GameEntry};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary};
-use anyhow::{anyhow, Result};
+use crate::state;
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
+use store::Store;
 
 /// The cloud cannot be reached right now (offline, timeout, folder missing).
 #[derive(Debug)]
@@ -120,12 +135,19 @@ pub trait CloudProvider: Send + Sync {
     fn list_games(&self) -> Result<Vec<CloudGame>>;
 }
 
+pub fn timeout(cfg: &AppConfig) -> Duration {
+    Duration::from_secs(cfg.network_timeout_secs.max(3))
+}
+
 /// Open the configured provider. `Ok(None)` when no cloud is configured.
 pub fn open(cfg: &AppConfig) -> Result<Option<Box<dyn CloudProvider>>> {
-    let timeout = std::time::Duration::from_secs(cfg.network_timeout_secs.max(3));
-    match &cfg.cloud {
+    open_config(&cfg.cloud, timeout(cfg))
+}
+
+/// Open any cloud configuration with its saved credentials.
+pub fn open_config(cloud: &CloudConfig, timeout: Duration) -> Result<Option<Box<dyn CloudProvider>>> {
+    match cloud {
         CloudConfig::None => Ok(None),
-        CloudConfig::LocalFolder { path } => Ok(Some(Box::new(local::LocalFolder::new(path.clone())))),
         CloudConfig::GoogleDrive {
             client_id,
             client_secret,
@@ -138,6 +160,295 @@ pub fn open(cfg: &AppConfig) -> Result<Option<Box<dyn CloudProvider>>> {
                 .ok_or_else(|| anyhow!("Google Drive 登录已失效，请在设置里重新连接"))?;
             Ok(Some(Box::new(gdrive::GoogleDrive::new(client, token, folder.clone(), timeout))))
         }
+        other => Ok(Some(Box::new(repo::Repo::new(build_store(other, None, timeout)?)))),
+    }
+}
+
+impl<T: Store + ?Sized> Store for Box<T> {
+    fn kind(&self) -> &'static str {
+        (**self).kind()
+    }
+    fn label(&self) -> String {
+        (**self).label()
+    }
+    fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
+        (**self).quota()
+    }
+    fn check(&self) -> Result<()> {
+        (**self).check()
+    }
+    fn list(&self, dir: &str) -> Result<Vec<store::Entry>> {
+        (**self).list(dir)
+    }
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        (**self).read(path)
+    }
+    fn download(&self, path: &str, dest: &Path) -> Result<()> {
+        (**self).download(path, dest)
+    }
+    fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+        (**self).write(path, data)
+    }
+    fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        (**self).upload(path, src)
+    }
+    fn remove(&self, path: &str) -> Result<()> {
+        (**self).remove(path)
+    }
+    fn cache_scope(&self) -> Option<String> {
+        (**self).cache_scope()
+    }
+}
+
+/// Build a path-based store. `secret` overrides the saved password / key
+/// (used to test new settings before saving them).
+pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration) -> Result<Box<dyn Store>> {
+    let secret = |missing: &str| -> Result<String> {
+        match secret {
+            Some(s) => Ok(s.to_string()),
+            None => secrets::load_for(cloud)?.ok_or_else(|| anyhow!("{missing}，请在设置里重新连接")),
+        }
+    };
+    Ok(match cloud {
+        CloudConfig::LocalFolder { path } => Box::new(local::LocalFolder::new(path.clone())),
+        CloudConfig::WebDav { url, username, folder } => Box::new(webdav::WebDav::new(
+            url,
+            username,
+            &secret("找不到保存的 WebDAV 密码")?,
+            folder,
+            timeout,
+        )?),
+        CloudConfig::S3 {
+            endpoint,
+            region,
+            bucket,
+            prefix,
+            access_key_id,
+            path_style,
+        } => Box::new(s3::S3::new(
+            endpoint,
+            region,
+            bucket,
+            prefix,
+            access_key_id,
+            &secret("找不到保存的 S3 Secret Key")?,
+            *path_style,
+            timeout,
+        )?),
+        CloudConfig::BaiduPan {
+            app_key,
+            secret_key,
+            app_name,
+            ..
+        } => {
+            let client = baidu::BaiduClient::resolve(app_key, secret_key, app_name)
+                .ok_or_else(|| anyhow!("百度网盘缺少应用的 AppKey / SecretKey，请在设置里填写"))?;
+            let token = baidu::load_token()?.ok_or_else(|| anyhow!("百度网盘登录已失效，请在设置里重新连接"))?;
+            Box::new(baidu::BaiduPan::new(
+                client,
+                baidu::Endpoints::default(),
+                token,
+                baidu::TokenSink::Keyring,
+                timeout,
+            ))
+        }
+        CloudConfig::None | CloudConfig::GoogleDrive { .. } => bail!("这种云盘不能这样打开"),
+    })
+}
+
+/// Test new store settings end to end: reach the folder, write a file, see it
+/// in the listing, read it back and delete it.
+pub fn probe(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration) -> Result<AccountInfo> {
+    probe_store(build_store(cloud, secret, timeout)?.as_ref())
+}
+
+/// The end-to-end write / list / read / delete test of [`probe`] on any store.
+pub fn probe_store(store: &dyn Store) -> Result<AccountInfo> {
+    store.check()?;
+    let name = format!(".ludonimbus-test-{}", ulid::Ulid::new().to_string().to_lowercase());
+    let data = format!("Ludonimbus connection test {}", Utc::now().to_rfc3339());
+    store.write(&name, data.as_bytes()).context("写入测试文件失败")?;
+    let result = (|| -> Result<()> {
+        let listed = store.list("").context("列出文件夹失败")?;
+        if !listed.iter().any(|e| e.name == name) {
+            bail!("写入的测试文件没有出现在文件列表里，这个服务器可能不完全兼容");
+        }
+        let back = store.read(&name).context("读取测试文件失败")?;
+        if back.as_deref() != Some(data.as_bytes()) {
+            bail!("读回来的测试文件内容不一致，这个服务器可能不完全兼容");
+        }
+        Ok(())
+    })();
+    let removed = store.remove(&name);
+    result?;
+    removed.context("删除测试文件失败")?;
+    let (used, total) = store.quota().unwrap_or((None, None));
+    Ok(AccountInfo {
+        label: store.label(),
+        used,
+        total,
+    })
+}
+
+/// Sign in to Baidu Netdisk with the device-code flow and test access to the
+/// app folder. `on_code` shows the code / QR code to the user (and opens the
+/// browser). Nothing is saved.
+pub fn baidu_sign_in(
+    client: &baidu::BaiduClient,
+    ep: &baidu::Endpoints,
+    on_code: impl FnOnce(&baidu::DeviceCode),
+    cancel: &std::sync::atomic::AtomicBool,
+    timeout: Duration,
+) -> Result<(baidu::Token, String, AccountInfo)> {
+    let code = baidu::start_device(client, ep)?;
+    on_code(&code);
+    let token = baidu::poll_device(client, ep, &code, cancel)?;
+    let name = baidu::user_info(ep, &token).map(|(n, _)| n).unwrap_or_else(|_| "百度网盘".into());
+    let store = baidu::BaiduPan::new(client.clone(), ep.clone(), token, baidu::TokenSink::Memory, timeout);
+    let account = probe_store(&store)?;
+    Ok((store.token(), name, account))
+}
+
+/// Sign in to Baidu Netdisk, save the token and switch to it. Empty app
+/// fields use the app built into the release. Returns the account name.
+pub fn connect_baidu(
+    app_key: &str,
+    secret_key: &str,
+    app_name: &str,
+    on_code: impl FnOnce(&baidu::DeviceCode),
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
+    let client = baidu::BaiduClient::resolve(app_key, secret_key, app_name)
+        .ok_or_else(|| anyhow!("请先填写百度网盘应用的 AppKey 和 SecretKey"))?;
+    let timeout = timeout(&config::load()?).max(Duration::from_secs(15));
+    let (token, name, _) = baidu_sign_in(&client, &baidu::Endpoints::default(), on_code, cancel, timeout)?;
+    baidu::store_token(&token)?;
+    switch_to(
+        CloudConfig::BaiduPan {
+            app_key: app_key.trim().to_string(),
+            secret_key: secret_key.trim().to_string(),
+            app_name: app_name.trim().to_string(),
+            account: Some(name.clone()),
+        },
+        None,
+    )?;
+    Ok(name)
+}
+
+fn reset_markers() -> Result<()> {
+    state::update(|s| {
+        for g in s.games.values_mut() {
+            g.cloud_def_uploaded = false;
+            g.last_check = None;
+        }
+    })
+}
+
+/// Make `new` the active cloud. `secret` (a WebDAV password / S3 key) is
+/// saved first. The old cloud is remembered as `previous_cloud` so its data
+/// can be copied over with [`migrate_previous`].
+pub fn switch_to(new: CloudConfig, secret: Option<&str>) -> Result<()> {
+    if let (Some(s), Some(user)) = (secret, secrets::user_for(&new)) {
+        secrets::store(&user, s)?;
+    }
+    let dropped = config::update(|c| {
+        let old = std::mem::replace(&mut c.cloud, new.clone());
+        // Google Drive and Baidu keep one sign-in each: switching accounts
+        // replaces it, so there is nothing to copy from.
+        let same_sign_in = matches!(
+            (&old, &new),
+            (CloudConfig::GoogleDrive { .. }, CloudConfig::GoogleDrive { .. })
+                | (CloudConfig::BaiduPan { .. }, CloudConfig::BaiduPan { .. })
+        );
+        if old == CloudConfig::None || old == new || same_sign_in {
+            return Ok(None);
+        }
+        let replaced = c.previous_cloud.replace(old);
+        // Switching back to the cloud we came from: nothing left to copy.
+        if c.previous_cloud.as_ref() == Some(&new) {
+            c.previous_cloud = None;
+        }
+        Ok(replaced)
+    })?;
+    if let Some(d) = dropped {
+        let cfg = config::load()?;
+        let mut keep = vec![&cfg.cloud];
+        keep.extend(cfg.previous_cloud.as_ref());
+        secrets::release(&d, &keep);
+    }
+    reset_markers()
+}
+
+/// Stop syncing with any cloud. Saved credentials are removed; the data in
+/// the cloud is kept.
+pub fn disconnect() -> Result<()> {
+    let cfg = config::load()?;
+    let is_google = |c: &CloudConfig| matches!(c, CloudConfig::GoogleDrive { .. });
+    if is_google(&cfg.cloud) || cfg.previous_cloud.as_ref().is_some_and(is_google) {
+        let _ = oauth::clear_refresh_token();
+    }
+    secrets::release(&cfg.cloud, &[]);
+    if let Some(p) = &cfg.previous_cloud {
+        secrets::release(p, &[]);
+    }
+    config::update(|c| {
+        c.cloud = CloudConfig::None;
+        c.previous_cloud = None;
+        Ok(())
+    })?;
+    reset_markers()
+}
+
+/// Forget the previous cloud (after copying, or when the user declines).
+pub fn dismiss_previous() -> Result<()> {
+    let cfg = config::load()?;
+    let Some(prev) = cfg.previous_cloud.clone() else { return Ok(()) };
+    secrets::release(&prev, &[&cfg.cloud]);
+    // The Google sign-in is no longer needed once we moved away from Drive.
+    if matches!(prev, CloudConfig::GoogleDrive { .. }) && !matches!(cfg.cloud, CloudConfig::GoogleDrive { .. }) {
+        let _ = oauth::clear_refresh_token();
+    }
+    config::update(|c| {
+        c.previous_cloud = None;
+        Ok(())
+    })
+}
+
+/// Copy everything from the previous cloud to the current one, then forget
+/// the previous cloud.
+pub fn migrate_previous(progress: impl FnMut(&migrate::Progress)) -> Result<migrate::Report> {
+    let cfg = config::load()?;
+    let prev = cfg.previous_cloud.clone().ok_or_else(|| anyhow!("没有需要复制的旧云盘"))?;
+    let from = open_config(&prev, timeout(&cfg))?.ok_or_else(|| anyhow!("没有需要复制的旧云盘"))?;
+    let to = open(&cfg)?.ok_or_else(|| anyhow!(NotConfigured))?;
+    let keys: Vec<String> = cfg.games.iter().map(|g| g.key.clone()).collect();
+    let report = migrate::copy_all(from.as_ref(), to.as_ref(), &keys, progress)?;
+    dismiss_previous()?;
+    reset_markers()?;
+    Ok(report)
+}
+
+/// Machine name of a cloud kind (matches the `kind` tag in the config).
+pub fn kind_id(cloud: &CloudConfig) -> &'static str {
+    match cloud {
+        CloudConfig::None => "none",
+        CloudConfig::LocalFolder { .. } => "localFolder",
+        CloudConfig::GoogleDrive { .. } => "googleDrive",
+        CloudConfig::WebDav { .. } => "webDav",
+        CloudConfig::S3 { .. } => "s3",
+        CloudConfig::BaiduPan { .. } => "baiduPan",
+    }
+}
+
+/// Short name of a cloud kind for messages.
+pub fn kind_name(cloud: &CloudConfig) -> &'static str {
+    match cloud {
+        CloudConfig::None => "未连接",
+        CloudConfig::LocalFolder { .. } => "本地 / 同步文件夹",
+        CloudConfig::GoogleDrive { .. } => "Google Drive",
+        CloudConfig::WebDav { .. } => "WebDAV",
+        CloudConfig::S3 { .. } => "S3 兼容存储",
+        CloudConfig::BaiduPan { .. } => "百度网盘",
     }
 }
 

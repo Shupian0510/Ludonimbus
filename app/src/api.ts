@@ -125,7 +125,7 @@ export interface GameView {
 export interface Overview {
   deviceId: string;
   deviceName: string;
-  cloud: { kind: "none" | "localFolder" | "googleDrive"; label: string | null; error: string | null };
+  cloud: { kind: CloudKind; label: string | null; error: string | null };
   steamFound: boolean;
   steamRunning: boolean;
   games: GameView[];
@@ -180,10 +180,47 @@ export interface LocalFile {
   mtime: number;
 }
 
+export type CloudKind = "none" | "localFolder" | "googleDrive" | "webDav" | "s3" | "baiduPan";
+
+export type WebDavConfig = { kind: "webDav"; url: string; username: string; folder: string };
+export type S3Config = {
+  kind: "s3";
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+  accessKeyId: string;
+  pathStyle: boolean;
+};
+
 export type CloudConfig =
   | { kind: "none" }
   | { kind: "localFolder"; path: string }
-  | { kind: "googleDrive"; clientId: string; clientSecret: string; folder: string; account: string | null };
+  | { kind: "googleDrive"; clientId: string; clientSecret: string; folder: string; account: string | null }
+  | WebDavConfig
+  | S3Config
+  | { kind: "baiduPan"; appKey: string; secretKey: string; appName: string; account: string | null };
+
+export interface BaiduDeviceCode {
+  userCode: string;
+  verificationUrl: string;
+  qrcodeUrl: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export interface MigrateProgress {
+  game: string;
+  done: number;
+  total: number;
+}
+
+export interface MigrateReport {
+  games: number;
+  copied: number;
+  skipped: number;
+  bytes: number;
+}
 
 export interface Settings {
   deviceId: string;
@@ -193,7 +230,11 @@ export interface Settings {
   steamRoot: string | null;
   steamAccount: string | null;
   cloud: CloudConfig;
+  /** Cloud used before the last switch whose saves can still be copied. */
+  previousCloud: { kind: CloudKind; name: string } | null;
   googleBuiltin: boolean;
+  baiduBuiltin: boolean;
+  baiduAppName: string;
   dataDir: string;
   runnerPath: string;
   runnerExists: boolean;
@@ -321,6 +362,13 @@ export const api = {
   cloudConnectGoogle: (clientId: string, clientSecret: string) =>
     invoke<string>("cloud_connect_google", { clientId, clientSecret }),
   cloudDisconnect: () => invoke<void>("cloud_disconnect"),
+  cloudTest: (cloud: WebDavConfig | S3Config, secret: string) => invoke<AccountInfo>("cloud_test", { cloud, secret }),
+  cloudConnect: (cloud: WebDavConfig | S3Config, secret: string) => invoke<string>("cloud_connect", { cloud, secret }),
+  cloudMigrate: () => invoke<MigrateReport>("cloud_migrate"),
+  cloudDismissPrevious: () => invoke<void>("cloud_dismiss_previous"),
+  cloudConnectBaidu: (appKey: string, secretKey: string, appName: string) =>
+    invoke<string>("cloud_connect_baidu", { appKey, secretKey, appName }),
+  cloudCancelLogin: () => invoke<void>("cloud_cancel_login"),
   cloudAccount: () => invoke<AccountInfo>("cloud_account"),
   devices: () => invoke<DeviceInfo[]>("list_devices"),
   ludusaviSearch: (query: string) => invoke<string[]>("ludusavi_search", { query }),

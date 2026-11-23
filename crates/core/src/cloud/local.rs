@@ -1,10 +1,11 @@
 //! "Cloud" in a plain folder: a NAS share, a USB drive, or a folder kept in
 //! sync by Google Drive for desktop / OneDrive. Also used by the tests.
 
-use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo, Unavailable};
-use crate::snapshot::{SnapshotMeta, SnapshotSummary};
+use super::store::{temp_name, Entry, Store};
+use super::Unavailable;
 use crate::util;
 use anyhow::{anyhow, Context, Result};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 pub struct LocalFolder {
@@ -14,6 +15,24 @@ pub struct LocalFolder {
 impl LocalFolder {
     pub fn new(root: PathBuf) -> Self {
         LocalFolder { root }
+    }
+
+    fn abs(&self, path: &str) -> PathBuf {
+        let mut p = self.root.clone();
+        for seg in path.split('/').filter(|s| !s.is_empty()) {
+            p.push(seg);
+        }
+        p
+    }
+}
+
+impl Store for LocalFolder {
+    fn kind(&self) -> &'static str {
+        "localFolder"
+    }
+
+    fn label(&self) -> String {
+        self.root.display().to_string()
     }
 
     fn check(&self) -> Result<()> {
@@ -26,126 +45,69 @@ impl LocalFolder {
         Ok(())
     }
 
-    fn snapshots_dir(&self, game: &str) -> PathBuf {
-        self.root.join("games").join(game).join("snapshots")
-    }
-}
-
-impl CloudProvider for LocalFolder {
-    fn kind(&self) -> &'static str {
-        "localFolder"
-    }
-
-    fn account(&self) -> Result<AccountInfo> {
+    fn list(&self, dir: &str) -> Result<Vec<Entry>> {
         self.check()?;
-        Ok(AccountInfo {
-            label: self.root.display().to_string(),
-            used: None,
-            total: None,
-        })
-    }
-
-    fn list_snapshots(&self, game: &str) -> Result<Vec<SnapshotSummary>> {
-        self.check()?;
-        let dir = self.snapshots_dir(game);
-        let mut out = Vec::new();
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            return Ok(out);
+        let Ok(rd) = std::fs::read_dir(self.abs(dir)) else {
+            return Ok(Vec::new());
         };
+        let mut out = Vec::new();
         for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "json") && p.with_extension("zip").is_file() {
-                if let Ok(text) = std::fs::read_to_string(&p) {
-                    if let Ok(meta) = serde_json::from_str::<SnapshotMeta>(&text) {
-                        out.push(SnapshotSummary::from(&meta));
-                    }
-                }
-            }
+            let Ok(md) = e.metadata() else { continue };
+            let mtime = md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            out.push(Entry {
+                name: e.file_name().to_string_lossy().into_owned(),
+                is_dir: md.is_dir(),
+                size: md.len(),
+                tag: format!("{mtime}-{}", md.len()),
+            });
         }
-        out.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
         Ok(out)
     }
 
-    fn get_meta(&self, game: &str, id: &str) -> Result<SnapshotMeta> {
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
         self.check()?;
-        let p = self.snapshots_dir(game).join(format!("{id}.json"));
-        let text = std::fs::read_to_string(&p).with_context(|| format!("找不到快照 {id}"))?;
-        Ok(serde_json::from_str(&text)?)
+        match std::fs::read(self.abs(path)) {
+            Ok(b) => Ok(Some(b)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(anyhow!(e).context(format!("无法读取 {path}"))),
+        }
     }
 
-    fn upload(&self, meta: &SnapshotMeta, zip: &Path) -> Result<()> {
+    fn download(&self, path: &str, dest: &Path) -> Result<()> {
         self.check()?;
-        let dir = self.snapshots_dir(&meta.game);
-        std::fs::create_dir_all(&dir)?;
-        let dest = dir.join(format!("{}.zip", meta.id));
-        let tmp = dir.join(format!("{}.zip.lntmp", meta.id));
-        std::fs::copy(zip, &tmp).context("复制快照到云端文件夹失败")?;
-        std::fs::rename(&tmp, &dest)?;
-        // The metadata file is written last and acts as the commit marker.
-        util::atomic_write(&dir.join(format!("{}.json", meta.id)), &serde_json::to_vec_pretty(meta)?)?;
-        Ok(())
-    }
-
-    fn download(&self, game: &str, id: &str, dest: &Path) -> Result<()> {
-        self.check()?;
-        let src = self.snapshots_dir(game).join(format!("{id}.zip"));
+        let src = self.abs(path);
         std::fs::copy(&src, dest).with_context(|| format!("找不到快照文件 {}", src.display()))?;
         Ok(())
     }
 
-    fn delete(&self, game: &str, id: &str) -> Result<()> {
+    fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         self.check()?;
-        let dir = self.snapshots_dir(game);
-        let _ = std::fs::remove_file(dir.join(format!("{id}.json")));
-        let _ = std::fs::remove_file(dir.join(format!("{id}.zip")));
+        util::atomic_write(&self.abs(path), data)
+    }
+
+    fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        self.check()?;
+        let dest = self.abs(path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp = self.abs(&temp_name(path));
+        std::fs::copy(src, &tmp).context("复制快照到云端文件夹失败")?;
+        std::fs::rename(&tmp, &dest)?;
         Ok(())
     }
 
-    fn update_meta(&self, meta: &SnapshotMeta) -> Result<()> {
+    fn remove(&self, path: &str) -> Result<()> {
         self.check()?;
-        let p = self.snapshots_dir(&meta.game).join(format!("{}.json", meta.id));
-        util::atomic_write(&p, &serde_json::to_vec_pretty(meta)?)
-    }
-
-    fn put_device(&self, device: &DeviceInfo) -> Result<()> {
-        self.check()?;
-        let p = self.root.join("devices").join(format!("{}.json", device.id));
-        util::atomic_write(&p, &serde_json::to_vec_pretty(device)?)
-    }
-
-    fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
-        self.check()?;
-        let mut out = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(self.root.join("devices")) {
-            for e in rd.flatten() {
-                if let Ok(text) = std::fs::read_to_string(e.path()) {
-                    if let Ok(d) = serde_json::from_str(&text) {
-                        out.push(d);
-                    }
-                }
-            }
+        match std::fs::remove_file(self.abs(path)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(anyhow!(e).context(format!("无法删除 {path}"))),
         }
-        Ok(out)
-    }
-
-    fn put_game(&self, game: &CloudGame) -> Result<()> {
-        self.check()?;
-        let p = self.root.join("games").join(&game.key).join("game.json");
-        util::atomic_write(&p, &serde_json::to_vec_pretty(game)?)
-    }
-
-    fn list_games(&self) -> Result<Vec<CloudGame>> {
-        self.check()?;
-        let mut out = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(self.root.join("games")) {
-            for e in rd.flatten() {
-                if let Ok(text) = std::fs::read_to_string(e.path().join("game.json")) {
-                    if let Ok(g) = serde_json::from_str(&text) {
-                        out.push(g);
-                    }
-                }
-            }
-        }
-        Ok(out)
     }
 }

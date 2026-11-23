@@ -19,9 +19,12 @@ globset = "0.4"
 walkdir = "2"
 ureq = { version = "2", features = ["json"] }
 sha2 = "0.10"
+md-5 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 url = "2"
+percent-encoding = "2"
+roxmltree = "0.20"
 dirs = "5"
 opener = "0.7"
 keyring = { version = "3", features = ["windows-native"] }
@@ -37,4 +40,10 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
+dav-server = "0.12.0"
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["server", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+md-5 = "0.10"
 tempfile = "3"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "macros"] }

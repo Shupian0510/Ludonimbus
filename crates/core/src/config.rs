@@ -18,6 +18,9 @@ pub struct AppConfig {
     /// Seconds to wait for the cloud before treating it as offline.
     pub network_timeout_secs: u64,
     pub games: Vec<GameEntry>,
+    /// The cloud used before the last switch, until its data has been copied
+    /// to the new one (or the user declined).
+    pub previous_cloud: Option<CloudConfig>,
 }
 
 impl Default for AppConfig {
@@ -30,6 +33,7 @@ impl Default for AppConfig {
             retention: Retention::default(),
             network_timeout_secs: 8,
             games: Vec::new(),
+            previous_cloud: None,
         }
     }
 }
@@ -75,6 +79,41 @@ pub enum CloudConfig {
         client_secret: String,
         #[serde(default = "default_drive_folder")]
         folder: String,
+        #[serde(default)]
+        account: Option<String>,
+    },
+    /// A WebDAV server: NAS, Nextcloud, Jianguoyun, OpenList / AList.
+    /// The password is kept in the Windows Credential Manager.
+    WebDav {
+        url: String,
+        #[serde(default)]
+        username: String,
+        #[serde(default = "default_drive_folder")]
+        folder: String,
+    },
+    /// S3-compatible object storage (MinIO, Aliyun OSS, Tencent COS, R2…).
+    /// The secret key is kept in the Windows Credential Manager.
+    S3 {
+        endpoint: String,
+        #[serde(default)]
+        region: String,
+        bucket: String,
+        #[serde(default = "default_drive_folder")]
+        prefix: String,
+        access_key_id: String,
+        #[serde(default)]
+        path_style: bool,
+    },
+    /// Baidu Netdisk through its open platform. Empty app fields use the
+    /// app built into the release. The token is kept in the Windows
+    /// Credential Manager.
+    BaiduPan {
+        #[serde(default)]
+        app_key: String,
+        #[serde(default)]
+        secret_key: String,
+        #[serde(default)]
+        app_name: String,
         #[serde(default)]
         account: Option<String>,
     },

@@ -1083,6 +1083,77 @@ table.files td:not(:first-child) {
   flex-direction: column;
   gap: 4px;
 }
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(102, 192, 244, 0.06);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip:hover {
+  border-color: var(--accent-2);
+  color: var(--text);
+}
+.baidu-login {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  background: rgba(102, 192, 244, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.baidu-login .qr {
+  width: 112px;
+  height: 112px;
+  flex: none;
+  padding: 4px;
+  background: #fff;
+  border-radius: 6px;
+}
+.baidu-login-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.user-code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 22px;
+  letter-spacing: 3px;
+  color: var(--text);
+  user-select: all;
+}
+.migrate-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: rgba(102, 192, 244, 0.07);
+  border: 1px solid rgba(102, 192, 244, 0.3);
+  border-radius: 9px;
+}
+.migrate-banner > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.migrate-banner .update-progress {
+  margin: 6px 0 0;
+}
 .device-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));

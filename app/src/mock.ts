@@ -176,13 +176,28 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         steamRoot: "C:\\Program Files (x86)\\Steam",
         steamAccount: "12345678",
         cloud: { kind: "googleDrive", clientId: "", clientSecret: "", folder: "Ludonimbus", account: "player@example.com" },
+        previousCloud: { kind: "localFolder", name: "本地 / 同步文件夹（D:\\Cloud\\Ludonimbus）" },
         googleBuiltin: true,
+        baiduBuiltin: false,
+        baiduAppName: "Ludonimbus",
         dataDir: "C:\\Users\\me\\AppData\\Roaming\\Ludonimbus",
         runnerPath: "C:\\Users\\me\\AppData\\Local\\Ludonimbus\\ludonimbus-run.exe",
         runnerExists: true,
         ludusavi: "ludusavi 0.31.0",
         version: "0.1.0",
       });
+    case "cloud_test":
+      return delay({ label: "https://dav.jianguoyun.com/dav/Ludonimbus", used: 1.2e9, total: 3e9 });
+    case "cloud_connect":
+      return delay("https://dav.jianguoyun.com/dav/Ludonimbus");
+    case "cloud_migrate":
+      return delay({ games: 3, copied: 42, skipped: 0, bytes: 6.4e8 }, 1500);
+    case "cloud_connect_baidu":
+      return delay("玩家", 4000);
+    case "cloud_cancel_login":
+      return delay(undefined);
+    case "cloud_dismiss_previous":
+      return delay(undefined);
     case "cloud_account":
       return delay({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":

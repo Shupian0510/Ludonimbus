@@ -1,9 +1,37 @@
 import { useCallback, useEffect, useState } from "react";
-import { AccountInfo, api, errorText, Settings, SteamAccount, UpdateInfo } from "../api";
+import { AccountInfo, api, CloudKind, errorText, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
+import { BaiduOption, MigrateBanner, S3Option, WebDavOption } from "./CloudForms";
 import { SteamPluginPanel } from "./SteamPlugin";
 import { Badge, Button, Icon, Spinner, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
+
+export const CLOUD_NAMES: Record<CloudKind, string> = {
+  none: "未连接",
+  localFolder: "本地 / 同步文件夹",
+  googleDrive: "Google Drive",
+  webDav: "WebDAV",
+  s3: "S3 兼容存储",
+  baiduPan: "百度网盘",
+};
+
+function currentLabel(s: Settings): string {
+  const c = s.cloud;
+  switch (c.kind) {
+    case "localFolder":
+      return c.path;
+    case "googleDrive":
+      return c.account ?? "";
+    case "webDav":
+      return `${c.url.replace(/\/+$/, "")}/${c.folder}`;
+    case "s3":
+      return `${c.endpoint} / ${c.bucket}${c.prefix ? ` / ${c.prefix}` : ""}`;
+    case "baiduPan":
+      return c.account ?? "";
+    default:
+      return "";
+  }
+}
 
 export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
   const ui = useUi();
@@ -132,16 +160,21 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
           {s.cloud.kind === "none" ? <Badge tone="muted">未连接</Badge> : accountError ? <Badge tone="warn">需要处理</Badge> : <Badge tone="ok">已连接</Badge>}
         </div>
 
+        <MigrateBanner settings={s} done={done} />
+
         {s.cloud.kind !== "none" && (
           <div className="cloud-current">
             <div>
-              <b>{s.cloud.kind === "googleDrive" ? "Google Drive" : "本地 / 同步文件夹"}</b>
+              <b>{CLOUD_NAMES[s.cloud.kind]}</b>
               <div className="muted small">
-                {account ? account.label : s.cloud.kind === "localFolder" ? s.cloud.path : s.cloud.account ?? ""}
+                {account ? account.label : currentLabel(s)}
                 {account?.used != null && account.total != null && ` · 已用 ${bytes(account.used)} / ${bytes(account.total)}`}
               </div>
               {accountError && <div className="health health-warn">{accountError}</div>}
               {s.cloud.kind === "googleDrive" && <div className="muted small">存档在你的 Google Drive「{s.cloud.folder}」文件夹里，网页版 Drive 也能直接看到和下载。</div>}
+              {s.cloud.kind === "baiduPan" && (
+                <div className="muted small">存档在你百度网盘的「我的应用数据/{s.cloud.appName || s.baiduAppName}」文件夹里，网页版和 App 都能看到。</div>
+              )}
             </div>
             <Button kind="danger" onClick={disconnect}>
               断开
@@ -194,6 +227,9 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
               </Button>
             </div>
           </div>
+          <BaiduOption key={`baidu-${s.cloud.kind}`} settings={s} done={done} />
+          <WebDavOption key={`webdav-${s.cloud.kind}`} settings={s} done={done} />
+          <S3Option key={`s3-${s.cloud.kind}`} settings={s} done={done} />
         </div>
       </section>
 

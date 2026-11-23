@@ -4,7 +4,7 @@
 //! - [`adapters`] built-in save rules for emulators / recomps
 //! - [`spec`]     effective save spec + root path resolution per device
 //! - [`snapshot`] scanning, hashing, zip snapshots, restoring
-//! - [`cloud`]    cloud providers (local folder, Google Drive)
+//! - [`cloud`]    cloud providers (local folder, Google Drive, WebDAV, S3)
 //! - [`sync`]     Steam-Cloud-like sync decisions and conflict handling
 //! - [`steam`]    Steam install, accounts, non-Steam shortcuts, artwork
 //! - [`millennium`] Millennium install and the Ludonimbus Steam plugin

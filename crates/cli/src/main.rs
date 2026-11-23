@@ -102,6 +102,43 @@ enum CloudCmd {
         #[arg(long, default_value = "")]
         client_secret: String,
     },
+    /// Use a WebDAV server (NAS, Nextcloud, Jianguoyun, OpenList…). The
+    /// password is read from LUDONIMBUS_SECRET or asked for.
+    Webdav {
+        #[arg(long)]
+        url: String,
+        #[arg(long, default_value = "")]
+        user: String,
+        #[arg(long, default_value = "Ludonimbus")]
+        folder: String,
+    },
+    /// Use S3-compatible storage. The secret key is read from
+    /// LUDONIMBUS_SECRET or asked for.
+    S3 {
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long, default_value = "")]
+        region: String,
+        #[arg(long)]
+        bucket: String,
+        #[arg(long, default_value = "Ludonimbus")]
+        prefix: String,
+        #[arg(long)]
+        access_key: String,
+        #[arg(long)]
+        path_style: bool,
+    },
+    /// Sign in to Baidu Netdisk (open the shown page or scan the QR code)
+    Baidu {
+        #[arg(long, default_value = "")]
+        app_key: String,
+        #[arg(long, default_value = "")]
+        secret_key: String,
+        #[arg(long, default_value = "")]
+        app_name: String,
+    },
+    /// Copy all saves from the previous cloud into the current one
+    Migrate,
     /// Show the connected account
     Info,
     /// List devices known to the cloud
@@ -126,6 +163,36 @@ fn human(bytes: u64) -> String {
         i += 1;
     }
     if i == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", U[i]) }
+}
+
+fn read_secret(prompt: &str) -> Result<String> {
+    if let Ok(s) = std::env::var("LUDONIMBUS_SECRET") {
+        if !s.is_empty() {
+            return Ok(s);
+        }
+    }
+    eprint!("{prompt}：");
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// Test WebDAV / S3 settings, then switch to them.
+fn connect_store(c: CloudConfig) -> Result<()> {
+    let prompt = if matches!(c, CloudConfig::S3 { .. }) { "Secret Key" } else { "密码" };
+    let secret = read_secret(prompt)?;
+    let timeout = cloud::timeout(&config::load()?).max(std::time::Duration::from_secs(15));
+    let account = cloud::probe(&c, Some(&secret), timeout)?;
+    cloud::switch_to(c, Some(&secret))?;
+    println!("已连接：{}", account.label);
+    hint_migrate()
+}
+
+fn hint_migrate() -> Result<()> {
+    if let Some(p) = config::load()?.previous_cloud {
+        println!("要把原来 {} 里的存档复制过来，请运行：ludonimbus cloud migrate", cloud::kind_name(&p));
+    }
+    Ok(())
 }
 
 fn account_or_default(account: Option<String>) -> Result<String> {
@@ -268,11 +335,69 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Cloud(cmd) => match cmd {
             CloudCmd::Folder { path } => {
                 std::fs::create_dir_all(&path)?;
-                config::update(|c| {
-                    c.cloud = CloudConfig::LocalFolder { path: path.clone() };
-                    Ok(())
-                })?;
+                cloud::switch_to(CloudConfig::LocalFolder { path: path.clone() }, None)?;
                 println!("云端已设置为文件夹 {}", path.display());
+                hint_migrate()?;
+            }
+            CloudCmd::Webdav { url, user, folder } => {
+                let c = CloudConfig::WebDav { url, username: user, folder };
+                connect_store(c)?;
+            }
+            CloudCmd::S3 {
+                endpoint,
+                region,
+                bucket,
+                prefix,
+                access_key,
+                path_style,
+            } => {
+                let c = CloudConfig::S3 {
+                    endpoint,
+                    region,
+                    bucket,
+                    prefix,
+                    access_key_id: access_key,
+                    path_style,
+                };
+                connect_store(c)?;
+            }
+            CloudCmd::Baidu {
+                app_key,
+                secret_key,
+                app_name,
+            } => {
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let name = cloud::connect_baidu(
+                    &app_key,
+                    &secret_key,
+                    &app_name,
+                    |code| {
+                        println!("请在浏览器中登录百度账号并输入授权码：{}", code.user_code);
+                        println!("授权页面：{}", code.browser_url());
+                        if !code.qrcode_url.is_empty() {
+                            println!("也可以用百度网盘 App 扫描二维码：{}", code.qrcode_url);
+                        }
+                        let _ = opener::open_browser(code.browser_url());
+                        println!("等待授权…");
+                    },
+                    &cancel,
+                )?;
+                println!("已连接百度网盘：{name}");
+                hint_migrate()?;
+            }
+            CloudCmd::Migrate => {
+                let r = cloud::migrate_previous(|p| {
+                    if p.done < p.total {
+                        println!("[{}/{}] {}", p.done + 1, p.total, p.game);
+                    }
+                })?;
+                println!(
+                    "已复制 {} 个版本（{}），{} 个已存在而跳过，涉及 {} 个游戏",
+                    r.copied,
+                    human(r.bytes),
+                    r.skipped,
+                    r.games
+                );
             }
             CloudCmd::Google { client_id, client_secret } => {
                 let client = oauth::GoogleClient::resolve(&client_id, &client_secret)
@@ -280,16 +405,17 @@ fn run(cli: Cli) -> Result<()> {
                 println!("请在打开的浏览器中登录 Google 账号…");
                 let auth = oauth::authorize(&client, std::time::Duration::from_secs(300))?;
                 oauth::store_refresh_token(&auth.refresh_token)?;
-                config::update(|c| {
-                    c.cloud = CloudConfig::GoogleDrive {
+                cloud::switch_to(
+                    CloudConfig::GoogleDrive {
                         client_id: client_id.clone(),
                         client_secret: client_secret.clone(),
                         folder: "Ludonimbus".into(),
                         account: auth.email.clone(),
-                    };
-                    Ok(())
-                })?;
+                    },
+                    None,
+                )?;
                 println!("已连接 Google Drive：{}", auth.email.unwrap_or_default());
+                hint_migrate()?;
             }
             CloudCmd::Info => {
                 let ctx = Ctx::load()?;
@@ -306,11 +432,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
             CloudCmd::Disconnect => {
-                let _ = oauth::clear_refresh_token();
-                config::update(|c| {
-                    c.cloud = CloudConfig::None;
-                    Ok(())
-                })?;
+                cloud::disconnect()?;
                 println!("已断开（云端数据保留）");
             }
         },

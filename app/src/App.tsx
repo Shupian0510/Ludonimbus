@@ -161,7 +161,13 @@ export default function App() {
                     ? "云盘需要重新连接"
                     : overview.cloud.kind === "googleDrive"
                       ? overview.cloud.label ?? "Google Drive"
-                      : "本地/同步文件夹"}
+                      : overview.cloud.kind === "baiduPan"
+                        ? overview.cloud.label ?? "百度网盘"
+                        : overview.cloud.kind === "webDav"
+                        ? "WebDAV"
+                        : overview.cloud.kind === "s3"
+                          ? "S3 存储"
+                          : "本地/同步文件夹"}
               </span>
             </button>
           )}
