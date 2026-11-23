@@ -82,8 +82,11 @@ pub fn launch_and_wait(
 
     let started = Instant::now();
     let mut exit: Option<(i32, Duration)> = None;
-    let watch_game = on_game_exit.is_some() && !wait_for.is_empty();
+    // Poll the game processes (cheap) to know whether the game was seen, and
+    // to report each game exit while the launcher stays open.
+    let watch_game = !wait_for.is_empty();
     let mut game_seen = false;
+    let mut game_ever_seen = false;
     let mut game_gone_since: Option<Instant> = None;
     loop {
         if exit.is_none() {
@@ -107,6 +110,7 @@ pub fn launch_and_wait(
                     log("game process is running");
                 }
                 game_seen = true;
+                game_ever_seen = true;
                 game_gone_since = None;
             } else if game_seen
                 && game_gone_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(3)
@@ -114,8 +118,8 @@ pub fn launch_and_wait(
                 game_seen = false;
                 game_gone_since = None;
                 if active {
-                    log("game exited while the launcher is still open");
                     if let Some(cb) = on_game_exit.as_mut() {
+                        log("game exited while the launcher is still open");
                         cb();
                     }
                 }
@@ -138,7 +142,8 @@ pub fn launch_and_wait(
     // appear when the launcher handed off quickly (or tracking failed);
     // otherwise a single check is enough and exiting stays instant.
     if !wait_for.is_empty() {
-        let handoff = !tracked || main_lifetime < Duration::from_secs(20);
+        // Already watched the game run and exit above: nothing to wait for.
+        let handoff = !game_ever_seen && (!tracked || main_lifetime < Duration::from_secs(20));
         let appear_window = if handoff { Duration::from_secs(8) } else { Duration::ZERO };
         let appear_deadline = Instant::now() + appear_window;
         let mut seen = is_running(wait_for);
@@ -252,12 +257,12 @@ mod tests {
     #[test]
     fn reports_game_exit_while_launcher_stays_open() {
         let tmp = tempfile::tempdir().unwrap();
-        // A uniquely named "game": a copy of ping that runs ~2 s.
+        // A uniquely named "game": a copy of ping that runs ~1 s.
         let game = tmp.path().join("ln-fake-game.exe");
         std::fs::copy(r"C:\Windows\System32\PING.EXE", &game).unwrap();
-        // The "launcher" starts the game, then stays open ~8 s.
+        // The "launcher" starts the game, then stays open ~6 s.
         let script = format!(
-            "start /b {} -n 3 127.0.0.1 >nul & ping -n 9 127.0.0.1 >nul",
+            "start /b {} -n 2 127.0.0.1 >nul & ping -n 7 127.0.0.1 >nul",
             game.display()
         );
         let calls = std::cell::Cell::new(0);
@@ -279,7 +284,9 @@ mod tests {
         launcher_done.set(true);
         assert_eq!(code, 0);
         assert_eq!(calls.get(), 1, "callback should run once, before the launcher exits");
-        assert!(start.elapsed() >= Duration::from_secs(7));
+        assert!(start.elapsed() >= Duration::from_secs(5));
+        // The game was seen running, so no extra "wait for it to appear" delay.
+        assert!(start.elapsed() < Duration::from_secs(10));
     }
 }
 

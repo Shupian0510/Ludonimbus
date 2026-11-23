@@ -16,7 +16,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+      # Reuse the release-profile cache that ci.yml's dev-build keeps warm on
+      # main (caches saved on tags are not visible to later tags, so don't save).
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-build
+          save-if: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20

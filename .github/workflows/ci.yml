@@ -3,7 +3,15 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
+  workflow_dispatch:
+
+# A newer push to the same branch / PR cancels the run in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -12,6 +20,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: debug-build
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -23,13 +34,14 @@ jobs:
       - name: Changelog has a bilingual entry for this version
         shell: pwsh
         run: ./scripts/changelog-section.ps1 -Version (./scripts/check-versions.ps1) | Out-Null
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
       - name: Rust tests
         run: cargo test --workspace --exclude ludonimbus-app
       - name: Frontend build
         working-directory: app
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
       - name: Desktop app compiles
         shell: pwsh
         run: |
@@ -37,15 +49,18 @@ jobs:
           cargo build -p ludonimbus-app
 
   # Installer for every commit on main, kept as a workflow artifact for 14
-  # days. Not a release: the auto-updater never offers it.
+  # days. Not a release: the auto-updater never offers it. It also keeps the
+  # release-profile cache warm for release.yml.
   dev-build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-build
       - uses: actions/setup-node@v4
         with:
           node-version: 20
