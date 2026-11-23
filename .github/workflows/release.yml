@@ -20,8 +20,8 @@ jobs:
       # main (caches saved on tags are not visible to later tags, so don't save).
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-build
-          key: ${{ hashFiles('Cargo.toml') }}
+          # Cargo.toml holds the build profiles, which rust-cache does not hash itself.
+          shared-key: release-build-${{ hashFiles('Cargo.toml') }}
           save-if: false
       - uses: actions/setup-node@v4
         with:
