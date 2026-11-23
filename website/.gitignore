@@ -1,0 +1,6 @@
+node_modules/
+.vitepress/cache/
+.vitepress/dist/
+# Generated from ../CHANGELOG.md by scripts/gen-changelog.mjs
+reference/changelog.md
+en/reference/changelog.md
