@@ -53,7 +53,6 @@ jobs:
   # release-profile cache warm for release.yml.
   dev-build:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

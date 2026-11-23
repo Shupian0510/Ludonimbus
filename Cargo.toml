@@ -16,5 +16,6 @@ serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 
 [profile.release]
-lto = "thin"
+# No LTO: it barely changes this app's size (most of the installer is
+# Ludusavi) but makes every release build minutes slower.
 strip = true
