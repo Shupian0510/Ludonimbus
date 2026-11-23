@@ -20,7 +20,7 @@ use crate::state::{self, ConflictInfo};
 use crate::{logger, paths};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub struct Ctx {
@@ -69,7 +69,7 @@ impl Ctx {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
     NoCloud,
@@ -87,7 +87,7 @@ pub enum Status {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusReport {
     pub status: Status,

@@ -1,6 +1,7 @@
-# Prepares the executables that ship next to the Ludonimbus app (Tauri "externalBin"):
+# Prepares the files that ship next to the Ludonimbus app:
 #   app/src-tauri/binaries/ludonimbus-run-<triple>.exe   (Steam launch wrapper, built here)
 #   app/src-tauri/binaries/ludusavi-<triple>.exe         (official Ludusavi release, not built here)
+#   app/src-tauri/plugin/ludonimbus.star                 (Steam plugin, built by build-plugin.ps1)
 #
 # Usage:
 #   ./scripts/prepare-sidecars.ps1                         # debug build, download Ludusavi if missing
@@ -46,5 +47,7 @@ if ($LudusaviPath) {
     Copy-Item (Join-Path $tmp "ludusavi.exe") $ludusaviOut -Force
     Remove-Item $tmp -Recurse -Force
 }
+& (Join-Path $PSScriptRoot "build-plugin.ps1")
+
 Write-Host "Sidecars ready in $bin"
 Get-ChildItem $bin -Filter *.exe | ForEach-Object { Write-Host ("  " + $_.Name) }

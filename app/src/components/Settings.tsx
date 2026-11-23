@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AccountInfo, api, errorText, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
+import { SteamPluginPanel } from "./SteamPlugin";
 import { Badge, Button, Icon, Spinner, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 
@@ -264,6 +265,8 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
           </div>
         </label>
       </section>
+
+      <SteamPluginPanel />
 
       <section className="panel form">
         <div className="panel-head">

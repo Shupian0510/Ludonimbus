@@ -288,6 +288,8 @@ sequenceDiagram
 
 ## 9. Millennium 插件（Phase 2）
 
+> **0.2 进展**：已实现游戏页的云存档状态栏（含立即同步、点击打开 Ludonimbus）、托盘程序的本机接口，以及在 Ludonimbus 里一键安装 Millennium 和插件；插件改用 starlight 的 `.star` 格式，状态用轮询而不是 SSE。版本弹窗、Steam 运行时开关自动同步、Steam 风格通知还没做。实现说明见 [steam-plugin.md](steam-plugin.md)。
+
 - **结构**：`millennium.toml` + `backend/main.lua`（`---@ffi` 函数供前端调用）+ `frontend/index.tsx`，用 Bun 构建。在本仓库 `plugin-millennium/` 里独立构建，提交社区时用 `git subtree split` 拆成独立仓库。
 - **功能**：
   - 在非 Steam 游戏的详情页注入「云存档」状态条，类似 Steam 的「云同步状态：已是最新」，点开是版本列表弹窗，提供「立即同步」。

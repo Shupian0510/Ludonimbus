@@ -82,6 +82,13 @@ export default function App() {
     const unlisten: Array<() => void> = [];
     if (inTauri) {
       listen("library-changed", () => reload()).then((u) => unlisten.push(u));
+      // Clicked in Steam (Millennium plugin): show that game.
+      listen<string>("open-game", (e) => {
+        setAdding(false);
+        setPage({ name: "game", key: e.payload });
+        reload();
+        check(e.payload);
+      }).then((u) => unlisten.push(u));
       // A game (and the Steam wrapper's upload) finished: refresh its status.
       listen<string>("game-stopped", (e) => {
         reload();

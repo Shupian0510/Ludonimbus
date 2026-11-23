@@ -4,6 +4,7 @@
 /app/src-tauri/gen/
 /app/src-tauri/binaries/*
 !/app/src-tauri/binaries/.gitkeep
+/app/src-tauri/plugin/
 *.log
 .DS_Store
 Thumbs.db

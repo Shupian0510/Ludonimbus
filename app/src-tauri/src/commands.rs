@@ -1,6 +1,6 @@
 //! Commands invoked by the web UI. All heavy work runs on blocking threads.
 
-use crate::{art, watcher};
+use crate::{art, busy, watcher};
 use anyhow::{anyhow, bail, Result};
 use ludonimbus_core::cloud::{self, oauth, AccountInfo, CloudGame, DeviceInfo};
 use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention};
@@ -194,7 +194,7 @@ fn with_game<T>(key: &str, f: impl FnOnce(&Ctx, &GameEntry) -> Result<T>) -> Res
     f(&ctx, &game)
 }
 
-fn cache_check(key: &str, report: &StatusReport) {
+pub(crate) fn cache_check(key: &str, report: &StatusReport) {
     let v = serde_json::to_value(report).ok();
     let _ = state::update_game(key, |g| g.last_check = v);
 }
@@ -217,6 +217,9 @@ pub async fn sync_game(key: String, resolution: String) -> CmdResult<Outcome> {
         if watcher::runner_active(&key) {
             bail!("游戏正在运行，退出游戏后会自动同步");
         }
+        let Some(_busy) = busy::begin(&key) else {
+            bail!("正在同步，请稍候");
+        };
         let res = match resolution.as_str() {
             "local" => Resolution::UseLocal,
             "cloud" => Resolution::UseCloud,

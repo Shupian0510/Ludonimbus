@@ -55,6 +55,15 @@ pub fn runner_active(key: &str) -> bool {
     runner_state(key) == Runner::Active
 }
 
+/// What the wrapper is doing: "preLaunch", "playing" or "uploading"
+/// (absent for wrappers older than 0.2.0).
+pub fn runner_phase(key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(marker(key)).ok()?;
+    serde_json::from_str::<serde_json::Value>(&text).ok()?["phase"]
+        .as_str()
+        .map(str::to_string)
+}
+
 /// Process names that mean "this game is running".
 pub fn watch_names(g: &config::GameEntry) -> Vec<String> {
     let mut names: Vec<String> = spec::effective(g).wait_for.iter().map(|s| s.to_lowercase()).collect();
@@ -74,6 +83,10 @@ fn vdf_stamp(cfg: &config::AppConfig) -> Option<SystemTime> {
 }
 
 fn background_sync(app: &AppHandle, cfg: &config::AppConfig, g: &config::GameEntry, why: &str) {
+    let Some(_busy) = crate::busy::begin(&g.key) else {
+        logger::log("watcher", format!("{}: {why}, but a sync is already running", g.key));
+        return;
+    };
     logger::log("watcher", format!("{}: {why}, syncing", g.key));
     // Give the game a moment to flush its saves.
     std::thread::sleep(Duration::from_secs(2));

@@ -166,13 +166,23 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
     }
 }
 
+/// `running/<key>.json`: tells the tray app (and through it the Steam plugin)
+/// that this wrapper handles the game, and what it is doing.
 struct RunningLock(PathBuf);
 
 impl RunningLock {
     fn create(key: &str) -> Self {
-        let p = paths::running_dir().join(format!("{key}.json"));
-        let _ = std::fs::write(&p, format!("{{\"pid\":{}}}", std::process::id()));
-        RunningLock(p)
+        let lock = RunningLock(paths::running_dir().join(format!("{key}.json")));
+        lock.phase("preLaunch");
+        lock
+    }
+
+    /// "preLaunch", "playing" or "uploading".
+    fn phase(&self, phase: &str) {
+        let _ = std::fs::write(
+            &self.0,
+            serde_json::json!({ "pid": std::process::id(), "phase": phase }).to_string(),
+        );
     }
 }
 
@@ -186,7 +196,7 @@ fn run(args: &[String]) -> Result<i32> {
     let (key, explicit) = parse_args(args)?;
     let ctx = Ctx::load()?;
     let mut game = ctx.game(&key)?;
-    let _lock = RunningLock::create(&key);
+    let lock = RunningLock::create(&key);
 
     let launch = match explicit {
         Some(cmd) if !cmd.is_empty() => {
@@ -255,10 +265,12 @@ fn run(args: &[String]) -> Result<i32> {
     let mut early_upload = || {
         settle();
         log(format!("{key}: game exited, uploading before the launcher closes"));
+        lock.phase("uploading");
         match sync::sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {
             Ok(out) => log(format!("{key}: early upload {out:?}")),
             Err(e) => log(format!("{key}: early upload failed: {e:#}")),
         }
+        lock.phase("playing");
     };
     let on_game_exit: Option<&mut dyn FnMut()> = if game.auto_sync && spec.upload_on_game_exit {
         Some(&mut early_upload)
@@ -267,6 +279,7 @@ fn run(args: &[String]) -> Result<i32> {
     };
 
     log(format!("{key}: launching {} {:?}", launch.exe.display(), launch.args));
+    lock.phase("playing");
     let code = process::launch_and_wait(
         &launch.exe,
         &launch.args,
@@ -277,6 +290,7 @@ fn run(args: &[String]) -> Result<i32> {
     )?;
 
     if game.auto_sync {
+        lock.phase("uploading");
         settle();
         log(format!("{key}: uploading saves"));
         match sync::sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {

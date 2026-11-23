@@ -201,6 +201,18 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         { current: "0.1.0", available: true, version: "0.1.1", notes: "- 修复：示例更新说明\n- 新增：示例功能", date: new Date().toISOString() },
         600,
       );
+    case "steam_plugin_status":
+      return delay({
+        steamRoot: "C:\Program Files (x86)\Steam",
+        steamRunning: true,
+        bundled: true,
+        millennium: "missing",
+        pluginInstalled: false,
+        pluginEnabled: false,
+        pluginCurrent: false,
+      });
+    case "steam_plugin_install":
+      return delay({ millenniumInstalled: "v3.6.3", steamRestarted: true }, 1500);
     case "relocate_auto":
       return delay("C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.8\\fefw.exe");
     default:

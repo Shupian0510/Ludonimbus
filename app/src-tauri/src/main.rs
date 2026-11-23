@@ -1,13 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod art;
+mod busy;
 mod commands;
+mod steam_plugin;
 mod updater;
 mod watcher;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, Runtime, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, Runtime, WindowEvent};
 
 pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
@@ -50,6 +53,9 @@ fn main() {
             }
             tray.build(app)?;
             watcher::spawn(app.handle().clone());
+            agent::spawn(app.handle().clone());
+            let handle = app.handle().clone();
+            std::thread::spawn(move || steam_plugin::refresh_installed(&handle));
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -98,9 +104,17 @@ fn main() {
             commands::list_devices,
             commands::ludusavi_search,
             commands::ludusavi_preview,
+            steam_plugin::steam_plugin_status,
+            steam_plugin::steam_plugin_install,
+            steam_plugin::steam_plugin_remove,
             updater::check_update,
             updater::install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Ludonimbus");
+        .build(tauri::generate_context!())
+        .expect("error while running Ludonimbus")
+        .run(|_app, event| {
+            if let RunEvent::Exit = event {
+                agent::remove_agent_file();
+            }
+        });
 }

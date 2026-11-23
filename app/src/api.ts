@@ -217,6 +217,24 @@ export interface UpdateInfo {
   date: string | null;
 }
 
+export type MillenniumInstall = "missing" | "legacy" | "installed";
+
+export interface SteamPluginStatus {
+  steamRoot: string | null;
+  steamRunning: boolean;
+  bundled: boolean;
+  millennium: MillenniumInstall | null;
+  pluginInstalled: boolean;
+  pluginEnabled: boolean;
+  pluginCurrent: boolean;
+}
+
+export interface SteamPluginProgress {
+  stage: "download" | "install";
+  done: number;
+  total: number;
+}
+
 export interface AccountInfo {
   label: string;
   used: number | null;
@@ -307,6 +325,10 @@ export const api = {
   devices: () => invoke<DeviceInfo[]>("list_devices"),
   ludusaviSearch: (query: string) => invoke<string[]>("ludusavi_search", { query }),
   ludusaviPreview: (title: string) => invoke<string[]>("ludusavi_preview", { title }),
+  steamPluginStatus: () => invoke<SteamPluginStatus>("steam_plugin_status"),
+  steamPluginInstall: (closeSteam: boolean) =>
+    invoke<{ millenniumInstalled: string | null; steamRestarted: boolean }>("steam_plugin_install", { closeSteam }),
+  steamPluginRemove: (closeSteam: boolean) => invoke<void>("steam_plugin_remove", { closeSteam }),
   checkUpdate: () => invoke<UpdateInfo>("check_update"),
   installUpdate: () => invoke<void>("install_update"),
 };

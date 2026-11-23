@@ -10,8 +10,8 @@
 ## 发一个新版本
 
 ```powershell
-# 1. 改版本号：同时更新 Cargo.toml、app/package.json、app/src-tauri/tauri.conf.json、Cargo.lock，
-#    并在 CHANGELOG.md 顶部加一个空的双语小节
+# 1. 改版本号：同时更新 Cargo.toml、app/package.json、app/src-tauri/tauri.conf.json、Cargo.lock、
+#    Steam 插件（plugin-millennium/package.json、millennium.toml），并在 CHANGELOG.md 顶部加一个空的双语小节
 ./scripts/bump-version.ps1 -Version 0.1.3
 
 # 2. 在 CHANGELOG.md 里把「### 中文」和「### English」都写好，然后提交
@@ -23,7 +23,7 @@ git commit -am "Release 0.1.3"
 ```
 
 发布后大约 10–15 分钟，[Releases](https://github.com/Shupian0510/Ludonimbus/releases) 页面会出现新版本，包含：
-- `Ludonimbus_X.Y.Z_x64-setup.exe`：安装包
+- `Ludonimbus_X.Y.Z_x64-setup.exe`：安装包（附带 Steam 插件 `millennium/ludonimbus.star`）
 - `Ludonimbus_X.Y.Z_x64-setup.exe.sig`：更新签名
 - `latest.json`：自动更新读取的版本信息，说明文字来自 CHANGELOG.md
 
@@ -51,7 +51,7 @@ git commit -am "Release 0.1.3"
 
 | 时机 | 检查内容 | 位置 |
 |---|---|---|
-| 每次推送 / PR | 三处版本号一致、当前版本有双语更新日志、Rust 测试、前端构建、桌面应用能编译 | `.github/workflows/ci.yml` |
+| 每次推送 / PR | 各处版本号（含 Steam 插件）一致、当前版本有双语更新日志、Rust 测试、前端构建、桌面应用能编译 | `.github/workflows/ci.yml` |
 | 推送到 main | 额外打一个开发版安装包（构建产物，保留 14 天） | `ci.yml` 的 `dev-build` |
 | 推送 `v*` 标签 | 标签与版本号一致、更新日志双语齐全，然后编译、签名、发布 Release 和 `latest.json` | `.github/workflows/release.yml` |
 
@@ -75,5 +75,5 @@ git commit -am "Release 0.1.3"
 
 - Single branch `main`. Stable releases are published by pushing a `vX.Y.Z` tag; every push to `main` also produces a development installer as a 14-day workflow artifact (never offered by the auto-updater).
 - Release: `./scripts/bump-version.ps1 -Version X.Y.Z` → write both `### 中文` and `### English` in `CHANGELOG.md` and commit → `./scripts/release.ps1` (checks branch, clean tree, versions, bilingual notes and tests, then tags and pushes). `release.yml` builds, signs and publishes the installer, its signature and `latest.json`.
-- CI checks on every push: matching versions, a bilingual changelog entry for the current version, Rust tests, frontend build, desktop app build.
+- CI checks on every push: matching versions (including the Steam plugin), a bilingual changelog entry for the current version, Rust tests, frontend build, desktop app build.
 - A beta channel (`-beta.N` prerelease tags plus an opt-in setting) will be added once there are more users.

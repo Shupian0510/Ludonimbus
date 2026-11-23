@@ -7,6 +7,7 @@
 //! - [`cloud`]    cloud providers (local folder, Google Drive)
 //! - [`sync`]     Steam-Cloud-like sync decisions and conflict handling
 //! - [`steam`]    Steam install, accounts, non-Steam shortcuts, artwork
+//! - [`millennium`] Millennium install and the Ludonimbus Steam plugin
 //! - [`games`]    high-level library operations shared by CLI / runner / app
 
 pub mod adapters;
@@ -16,6 +17,7 @@ pub mod games;
 pub mod lockfile;
 pub mod logger;
 pub mod ludusavi;
+pub mod millennium;
 pub mod paths;
 pub mod process;
 pub mod relocate;

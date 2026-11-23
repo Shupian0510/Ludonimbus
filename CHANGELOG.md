@@ -4,6 +4,20 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.2.0
+
+### 中文
+
+- 新增：在 Steam 里显示云存档状态。在「设置 → 在 Steam 中显示云存档状态」点「一键安装」，Ludonimbus 会从 GitHub 下载并校验开源插件框架 Millennium，安装到 Steam，再启用 Ludonimbus 插件。之后 Steam 游戏页的「开始游戏」栏会显示「Ludonimbus 云存档：已是最新」这类状态，从 Steam 启动、游戏中、上传中都会实时显示，也可以直接点同步按钮，或点它打开 Ludonimbus。
+- 插件只负责显示，不接触网盘账号；需要 Ludonimbus 在托盘中运行。可以随时在设置里移除插件，Ludonimbus 更新时插件也会自动更新。
+- 改进：同一个游戏不会再同时运行两次同步（界面、后台监视和 Steam 里的同步按钮共用一把锁）。
+
+### English
+
+- New: cloud save status inside Steam. In Settings → "Show cloud save status in Steam", click "Install". Ludonimbus downloads and verifies the open-source Millennium plugin framework from GitHub, installs it into Steam and enables the Ludonimbus plugin. The play bar of a game's library page then shows the status ("Ludonimbus cloud saves: up to date"), live while launching, playing and uploading, with a sync button; clicking it opens the game in Ludonimbus.
+- The plugin only displays information and never touches your cloud account; Ludonimbus must be running in the tray. The plugin can be removed in Settings at any time and is updated together with Ludonimbus.
+- Improved: the same game is never synced twice at once (the app, the background watcher and the sync button in Steam share one lock).
+
 ## 0.1.2
 
 ### 中文
