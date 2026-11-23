@@ -1,7 +1,7 @@
 [plugin]
 id = "io.github.shupian0510.ludonimbus"
 name = "Ludonimbus 云存档"
-version = "0.2.0"
+version = "0.3.0"
 author = "Shupian0510"
 description = "在 Steam 游戏详情页显示 Ludonimbus 的云存档状态。"
 

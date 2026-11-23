@@ -40,7 +40,7 @@ Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：从 Stea
 - **版本历史**：每个版本都记录时间、设备和来源，可以恢复、导出 zip、锁定、写备注。旧版本自动清理，手动备份永久保留。
 - **冲突时两份都留**：两台电脑都改过存档时让你选择用哪一份，没选的那份也留在版本历史里。
 - **离线也能玩**：连不上云端就直接启动游戏，存档先保存在本机，联网后自动补传。
-- **云盘随你选**：Google Drive、百度网盘（都是一键登录）、群晖等 NAS、坚果云、Nextcloud、阿里云 OSS / 腾讯云 COS 等对象存储；阿里云盘、夸克等可以通过 OpenList / AList 接入。换云盘时一键把历史版本复制过去。
+- **云盘随你选**：Google Drive（一键登录）、群晖等 NAS、坚果云、Nextcloud、阿里云 OSS / 腾讯云 COS 等对象存储；百度网盘、阿里云盘、夸克等可以通过 OpenList / AList 接入。换云盘时一键把历史版本复制过去。
 - **Steam 风格的界面**：网格 / 列表游戏库，直接使用你在 Steam 里设置的封面、横幅和 Logo。
 
 ## 下载与安装
@@ -57,7 +57,6 @@ Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：从 Stea
 
 1. **连接云盘**：在「设置 → 云盘」选一种：
    - **Google Drive**：在浏览器里登录即可。
-   - **百度网盘**：在浏览器里授权，或者用百度网盘 App 扫码。存档放在你网盘的「我的应用数据/Ludonimbus」里。非会员下载会被百度限速，换电脑或恢复较大的存档时要多等一会儿。
    - **WebDAV**：群晖 / 威联通等 NAS、坚果云、Nextcloud，或者 [OpenList](https://github.com/OpenListTeam/OpenList) / AList（可以挂载百度网盘、阿里云盘、夸克等）。填地址、用户名和密码，先点「测试连接」。
    - **S3 兼容存储**：NAS 上的 MinIO，或阿里云 OSS、腾讯云 COS、Cloudflare R2。
    - **文件夹**：OneDrive / Google Drive 电脑版同步的文件夹、NAS 共享目录、移动硬盘。
@@ -112,8 +111,7 @@ ludonimbus-run：从你的云盘拉取较新的存档
 
 - **存档只在你的电脑和你的云盘之间传输**，开发者没有服务器，也收集不到任何数据。
 - **Google Drive 只能访问 Ludonimbus 自己创建的文件**，存档在你 Drive 里的「Ludonimbus」文件夹，网页版也能直接查看和下载。
-- **百度网盘只能访问「我的应用数据/Ludonimbus」**这一个文件夹，看不到你网盘里的其他文件。
-- **WebDAV / S3 的密码和百度网盘的登录凭据只保存在本机**的 Windows 凭据管理器里，不会写进配置文件，断开时删除。
+- **WebDAV / S3 的密码只保存在本机**的 Windows 凭据管理器里，不会写进配置文件，断开时删除。
 - **Steam 插件只负责显示**：它通过本机接口向托盘里的 Ludonimbus 询问状态，接口只监听本机，并且需要每次启动随机生成的令牌，不接触你的网盘账号。
 - 详见[隐私政策](https://shupian0510.github.io/Ludonimbus/privacy.html)。
 
@@ -134,7 +132,7 @@ ludonimbus-run：从你的云盘拉取较新的存档
 <details>
 <summary><b>能用百度网盘、阿里云盘或夸克吗？</b></summary>
 
-百度网盘可以直接一键登录（「设置 → 云盘 → 百度网盘」）。阿里云盘和夸克没有面向个人开发者的官方接口，可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面。速度和稳定性取决于对应网盘和 OpenList 的驱动。坚果云自带 WebDAV，可以直接连接。
+百度网盘一键登录已经开发完成，正在等待百度开放平台审核，通过后会在新版本中开放。在此之前，以及阿里云盘、夸克（没有面向个人开发者的官方接口），都可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面。速度和稳定性取决于对应网盘和 OpenList 的驱动。坚果云自带 WebDAV，可以直接连接。
 </details>
 
 <details>
@@ -163,7 +161,7 @@ ludonimbus-run：从你的云盘拉取较新的存档
 **接下来**
 
 - [x] WebDAV（NAS、坚果云、Nextcloud、OpenList）、S3 兼容存储，换云盘时一键复制存档
-- [x] 百度网盘一键登录
+- [ ] 百度网盘一键登录（已开发完成，等待百度审核）
 - [ ] 更方便地添加游戏：扫描本机已安装的游戏和已有的存档；认不出的游戏一步步引导你找到存档
 - [ ] 不在 Steam 里的游戏一键加入 Steam，自动开启云存档，从 SteamGridDB 挑选封面
 - [ ] 同步 Steam 截图和游戏时间，换电脑也能找回
@@ -200,7 +198,7 @@ ludonimbus-run：从你的云盘拉取较新的存档
 - **Saves survive reinstalls**: saves are tracked relative to the game folder and restored on the first launch after reinstalling, moving the game or switching PCs.
 - **Version history and conflict handling**: every snapshot records time and device; conflicts keep both sides.
 - **Offline friendly**: if the cloud is unreachable the game starts anyway and saves are uploaded later.
-- **Your own storage**: Google Drive (Ludonimbus can only see files it created), Baidu Netdisk (one-click sign-in, app folder only), any WebDAV server (NAS, Nextcloud, OpenList…), S3-compatible storage, or any folder. Switching clouds copies your whole history over. There are no developer servers.
+- **Your own storage**: Google Drive (Ludonimbus can only see files it created), any WebDAV server (NAS, Nextcloud, OpenList…), S3-compatible storage, or any folder. Switching clouds copies your whole history over. There are no developer servers.
 
 **Install**: Windows 10/11 64-bit. Download `Ludonimbus_x.y.z_x64-setup.exe` from [Releases](https://github.com/Shupian0510/Ludonimbus/releases/latest); the app updates itself afterwards. Then connect a cloud in Settings, add your Steam shortcuts and turn on "Steam auto-sync" for each game.
 

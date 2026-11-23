@@ -227,7 +227,12 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
               </Button>
             </div>
           </div>
-          <BaiduOption key={`baidu-${s.cloud.kind}`} settings={s} done={done} />
+          {/* Baidu needs an app approved on the Baidu open platform: builds
+              without one hide the option (except for development, or when
+              this PC is already connected). */}
+          {(s.baiduBuiltin || s.cloud.kind === "baiduPan" || import.meta.env.DEV) && (
+            <BaiduOption key={`baidu-${s.cloud.kind}`} settings={s} done={done} />
+          )}
           <WebDavOption key={`webdav-${s.cloud.kind}`} settings={s} done={done} />
           <S3Option key={`s3-${s.cloud.kind}`} settings={s} done={done} />
         </div>

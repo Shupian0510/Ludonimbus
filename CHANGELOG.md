@@ -4,6 +4,24 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.3.0
+
+### 中文
+
+- 新增：WebDAV 云盘。支持群晖、威联通等 NAS，坚果云、Nextcloud，也可以通过 OpenList / AList 接入百度网盘、阿里云盘、夸克等。设置页提供常用服务的填写示例，保存前可以先「测试连接」。
+- 新增：S3 兼容存储，例如 NAS 上的 MinIO、阿里云 OSS、腾讯云 COS、Cloudflare R2。
+- 新增：换云盘时，可以一键把原来云盘里的全部存档和历史版本复制到新云盘。中途断开也没关系，再点一次会从没复制的部分继续；原来的云盘不会被修改。
+- WebDAV / S3 的密码保存在 Windows 凭据管理器里，不写入配置文件，断开时删除。
+- 百度网盘一键登录已经开发完成，正在等待百度开放平台审核，通过后会在后续版本中开放。
+
+### English
+
+- New: WebDAV clouds: NAS (Synology, QNAP…), Jianguoyun, Nextcloud, and Chinese netdisks such as Baidu, Aliyun and Quark through OpenList / AList. The settings page has presets for common services and a "Test connection" button.
+- New: S3-compatible storage such as MinIO on a NAS, Aliyun OSS, Tencent COS and Cloudflare R2.
+- New: when you switch clouds, Ludonimbus offers to copy every save and its full history to the new cloud. An interrupted copy picks up where it stopped, and the old cloud is never changed.
+- WebDAV / S3 passwords are kept in the Windows Credential Manager, never in the config file, and removed when you disconnect.
+- One-click Baidu Netdisk sign-in is ready and waiting for Baidu's open-platform review; it will be enabled in a later update.
+
 ## 0.2.0
 
 ### 中文
