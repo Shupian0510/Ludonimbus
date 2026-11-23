@@ -18,9 +18,9 @@
 <p align="center">
   <a href="https://github.com/Shupian0510/Ludonimbus/releases/latest"><b>下载</b></a>
   &nbsp;·&nbsp;
-  <a href="https://shupian0510.github.io/Ludonimbus/">主页</a>
+  <a href="https://shupian0510.github.io/Ludonimbus/">使用文档</a>
   &nbsp;·&nbsp;
-  <a href="#english">English</a>
+  <a href="README.en.md">English</a>
   &nbsp;·&nbsp;
   <a href="https://github.com/Shupian0510/Ludonimbus/issues">反馈问题</a>
 </p>
@@ -71,6 +71,8 @@ Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：从 Stea
 4. **照常玩**：以后从 Steam 启动游戏就行。
 
 关闭窗口后 Ludonimbus 会留在系统托盘。不通过 Steam、直接打开游戏时，它也会在游戏退出后自动备份。
+
+每种云盘和功能的详细步骤见[使用文档](https://shupian0510.github.io/Ludonimbus/guide/quick-start.html)。
 
 ## 在 Steam 里显示云存档状态
 
@@ -196,6 +198,8 @@ ludonimbus-run：从你的云盘拉取较新的存档
 目前只支持 Windows。
 </details>
 
+更多问题和故障排查见[常见问题与故障排查](https://shupian0510.github.io/Ludonimbus/reference/faq.html)。
+
 ## 路线图
 
 - [x] Google Drive / 同步文件夹、自动同步、版本历史、冲突处理、自动更新
@@ -231,24 +235,3 @@ ludonimbus-run：从你的云盘拉取较新的存档
 ## 许可
 
 [MIT](LICENSE) © Shupian0510
-
----
-
-<h2 id="english">English</h2>
-
-**Ludonimbus brings Steam-Cloud-like save sync to non-Steam shortcuts**: emulators, recompilations and third-party PC games you added to Steam.
-
-- **Works like Steam Cloud**: launch from Steam as usual. Newer saves are pulled before the game starts and new saves are uploaded after it exits.
-- **Status inside Steam** (optional): the play bar of a game's library page shows "up to date", "uploading", "conflict" and so on, with a sync button. Ludonimbus installs the open-source [Millennium](https://github.com/SteamClientHomebrew/Millennium) plugin framework and its own plugin in one click.
-- **Saves survive reinstalls**: saves are tracked relative to the game folder and restored on the first launch after reinstalling, moving the game or switching PCs.
-- **Version history and conflict handling**: every snapshot records time and device; conflicts keep both sides.
-- **Offline friendly**: if the cloud is unreachable the game starts anyway and saves are uploaded later.
-- **Add games without hunting for saves**: "Add game → Scan this PC" lists non-Steam shortcuts, games installed by Epic, GOG and the Xbox app, games with saves inside emulators, and any of the thousands of PC games in Ludusavi's database that have saves on this PC. Games Steam Cloud already syncs are listed apart. For unknown games, "play and find" lists the folders the game writes to when you save once.
-- **Finds where games are installed**: games found by their saves are looked up in Epic, GOG, Xbox, EA, Ubisoft and other store folders.
-- **One-click add to Steam**: add games that are not in Steam (Xbox app / PC Game Pass games included, started through their `gamelaunchhelper.exe`) one by one or in bulk, with cloud saves on from the first launch and artwork from [SteamGridDB](https://www.steamgriddb.com/) (your own API key) or local images.
-- **Recomps and emulators recognised**: built-in rules for 140+ recomps and ports (many from [RecompLauncher](https://recomplauncher.com/)'s catalog) and 19 emulators. Dolphin, Cemu, Azahar/Citra, RPCS3, shadPS4, PPSSPP, Vita3K, RetroArch and Ryujinx sync each game on its own: games with saves in the emulator are listed by the scan, and shortcuts that open a game sync just that game's saves.
-- **Your own storage**: Google Drive (Ludonimbus can only see files it created), any WebDAV server (NAS, Nextcloud, OpenList…), S3-compatible storage, or any folder. Switching clouds copies your whole history over. There are no developer servers.
-
-**Install**: Windows 10/11 64-bit. Download `Ludonimbus_x.y.z_x64-setup.exe` from [Releases](https://github.com/Shupian0510/Ludonimbus/releases/latest); the app updates itself afterwards. Then connect a cloud in Settings, add games with "Add game → Scan this PC", and turn on "Steam auto-sync" for games already in Steam or click "Add to Steam" for the others.
-
-Built on [Ludusavi](https://github.com/mtkennerly/ludusavi)'s save database. Licensed under [MIT](LICENSE). Developer notes: [`docs/development.md`](docs/development.md).

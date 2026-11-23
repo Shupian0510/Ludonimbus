@@ -41,6 +41,26 @@ cargo run -p ludonimbus-cli -- discover --ludusavi --folder D:\Games   # 扫描�
 
 手动测试清单：[testing-v0.1.md](testing-v0.1.md)、[testing-v0.2.md](testing-v0.2.md)、[testing-v0.3.md](testing-v0.3.md)、[testing-v0.4.md](testing-v0.4.md)。
 
+## 文档站
+
+用户文档在 `website/`（VitePress，中文在根目录，英文在 `en/`，文件名一一对应），推送到 main 后由 `.github/workflows/docs.yml` 构建并发布到 <https://shupian0510.github.io/Ludonimbus/>。本地预览：
+
+```powershell
+cd website
+npm ci
+npm run dev       # http://localhost:5173/Ludonimbus/，改了页面自动刷新
+npm run build     # 和 CI 一样构建，死链会报错
+npm run preview   # 预览构建结果
+```
+
+- 更新日志页由 `scripts/gen-changelog.mjs` 在构建时从根目录的 `CHANGELOG.md` 生成（`### 中文` / `### English` 两段分到两种语言），不要手改 `website/reference/changelog.md`。
+- `privacy.html` 必须保持原地址（Google OAuth 同意屏幕和百度开放平台审核都填了这个链接），内容在 `website/parts/`。
+- 计划要放截图的位置用 `<!-- screenshot: 场景名 -->` 标出，清单在 `website/SCREENSHOTS.md`。
+
+提交 PR 前：
+
+- [ ] 用户能看到的改动（界面文字、新功能、行为变化），在同一个 PR 里更新文档站的中英文页面。
+
 ## 发布新版本
 
 ```powershell
@@ -92,7 +112,8 @@ crates/runner        ludonimbus-run，Steam 快捷方式实际启动的程序
 app/                 桌面应用（Tauri 2 + React + TypeScript），含给 Steam 插件用的本机接口
 plugin-millennium/   Steam 插件（Millennium：Lua 后端 + TypeScript 前端）
 adapters/            内置存档规则（游戏、模拟器、从 RecompLauncher 目录生成的规则）
-docs/                设计文档、测试清单、主页
+website/             文档站（VitePress），发布到 GitHub Pages
+docs/                设计文档、测试清单（不发布到文档站）
 scripts/             构建与发布脚本
 ```
 

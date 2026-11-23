@@ -1,0 +1,24 @@
+/* Steam-like blues, matching the app. */
+:root {
+  --vp-c-brand-1: #1576c4;
+  --vp-c-brand-2: #1a86dc;
+  --vp-c-brand-3: #1a9fff;
+  --vp-c-brand-soft: rgba(26, 159, 255, 0.14);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #1a9fff 20%, #66c0f4);
+  --vp-home-hero-image-background-image: radial-gradient(circle, rgba(102, 192, 244, 0.35) 0%, rgba(26, 159, 255, 0) 70%);
+  --vp-home-hero-image-filter: blur(48px);
+}
+
+.dark {
+  --vp-c-brand-1: #66c0f4;
+  --vp-c-brand-2: #47a8ec;
+  --vp-c-brand-3: #1a9fff;
+  --vp-c-brand-soft: rgba(102, 192, 244, 0.16);
+}
+
+/* Tables in the docs are often wide comparison tables. */
+.vp-doc table {
+  font-size: 14px;
+}
