@@ -11,7 +11,7 @@ Click "Choose game program…" and pick the game's exe. Ludonimbus uses it to te
 - **Emulators**: pick the emulator program; the built-in rule is applied automatically.
 - No program (for example you only want to back up a save folder): click "No program, just choose saves".
 
-<!-- screenshot: add-game-manual -->
+![Add game → Add manually](/screenshots/en/add-game-manual.png)
 
 ## 2. Recognised by a built-in rule
 

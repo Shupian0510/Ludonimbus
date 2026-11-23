@@ -18,7 +18,7 @@
 
 游戏详情页会显示「本机和云端都有新的存档改动」，同样可以选「使用云端存档」或「使用本机存档」。冲突没处理时，「立即同步」不可用。
 
-<!-- screenshot: game-detail-conflict -->
+![游戏详情页：存档冲突](/screenshots/zh-CN/game-detail-conflict.png)
 
 ## 玩游戏期间另一台电脑也上传了
 

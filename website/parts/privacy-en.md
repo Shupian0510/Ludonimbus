@@ -33,6 +33,7 @@ Ludonimbus's use and transfer of information received from Google APIs adheres t
 - Delete all data the app stored in your Drive by deleting the `Ludonimbus` folder in Google Drive.
 - If you use a local or synced folder instead of Google Drive, no Google data is involved.
 - If you connect Baidu Netdisk, Ludonimbus uses Baidu's official open platform (permissions `basic,netdisk`) and can only read and write the folder 我的应用数据/Ludonimbus (My App Data/Ludonimbus) in your Baidu Netdisk. The sign-in token is stored in the Windows Credential Manager and removed when you disconnect. Delete that folder to delete all data the app stored there.
+- If you connect Quark, Ludonimbus runs the open-source tool OpenList on your computer (listening only on this computer) and uses it to read and write the "Ludonimbus" folder in your Quark drive. The Quark sign-in is kept only in OpenList's data folder on your computer, and saves travel only between your computer and Quark; the sign-in is deleted when you disconnect.
 - If you use a WebDAV server or S3-compatible storage, saves are sent only to the server you entered. Its password or secret key is stored in the Windows Credential Manager on your computer and removed when you disconnect.
 - If you enter a SteamGridDB API key to pick artwork, Ludonimbus sends the game names you search for to SteamGridDB with your key and downloads the images you choose. The key is stored in the Windows Credential Manager and can be deleted in Settings. No save data is sent to SteamGridDB.
 

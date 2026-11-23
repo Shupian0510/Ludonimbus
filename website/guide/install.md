@@ -14,6 +14,8 @@
 - [Ludusavi](https://github.com/mtkennerly/ludusavi) 的官方程序：用来查找上万款 PC 游戏的存档位置。
 - Steam 插件文件：只有你在设置里点「一键安装」时才会装进 Steam，见[在 Steam 里显示云存档状态](../steam/status-in-steam.md)。
 
+第一次打开时会弹出[首次使用引导](./first-run.md)，带你连接云盘、开始添加游戏。
+
 ## 安装时被 Windows 或浏览器拦下
 
 安装包暂未进行代码签名，下载和安装时可能会被拦一下：

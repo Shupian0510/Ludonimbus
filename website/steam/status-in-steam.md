@@ -2,7 +2,7 @@
 
 装好之后，Steam 游戏库里每个由 Ludonimbus 管理的游戏，「开始游戏」那一栏会多出一项「Ludonimbus 云存档」，和「最后运行日期」「游戏时间」并排显示。
 
-<!-- screenshot: steam-play-bar-status (需要真实环境截图) -->
+![Steam 游戏页里的 Ludonimbus 云存档状态](/screenshots/zh-CN/steam-play-bar-status.png)
 
 - 从 Steam 启动、游戏中、退出上传时都会实时更新，例如「已是最新 · 5 分钟前」「游戏运行中，退出后自动上传」「正在上传存档…」「存档冲突，点击选择保留哪一份」。
 - 点右边的按钮立即同步，点状态本身会打开 Ludonimbus 里的这个游戏。
@@ -18,7 +18,7 @@
    - 把 Ludonimbus 插件放进 Millennium 并启用；
    - 安装时暂时关闭 Steam，完成后自动重新打开。
 
-<!-- screenshot: settings-steam-plugin -->
+![设置 → 在 Steam 中显示云存档状态](/screenshots/zh-CN/settings-steam-plugin.png)
 
 这和 Millennium 官方安装程序做的事情一样。之后 Millennium 自己负责更新；Ludonimbus 更新时，插件也会自动更新，下次打开 Steam 时生效。
 

@@ -1,6 +1,6 @@
 # 快速上手
 
-装好 Ludonimbus 后，四步就能用起来。
+装好 Ludonimbus 后，四步就能用起来。第一次打开时的[首次使用引导](./first-run.md)会带你完成第 1 步，并直接打开第 2 步的扫描。
 
 ## 1. 连接云盘
 
@@ -9,13 +9,14 @@
 | 云盘 | 怎么连接 |
 |---|---|
 | **Google Drive** | 点「连接 Google Drive」，在浏览器里登录即可。见 [Google Drive](../clouds/google-drive.md) |
-| **WebDAV** | 坚果云、群晖 / 威联通等 NAS、Nextcloud，或者通过 OpenList / AList 接入百度网盘、阿里云盘、夸克等。填地址、用户名和密码，先点「测试连接」。见 [WebDAV](../clouds/webdav.md) |
+| **夸克网盘** | 用夸克 App 扫码登录（实验性）。见[夸克网盘](../clouds/quark.md) |
+| **WebDAV** | 坚果云、群晖 / 威联通等 NAS、Nextcloud，或者通过 OpenList / AList 接入百度网盘、阿里云盘等。填地址、用户名和密码，先点「测试连接」。见 [WebDAV](../clouds/webdav.md) |
 | **S3 兼容存储** | NAS 上的 MinIO，或阿里云 OSS、腾讯云 COS、Cloudflare R2。见 [S3 兼容存储](../clouds/s3.md) |
 | **文件夹** | OneDrive / Google Drive 电脑版同步的文件夹、NAS 共享目录、移动硬盘。见[本地 / 同步文件夹](../clouds/folder.md) |
 
 不知道选哪个？看[怎么选云盘](../clouds/index.md)。
 
-<!-- screenshot: settings-cloud -->
+![设置 → 云盘](/screenshots/zh-CN/settings-cloud.png)
 
 ## 2. 添加游戏
 
@@ -27,7 +28,7 @@
 
 见[扫描本机](../games/scan.md)。
 
-<!-- screenshot: add-game-scan -->
+![添加游戏 → 扫描本机](/screenshots/zh-CN/add-game-scan.png)
 
 ## 3. 开启 Steam 自动同步
 
@@ -36,7 +37,7 @@
 
 修改 Steam 快捷方式需要暂时关闭 Steam，Ludonimbus 会自动关闭并重新打开它。
 
-<!-- screenshot: game-detail -->
+![游戏详情页](/screenshots/zh-CN/game-detail.png)
 
 ## 4. 照常玩
 

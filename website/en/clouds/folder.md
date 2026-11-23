@@ -13,7 +13,7 @@ Good for:
 1. Open Settings → Cloud and click "Choose folder…" under "Local / synced folder".
 2. Pick a folder, for example `D:\OneDrive\Ludonimbus`.
 
-<!-- screenshot: settings-cloud-folder -->
+![Settings → Cloud: local / synced folder](/screenshots/en/settings-cloud-folder.png)
 
 ## Keep in mind
 

@@ -8,7 +8,7 @@
 2. 浏览器会打开 Google 的登录页面，选你的账号并同意授权。
 3. 回到 Ludonimbus，云盘一栏会显示「已连接」、你的账号和已用空间。
 
-<!-- screenshot: settings-cloud-google -->
+![设置 → 云盘：Google Drive](/screenshots/zh-CN/settings-cloud-google.png)
 
 需要能访问 Google 的网络。连不上 Google 的话，可以选[坚果云](./webdav.md#jianguoyun)等其他云盘。
 

@@ -11,7 +11,7 @@
 - **模拟器**请选模拟器程序，会自动套用内置规则。
 - 没有程序（例如只想备份某个存档文件夹）：点「没有程序，直接指定存档」。
 
-<!-- screenshot: add-game-manual -->
+![添加游戏 → 手动添加](/screenshots/zh-CN/add-game-manual.png)
 
 ## 2. 被内置规则认出
 

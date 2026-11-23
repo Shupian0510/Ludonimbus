@@ -8,7 +8,7 @@ Use your own Google account; saves are kept in your Google Drive.
 2. Your browser opens Google's sign-in page. Choose your account and allow access.
 3. Back in Ludonimbus, the cloud section shows "Connected", your account and the space used.
 
-<!-- screenshot: settings-cloud-google -->
+![Settings → Cloud: Google Drive](/screenshots/en/settings-cloud-google.png)
 
 ## What Ludonimbus can see
 

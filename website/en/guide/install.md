@@ -14,6 +14,8 @@ Besides Ludonimbus itself, the installer contains:
 - The official [Ludusavi](https://github.com/mtkennerly/ludusavi) program, used to find the saves of thousands of PC games.
 - The Steam plugin file. It is only installed into Steam when you click Install in Settings; see [Cloud status inside Steam](../steam/status-in-steam.md).
 
+The first time you open it, the [first-run guide](./first-run.md) helps you connect a cloud and start adding games.
+
 ## If Windows or your browser blocks it
 
 The installer is not code-signed yet, so it may be stopped on the way:

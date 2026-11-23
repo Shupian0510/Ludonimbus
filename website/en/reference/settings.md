@@ -4,11 +4,17 @@
 
 Click "Settings" in the sidebar.
 
-<!-- screenshot: settings -->
+![Settings](/screenshots/en/settings.png)
 
 ### Cloud
 
 Connect, switch or disconnect your cloud; see [Choosing a cloud](../clouds/index.md). Once connected it shows the cloud type, account or address, and the space used (where the cloud reports it). If something is wrong with the cloud, it says it needs attention and why.
+
+### Language / 语言 {#language}
+
+Interface language: "Same as Windows", 简体中文 or English; it applies right away. By default it follows the Windows display language (Chinese for a Chinese Windows, English otherwise). The tray menu, the dialogs shown when a game starts from Steam and the [cloud status inside Steam](../steam/status-in-steam.md) use it too.
+
+![Settings → Language](/screenshots/en/settings-language.png)
 
 ### This PC and sync
 
@@ -45,12 +51,13 @@ Enter or delete your SteamGridDB API key. See [Artwork and SteamGridDB](../steam
 | Data folder | `%APPDATA%\Ludonimbus`: settings, sync records and logs; click to open |
 | Ludusavi | Where the bundled Ludusavi is; "Not found" only affects adding PC games from Ludusavi's database |
 | Device id | This PC's unique id in the cloud |
+| Links | Documentation, GitHub, reporting a problem, and "Show the first-run guide again" (see [First-run guide](../guide/first-run.md)) |
 
 ## Per-game settings {#per-game}
 
 Open the "Settings" tab on a game's page.
 
-<!-- screenshot: game-settings -->
+![Game page: settings](/screenshots/en/game-settings.png)
 
 | Setting | What it does |
 |---|---|

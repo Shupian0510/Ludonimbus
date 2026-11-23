@@ -10,8 +10,8 @@ SteamGridDB needs a free API key:
 2. Under Preferences → API, generate a key and copy it.
 3. Paste it in Ludonimbus under Settings → "Artwork (SteamGridDB)" and click "Save".
 
-<!-- screenshot: settings-sgdb -->
-<!-- screenshot: sgdb-api-page (real-environment screenshot needed) -->
+![Settings → Artwork (SteamGridDB)](/screenshots/en/settings-sgdb.png)
+![SteamGridDB's API key page](/screenshots/zh-CN/sgdb-api-page.png)
 
 The key is kept in the Windows Credential Manager; click "Delete key" to remove it. Without a key you can still use local images.
 
@@ -27,7 +27,7 @@ On the game page, click "Change artwork":
 2. Community images are listed under each image type; click one to use it.
 3. To use your own image, click "Use a local image…".
 
-<!-- screenshot: art-picker -->
+![Change artwork](/screenshots/en/art-picker.png)
 
 | Image | Where it's shown |
 |---|---|
@@ -39,7 +39,7 @@ On the game page, click "Change artwork":
 
 Steam shows the new artwork after it restarts.
 
-<!-- screenshot: steam-library-artwork (real-environment screenshot needed) -->
+![A Steam library with artwork from SteamGridDB](/screenshots/zh-CN/steam-library-artwork.webp)
 
 ## Privacy
 

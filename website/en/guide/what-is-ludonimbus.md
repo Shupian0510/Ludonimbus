@@ -4,7 +4,7 @@ Steam Cloud only works for games bought in the Steam store. The emulators, recom
 
 Ludonimbus gives these games the Steam Cloud experience: **newer saves are pulled before the game starts from Steam, new saves are uploaded after it exits, and every version is kept.** Saves live in **your own** Google Drive, NAS, WebDAV / S3 storage or any folder. There are no third-party servers.
 
-<!-- screenshot: library-grid -->
+![Library](/screenshots/en/library-grid.png)
 
 ## Which games it is for
 

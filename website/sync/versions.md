@@ -2,7 +2,7 @@
 
 每次上传都会在云端留下一个版本。在游戏详情页打开「版本历史」标签，可以看到所有设备上传的版本。
 
-<!-- screenshot: versions -->
+![版本历史](/screenshots/zh-CN/versions.png)
 
 每个版本显示：
 

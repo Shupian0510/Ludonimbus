@@ -15,7 +15,7 @@
 2. 打开或关闭**自动配封面**：从 SteamGridDB 选评分最高的封面、背景、Logo 和图标，需要先在设置里填写 SteamGridDB API Key，见[封面与 SteamGridDB](./artwork.md)。
 3. 点「加入 Steam」。Steam 正在运行时会暂时关闭，完成后自动重新打开。
 
-<!-- screenshot: add-to-steam -->
+![加入 Steam](/screenshots/zh-CN/add-to-steam.png)
 
 有个别游戏没能加入时，会提示「有 N 个没能加入，其他的已经加好了」，并在游戏名后显示原因，可以点「重试」。
 

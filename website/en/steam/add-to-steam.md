@@ -15,7 +15,7 @@ In the dialog:
 2. Turn **automatic artwork** on or off: Ludonimbus picks the top-rated cover, background, logo and icon from SteamGridDB. This needs a SteamGridDB API key in Settings; see [Artwork and SteamGridDB](./artwork.md).
 3. Click "Add to Steam". If Steam is running it is closed briefly and reopened afterwards.
 
-<!-- screenshot: add-to-steam -->
+![Add to Steam](/screenshots/en/add-to-steam.png)
 
 If some games couldn't be added, Ludonimbus says how many failed (the others are added) and shows the reason next to each one; click "Retry".
 

@@ -10,8 +10,8 @@ SteamGridDB 需要一个免费的 API Key：
 2. 在「偏好设置 → API」里生成一个 Key，复制。
 3. 在 Ludonimbus「设置 → 封面（SteamGridDB）」粘贴，点「保存」。
 
-<!-- screenshot: settings-sgdb -->
-<!-- screenshot: sgdb-api-page (需要真实环境截图) -->
+![设置 → 封面（SteamGridDB）](/screenshots/zh-CN/settings-sgdb.png)
+![SteamGridDB 的 API Key 页面](/screenshots/zh-CN/sgdb-api-page.png)
 
 Key 保存在本机的 Windows 凭据管理器里，不用时可以点「删除 Key」。不填 Key 也可以用本地图片。
 
@@ -27,7 +27,7 @@ Key 保存在本机的 Windows 凭据管理器里，不用时可以点「删除 
 2. 每种图片下面会列出社区上传的图片，点一下就用它。
 3. 想用自己的图片，点「使用本地图片…」。
 
-<!-- screenshot: art-picker -->
+![更换封面](/screenshots/zh-CN/art-picker.png)
 
 | 图片 | 用在哪里 |
 |---|---|
@@ -39,7 +39,7 @@ Key 保存在本机的 Windows 凭据管理器里，不用时可以点「删除 
 
 Steam 里的封面在 Steam 重新打开后更新。
 
-<!-- screenshot: steam-library-artwork (需要真实环境截图) -->
+![配好封面的 Steam 游戏库](/screenshots/zh-CN/steam-library-artwork.webp)
 
 ## 隐私
 

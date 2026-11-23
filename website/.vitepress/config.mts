@@ -11,6 +11,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
       items: [
         { text: 'Ludonimbus 是什么', link: '/guide/what-is-ludonimbus' },
         { text: '下载与安装', link: '/guide/install' },
+        { text: '首次使用引导', link: '/guide/first-run' },
         { text: '快速上手', link: '/guide/quick-start' },
       ],
     },
@@ -19,6 +20,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
       items: [
         { text: '怎么选', link: '/clouds/' },
         { text: 'Google Drive', link: '/clouds/google-drive' },
+        { text: '夸克网盘（实验性）', link: '/clouds/quark' },
         { text: '百度网盘（审核中）', link: '/clouds/baidu' },
         { text: 'WebDAV：坚果云、NAS、OpenList', link: '/clouds/webdav' },
         { text: 'S3 兼容存储', link: '/clouds/s3' },
@@ -83,6 +85,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
       items: [
         { text: 'What is Ludonimbus', link: '/en/guide/what-is-ludonimbus' },
         { text: 'Download and install', link: '/en/guide/install' },
+        { text: 'First-run guide', link: '/en/guide/first-run' },
         { text: 'Quick start', link: '/en/guide/quick-start' },
       ],
     },
@@ -91,6 +94,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
       items: [
         { text: 'Choosing a cloud', link: '/en/clouds/' },
         { text: 'Google Drive', link: '/en/clouds/google-drive' },
+        { text: 'Quark (experimental)', link: '/en/clouds/quark' },
         { text: 'Baidu Netdisk (in review)', link: '/en/clouds/baidu' },
         { text: 'WebDAV: NAS, Nextcloud, OpenList', link: '/en/clouds/webdav' },
         { text: 'S3-compatible storage', link: '/en/clouds/s3' },

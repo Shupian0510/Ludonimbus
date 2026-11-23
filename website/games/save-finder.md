@@ -4,7 +4,7 @@ Ludonimbus 认不出存档位置的游戏，会打开找存档向导：在「扫
 
 向导里有四种办法，从上往下试，任何一种找到了就可以添加。
 
-<!-- screenshot: save-finder -->
+![找存档向导](/screenshots/zh-CN/save-finder.png)
 
 ## 1. 在 Ludusavi 数据库里找
 

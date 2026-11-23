@@ -13,7 +13,7 @@ WebDAV 是很多网盘和 NAS 都支持的标准协议。坚果云、群晖、�
 4. 点「测试连接」，确认能连上、能写入。
 5. 点「连接」。
 
-<!-- screenshot: settings-cloud-webdav -->
+![设置 → 云盘：WebDAV（坚果云）](/screenshots/zh-CN/settings-cloud-webdav.png)
 
 密码保存在本机的 Windows 凭据管理器里，不会写进配置文件，断开时删除。之后要改地址或密码，在同一个地方改好点「保存修改」；密码栏留空表示不修改。
 
@@ -71,6 +71,10 @@ WebDAV 是很多网盘和 NAS 都支持的标准协议。坚果云、群晖、�
 应用密码在 Nextcloud 的「个人设置 → 安全 → 设备与会话」里创建。
 
 ## OpenList / AList {#openlist}
+
+::: tip 夸克网盘
+0.5 起夸克网盘可以[一键连接](./quark.md)，Ludonimbus 会自己下载并运行 OpenList，不需要手动配置。下面的步骤适合已经在用 OpenList、或者要接入其他网盘的情况。
+:::
 
 [OpenList](https://github.com/OpenListTeam/OpenList)（AList 的社区分支）可以把百度网盘、阿里云盘、夸克等网盘挂载成一个 WebDAV 服务。这些网盘没有面向个人开发者的官方接口（百度网盘的一键登录还在审核中），用 OpenList 是目前接入它们的办法。
 

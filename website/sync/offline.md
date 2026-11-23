@@ -14,7 +14,7 @@
 
 云端恢复访问后会自动补传：下次从 Steam 启动前（来源「启动前补传」），或者托盘里的 Ludonimbus 定期检查时。也可以手动点「立即同步」。
 
-<!-- screenshot: game-detail-pending -->
+![游戏详情页：等待上传](/screenshots/zh-CN/game-detail-pending.png)
 
 ## 状态提示
 

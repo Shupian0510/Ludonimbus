@@ -4,7 +4,7 @@ When Ludonimbus doesn't know where a game keeps its saves, the save finder opens
 
 It offers four ways, tried top to bottom; any one that finds the saves is enough.
 
-<!-- screenshot: save-finder -->
+![Save finder](/screenshots/en/save-finder.png)
 
 ## 1. Search Ludusavi's database
 

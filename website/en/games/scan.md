@@ -2,7 +2,7 @@
 
 Click "Add game" at the top right of the library; the first tab is "Scan this PC". It lists every game on this PC that can be added, ready to tick and add in bulk, without hunting for saves.
 
-<!-- screenshot: add-game-scan -->
+![Add game → Scan this PC](/screenshots/en/add-game-scan.png)
 
 ## What it looks for
 
