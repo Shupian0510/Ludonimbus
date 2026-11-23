@@ -26,18 +26,14 @@ jobs:
       - name: Check version matches tag
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}".TrimStart("v")
-          $conf = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          if ($conf -ne $tag) { throw "Tag $tag does not match tauri.conf.json version $conf" }
+          $version = ./scripts/check-versions.ps1
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match version $version" }
 
-      - name: Release notes from CHANGELOG.md
+      - name: Release notes from CHANGELOG.md (must be bilingual)
         id: notes
         shell: pwsh
         run: |
-          $ver = "${{ github.ref_name }}".TrimStart("v")
-          $text = Get-Content CHANGELOG.md -Raw
-          $m = [regex]::Match($text, "(?ms)^## \[?v?$([regex]::Escape($ver))\]?[^\r\n]*\r?\n(.*?)(?=^## |\z)")
-          $body = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Ludonimbus $ver" }
+          $body = (./scripts/changelog-section.ps1 -Version "${{ github.ref_name }}") -join "`n"
           $delim = "EOF_" + [guid]::NewGuid().ToString("N")
           "body<<$delim`n$body`n$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 

@@ -1,15 +1,26 @@
 # 更新日志 / Changelog
 
-每个版本的说明会自动显示在 GitHub Release 页面和应用内的更新提示里。
-发版方法：在下面新增一节 `## 版本号`，把 `app/src-tauri/tauri.conf.json`、`app/package.json`、`Cargo.toml` 里的版本号改成同一个，提交后推送标签 `v版本号`。
+每个版本的说明会原样显示在 GitHub Release 页面和应用内的更新提示里。每一节都必须同时包含 `### 中文` 和 `### English`，发版时会自动检查。发版流程见 [docs/release-process.md](docs/release-process.md)。
+
+Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
 ## 0.1.2
+
+### 中文
 
 - 新增：「游戏进程退出就上传，不等启动器关闭」，可以在每个游戏的「设置」里开关。适合启动器会一直开着的游戏：游戏一关就上传，关闭启动器时再检查一次。塞尔达传说：时之笛（Longshot）默认开启。
 - 不经过 Steam、直接打开游戏时，托盘里的后台监视也遵循这个设置。
 - 游戏设置页的「游戏进程」会显示内置规则里的进程名。
 
+### English
+
+- New: "Upload when the game process exits, without waiting for the launcher to close", configurable per game in its settings. Useful for launchers that stay open: saves are uploaded as soon as the game closes and checked again when the launcher closes. On by default for The Legend of Zelda: Ocarina of Time (Longshot).
+- The tray watcher follows the same setting for games started outside Steam.
+- The "Game process" field shows the process names from the built-in rule.
+
 ## 0.1.1
+
+### 中文
 
 - 修复：从 Steam 启动塞尔达传说：时之笛后，退出游戏要等最长 60 秒才上传，期间 Steam 一直显示「运行中」。原因是规则把 Longshot 一直留在磁盘上的锁文件当成「游戏还在写存档」；现在只有锁文件正被占用时才等待，最多 20 秒。
 - 修复：在 Steam 里点「停止」强制结束后，存档没有上传。现在托盘里的 Ludonimbus 会发现并立即补传。
@@ -17,9 +28,19 @@
 - 改进：启动器运行超过 20 秒时，退出后不再额外等待 8 秒。
 - 改进：游戏结束后界面自动刷新同步状态；每 10 分钟重新检查一次云端。
 
+### English
+
+- Fixed: after playing The Legend of Zelda: Ocarina of Time from Steam, the upload waited up to 60 s after exit while Steam kept showing the game as running. The rule treated Longshot's leftover lock file as "still writing saves"; Ludonimbus now only waits while a lock file is actually in use, for at most 20 s.
+- Fixed: saves were not uploaded after pressing "Stop" in Steam. The Ludonimbus tray app now notices and uploads right away.
+- Improved: faster sync before launching from Steam. Google Drive folder ids are cached locally, and bookkeeping happens after the game exits.
+- Improved: no extra 8 s wait after exit when the launcher ran for more than 20 s.
+- Improved: statuses refresh automatically after a game exits, and every game is re-checked against the cloud every 10 minutes.
+
 ## 0.1.0
 
-第一个版本 / First release.
+### 中文
+
+第一个版本。
 
 - 像 Steam 云存档一样同步非 Steam 游戏的存档：从 Steam 启动前拉取，退出后上传。
 - 云盘：一键连接 Google Drive（存档在你自己的 Drive 里），或者任意文件夹（Google Drive / OneDrive 电脑版同步的文件夹、NAS、移动硬盘）。
@@ -32,3 +53,19 @@
 - 应用内自动更新。
 
 注意：安装包暂未进行代码签名，Windows 可能提示「未知发布者」，点「更多信息 → 仍要运行」即可。修改 Steam 快捷方式时需要暂时关闭 Steam（Ludonimbus 会自动关闭并重新打开）。
+
+### English
+
+First release.
+
+- Steam-Cloud-like save sync for non-Steam games: saves are pulled before launching from Steam and uploaded after the game exits.
+- Storage: one-click Google Drive (saves live in your own Drive), or any folder (a Google Drive / OneDrive desktop sync folder, a NAS share, a USB drive).
+- Version history: every version records the time, device and trigger; restore it, export it as a zip, lock it or add a note. Old automatic versions are cleaned up; manual backups are kept forever.
+- Conflicts: when two devices both changed the saves, you choose which one to use; the other one stays in the history.
+- Works offline: if the cloud is unreachable the game starts anyway; new saves are kept locally and uploaded later.
+- Emulator updates don't break sync: Steam shortcuts only store a game id, a new version extracted into a new folder is found automatically, and edited shortcuts are detected and repaired with one click.
+- Built-in rules: The Legend of Zelda: Ocarina of Time (Longshot), Fire Emblem: Fortune's Weave (fefw recomp), Bloodborne (Lantern Engine). PC games can be added from the Ludusavi database.
+- Steam-style library (grid / list) using your Steam custom artwork; a tray watcher handles games started outside Steam.
+- In-app auto-update.
+
+Note: the installer is not code-signed yet, so Windows may show "Unknown publisher"; click "More info → Run anyway". Changing Steam shortcuts requires closing Steam briefly (Ludonimbus closes and reopens it).

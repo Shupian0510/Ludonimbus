@@ -96,11 +96,13 @@ cargo run -p ludonimbus-cli -- snapshots fe-fortunes-weave
 
 ### 发布新版本
 
-1. 在 [`CHANGELOG.md`](CHANGELOG.md) 新增一节 `## x.y.z`。
-2. 把 `Cargo.toml`、`app/package.json`、`app/src-tauri/tauri.conf.json` 里的版本号改成 `x.y.z`。
-3. 提交后推送标签：`git tag vx.y.z && git push origin vx.y.z`。
+```powershell
+./scripts/bump-version.ps1 -Version 0.1.3   # 改版本号，并在 CHANGELOG.md 加双语模板
+# 写好 CHANGELOG.md 的中文和英文说明，提交
+./scripts/release.ps1                       # 检查后打标签推送，GitHub Actions 编译、签名并发布
+```
 
-[`release.yml`](.github/workflows/release.yml) 会在 GitHub 上编译、签名并创建 Release，同时发布 `latest.json`，已安装的 Ludonimbus 会据此提示更新。需要的仓库 Secrets：`LUDONIMBUS_GOOGLE_CLIENT_ID`、`LUDONIMBUS_GOOGLE_CLIENT_SECRET`、`TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+每次推送到 main 还会自动打一个开发版安装包（Actions 构建产物，保留 14 天）。完整说明见 [`docs/release-process.md`](docs/release-process.md)。
 
 ### Google Drive
 
