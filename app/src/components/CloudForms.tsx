@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
-import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgress, S3Config, Settings, WebDavConfig } from "../api";
+import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgress, OpenListInfo, S3Config, Settings, WebDavConfig } from "../api";
 import { bytes } from "../format";
 import { Messages, msg, useI18n, useT } from "../i18n";
 import { Button, Toggle, useUi } from "./ui";
@@ -587,17 +587,18 @@ export function CloudOptions({
     google: <GoogleOption key={`google-${k}`} settings={settings} done={done} />,
     folder: <FolderOption key="folder" done={done} note={folderNote} />,
     baidu: baidu ? <BaiduOption key={`baidu-${k}`} settings={settings} done={done} /> : null,
+    quark: <QuarkOption key={`quark-${k}`} settings={settings} done={done} />,
     webdav: <WebDavOption key={`webdav-${k}`} settings={settings} done={done} />,
     jianguoyun: <WebDavOption key={`jgy-${k}`} settings={settings} done={done} preset={t.cloud.presets.jianguoyun.label} />,
     s3: <S3Option key={`s3-${k}`} settings={settings} done={done} />,
   };
   if (!guide) {
-    return <div className="cloud-options">{[all.google, all.folder, all.baidu, all.webdav, all.s3]}</div>;
+    return <div className="cloud-options">{[all.google, all.folder, all.baidu, all.quark, all.webdav, all.s3]}</div>;
   }
   const [first, rest] =
     lang === "zh-CN"
-      ? [[all.baidu, all.jianguoyun, all.google], [all.webdav, all.s3, all.folder]]
-      : [[all.google, all.webdav, all.folder], [all.s3, all.baidu]];
+      ? [[all.quark, all.jianguoyun, all.google], [all.baidu, all.webdav, all.s3, all.folder]]
+      : [[all.google, all.webdav, all.folder], [all.s3, all.quark, all.baidu]];
   return (
     <div className="cloud-options">
       {first}
@@ -608,6 +609,114 @@ export function CloudOptions({
           {t.onboarding.cloud.more}
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Quark through OpenList: download the component once (with consent), then
+ * sign in on Quark's own page in a private window.
+ */
+export function QuarkOption({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
+  const ui = useUi();
+  const t = useT();
+  const q = t.cloud.quark;
+  const current = settings.cloud.kind === "quark";
+  const [info, setInfo] = useState<OpenListInfo | null>(null);
+  const [stage, setStage] = useState<"idle" | "download" | "login">("idle");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.openlistStatus().then(setInfo, () => setInfo(null));
+    let off: (() => void) | undefined;
+    listen<{ done: number; total: number }>("openlist-progress", (e) => setProgress(e.payload)).then((u) => (off = u), () => undefined);
+    return () => off?.();
+  }, []);
+
+  const confirmSwitch = async () => {
+    if (settings.cloud.kind === "none" || current) return true;
+    const m = msg().cloud;
+    return ui.confirm({ title: m.switchTitle(msg().cloudNames.quark), text: m.switchText, confirm: m.switch });
+  };
+
+  const connect = async (zip?: string | null) => {
+    if (!(await confirmSwitch())) return;
+    setError(null);
+    try {
+      if (!info?.installed) {
+        setStage("download");
+        setProgress(null);
+        await api.openlistInstall(zip ?? null);
+        setInfo(await api.openlistStatus());
+      }
+      setStage("login");
+      const label = await api.cloudConnectQuark();
+      await done(msg().cloud.connected(msg().cloudNames.quark, label));
+    } catch (e) {
+      const text = errorText(e);
+      if (!text.includes("已取消") && !/cancel/i.test(text)) setError(text);
+    } finally {
+      setStage("idle");
+    }
+  };
+
+  const pickZip = async () => {
+    const zip = await api.openlistPickZip();
+    if (zip) await connect(zip);
+  };
+
+  const pct = progress && progress.total > 0 ? Math.floor((progress.done / progress.total) * 100) : 0;
+
+  return (
+    <div className="cloud-option">
+      <div className="cloud-option-head">
+        <b>
+          {t.cloudNames.quark} <span className="badge badge-muted">{q.experimental}</span>
+        </b>
+        <span className="muted small">{q.intro}</span>
+      </div>
+      {info && !info.installed && stage === "idle" && (
+        <p className="muted small">
+          {q.needComponent(bytes(info.size), info.license)}{" "}
+          <button className="link small" onClick={() => api.openPath(info.project)}>
+            {q.project}
+          </button>
+        </p>
+      )}
+      {stage === "download" && (
+        <div className="update-progress">
+          <div className="bar">
+            <span style={{ width: `${pct || 3}%` }} />
+          </div>
+          <span className="muted small">
+            {progress && progress.total > 0 ? q.downloading(pct, bytes(progress.done), bytes(progress.total)) : q.preparing}
+          </span>
+        </div>
+      )}
+      {stage === "login" && (
+        <div className="banner banner-info">
+          <span className="spinner" />
+          <span>{q.waiting}</span>
+        </div>
+      )}
+      {error && <div className="health health-warn small">{error}</div>}
+      <div className="row">
+        {stage === "login" ? (
+          <Button key="cancel" onClick={() => void api.cloudCancelLogin()}>
+            {t.common.cancel}
+          </Button>
+        ) : (
+          <Button key="connect" kind="primary" icon="cloud" onClick={() => connect()} disabled={stage !== "idle" || !info}>
+            {current ? q.relogin : info?.installed ? q.connect : q.downloadConnect}
+          </Button>
+        )}
+        {info && !info.installed && stage === "idle" && (
+          <button className="link small" onClick={pickZip}>
+            {q.pickZip}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

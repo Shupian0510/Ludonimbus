@@ -166,6 +166,7 @@ fn cloud_view(cfg: &AppConfig) -> CloudView {
         CloudConfig::WebDav { url, folder, .. } => ("webDav", Some(format!("{}/{}", url.trim_end_matches('/'), folder))),
         CloudConfig::S3 { bucket, prefix, .. } => ("s3", Some(format!("{bucket}/{prefix}"))),
         CloudConfig::BaiduPan { account, .. } => ("baiduPan", account.clone().or(Some(ludonimbus_core::tr!("百度网盘", "Baidu Netdisk")))),
+        CloudConfig::Quark { folder } => ("quark", Some(ludonimbus_core::tr!("夸克网盘 · {folder}", "Quark · {folder}"))),
     };
     let error = match cloud::open(cfg) {
         Ok(_) => None,
@@ -823,6 +824,7 @@ fn previous_name(c: &CloudConfig) -> String {
         CloudConfig::WebDav { url, .. } => url.clone(),
         CloudConfig::S3 { bucket, .. } => bucket.clone(),
         CloudConfig::BaiduPan { account, .. } => account.clone().unwrap_or_default(),
+        CloudConfig::Quark { folder } => folder.clone(),
         CloudConfig::None => String::new(),
     };
     if detail.is_empty() {
@@ -934,6 +936,69 @@ pub async fn cloud_connect_baidu(app: tauri::AppHandle, app_key: String, secret_
         )
     })
     .await
+}
+
+/// What the Quark option shows before downloading OpenList.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenListInfo {
+    installed: bool,
+    version: &'static str,
+    size: u64,
+    url: String,
+    asset: &'static str,
+    project: &'static str,
+    license: &'static str,
+}
+
+#[tauri::command]
+pub async fn openlist_status() -> CmdResult<OpenListInfo> {
+    use ludonimbus_core::openlist;
+    Ok(OpenListInfo {
+        installed: openlist::installed(),
+        version: openlist::VERSION,
+        size: openlist::SIZE,
+        url: openlist::download_url(),
+        asset: openlist::ASSET,
+        project: openlist::PROJECT_URL,
+        license: openlist::LICENSE,
+    })
+}
+
+/// Download OpenList from GitHub (progress as `openlist-progress`), or
+/// install it from a zip the user downloaded.
+#[tauri::command]
+pub async fn openlist_install(app: tauri::AppHandle, zip: Option<String>) -> CmdResult<()> {
+    use tauri::Emitter;
+    blocking(move || {
+        let emit = |done: u64, total: u64| {
+            let _ = app.emit("openlist-progress", serde_json::json!({ "done": done, "total": total }));
+        };
+        ludonimbus_core::openlist::install(zip.as_deref().map(Path::new), &emit)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn openlist_pick_zip() -> CmdResult<Option<String>> {
+    blocking(|| {
+        Ok(rfd::FileDialog::new()
+            .set_title(ludonimbus_core::tr!("选择下载好的 OpenList 安装包", "Choose the downloaded OpenList package"))
+            .add_filter("zip", &["zip"])
+            .pick_file()
+            .map(|p| p.display().to_string()))
+    })
+    .await
+}
+
+/// Sign in to Quark in a private window, mount it in OpenList and switch to
+/// it (also used to sign in again when the sign-in expired).
+#[tauri::command]
+pub async fn cloud_connect_quark(app: tauri::AppHandle) -> CmdResult<String> {
+    use std::sync::atomic::Ordering;
+    LOGIN_CANCEL.store(false, Ordering::SeqCst);
+    let cookie = crate::quark_login::sign_in(&app, &LOGIN_CANCEL).await.map_err(|e| format!("{e:#}"))?;
+    blocking(move || cloud::connect_quark(&cookie)).await
 }
 
 #[tauri::command]

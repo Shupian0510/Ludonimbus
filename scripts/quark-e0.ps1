@@ -22,6 +22,11 @@
   ./scripts/quark-e0.ps1 -Recheck        # days later: is the login still valid?
 .EXAMPLE
   ./scripts/quark-e0.ps1 -SelfTest       # OpenList's local storage instead of Quark (checks the script only)
+.EXAMPLE
+  ./scripts/quark-e0.ps1 -TwoDevices     # Ludonimbus's Quark support as two devices sharing one account
+.EXAMPLE
+  ./scripts/quark-e0.ps1 -Compare        # run the checks without and then with OpenList's listing cache,
+                                         # with per-request timings, to see where the time goes
 #>
 param(
     [string]$WorkDir = (Join-Path $env:LOCALAPPDATA "Ludonimbus-e0"),
@@ -29,11 +34,18 @@ param(
     [int]$BigMB = 10,
     [switch]$SelfTest,
     [switch]$Keep,
-    [switch]$Recheck
+    [switch]$Recheck,
+    # Minutes OpenList keeps directory listings (0 = always ask the drive).
+    [int]$CacheMinutes = 0,
+    [switch]$Compare,
+    # Ludonimbus's own Quark code as two devices (crates/core/tests/quark_live.rs).
+    [switch]$TwoDevices
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+# cargo prints UTF-8; read it as such (Chinese messages, the report file).
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $Version = "v4.2.10"
 $Asset = "openlist-windows-amd64.zip"
@@ -120,6 +132,40 @@ try {
     }
     Say ("openlist.exe: {0}" -f (& $Exe version 2>&1 | Select-String -Pattern "Version" | Select-Object -First 1))
 
+    if ($TwoDevices) {
+        # Two OpenList servers run by Ludonimbus's own code; this script only passes the cookie.
+        Step "2. Two devices (Ludonimbus's Quark support, OpenList listing cache on)"
+        if (-not (Test-Path $Zip)) { throw "Keep $Zip for this check (run once without -TwoDevices to download it)." }
+        $env:LUDONIMBUS_QUARK_COOKIE = ReadCookie
+        $env:LUDONIMBUS_OPENLIST_ZIP = $Zip
+        $env:LUDONIMBUS_DAV_TRACE = "1"
+        $dav = [System.Collections.Generic.List[object]]::new()
+        Push-Location $Repo
+        try {
+            cargo test -q -p ludonimbus-core --test quark_live -- --ignored --nocapture 2>&1 | ForEach-Object {
+                $line = "$_"
+                if ($line -match '^DAV (\w+) (\S+) (\d+)ms') {
+                    $dav.Add([pscustomobject]@{ Method = $Matches[1]; Ms = [int]$Matches[3] })
+                    # Failed requests go in the report as they are.
+                    if ($Matches[2] -ne "ok") { Write-Host $line; $Report.Add($line) }
+                    return
+                }
+                Write-Host $line
+                if ($line -match "^\[|PASSED|panicked|assert|Error|error|FAILED|test result|retry|cleanup") { $Report.Add($line) }
+            }
+            if ($LASTEXITCODE -ne 0) { $exitCode = 1; Say "RESULT: FAILED (see the test output above)" } else { Say "RESULT: ALL PASSED" }
+        } finally {
+            Pop-Location
+            Remove-Item Env:LUDONIMBUS_QUARK_COOKIE, Env:LUDONIMBUS_OPENLIST_ZIP, Env:LUDONIMBUS_DAV_TRACE -ErrorAction SilentlyContinue
+        }
+        Say "requests by method (count, average, max):"
+        $dav | Group-Object Method | Sort-Object Name | ForEach-Object {
+            $m = $_.Group | Measure-Object Ms -Average -Maximum
+            Say ("  {0,-9} x{1,-4} avg {2,6:N0} ms   max {3,6:N0} ms" -f $_.Name, $_.Count, $m.Average, $m.Maximum)
+        }
+        return
+    }
+
     if ($Recheck) {
         # --- Recheck: same data, no new cookie -----------------------------------
         if (-not (Test-Path $StateFile)) { throw "Nothing to re-check: run once with -Keep first." }
@@ -160,7 +206,7 @@ try {
         Step "3. Mount $(if ($SelfTest) { 'local storage' } else { 'Quark' }) at /quark"
         $storage = @{
             mount_path = "/quark"; order = 0; remark = "Ludonimbus E0"
-            cache_expiration = 0          # other devices write too: never serve a cached listing
+            cache_expiration = $CacheMinutes  # 0: other devices' uploads show up at once
             web_proxy = $true; webdav_policy = "native_proxy"; down_proxy_url = ""
         }
         if ($SelfTest) {
@@ -204,22 +250,62 @@ try {
     }
 
     # --- 5. Ludonimbus's WebDAV code against it ---------------------------------------
-    Step "5. Ludonimbus WebDAV checks ($BigMB MB large file)"
-    $env:LUDONIMBUS_DAV_URL = "$Base/dav/"
-    $env:LUDONIMBUS_DAV_USER = $davUser
-    $env:LUDONIMBUS_DAV_PASS = $davPass
-    $env:LUDONIMBUS_DAV_BIG_MB = "$BigMB"
-    Push-Location $Repo
-    try {
-        cargo test -q -p ludonimbus-core --test webdav_live -- --ignored --nocapture 2>&1 | ForEach-Object {
-            $line = "$_"
-            Write-Host $line
-            if ($line -match "^\[|PASSED|panicked|assert|Error|error|FAILED|test result") { $Report.Add($line) }
+    function RunChecks([string]$title) {
+        Step "5. Ludonimbus WebDAV checks ($BigMB MB large file, $title)"
+        $env:LUDONIMBUS_DAV_URL = "$Base/dav/"
+        $env:LUDONIMBUS_DAV_USER = $davUser
+        $env:LUDONIMBUS_DAV_PASS = $davPass
+        $env:LUDONIMBUS_DAV_BIG_MB = "$BigMB"
+        $env:LUDONIMBUS_DAV_TRACE = "1"
+        $dav = [System.Collections.Generic.List[object]]::new()
+        Push-Location $Repo
+        try {
+            cargo test -q -p ludonimbus-core --test webdav_live -- --ignored --nocapture 2>&1 | ForEach-Object {
+                $line = "$_"
+                if ($line -match '^DAV (\w+) (\S+) (\d+)ms') {
+                    $dav.Add([pscustomobject]@{ Method = $Matches[1]; Ms = [int]$Matches[3] })
+                    return
+                }
+                Write-Host $line
+                if ($line -match "^\[|PASSED|panicked|assert|Error|error|FAILED|test result") { $Report.Add($line) }
+            }
+            $code = $LASTEXITCODE
+        } finally {
+            Pop-Location
+            Remove-Item Env:LUDONIMBUS_DAV_PASS, Env:LUDONIMBUS_DAV_TRACE -ErrorAction SilentlyContinue
         }
-        $testExit = $LASTEXITCODE
-    } finally {
-        Pop-Location
-        Remove-Item Env:LUDONIMBUS_DAV_PASS -ErrorAction SilentlyContinue
+        Say "requests by method (count, average, max):"
+        $dav | Group-Object Method | Sort-Object Name | ForEach-Object {
+            $m = $_.Group | Measure-Object Ms -Average -Maximum
+            Say ("  {0,-9} x{1,-4} avg {2,6:N0} ms   max {3,6:N0} ms" -f $_.Name, $_.Count, $m.Average, $m.Maximum)
+        }
+        return $code
+    }
+
+    function SetCache([int]$minutes) {
+        $s = (Api GET "/api/admin/storage/list" $null $token).content | Where-Object { $_.mount_path -eq "/quark" }
+        $s.cache_expiration = $minutes
+        Api POST "/api/admin/storage/update" $s $token | Out-Null
+        Say "OpenList listing cache set to $minutes min"
+    }
+
+    # How long it takes Ludonimbus to force one fresh listing through OpenList's API.
+    function TimeList([bool]$refresh) {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        Api POST "/api/fs/list" @{ path = "/quark/$TestFolder"; refresh = $refresh; page = 1; per_page = 0; password = "" } $token | Out-Null
+        return $sw.ElapsedMilliseconds
+    }
+
+    if ($Compare) {
+        SetCache 0
+        $testExit = RunChecks "no listing cache"
+        SetCache 30
+        $second = RunChecks "listing cache 30 min"
+        if ($second -ne 0) { $testExit = $second }
+        Step "5b. One folder listing through OpenList's API"
+        Say ("cached: {0} ms, forced refresh: {1} ms, forced refresh again: {2} ms" -f (TimeList $false), (TimeList $true), (TimeList $true))
+    } else {
+        $testExit = RunChecks "listing cache $CacheMinutes min"
     }
 
     # --- 6. Resources ---------------------------------------------------------------

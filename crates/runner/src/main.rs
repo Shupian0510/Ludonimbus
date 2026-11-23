@@ -37,6 +37,8 @@ fn main() {
             1
         }
     };
+    // OpenList (Quark) started for this launch stops again unless the app runs.
+    ludonimbus_core::openlist::release_if_started_here();
     std::process::exit(code);
 }
 

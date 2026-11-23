@@ -26,6 +26,8 @@ function currentLabel(s: Settings): string {
       return `${c.endpoint} / ${c.bucket}${c.prefix ? ` / ${c.prefix}` : ""}`;
     case "baiduPan":
       return c.account ?? "";
+    case "quark":
+      return c.folder;
     default:
       return "";
   }

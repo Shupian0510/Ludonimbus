@@ -324,6 +324,22 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay({ games: 3, copied: 42, skipped: 0, bytes: 6.4e8 }, 1500);
     case "cloud_connect_baidu":
       return delay(L("玩家", "player"), 4000);
+    case "openlist_status":
+      return delay({
+        installed: false,
+        version: "v4.2.10",
+        size: 59999218,
+        url: "https://github.com/OpenListTeam/OpenList/releases/download/v4.2.10/openlist-windows-amd64.zip",
+        asset: "openlist-windows-amd64.zip",
+        project: "https://github.com/OpenListTeam/OpenList",
+        license: "AGPL-3.0",
+      });
+    case "openlist_install":
+      return delay(undefined, 1500);
+    case "openlist_pick_zip":
+      return delay(null);
+    case "cloud_connect_quark":
+      return delay(L("夸克网盘 · Ludonimbus", "Quark · Ludonimbus"), 3000);
     case "cloud_cancel_login":
       return delay(undefined);
     case "cloud_dismiss_previous":

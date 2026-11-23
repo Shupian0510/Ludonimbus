@@ -12,6 +12,7 @@
 //! - [`sync`]     Steam-Cloud-like sync decisions and conflict handling
 //! - [`steam`]    Steam install, accounts, non-Steam shortcuts, artwork
 //! - [`millennium`] Millennium install and the Ludonimbus Steam plugin
+//! - [`openlist`] the OpenList server used to reach Quark
 //! - [`games`]    high-level library operations shared by CLI / runner / app
 //! - [`i18n`]     interface language for texts made in Rust (`tr!`)
 //! - [`xbox`]     Xbox app games: launch helper, real game processes
@@ -29,6 +30,7 @@ pub mod lockfile;
 pub mod logger;
 pub mod ludusavi;
 pub mod millennium;
+pub mod openlist;
 pub mod recomplauncher;
 pub mod paths;
 pub mod process;

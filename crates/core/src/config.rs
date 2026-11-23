@@ -132,6 +132,12 @@ pub enum CloudConfig {
         #[serde(default)]
         account: Option<String>,
     },
+    /// Quark through the OpenList server Ludonimbus runs (see `openlist`).
+    /// The sign-in lives in OpenList's own data folder.
+    Quark {
+        #[serde(default = "default_drive_folder")]
+        folder: String,
+    },
 }
 
 fn default_drive_folder() -> String {

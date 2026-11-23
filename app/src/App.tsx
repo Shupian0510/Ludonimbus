@@ -193,7 +193,9 @@ export default function App() {
                       ? overview.cloud.label ?? "Google Drive"
                       : overview.cloud.kind === "baiduPan"
                         ? overview.cloud.label ?? t.cloudNames.baiduPan
-                        : overview.cloud.kind === "webDav"
+                        : overview.cloud.kind === "quark"
+                          ? t.cloudNames.quark
+                          : overview.cloud.kind === "webDav"
                           ? "WebDAV"
                           : overview.cloud.kind === "s3"
                             ? t.app.cloud.s3

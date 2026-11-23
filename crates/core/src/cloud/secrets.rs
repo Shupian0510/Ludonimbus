@@ -57,6 +57,11 @@ pub fn load_for(cloud: &CloudConfig) -> Result<Option<String>> {
 
 /// Forget the secret of `dropped` unless one of `keep` uses the same one.
 pub fn release(dropped: &CloudConfig, keep: &[&CloudConfig]) {
+    // Quark's sign-in lives in OpenList's data folder.
+    if matches!(dropped, CloudConfig::Quark { .. }) && !keep.iter().any(|k| matches!(k, CloudConfig::Quark { .. })) {
+        crate::openlist::forget();
+        return;
+    }
     let Some(user) = user_for(dropped) else { return };
     if keep.iter().any(|k| user_for(k).as_deref() == Some(user.as_str())) {
         return;

@@ -254,7 +254,7 @@ export interface SgdbImage {
   author: string;
 }
 
-export type CloudKind = "none" | "localFolder" | "googleDrive" | "webDav" | "s3" | "baiduPan";
+export type CloudKind = "none" | "localFolder" | "googleDrive" | "webDav" | "s3" | "baiduPan" | "quark";
 
 export type WebDavConfig = { kind: "webDav"; url: string; username: string; folder: string };
 export type S3Config = {
@@ -273,7 +273,18 @@ export type CloudConfig =
   | { kind: "googleDrive"; clientId: string; clientSecret: string; folder: string; account: string | null }
   | WebDavConfig
   | S3Config
-  | { kind: "baiduPan"; appKey: string; secretKey: string; appName: string; account: string | null };
+  | { kind: "baiduPan"; appKey: string; secretKey: string; appName: string; account: string | null }
+  | { kind: "quark"; folder: string };
+
+export interface OpenListInfo {
+  installed: boolean;
+  version: string;
+  size: number;
+  url: string;
+  asset: string;
+  project: string;
+  license: string;
+}
 
 export interface BaiduDeviceCode {
   userCode: string;
@@ -443,6 +454,10 @@ export const api = {
   cloudConnectBaidu: (appKey: string, secretKey: string, appName: string) =>
     invoke<string>("cloud_connect_baidu", { appKey, secretKey, appName }),
   cloudCancelLogin: () => invoke<void>("cloud_cancel_login"),
+  openlistStatus: () => invoke<OpenListInfo>("openlist_status"),
+  openlistInstall: (zip: string | null) => invoke<void>("openlist_install", { zip }),
+  openlistPickZip: () => invoke<string | null>("openlist_pick_zip"),
+  cloudConnectQuark: () => invoke<string>("cloud_connect_quark"),
   scanQuick: () => invoke<Found[]>("scan_quick"),
   scanLudusavi: () => invoke<Found[]>("scan_ludusavi"),
   scanFolder: (path: string) => invoke<Found[]>("scan_folder", { path }),

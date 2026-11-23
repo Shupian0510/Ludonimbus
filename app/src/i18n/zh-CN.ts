@@ -74,6 +74,7 @@ export const cloudNames = {
   webDav: "WebDAV",
   s3: "S3 兼容存储",
   baiduPan: "百度网盘",
+  quark: "夸克网盘",
 };
 
 export const app = {
@@ -411,6 +412,21 @@ export const cloud = {
     reconnect: "重新连接百度网盘",
     connect: "连接百度网盘",
     own: "使用自己的百度应用（高级）",
+  },
+  quark: {
+    experimental: "实验性",
+    intro:
+      "用夸克 App 扫码登录。夸克没有给第三方应用的官方接口，Ludonimbus 通过开源工具 OpenList 连接，存档放在网盘的「Ludonimbus」文件夹里。上传比其他云盘慢一些，每个存档版本约 10 秒。",
+    needComponent: (size: string, license: string) =>
+      `第一次使用需要下载 OpenList 组件（${size}，来自 OpenList 在 GitHub 的官方发布页，开源许可 ${license}），下载后会校验 SHA-256。它只在本机运行，只有 Ludonimbus 能访问。`,
+    project: "OpenList 项目主页",
+    downloading: (pct: number, done: string, total: string) => `正在下载 OpenList… ${pct}%（${done} / ${total}）`,
+    preparing: "正在准备…",
+    waiting: "已打开夸克网盘的登录窗口。用夸克 App 扫码登录（或用页面上的其他方式），登录后这里会自动继续。",
+    relogin: "重新扫码登录",
+    connect: "扫码连接夸克网盘",
+    downloadConnect: "下载组件并连接",
+    pickZip: "GitHub 下载太慢？选择已下载的安装包…",
   },
   migrate: {
     nothing: "原来的云盘里没有存档，不需要复制",

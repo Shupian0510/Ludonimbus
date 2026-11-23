@@ -19,6 +19,7 @@ pub mod gdrive;
 pub mod local;
 pub mod migrate;
 pub mod oauth;
+pub mod quark;
 pub mod repo;
 pub mod s3;
 pub mod secrets;
@@ -252,6 +253,7 @@ pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration)
                 timeout,
             ))
         }
+        CloudConfig::Quark { folder } => Box::new(quark::Quark::open(folder, timeout)?),
         CloudConfig::None | CloudConfig::GoogleDrive { .. } => bail!(crate::tr!("这种云盘不能这样打开", "This kind of cloud can't be opened this way")),
     })
 }
@@ -309,6 +311,19 @@ pub fn baidu_sign_in(
     Ok((store.token(), name, account))
 }
 
+/// Mount Quark in OpenList with the cookie of a signed-in browser, check
+/// the Ludonimbus folder and switch to it. OpenList must be installed.
+pub fn connect_quark(cookie: &str) -> Result<String> {
+    let folder = "Ludonimbus".to_string();
+    crate::openlist::connect_quark(cookie, &folder)?;
+    let cloud = CloudConfig::Quark { folder };
+    let store = build_store(&cloud, None, Duration::from_secs(30))?;
+    store.check()?;
+    let label = store.label();
+    switch_to(cloud, None)?;
+    Ok(label)
+}
+
 /// Sign in to Baidu Netdisk, save the token and switch to it. Empty app
 /// fields use the app built into the release. Returns the account name.
 pub fn connect_baidu(
@@ -359,6 +374,7 @@ pub fn switch_to(new: CloudConfig, secret: Option<&str>) -> Result<()> {
             (&old, &new),
             (CloudConfig::GoogleDrive { .. }, CloudConfig::GoogleDrive { .. })
                 | (CloudConfig::BaiduPan { .. }, CloudConfig::BaiduPan { .. })
+                | (CloudConfig::Quark { .. }, CloudConfig::Quark { .. })
         );
         if old == CloudConfig::None || old == new || same_sign_in {
             return Ok(None);
@@ -437,6 +453,7 @@ pub fn kind_id(cloud: &CloudConfig) -> &'static str {
         CloudConfig::WebDav { .. } => "webDav",
         CloudConfig::S3 { .. } => "s3",
         CloudConfig::BaiduPan { .. } => "baiduPan",
+        CloudConfig::Quark { .. } => "quark",
     }
 }
 
@@ -450,6 +467,7 @@ pub fn kind_name(cloud: &CloudConfig) -> &'static str {
         CloudConfig::WebDav { .. } => "WebDAV",
         CloudConfig::S3 { .. } => if en { "S3-compatible storage" } else { "S3 兼容存储" },
         CloudConfig::BaiduPan { .. } => if en { "Baidu Netdisk" } else { "百度网盘" },
+        CloudConfig::Quark { .. } => if en { "Quark" } else { "夸克网盘" },
     }
 }
 

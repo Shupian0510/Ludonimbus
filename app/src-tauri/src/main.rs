@@ -5,6 +5,7 @@ mod art;
 mod busy;
 mod commands;
 mod library;
+mod quark_login;
 mod steam_plugin;
 mod updater;
 mod watcher;
@@ -71,6 +72,12 @@ fn main() {
             agent::spawn(app.handle().clone());
             let handle = app.handle().clone();
             std::thread::spawn(move || steam_plugin::refresh_installed(&handle));
+            // Start OpenList early when the cloud is Quark, so the first sync doesn't wait for it.
+            std::thread::spawn(|| {
+                if matches!(config::load().map(|c| c.cloud), Ok(config::CloudConfig::Quark { .. })) {
+                    let _ = ludonimbus_core::openlist::ensure_running();
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -116,6 +123,10 @@ fn main() {
             commands::set_language,
             commands::get_onboarding,
             commands::finish_onboarding,
+            commands::openlist_status,
+            commands::openlist_install,
+            commands::openlist_pick_zip,
+            commands::cloud_connect_quark,
             commands::cloud_use_folder,
             commands::cloud_connect_google,
             commands::cloud_disconnect,
@@ -160,6 +171,8 @@ fn main() {
         .run(|_app, event| {
             if let RunEvent::Exit = event {
                 agent::remove_agent_file();
+                // OpenList (Quark) runs while the app does.
+                ludonimbus_core::openlist::stop();
             }
         });
 }

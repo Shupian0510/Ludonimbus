@@ -15,8 +15,22 @@ use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
+
+/// `LUDONIMBUS_DAV_TRACE=1` prints every request with its status and
+/// duration to stderr, to see where a slow server spends its time.
+fn trace<T>(method: &str, url: &Url, started: Instant, res: &Result<T, ureq::Error>) {
+    if std::env::var_os("LUDONIMBUS_DAV_TRACE").is_none() {
+        return;
+    }
+    let status = match res {
+        Ok(_) => "ok".to_string(),
+        Err(ureq::Error::Status(c, _)) => c.to_string(),
+        Err(_) => "err".to_string(),
+    };
+    eprintln!("DAV {method} {status} {}ms {}", started.elapsed().as_millis(), url.path());
+}
 
 const PROPFIND_LIST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/><d:getetag/><d:getlastmodified/></d:prop></d:propfind>"#;
@@ -34,6 +48,8 @@ pub struct WebDav {
     bulk: ureq::Agent,
     /// Folders known to exist (relative paths, `""` = root folder).
     known_dirs: Mutex<HashSet<String>>,
+    /// Upload to a temporary name and rename it (see [`WebDav::direct_uploads`]).
+    atomic: bool,
 }
 
 /// One `<response>` of a multistatus document.
@@ -126,7 +142,8 @@ fn fail(e: ureq::Error) -> anyhow::Error {
                 405 => anyhow!(crate::tr!("WebDAV 服务器不支持这个操作（405），请确认地址指向的是 WebDAV 服务", "The WebDAV server doesn't support this (405). Make sure the address points to a WebDAV service")),
                 507 => anyhow!(crate::tr!("WebDAV 空间不足（507）", "Not enough space on the WebDAV server (507)")),
                 429 | 503 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器繁忙或请求太频繁（{code}）", "The WebDAV server is busy or got too many requests ({code})"))),
-                c if c >= 500 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器错误 {c}", "WebDAV server error {c}"))),
+                c if c >= 500 && body.trim().is_empty() => anyhow!(Unavailable(crate::tr!("WebDAV 服务器错误 {c}", "WebDAV server error {c}"))),
+                c if c >= 500 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器错误 {c}：{}", "WebDAV server error {c}: {}", body.trim()))),
                 c => anyhow!(crate::tr!("WebDAV 返回错误 {c}：{body}", "WebDAV returned error {c}: {body}")),
             }
         }
@@ -177,7 +194,17 @@ impl WebDav {
                 .timeout_write(Duration::from_secs(300))
                 .build(),
             known_dirs: Mutex::new(HashSet::new()),
+            atomic: true,
         })
+    }
+
+    /// Upload straight to the final name instead of a temporary file that
+    /// is renamed afterwards. Only for servers whose uploads are atomic
+    /// themselves (OpenList in front of Quark: a file only appears once its
+    /// upload has finished), where the extra rename is slow.
+    pub fn direct_uploads(mut self) -> Self {
+        self.atomic = false;
+        self
     }
 
     /// URL of a path below the data folder (`dir` adds a trailing slash).
@@ -201,12 +228,14 @@ impl WebDav {
     }
 
     fn propfind(&self, url: &Url, depth: &str, body: &str) -> Result<Option<Vec<DavItem>>> {
-        match self
+        let t = Instant::now();
+        let res = self
             .req(&self.agent, "PROPFIND", url)
             .set("Depth", depth)
             .set("Content-Type", "application/xml; charset=utf-8")
-            .send_string(body)
-        {
+            .send_string(body);
+        trace("PROPFIND", url, t, &res);
+        match res {
             Ok(r) => Ok(Some(parse_multistatus(&r.into_string()?)?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(fail(e)),
@@ -214,7 +243,10 @@ impl WebDav {
     }
 
     fn mkcol(&self, url: &Url) -> Result<()> {
-        match self.req(&self.agent, "MKCOL", url).call() {
+        let t = Instant::now();
+        let res = self.req(&self.agent, "MKCOL", url).call();
+        trace("MKCOL", url, t, &res);
+        match res {
             Ok(_) => Ok(()),
             // 405: already exists. Some servers answer 301 (redirect to the
             // existing folder) or 409 when it exists as well.
@@ -287,6 +319,7 @@ impl WebDav {
         }
         let mut created = false;
         loop {
+            let t = Instant::now();
             let res = match body {
                 Body::Bytes(b) => self
                     .req(&self.bulk, "PUT", &url)
@@ -303,6 +336,7 @@ impl WebDav {
                         .send(f)
                 }
             };
+            trace("PUT", &url, t, &res);
             match res {
                 Ok(_) => return Ok(()),
                 Err(ureq::Error::Status(404 | 409, _)) if !created => {
@@ -316,12 +350,15 @@ impl WebDav {
 
     /// `Ok(false)` when the server does not support moving files.
     fn rename(&self, from: &str, to: &str) -> Result<bool> {
-        match self
-            .req(&self.agent, "MOVE", &self.url(from, false))
+        let t = Instant::now();
+        let url = self.url(from, false);
+        let res = self
+            .req(&self.agent, "MOVE", &url)
             .set("Destination", self.url(to, false).as_str())
             .set("Overwrite", "T")
-            .call()
-        {
+            .call();
+        trace("MOVE", &url, t, &res);
+        match res {
             Ok(_) => Ok(true),
             Err(ureq::Error::Status(403 | 405 | 501 | 502, _)) => Ok(false),
             Err(e) => Err(fail(e)),
@@ -329,6 +366,9 @@ impl WebDav {
     }
 
     fn put_atomic(&self, path: &str, body: Body) -> Result<()> {
+        if !self.atomic {
+            return self.put(path, &body);
+        }
         let tmp = temp_name(path);
         self.put(&tmp, &body)?;
         match self.rename(&tmp, path) {
@@ -345,7 +385,11 @@ impl WebDav {
     }
 
     fn get(&self, agent: &ureq::Agent, path: &str) -> Result<Option<ureq::Response>> {
-        match self.req(agent, "GET", &self.url(path, false)).call() {
+        let t = Instant::now();
+        let url = self.url(path, false);
+        let res = self.req(agent, "GET", &url).call();
+        trace("GET", &url, t, &res);
+        match res {
             Ok(r) => Ok(Some(r)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(fail(e)),
@@ -428,7 +472,11 @@ impl Store for WebDav {
     }
 
     fn remove(&self, path: &str) -> Result<()> {
-        match self.req(&self.agent, "DELETE", &self.url(path, false)).call() {
+        let t = Instant::now();
+        let url = self.url(path, false);
+        let res = self.req(&self.agent, "DELETE", &url).call();
+        trace("DELETE", &url, t, &res);
+        match res {
             Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
             Err(e) => Err(fail(e)),
         }

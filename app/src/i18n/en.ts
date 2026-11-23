@@ -70,6 +70,7 @@ export const cloudNames: typeof Zh.cloudNames = {
   webDav: "WebDAV",
   s3: "S3-compatible storage",
   baiduPan: "Baidu Netdisk",
+  quark: "Quark",
 };
 
 export const app: typeof Zh.app = {
@@ -407,6 +408,21 @@ export const cloud: typeof Zh.cloud = {
     reconnect: "Reconnect Baidu Netdisk",
     connect: "Connect Baidu Netdisk",
     own: "Use my own Baidu app (advanced)",
+  },
+  quark: {
+    experimental: "Experimental",
+    intro:
+      "Sign in by scanning a QR code with the Quark app. Quark has no official API for third-party apps, so Ludonimbus connects through the open-source tool OpenList; saves go in the \"Ludonimbus\" folder of your drive. Uploads are slower than with other clouds, about 10 seconds per save version.",
+    needComponent: (size, license) =>
+      `The first time, the OpenList component has to be downloaded (${size}, from OpenList's official GitHub releases, open-source ${license}); its SHA-256 is checked. It runs only on this PC, and only Ludonimbus can use it.`,
+    project: "OpenList project page",
+    downloading: (pct, done, total) => `Downloading OpenList… ${pct}% (${done} / ${total})`,
+    preparing: "Preparing…",
+    waiting: "Quark's sign-in window is open. Scan the QR code with the Quark app (or use another way the page offers); this continues by itself once you're signed in.",
+    relogin: "Scan to sign in again",
+    connect: "Connect Quark",
+    downloadConnect: "Download the component and connect",
+    pickZip: "GitHub too slow? Choose a downloaded package…",
   },
   migrate: {
     nothing: "The old cloud has no saves; nothing to copy",
