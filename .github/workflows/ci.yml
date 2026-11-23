@@ -22,6 +22,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: debug-build
+          key: ${{ hashFiles('Cargo.toml') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
@@ -60,6 +61,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-build
+          key: ${{ hashFiles('Cargo.toml') }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20

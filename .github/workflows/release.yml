@@ -21,6 +21,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-build
+          key: ${{ hashFiles('Cargo.toml') }}
           save-if: false
       - uses: actions/setup-node@v4
         with:
