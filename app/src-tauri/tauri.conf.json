@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Shupian0510",
     "targets": [
       "nsis"
     ],
