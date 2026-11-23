@@ -1094,6 +1094,54 @@ table.files td:not(:first-child) {
   gap: 14px;
 }
 
+/* Updates ----------------------------------------------------------------- */
+.update-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(102, 192, 244, 0.4);
+  background: rgba(102, 192, 244, 0.12);
+  color: #bfe3fa;
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+}
+.update-chip:hover {
+  background: rgba(102, 192, 244, 0.2);
+}
+.release-notes {
+  white-space: pre-wrap;
+  background: #121821;
+  border: 1px solid #263546;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0 12px;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 12px;
+}
+.update-progress .bar {
+  height: 8px;
+  border-radius: 4px;
+  background: #121821;
+  overflow: hidden;
+}
+.update-progress .bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #47a8ec, #66c0f4);
+  transition: width 0.2s;
+}
+
 /* Empty / toasts ---------------------------------------------------------- */
 .empty {
   display: flex;

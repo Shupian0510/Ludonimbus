@@ -33,6 +33,12 @@
 
 规则写在 [`adapters/builtin.yaml`](adapters/builtin.yaml) 里，欢迎提 PR 补充更多模拟器和游戏。
 
+## 下载
+
+到 [Releases](https://github.com/Shupian0510/Ludonimbus/releases/latest) 下载 `Ludonimbus_x.y.z_x64-setup.exe` 安装（装在当前用户下，不需要管理员权限）。之后有新版本时，应用会自动提示并一键更新。
+
+安装包暂未进行代码签名，Windows 可能提示「未知发布者」，点「更多信息 → 仍要运行」即可。
+
 ## 使用
 
 1. 安装后打开 Ludonimbus，在「设置 → 云盘」里连接 Google Drive，或者选一个同步文件夹。
@@ -88,6 +94,14 @@ cargo run -p ludonimbus-cli -- snapshots fe-fortunes-weave
 
 运行测试：`cargo test --workspace --exclude ludonimbus-app`
 
+### 发布新版本
+
+1. 在 [`CHANGELOG.md`](CHANGELOG.md) 新增一节 `## x.y.z`。
+2. 把 `Cargo.toml`、`app/package.json`、`app/src-tauri/tauri.conf.json` 里的版本号改成 `x.y.z`。
+3. 提交后推送标签：`git tag vx.y.z && git push origin vx.y.z`。
+
+[`release.yml`](.github/workflows/release.yml) 会在 GitHub 上编译、签名并创建 Release，同时发布 `latest.json`，已安装的 Ludonimbus 会据此提示更新。需要的仓库 Secrets：`LUDONIMBUS_GOOGLE_CLIENT_ID`、`LUDONIMBUS_GOOGLE_CLIENT_SECRET`、`TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+
 ### Google Drive
 
 发布者需要在 Google Cloud 创建一次「桌面应用」类型的 OAuth 客户端，并在构建时注入 Client ID，见 [`docs/google-oauth-setup.md`](docs/google-oauth-setup.md)。普通用户只需要登录。
@@ -105,7 +119,7 @@ docs/            设计文档
 
 ## 路线图
 
-- [x] 第一版：Google Drive / 同步文件夹、3 个游戏自动同步、版本历史、冲突处理、图形界面
+- [x] 第一版：Google Drive / 同步文件夹、3 个游戏自动同步、版本历史、冲突处理、图形界面、自动更新
 - [ ] Millennium 插件：在 Steam 游戏页里显示云存档状态和版本，不关 Steam 就能开关自动同步
 - [ ] 更多模拟器规则（Ryujinx / Eden、RPCS3、Dolphin、RetroArch、PCSX2…）
 - [ ] 更多云盘（rclone、WebDAV / OpenList）

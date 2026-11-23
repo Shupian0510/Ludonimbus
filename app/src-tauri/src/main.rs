@@ -2,6 +2,7 @@
 
 mod art;
 mod commands;
+mod updater;
 mod watcher;
 
 use tauri::menu::{Menu, MenuItem};
@@ -19,6 +20,7 @@ pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol("ludoart", art::handle)
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "打开 Ludonimbus", true, None::<&str>)?;
@@ -96,6 +98,8 @@ fn main() {
             commands::list_devices,
             commands::ludusavi_search,
             commands::ludusavi_preview,
+            updater::check_update,
+            updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ludonimbus");

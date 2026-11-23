@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { AccountInfo, api, errorText, Settings, SteamAccount } from "../api";
+import { AccountInfo, api, errorText, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
 import { Badge, Button, Icon, Spinner, useUi } from "./ui";
+import { UpdateDialog } from "./Update";
 
 export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) {
   const ui = useUi();
@@ -17,6 +18,7 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
   const [clientSecret, setClientSecret] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
   const load = useCallback(async () => {
     const v = await api.settings();
@@ -102,6 +104,16 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
   };
 
   const needClientId = !s.googleBuiltin;
+
+  const checkUpdate = async () => {
+    try {
+      const u = await api.checkUpdate();
+      if (u.available) setUpdate(u);
+      else ui.toast(`已经是最新版本（${u.current}）`);
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
 
   return (
     <div className="page settings">
@@ -259,6 +271,15 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
           <h3>关于</h3>
         </div>
         <label>
+          <span>版本</span>
+          <div className="row">
+            <span>Ludonimbus {s.version}</span>
+            <Button small icon="download" onClick={checkUpdate}>
+              检查更新
+            </Button>
+          </div>
+        </label>
+        <label>
           <span>数据目录</span>
           <button className="link" onClick={() => api.openPath(s.dataDir)}>
             {s.dataDir}
@@ -273,6 +294,7 @@ export function SettingsPage({ onChanged }: { onChanged: () => Promise<void> }) 
           <code>{s.deviceId}</code>
         </label>
       </section>
+      {update && <UpdateDialog info={update} onClose={() => setUpdate(null)} />}
     </div>
   );
 }

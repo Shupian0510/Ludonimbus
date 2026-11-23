@@ -9,7 +9,9 @@
 param(
     [switch]$Release,
     [string]$LudusaviPath = "",
-    [string]$LudusaviVersion = "0.31.0"
+    [string]$LudusaviVersion = "0.31.0",
+    # SHA-256 of the official ludusavi-v<version>-win64.zip (GitHub release asset digest).
+    [string]$LudusaviSha256 = "f47a8ad8c708f01d2eb124704973beffab205e292f5287a10fc4a101f8d68706"
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -34,7 +36,12 @@ if ($LudusaviPath) {
     New-Item -ItemType Directory $tmp | Out-Null
     Write-Host "Downloading Ludusavi v$LudusaviVersion from $url"
     Invoke-WebRequest $url -OutFile (Join-Path $tmp "ludusavi.zip")
-    Write-Host ("SHA256: " + (Get-FileHash (Join-Path $tmp "ludusavi.zip") -Algorithm SHA256).Hash)
+    $hash = (Get-FileHash (Join-Path $tmp "ludusavi.zip") -Algorithm SHA256).Hash.ToLower()
+    if ($LudusaviSha256 -and $hash -ne $LudusaviSha256.ToLower()) {
+        Remove-Item $tmp -Recurse -Force
+        throw "Ludusavi download checksum mismatch: $hash"
+    }
+    Write-Host "SHA256 verified: $hash"
     Expand-Archive (Join-Path $tmp "ludusavi.zip") -DestinationPath $tmp
     Copy-Item (Join-Path $tmp "ludusavi.exe") $ludusaviOut -Force
     Remove-Item $tmp -Recurse -Force

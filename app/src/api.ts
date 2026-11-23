@@ -206,6 +206,14 @@ export interface DeviceInfo {
   lastSeen: string;
 }
 
+export interface UpdateInfo {
+  current: string;
+  available: boolean;
+  version: string | null;
+  notes: string | null;
+  date: string | null;
+}
+
 export interface AccountInfo {
   label: string;
   used: number | null;
@@ -295,6 +303,8 @@ export const api = {
   devices: () => invoke<DeviceInfo[]>("list_devices"),
   ludusaviSearch: (query: string) => invoke<string[]>("ludusavi_search", { query }),
   ludusaviPreview: (title: string) => invoke<string[]>("ludusavi_preview", { title }),
+  checkUpdate: () => invoke<UpdateInfo>("check_update"),
+  installUpdate: () => invoke<void>("install_update"),
 };
 
 export function errorText(e: unknown): string {

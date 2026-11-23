@@ -27,18 +27,40 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/ludonimbus-run", "binaries/ludusavi"],
+    "externalBin": [
+      "binaries/ludonimbus-run",
+      "binaries/ludusavi"
+    ],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      }
+    },
+    "resources": {
+      "licenses/*": "licenses/"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk5NUY4Qjk5OUJGNkZDQjgKUldTNC9QYWJtWXRmbVRpWjlFOU9OcTNNUy9YWEVLK2UrOWxvT2RoUEVabmlQVHhISmRTa0ZxMS8K",
+      "endpoints": [
+        "https://github.com/Shupian0510/Ludonimbus/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

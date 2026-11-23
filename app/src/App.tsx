@@ -1,12 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport } from "./api";
+import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport, UpdateInfo } from "./api";
 import { AddGame } from "./components/AddGame";
 import { Devices } from "./components/Devices";
 import { GameDetail } from "./components/GameDetail";
 import { Library } from "./components/Library";
 import { SettingsPage } from "./components/Settings";
 import { Icon, Spinner, useUi } from "./components/ui";
+import { UpdateDialog } from "./components/Update";
 import { outcomeText } from "./format";
 
 export type Page = { name: "library" } | { name: "game"; key: string } | { name: "devices" } | { name: "settings" };
@@ -19,6 +20,8 @@ export default function App() {
   const [page, setPage] = useState<Page>({ name: "library" });
   const [adding, setAdding] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [showUpdate, setShowUpdate] = useState(false);
   const checkingRef = useRef<Record<string, boolean>>({});
 
   const reload = useCallback(async () => {
@@ -95,6 +98,21 @@ export default function App() {
     };
   }, [refresh, reload, check, ui]);
 
+  // Check for app updates shortly after start, then every 6 hours.
+  useEffect(() => {
+    const run = () =>
+      api.checkUpdate().then(
+        (u) => setUpdate(u.available ? u : null),
+        () => undefined,
+      );
+    const first = setTimeout(run, 4000);
+    const timer = setInterval(run, 6 * 3600 * 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, []);
+
   const game = page.name === "game" ? overview?.games.find((g) => g.key === page.key) : undefined;
 
   return (
@@ -110,6 +128,12 @@ export default function App() {
           <NavItem icon="settings" label="设置" active={page.name === "settings"} onClick={() => setPage({ name: "settings" })} />
         </nav>
         <div className="sidebar-foot">
+          {update && (
+            <button className="update-chip" onClick={() => setShowUpdate(true)}>
+              <Icon name="download" size={16} />
+              <span>新版本 {update.version} 可用</span>
+            </button>
+          )}
           {overview && (
             <button className={`cloud-chip ${overview.cloud.kind === "none" || overview.cloud.error ? "off" : "on"}`} onClick={() => setPage({ name: "settings" })}>
               <Icon name="cloud" size={16} />
@@ -174,6 +198,8 @@ export default function App() {
         {page.name === "devices" && <Devices overview={overview} />}
         {page.name === "settings" && <SettingsPage onChanged={refresh} />}
       </main>
+
+      {showUpdate && update && <UpdateDialog info={update} onClose={() => setShowUpdate(false)} />}
 
       {adding && overview && (
         <AddGame
