@@ -56,7 +56,7 @@ Steam 快捷方式 ──> ludonimbus-run --game <id> ──> 启动前同步 �
 
 - 每个版本是一个只追加、不可修改的 zip 快照，带父版本指针和设备信息；最新的主线版本就是「云端当前版本」。
 - 启动前的判定规则见 [`crates/core/src/sync.rs`](crates/core/src/sync.rs) 顶部的表格。
-- 设计文档：[`docs/plan-phase1.md`](docs/plan-phase1.md)。
+- 设计文档：[`docs/plan-phase1.md`](docs/plan-phase1.md)；测试清单：[`docs/testing-v0.1.md`](docs/testing-v0.1.md)。
 
 ## 从源码构建
 
