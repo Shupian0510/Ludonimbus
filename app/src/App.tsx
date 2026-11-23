@@ -82,6 +82,11 @@ export default function App() {
     const unlisten: Array<() => void> = [];
     if (inTauri) {
       listen("library-changed", () => reload()).then((u) => unlisten.push(u));
+      // A game (and the Steam wrapper's upload) finished: refresh its status.
+      listen<string>("game-stopped", (e) => {
+        reload();
+        check(e.payload);
+      }).then((u) => unlisten.push(u));
       listen<{ key: string; name: string; outcome: Outcome | null; error: string | null }>("sync-finished", (e) => {
         const { key, name, outcome, error } = e.payload;
         if (error) ui.toast(`「${name}」后台同步失败：${error}`, "bad");
@@ -92,11 +97,16 @@ export default function App() {
       }).then((u) => unlisten.push(u));
     }
     const timer = setInterval(() => reload(), 30000);
+    // Re-check every game against the cloud now and then (other devices may have uploaded).
+    const recheck = setInterval(() => {
+      reload().then((o) => o && checkAll(o.games));
+    }, 10 * 60 * 1000);
     return () => {
       unlisten.forEach((u) => u());
       clearInterval(timer);
+      clearInterval(recheck);
     };
-  }, [refresh, reload, check, ui]);
+  }, [refresh, reload, check, checkAll, ui]);
 
   // Check for app updates shortly after start, then every 6 hours.
   useEffect(() => {

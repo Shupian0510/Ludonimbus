@@ -11,6 +11,8 @@ use std::time::Duration;
 #[serde(rename_all = "camelCase", default)]
 pub struct State {
     pub games: BTreeMap<String, GameState>,
+    /// Last time this device refreshed its entry in the cloud.
+    pub device_seen_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

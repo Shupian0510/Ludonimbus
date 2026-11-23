@@ -1,12 +1,15 @@
 //! Background watcher (runs while the app sits in the tray):
 //! - backs up games that were started without the Steam wrapper, after they exit
+//! - recovers when the wrapper was killed before it could upload (e.g. the user
+//!   pressed "Stop" in Steam): its running marker is left behind, so we sync
+//! - tells the UI when a game stops so statuses refresh
 //! - notices `shortcuts.vdf` changes so the UI can flag broken shortcuts
 
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution};
 use ludonimbus_core::{config, logger, paths, process, spec, steam, util};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter};
 
@@ -19,21 +22,37 @@ pub struct SyncEvent {
     pub error: Option<String>,
 }
 
-/// Whether `ludonimbus-run` is currently handling this game.
-pub fn runner_active(key: &str) -> bool {
-    let p = paths::running_dir().join(format!("{key}.json"));
-    let Ok(text) = std::fs::read_to_string(&p) else {
-        return false;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Runner {
+    None,
+    Active,
+    /// The marker exists but its process is gone: the wrapper was terminated
+    /// before it finished (and before it uploaded).
+    Stale,
+}
+
+fn marker(key: &str) -> std::path::PathBuf {
+    paths::running_dir().join(format!("{key}.json"))
+}
+
+pub fn runner_state(key: &str) -> Runner {
+    let Ok(text) = std::fs::read_to_string(marker(key)) else {
+        return Runner::None;
     };
     let pid = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
         .and_then(|v| v["pid"].as_u64())
         .unwrap_or(0) as u32;
     if pid != 0 && process::pid_alive(pid) {
-        return true;
+        Runner::Active
+    } else {
+        Runner::Stale
     }
-    let _ = std::fs::remove_file(&p);
-    false
+}
+
+/// Whether `ludonimbus-run` is currently handling this game.
+pub fn runner_active(key: &str) -> bool {
+    runner_state(key) == Runner::Active
 }
 
 /// Process names that mean "this game is running".
@@ -54,9 +73,31 @@ fn vdf_stamp(cfg: &config::AppConfig) -> Option<SystemTime> {
         .max()
 }
 
+fn background_sync(app: &AppHandle, cfg: &config::AppConfig, g: &config::GameEntry, why: &str) {
+    logger::log("watcher", format!("{}: {why}, syncing", g.key));
+    // Give the game a moment to flush its saves.
+    std::thread::sleep(Duration::from_secs(2));
+    let ctx = Ctx::from_config(cfg.clone());
+    let result = sync::sync(&ctx, g, Resolution::Auto, Trigger::Passive);
+    logger::log(
+        "watcher",
+        format!("{}: background sync {:?}", g.key, result.as_ref().map_err(|e| e.to_string())),
+    );
+    let _ = app.emit(
+        "sync-finished",
+        SyncEvent {
+            key: g.key.clone(),
+            name: g.name.clone(),
+            outcome: result.as_ref().ok().cloned(),
+            error: result.err().map(|e| format!("{e:#}")),
+        },
+    );
+}
+
 pub fn spawn(app: AppHandle) {
     std::thread::spawn(move || {
-        let mut observed: HashSet<String> = HashSet::new();
+        // Games currently running → whether the Steam wrapper was handling them.
+        let mut running: HashMap<String, bool> = HashMap::new();
         let mut last_vdf: Option<SystemTime> = None;
         let mut tick: u64 = 0;
         loop {
@@ -66,35 +107,37 @@ pub fn spawn(app: AppHandle) {
             let procs = process::process_names();
             let mut changed = false;
 
-            for g in cfg.games.iter().filter(|g| g.auto_sync) {
-                let names = watch_names(g);
-                let running = names.iter().any(|n| procs.contains(n));
-                let wrapped = runner_active(&g.key);
-                if running && !wrapped {
-                    if observed.insert(g.key.clone()) {
-                        logger::log("watcher", format!("{}: started outside the Steam wrapper", g.key));
+            for g in &cfg.games {
+                let runner = runner_state(&g.key);
+                let game_up = watch_names(g).iter().any(|n| procs.contains(n));
+                if runner == Runner::Active || game_up {
+                    let started = !running.contains_key(&g.key);
+                    let wrapped = running.entry(g.key.clone()).or_insert(false);
+                    if runner == Runner::Active {
+                        *wrapped = true;
+                    }
+                    if started {
                         changed = true;
+                        if !*wrapped {
+                            logger::log("watcher", format!("{}: started outside the Steam wrapper", g.key));
+                        }
                     }
-                } else if !running && observed.remove(&g.key) {
+                    continue;
+                }
+                // Not running any more.
+                let was = running.remove(&g.key);
+                if runner == Runner::Stale {
+                    let _ = std::fs::remove_file(marker(&g.key));
                     changed = true;
-                    if wrapped {
-                        continue;
+                    if g.auto_sync {
+                        background_sync(&app, &cfg, g, "the Steam wrapper was terminated before it finished");
                     }
-                    // Give the game a moment to flush its saves.
-                    std::thread::sleep(Duration::from_secs(2));
-                    let ctx = Ctx::from_config(cfg.clone());
-                    let result = sync::sync(&ctx, g, Resolution::Auto, Trigger::Passive);
-                    logger::log(
-                        "watcher",
-                        format!("{}: passive sync {:?}", g.key, result.as_ref().map_err(|e| e.to_string())),
-                    );
-                    let ev = SyncEvent {
-                        key: g.key.clone(),
-                        name: g.name.clone(),
-                        outcome: result.as_ref().ok().cloned(),
-                        error: result.err().map(|e| format!("{e:#}")),
-                    };
-                    let _ = app.emit("sync-finished", ev);
+                } else if let Some(wrapped) = was {
+                    changed = true;
+                    if !wrapped && g.auto_sync {
+                        background_sync(&app, &cfg, g, "game started outside the Steam wrapper has exited");
+                    }
+                    let _ = app.emit("game-stopped", g.key.clone());
                 }
             }
 

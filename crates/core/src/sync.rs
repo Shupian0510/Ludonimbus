@@ -193,7 +193,12 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEnt
     if !st.cloud_def_uploaded && cloud.put_game(&CloudGame::from(game)).is_ok() {
         let _ = state::update_game(&game.key, |g| g.cloud_def_uploaded = true);
     }
-    let _ = cloud.put_device(&cloud::device_info(&ctx.cfg));
+    let due = state::load()
+        .device_seen_at
+        .is_none_or(|t| Utc::now() - t > chrono::Duration::hours(6));
+    if due && cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
+        let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
+    }
 }
 
 fn upload_local(
@@ -335,7 +340,10 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
         Err(e) if cloud::is_unavailable(&e) => return offline(ctx, game, trigger, e),
         Err(e) => return Err(e),
     };
-    best_effort_housekeeping(ctx, cloud, game);
+    // Keep launching fast: bookkeeping happens after playing, not before.
+    if trigger != Trigger::PreLaunch {
+        best_effort_housekeeping(ctx, cloud, game);
+    }
 
     let local = snapshot::local_state(game)?;
     let st = state::game(&game.key);

@@ -247,8 +247,12 @@ fn run(args: &[String]) -> Result<i32> {
                 .filter_map(|p| spec::split_pattern(p).ok())
                 .filter_map(|(root, rest)| spec::resolve_root_name(&root, &roots).map(|b| b.join(rest)))
                 .collect();
-            process::wait_quiesce(&patterns, Duration::from_secs(60));
+            if !patterns.is_empty() {
+                log(format!("{key}: waiting for save files to be released"));
+                process::wait_quiesce(&patterns, Duration::from_secs(20));
+            }
         }
+        log(format!("{key}: uploading saves"));
         match sync::sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {
             Ok(Outcome::Conflict { cloud, .. }) => {
                 log(format!("{key}: post-exit conflict"));

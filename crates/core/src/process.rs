@@ -75,9 +75,11 @@ pub fn launch_and_wait(
     #[cfg(not(windows))]
     let tracked = false;
 
+    let started = Instant::now();
     let status = child.wait()?;
     let code = status.code().unwrap_or(0);
-    log(&format!("main process exited with {code}"));
+    let main_lifetime = started.elapsed();
+    log(&format!("main process exited with {code} after {}s", main_lifetime.as_secs()));
 
     #[cfg(windows)]
     if tracked {
@@ -90,9 +92,13 @@ pub fn launch_and_wait(
     }
     let _ = tracked;
 
-    // Fallback: the real game may live outside the job (or appear late).
+    // Fallback: the real game may live outside the job. Only wait for it to
+    // appear when the launcher handed off quickly (or tracking failed);
+    // otherwise a single check is enough and exiting stays instant.
     if !wait_for.is_empty() {
-        let appear_deadline = Instant::now() + Duration::from_secs(8);
+        let handoff = !tracked || main_lifetime < Duration::from_secs(20);
+        let appear_window = if handoff { Duration::from_secs(8) } else { Duration::ZERO };
+        let appear_deadline = Instant::now() + appear_window;
         let mut seen = is_running(wait_for);
         while !seen && Instant::now() < appear_deadline {
             std::thread::sleep(Duration::from_millis(500));
@@ -115,15 +121,20 @@ pub fn launch_and_wait(
     Ok(code)
 }
 
-/// Wait (up to `max`) until no file matches any of the given absolute glob
-/// patterns, e.g. a lock file the game keeps while writing saves.
+/// Wait (up to `max`) while any file matching the given absolute glob
+/// patterns is still held open by another process, e.g. a lock file the game
+/// keeps open while writing saves. Files that merely exist do not count:
+/// some games leave their lock files behind after exiting.
 pub fn wait_quiesce(patterns: &[std::path::PathBuf], max: Duration) {
     if patterns.is_empty() {
         return;
     }
     let start = Instant::now();
     loop {
-        let busy = patterns.iter().any(|p| any_match(p));
+        let busy = patterns
+            .iter()
+            .flat_map(|p| matching_files(p))
+            .any(|f| file_in_use(&f));
         if !busy || start.elapsed() > max {
             return;
         }
@@ -131,10 +142,10 @@ pub fn wait_quiesce(patterns: &[std::path::PathBuf], max: Duration) {
     }
 }
 
-fn any_match(pattern: &Path) -> bool {
+fn matching_files(pattern: &Path) -> Vec<std::path::PathBuf> {
     let s = pattern.to_string_lossy().replace('\\', "/");
     let Some(idx) = s.find(['*', '?', '[']) else {
-        return pattern.exists();
+        return if pattern.is_file() { vec![pattern.to_path_buf()] } else { Vec::new() };
     };
     let dir_end = s[..idx].rfind('/').unwrap_or(0);
     let dir = std::path::PathBuf::from(&s[..dir_end]);
@@ -143,14 +154,58 @@ fn any_match(pattern: &Path) -> bool {
         .literal_separator(true)
         .build()
     else {
-        return false;
+        return Vec::new();
     };
     let m = glob.compile_matcher();
     walkdir::WalkDir::new(&dir)
         .max_depth(4)
         .into_iter()
         .flatten()
-        .any(|e| m.is_match(e.path().to_string_lossy().replace('\\', "/")))
+        .filter(|e| e.file_type().is_file() && m.is_match(e.path().to_string_lossy().replace('\\', "/")))
+        .map(|e| e.into_path())
+        .collect()
+}
+
+/// Whether another process currently has the file open.
+pub fn file_in_use(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        // Opening with no sharing fails while any other handle is open.
+        match std::fs::OpenOptions::new().read(true).share_mode(0).open(path) {
+            Ok(_) => false,
+            Err(e) => e.raw_os_error() == Some(ERROR_SHARING_VIOLATION),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_open_lock_files_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lock = tmp.path().join("slot.lock");
+        std::fs::write(&lock, b"").unwrap();
+        let pattern = tmp.path().join("*.lock");
+        // A leftover lock file nobody holds open does not block.
+        assert!(!file_in_use(&lock));
+        let start = Instant::now();
+        wait_quiesce(&[pattern.clone()], Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        // While a process holds it open, it counts as busy.
+        let held = std::fs::File::open(&lock).unwrap();
+        assert!(file_in_use(&lock));
+        drop(held);
+        assert!(!file_in_use(&lock));
+    }
 }
 
 #[cfg(windows)]

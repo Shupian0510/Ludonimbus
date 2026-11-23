@@ -4,11 +4,16 @@
 //! always download their saves from the Drive website, even without the app.
 //! Snapshot summaries are stored in `appProperties` / `description` of the
 //! zip file, so one listing call returns the whole history.
+//!
+//! Sub-folder ids are cached on disk (keyed by the app folder's id) so that a
+//! launch from Steam needs only a few requests.
 
 use super::oauth::{self, describe, GoogleClient};
 use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary, Trigger};
+use crate::{paths, util};
 use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Read;
@@ -27,7 +32,20 @@ pub struct GoogleDrive {
     agent: ureq::Agent,
     bulk: ureq::Agent,
     token: Mutex<Option<(String, Instant)>>,
+    /// Id of the app folder in My Drive, looked up once per process.
+    root: Mutex<Option<String>>,
+    /// Sub-folder path (e.g. `games/x/snapshots`) → id, below `root`.
     folders: Mutex<HashMap<String, String>>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct FolderCache {
+    root: String,
+    folders: HashMap<String, String>,
+}
+
+fn cache_file() -> std::path::PathBuf {
+    paths::data_dir().join("gdrive-folders.json")
 }
 
 #[derive(Debug, Clone)]
@@ -59,8 +77,54 @@ impl GoogleDrive {
                 .timeout_write(Duration::from_secs(300))
                 .build(),
             token: Mutex::new(None),
+            root: Mutex::new(None),
             folders: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn save_cache(&self) {
+        let Some(root) = self.root.lock().unwrap().clone() else { return };
+        let cache = FolderCache {
+            root,
+            folders: self.folders.lock().unwrap().clone(),
+        };
+        if let Ok(bytes) = serde_json::to_vec_pretty(&cache) {
+            let _ = util::atomic_write(&cache_file(), &bytes);
+        }
+    }
+
+    /// Drop cached sub-folder ids (e.g. after the user deleted a folder).
+    fn forget_folders(&self) {
+        self.folders.lock().unwrap().clear();
+        self.save_cache();
+    }
+
+    /// Whether a folder still exists and is not in the trash.
+    fn folder_alive(&self, id: &str) -> Result<bool> {
+        match self
+            .agent
+            .get(&format!("{API}/files/{id}?fields=trashed"))
+            .set("Authorization", &self.bearer()?)
+            .call()
+        {
+            Ok(r) => {
+                let v: Value = r.into_json()?;
+                Ok(!v["trashed"].as_bool().unwrap_or(false))
+            }
+            Err(ureq::Error::Status(404, _)) => Ok(false),
+            Err(e) => Err(describe(e)),
+        }
+    }
+
+    /// Folder for writing: resolved (and created) with a liveness check so a
+    /// trashed cached folder is never written into.
+    fn writable_folder(&self, parts: &[&str]) -> Result<String> {
+        let id = self.folder_id(parts, true)?.expect("created");
+        if self.folder_alive(&id)? {
+            return Ok(id);
+        }
+        self.forget_folders();
+        Ok(self.folder_id(parts, true)?.expect("created"))
     }
 
     fn bearer(&self) -> Result<String> {
@@ -134,16 +198,46 @@ impl GoogleDrive {
             .ok_or_else(|| anyhow!("创建文件夹失败"))
     }
 
+    fn root_id(&self, create: bool) -> Result<Option<String>> {
+        if let Some(r) = self.root.lock().unwrap().clone() {
+            return Ok(Some(r));
+        }
+        let q = format!(
+            "name='{}' and 'root' in parents and mimeType='{FOLDER_MIME}' and trashed=false",
+            esc(&self.folder)
+        );
+        let id = match self.list(&q)?.into_iter().next() {
+            Some(f) => f.id,
+            None if create => self.create_folder(&self.folder, "root")?,
+            None => return Ok(None),
+        };
+        let disk: FolderCache = std::fs::read(cache_file())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        {
+            let mut folders = self.folders.lock().unwrap();
+            folders.clear();
+            if disk.root == id {
+                folders.extend(disk.folders);
+            }
+        }
+        *self.root.lock().unwrap() = Some(id.clone());
+        Ok(Some(id))
+    }
+
     /// Resolve (optionally creating) a folder path below the app folder.
     fn folder_id(&self, parts: &[&str], create: bool) -> Result<Option<String>> {
-        let mut cache_key = String::new();
-        let mut parent = "root".to_string();
-        let mut names = vec![self.folder.as_str()];
-        names.extend_from_slice(parts);
-        for name in names {
-            cache_key.push('/');
-            cache_key.push_str(name);
-            if let Some(id) = self.folders.lock().unwrap().get(&cache_key).cloned() {
+        let Some(mut parent) = self.root_id(create)? else {
+            return Ok(None);
+        };
+        let mut path = String::new();
+        for name in parts {
+            if !path.is_empty() {
+                path.push('/');
+            }
+            path.push_str(name);
+            if let Some(id) = self.folders.lock().unwrap().get(&path).cloned() {
                 parent = id;
                 continue;
             }
@@ -157,7 +251,8 @@ impl GoogleDrive {
                 None if create => self.create_folder(name, &parent)?,
                 None => return Ok(None),
             };
-            self.folders.lock().unwrap().insert(cache_key.clone(), id.clone());
+            self.folders.lock().unwrap().insert(path.clone(), id.clone());
+            self.save_cache();
             parent = id;
         }
         Ok(Some(parent))
@@ -242,7 +337,7 @@ impl GoogleDrive {
     }
 
     fn put_json(&self, parts: &[&str], name: &str, value: &Value) -> Result<()> {
-        let folder = self.folder_id(parts, true)?.expect("created");
+        let folder = self.writable_folder(parts)?;
         let body = serde_json::to_vec_pretty(value)?;
         match self.find_file(&folder, name)? {
             Some(f) => self.update_content(&f.id, "application/json", &body),
@@ -342,9 +437,7 @@ impl CloudProvider for GoogleDrive {
     }
 
     fn upload(&self, meta: &SnapshotMeta, zip: &Path) -> Result<()> {
-        let folder = self
-            .folder_id(&["games", &meta.game, "snapshots"], true)?
-            .expect("created");
+        let folder = self.writable_folder(&["games", &meta.game, "snapshots"])?;
         let body = std::fs::read(zip).with_context(|| format!("无法读取 {}", zip.display()))?;
         let (props, desc) = Self::summary_props(meta);
         // Full metadata first, then the zip (its appProperties make it visible).
