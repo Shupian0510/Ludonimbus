@@ -71,11 +71,9 @@ cd app
 npm install
 npm run tauri dev
 
-# 3. 打包安装程序（NSIS）
+# 3. 打包安装程序（NSIS），Google OAuth 客户端从 secrets.local.env 或环境变量读取
 cd ..
-./scripts/prepare-sidecars.ps1 -Release
-cd app
-npm run tauri build
+./scripts/build-release.ps1
 ```
 
 只调界面时可以 `npm run dev` 直接在浏览器里打开，会使用模拟数据（`app/src/mock.ts`）。

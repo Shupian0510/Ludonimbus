@@ -39,14 +39,20 @@ Ludonimbus 用 Google 官方的「桌面应用」登录方式连接 Google Drive
 
 ## 4. 把 Client ID 内置进发布包
 
-构建时设置环境变量，Ludonimbus 会在编译时读取：
+在仓库根目录建一个 `secrets.local.env`（已被 git 忽略，不会提交）：
+
+```
+LUDONIMBUS_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+LUDONIMBUS_GOOGLE_CLIENT_SECRET=GOCSPX-xxxx
+```
+
+然后运行发布脚本，它会读取这两个值并在编译时内置进桌面应用和 Steam 启动包装器：
 
 ```powershell
-$env:LUDONIMBUS_GOOGLE_CLIENT_ID = "xxxx.apps.googleusercontent.com"
-$env:LUDONIMBUS_GOOGLE_CLIENT_SECRET = "GOCSPX-xxxx"
-./scripts/prepare-sidecars.ps1 -Release
-npm --prefix app run tauri build
+./scripts/build-release.ps1
 ```
+
+也可以不建文件，直接设置同名环境变量再运行脚本。
 
 在 GitHub Actions 里把它们存成仓库 Secrets（`Settings → Secrets and variables → Actions`），在构建步骤里作为环境变量传入。
 

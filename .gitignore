@@ -12,3 +12,4 @@ Thumbs.db
 /app/public/mock-art/
 .claude/
 *.tsbuildinfo
+/secrets.local.env
