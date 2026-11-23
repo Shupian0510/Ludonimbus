@@ -121,4 +121,4 @@ docs/            设计文档
 
 ## 许可
 
-[MIT](LICENSE)
+[MIT](LICENSE) · [主页](https://shupian0510.github.io/Ludonimbus/) · [隐私政策](https://shupian0510.github.io/Ludonimbus/privacy.html)

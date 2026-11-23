@@ -14,7 +14,15 @@ Ludonimbus 用 Google 官方的「桌面应用」登录方式连接 Google Drive
 进入「API 和服务 → OAuth 同意屏幕」（新版界面叫「Google Auth Platform」）：
 
 1. 用户类型选 **外部（External）**。
-2. 填写应用名称（Ludonimbus）、用户支持邮箱、开发者联系邮箱。建议准备一个隐私政策页面（放在 GitHub Pages 上即可），说明应用只访问它自己创建的 Drive 文件。
+2. 「Branding（品牌）」页填写：
+   - App name：`Ludonimbus`
+   - User support email、Developer contact information（页面最底部）：你的邮箱
+   - App home page：`https://shupian0510.github.io/Ludonimbus/`
+   - Application privacy policy link：`https://shupian0510.github.io/Ludonimbus/privacy.html`
+   - Authorized domains：`shupian0510.github.io`
+   - Logo 先不要上传（上传 Logo 会触发品牌验证）
+
+   主页和隐私政策由仓库的 `docs/index.html`、`docs/privacy.html` 通过 GitHub Pages 发布。
 3. 「数据访问 / 范围」里添加：
    - `https://www.googleapis.com/auth/drive.file`（非敏感范围：只能访问本应用创建的文件）
    - `openid`、`.../auth/userinfo.email`（用来显示已登录的账号）
