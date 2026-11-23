@@ -1,0 +1,14 @@
+/target/
+**/node_modules/
+/app/dist/
+/app/src-tauri/gen/
+/app/src-tauri/binaries/*
+!/app/src-tauri/binaries/.gitkeep
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+/app/public/mock-art/
+.claude/
+*.tsbuildinfo

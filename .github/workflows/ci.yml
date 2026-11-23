@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Rust tests
+        run: cargo test --workspace --exclude ludonimbus-app
+      - name: Frontend build
+        working-directory: app
+        run: |
+          npm ci
+          npm run build
+      - name: Desktop app compiles
+        shell: pwsh
+        run: |
+          ./scripts/prepare-sidecars.ps1
+          cargo build -p ludonimbus-app

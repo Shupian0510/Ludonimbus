@@ -1,0 +1,102 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod art;
+mod commands;
+mod watcher;
+
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, Runtime, WindowEvent};
+
+pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .register_uri_scheme_protocol("ludoart", art::handle)
+        .setup(|app| {
+            let open = MenuItem::with_id(app, "open", "打开 Ludonimbus", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let mut tray = TrayIconBuilder::with_id("main")
+                .tooltip("Ludonimbus")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, e| match e.id.as_ref() {
+                    "open" => show_main(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, e| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = e
+                    {
+                        show_main(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+            watcher::spawn(app.handle().clone());
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Keep running in the tray so the background watcher can back up
+            // games started outside Steam.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::get_overview,
+            commands::check_game,
+            commands::sync_game,
+            commands::backup_game,
+            commands::list_snapshots,
+            commands::get_snapshot,
+            commands::restore_snapshot,
+            commands::set_snapshot,
+            commands::delete_snapshot,
+            commands::export_snapshot,
+            commands::local_files,
+            commands::open_path,
+            commands::open_save_folder,
+            commands::steam_accounts,
+            commands::steam_shortcuts,
+            commands::add_from_shortcut,
+            commands::add_custom,
+            commands::cloud_games,
+            commands::add_from_cloud,
+            commands::update_game,
+            commands::remove_game,
+            commands::relocate_auto,
+            commands::set_game_exe,
+            commands::pick_exe,
+            commands::pick_folder,
+            commands::folder_to_pattern,
+            commands::steam_set_enabled,
+            commands::steam_repair,
+            commands::get_settings,
+            commands::save_settings,
+            commands::cloud_use_folder,
+            commands::cloud_connect_google,
+            commands::cloud_disconnect,
+            commands::cloud_account,
+            commands::list_devices,
+            commands::ludusavi_search,
+            commands::ludusavi_preview,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Ludonimbus");
+}

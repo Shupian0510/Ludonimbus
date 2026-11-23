@@ -1,0 +1,15 @@
+[package]
+name = "ludonimbus-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ludonimbus-run"
+path = "src/main.rs"
+
+[dependencies]
+ludonimbus-core.workspace = true
+anyhow.workspace = true
+rfd = "0.15"
+chrono.workspace = true

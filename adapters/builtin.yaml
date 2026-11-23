@@ -1,0 +1,45 @@
+# Ludonimbus 内置存档规则（适配器）
+#
+# 路径写法：每条路径以 {根目录名} 开头，后面接相对路径或通配符。
+# 可用的根目录：
+#   {install}       游戏目录（Ludonimbus 记录的 exe 所在文件夹）
+#   {home}          用户目录
+#   {appdata}       %APPDATA%（Roaming）
+#   {localappdata}  %LOCALAPPDATA%
+#   {documents}     文档
+#   以及在 roots 里自定义的根目录（可以引用 {env:变量名} 和上面这些）
+#
+# 字段：
+#   match      用来从 Steam 快捷方式识别游戏：exe 文件名 + 可选的同目录文件
+#   saves      要同步的存档
+#   exclude    排除的文件
+#   waitFor    游戏真正的进程名（启动器会先退出时用来判断游戏是否还在运行）
+#   quiesce    这些文件存在时说明游戏还在写存档，要等它们消失
+#   relocate   游戏换到新文件夹（比如解压了新版本）时怎么自动找到它
+
+- key: zelda-oot-longshot
+  name: 塞尔达传说：时之笛
+  platform: Longshot（原生重制）
+  match: { exe: LongshotLauncher.exe }
+  roots: { data: "{appdata}/Longshot" }
+  saves: ["{data}/save/**"]
+  exclude: ["{data}/save-work/**"]
+  waitFor: ["longshot.exe"]
+  quiesce: { absent: ["{data}/save-work/*.lock"] }
+
+- key: fe-fortunes-weave
+  name: 火焰纹章：万缕千丝
+  platform: fefw recomp
+  match: { exe: fefw.exe }
+  saves: ["{install}/save/**"]
+  waitFor: ["fefw.exe"]
+  relocate: { exe: fefw.exe, dirPattern: "fefw-recomp-*" }
+
+- key: bloodborne-lantern
+  name: Bloodborne
+  platform: Lantern Engine（shadPS4）
+  match: { exe: Bloodborne.exe, sibling: "Lantern Engine.exe" }
+  saves: ["{install}/user/savedata/1/CUSA00207/**"]
+  exclude: ["{install}/user/launcher-backups/**", "{install}/user/cache/**"]
+  waitFor: ["Lantern Engine.exe"]
+  relocate: { exe: Bloodborne.exe, sibling: "Lantern Engine.exe" }

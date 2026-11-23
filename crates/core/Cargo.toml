@@ -1,0 +1,40 @@
+[package]
+name = "ludonimbus-core"
+description = "Ludonimbus sync engine: save discovery, snapshots, cloud providers, Steam shortcuts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+serde_yaml = "0.9"
+ulid = "1"
+blake3 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+globset = "0.4"
+walkdir = "2"
+ureq = { version = "2", features = ["json"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+url = "2"
+dirs = "5"
+opener = "0.7"
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_System_Diagnostics_ToolHelp",
+] }
+
+[dev-dependencies]
+tempfile = "3"
