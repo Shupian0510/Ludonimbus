@@ -1,0 +1,6 @@
+# Build profiles live here rather than in Cargo.toml so CI can key its Rust
+# cache on this file without the version bump in Cargo.toml invalidating it.
+[profile.release]
+# No LTO: it barely changes this app's size (most of the installer is
+# Ludusavi) but makes every release build minutes slower.
+strip = true
