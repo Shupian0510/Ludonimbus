@@ -135,6 +135,7 @@ fn layout_and_migration(port: u16, tmp: &Path) {
             wait_for: vec![],
             roots: BTreeMap::new(),
             ludusavi_title: None,
+            source: None,
         })
         .unwrap();
     local

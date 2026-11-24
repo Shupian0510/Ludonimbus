@@ -119,6 +119,36 @@ export const library = {
   steam: { on: "自动同步", off: "未启用", none: "未关联" },
 };
 
+/** 游戏来源：模拟器、重编译…；游戏库里的标识、筛选和分组。 */
+export const source = {
+  kinds: { emulator: "模拟器", recomp: "重编译 / 移植", pc: "PC 游戏", xbox: "Xbox", custom: "其他" },
+  /** 游戏封面上的标识（模拟器游戏显示模拟器的名字）。 */
+  tags: { emulator: "模拟器", recomp: "重编译 / 移植", pc: "PC 游戏", xbox: "Xbox", custom: "其他" },
+  all: "全部",
+  view: "显示选项",
+  groupBy: "按来源分组",
+  showTags: "显示来源标识",
+  games: (n: number) => `${n} 个游戏`,
+  syncAll: "全部同步",
+  backupAll: "全部备份",
+  syncAllTitle: "同步这个分组里的所有游戏",
+  backupAllTitle: "给这个分组里的所有游戏各建一个手动备份",
+  progress: (done: number, n: number) => `${done}/${n}…`,
+  backupPrompt: (label: string, n: number) => `备份「${label}」的 ${n} 个游戏`,
+  backupText: "给每个游戏的当前存档建一个手动备份，永久保留（不受自动清理影响）。备注会写到每个备份上，比如「升级模拟器前」。",
+  summary: (label: string, r: { done: number; conflicts: number; failed: string[]; skipped: number }) => {
+    const parts = [`「${label}」：${r.done} 个游戏已完成`];
+    if (r.conflicts) parts.push(`${r.conflicts} 个有冲突需要处理`);
+    if (r.failed.length) parts.push(`${r.failed.length} 个失败（${r.failed.join("、")}）`);
+    if (r.skipped) parts.push(`${r.skipped} 个正在运行或没有存档，已跳过`);
+    return parts.join("，");
+  },
+  nothing: "这个分组里没有可以处理的游戏（正在运行或没有存档）",
+  field: "来源分组",
+  auto: (name: string) => `自动：${name}`,
+  fieldHint: "游戏库按这个名字给游戏分组，例如填模拟器的名字，同一个模拟器的游戏就会放在一起。留空则自动识别。",
+};
+
 export const devices = {
   title: "设备",
   subtitle: "连接到同一个云盘的电脑。每个版本都会记录是哪台设备上传的。",

@@ -216,6 +216,10 @@ pub struct GameEntry {
     pub steam: Option<SteamLink>,
     #[serde(default = "yes")]
     pub auto_sync: bool,
+    /// Library group chosen by the user (e.g. an emulator's name for a game
+    /// added with its own save folders); `None` = the detected source, see
+    /// [`crate::games::source`].
+    pub source: Option<String>,
 }
 
 fn yes() -> bool {

@@ -344,6 +344,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
             e.wait_for = cg.wait_for.clone();
             e.roots = cg.roots.clone();
             e.ludusavi_title = cg.ludusavi_title.clone();
+            e.source = cg.source.clone();
             Ok(())
         });
     }
@@ -368,11 +369,58 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
             roots: cg.roots.clone(),
             ludusavi_title: cg.ludusavi_title.clone(),
             auto_sync: true,
+            source: cg.source.clone(),
             ..Default::default()
         };
         cfg.games.push(entry.clone());
         Ok(entry)
     })
+}
+
+/// What kind of program a game runs on, for the library's source badges
+/// and groups.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    /// An emulator rule: many games share it.
+    Emulator,
+    /// A rule for one game: recompilations, ports, fan remakes.
+    Recomp,
+    /// A PC game whose saves Ludusavi's database knows.
+    Pc,
+    /// An Xbox app (Game Pass) game, started through `gamelaunchhelper.exe`.
+    Xbox,
+    /// Added by hand with its own save folders.
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Source {
+    pub kind: SourceKind,
+    /// The emulator (`Dolphin`); `None` for the other kinds, whose group
+    /// name the interface supplies.
+    pub name: Option<String>,
+    /// The rule's platform in the interface language
+    /// (`GameCube / Wii 模拟器`, `Longshot（原生重制）`).
+    pub detail: Option<String>,
+    /// The group the user chose instead (see [`GameEntry::source`]).
+    pub label: Option<String>,
+}
+
+/// Where a game comes from, worked out from its save rule and program.
+pub fn source(g: &GameEntry) -> Source {
+    let (kind, name, detail) = match g.adapter.as_deref().and_then(adapters::find) {
+        Some(a) if a.is_emulator() => (SourceKind::Emulator, Some(a.name.clone()), a.platform_label()),
+        Some(a) => (SourceKind::Recomp, None, a.platform_label()),
+        None if g.exe.as_deref().is_some_and(|e| crate::xbox::is_launch_helper(e) || crate::xbox::content_dir(e).is_some()) => {
+            (SourceKind::Xbox, None, None)
+        }
+        None if g.ludusavi_title.is_some() => (SourceKind::Pc, None, None),
+        None => (SourceKind::Custom, None, None),
+    };
+    let label = g.source.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    Source { kind, name, detail, label }
 }
 
 pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> Result<GameEntry> {
@@ -686,5 +734,50 @@ pub fn steam_repair(key: &str) -> Result<()> {
         }
         steam::Health::NotLinked => bail!(crate::tr!("这个游戏没有关联 Steam 快捷方式", "This game isn't linked to a Steam shortcut")),
         steam::Health::NoSteam => bail!(crate::tr!("没有找到 Steam", "Steam not found")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn game(adapter: Option<&str>, exe: Option<&str>, ludusavi: Option<&str>) -> GameEntry {
+        GameEntry {
+            key: "g".into(),
+            name: "G".into(),
+            adapter: adapter.map(str::to_string),
+            exe: exe.map(PathBuf::from),
+            ludusavi_title: ludusavi.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn source_kinds() {
+        let s = source(&game(Some("dolphin"), None, None));
+        assert_eq!(s.kind, SourceKind::Emulator);
+        assert_eq!(s.name.as_deref(), Some("Dolphin"));
+        assert!(s.detail.is_some());
+
+        let s = source(&game(Some("zelda-oot-longshot"), None, None));
+        assert_eq!(s.kind, SourceKind::Recomp);
+        assert_eq!(s.name, None);
+
+        let xbox = r"C:\XboxGames\Some Game\Content\gamelaunchhelper.exe";
+        assert_eq!(source(&game(None, Some(xbox), Some("Some Game"))).kind, SourceKind::Xbox);
+        assert_eq!(source(&game(None, Some(r"C:\Games\x.exe"), Some("X"))).kind, SourceKind::Pc);
+        assert_eq!(source(&game(None, None, None)).kind, SourceKind::Custom);
+        // A rule that no longer exists.
+        assert_eq!(source(&game(Some("gone"), None, None)).kind, SourceKind::Custom);
+    }
+
+    #[test]
+    fn source_label() {
+        let mut g = game(None, None, None);
+        assert_eq!(source(&g).label, None);
+        g.source = Some("  RetroArch ".into());
+        assert_eq!(source(&g).label.as_deref(), Some("RetroArch"));
+        g.source = Some("   ".into());
+        assert_eq!(source(&g).label, None);
     }
 }

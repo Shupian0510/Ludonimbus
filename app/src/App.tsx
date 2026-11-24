@@ -239,6 +239,10 @@ export default function App() {
             onOpen={(key) => setPage({ name: "game", key })}
             onAdd={() => setAdding(true)}
             onRefresh={refresh}
+            onChanged={async (keys) => {
+              await reload();
+              for (const k of keys) check(k);
+            }}
             onSettings={() => setPage({ name: "settings" })}
           />
         )}

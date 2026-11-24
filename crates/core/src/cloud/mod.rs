@@ -99,6 +99,10 @@ pub struct CloudGame {
     pub roots: BTreeMap<String, String>,
     #[serde(default)]
     pub ludusavi_title: Option<String>,
+    /// The library group the user chose, so other devices show the game
+    /// in the same group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 impl From<&GameEntry> for CloudGame {
@@ -112,6 +116,7 @@ impl From<&GameEntry> for CloudGame {
             wait_for: g.wait_for.clone(),
             roots: g.roots.clone(),
             ludusavi_title: g.ludusavi_title.clone(),
+            source: g.source.clone(),
         }
     }
 }

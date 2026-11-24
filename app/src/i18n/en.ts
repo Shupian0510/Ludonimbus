@@ -115,6 +115,34 @@ export const library: typeof Zh.library = {
   steam: { on: "Auto-sync", off: "Off", none: "Not linked" },
 };
 
+export const source: typeof Zh.source = {
+  kinds: { emulator: "Emulator", recomp: "Recomps & ports", pc: "PC games", xbox: "Xbox", custom: "Other" },
+  tags: { emulator: "Emulator", recomp: "Recomp / port", pc: "PC game", xbox: "Xbox", custom: "Other" },
+  all: "All",
+  view: "View options",
+  groupBy: "Group by source",
+  showTags: "Show source badges",
+  games: (n) => `${n} ${plural(n, "game", "games")}`,
+  syncAll: "Sync all",
+  backupAll: "Back up all",
+  syncAllTitle: "Sync every game in this group",
+  backupAllTitle: "Make a manual backup of every game in this group",
+  progress: (done, n) => `${done}/${n}…`,
+  backupPrompt: (label, n) => `Back up ${n} ${plural(n, "game", "games")} in "${label}"`,
+  backupText: "Makes a manual backup of each game's current saves, kept forever (automatic cleanup skips them). The note goes on every backup, such as \"before updating the emulator\".",
+  summary: (label, r) => {
+    const parts = [`"${label}": ${r.done} ${plural(r.done, "game", "games")} done`];
+    if (r.conflicts) parts.push(`${r.conflicts} with a conflict to resolve`);
+    if (r.failed.length) parts.push(`${r.failed.length} failed (${r.failed.join(", ")})`);
+    if (r.skipped) parts.push(`${r.skipped} skipped (running or no saves)`);
+    return parts.join(", ");
+  },
+  nothing: "Nothing to do in this group (the games are running or have no saves)",
+  field: "Source group",
+  auto: (name) => `Automatic: ${name}`,
+  fieldHint: "The library groups games by this name. Enter an emulator's name, for example, to keep its games together. Leave empty to detect it automatically.",
+};
+
 export const devices: typeof Zh.devices = {
   title: "Devices",
   subtitle: "PCs connected to the same cloud. Every version records which device uploaded it.",

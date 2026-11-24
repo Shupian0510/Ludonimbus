@@ -121,6 +121,20 @@ export interface GameView {
   pending: number;
   lastCheck: StatusReport | null;
   playtime: PlaytimeSummary;
+  source: GameSource;
+}
+
+/** What a game runs on: detected from its save rule and program. */
+export type SourceKind = "emulator" | "recomp" | "pc" | "xbox" | "custom";
+
+export interface GameSource {
+  kind: SourceKind;
+  /** The emulator (`Dolphin`); null for the other kinds. */
+  name: string | null;
+  /** The rule's platform (`GameCube / Wii emulator`, `Longshot (native remake)`). */
+  detail: string | null;
+  /** The group the user chose instead; null = detected. */
+  label: string | null;
 }
 
 export interface PlaytimeDevice {
@@ -479,6 +493,8 @@ export const api = {
       args?: string;
       autoSync?: boolean;
       uploadOnGameExit?: boolean;
+      /** Library group; "" = detected. */
+      source?: string;
     },
   ) => invoke<void>("update_game", { key, patch }),
   removeGame: (key: string) => invoke<void>("remove_game", { key }),

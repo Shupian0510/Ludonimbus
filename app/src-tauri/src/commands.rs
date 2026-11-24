@@ -79,6 +79,8 @@ pub struct GameView {
     last_check: Option<serde_json::Value>,
     /// Playtime over all devices (from local data; refreshed by every sync).
     playtime: playtime::Summary,
+    /// Emulator / recomp / PC game…, for the library's badges and groups.
+    source: games::Source,
 }
 
 fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
@@ -139,6 +141,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
         pending: st.pending.len(),
         last_check: st.last_check,
         playtime: playtime::summary(cfg, &g.key),
+        source: games::source(g),
     }
 }
 
@@ -510,6 +513,8 @@ pub struct GamePatch {
     args: Option<String>,
     auto_sync: Option<bool>,
     upload_on_game_exit: Option<bool>,
+    /// Library group; empty = the detected source.
+    source: Option<String>,
 }
 
 fn clean(list: Vec<String>) -> Vec<String> {
@@ -548,6 +553,9 @@ pub async fn update_game(key: String, patch: GamePatch) -> CmdResult<()> {
             }
             if let Some(v) = patch.upload_on_game_exit {
                 g.upload_on_game_exit = Some(v);
+            }
+            if let Some(s) = patch.source {
+                g.source = Some(s.trim().to_string()).filter(|s| !s.is_empty());
             }
             Ok(())
         })?;

@@ -110,8 +110,25 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     pending: 0,
     lastCheck: checks[key] ?? null,
     playtime: playtime[key] ?? { totalSecs: 0, lastPlayed: null, devices: [] },
+    source: { kind: "recomp", name: null, detail: platform || null, label: null },
     ...extra,
   };
+}
+
+/** An emulator game (no artwork in the preview: shows the name instead). */
+function emuGame(key: string, name: string, emulator: string, platform: string, exe: string, saves: string[], hours: number): GameView {
+  return game(key, name, 0, platform, exe, saves, {
+    adapter: emulator.toLowerCase(),
+    adapterName: emulator,
+    customSaves: true,
+    steam: null,
+    health: { state: "notLinked" },
+    art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+    lastSyncAt: ago(60 * hours),
+    lastSyncedDevice: "DESKTOP-MAIN",
+    playtime: devicePlaytime(hours, 0, 0),
+    source: { kind: "emulator", name: emulator, detail: platform, label: null },
+  });
 }
 
 function devicePlaytime(hours: number, laptopHours: number, steamHours: number): PlaytimeSummary {
@@ -152,6 +169,7 @@ const overview: Overview = {
       steam: null,
       health: { state: "notLinked" },
       art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+      source: { kind: "pc", name: null, detail: null, label: null },
     }),
     game("starfield", "Starfield", 0, "", "", ["{ludusavi}"], {
       adapter: null,
@@ -164,6 +182,7 @@ const overview: Overview = {
       steam: null,
       health: { state: "notLinked" },
       art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+      source: { kind: "pc", name: null, detail: null, label: null },
     }),
     game("doom-eternal", "DOOM Eternal", 0, "", "C:\\XboxGames\\Doom Eternal - PC\\Content\\launcher\\idTechLauncher.exe", ["{ludusavi}"], {
       adapter: null,
@@ -174,9 +193,36 @@ const overview: Overview = {
       steam: null,
       health: { state: "notLinked" },
       art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+      source: { kind: "xbox", name: null, detail: null, label: null },
     }),
   ],
 };
+
+// Emulator games for the source groups; left out of the docs screenshots
+// (?scene=…) except the one that shows the groups.
+if (!mockScene || mockScene === "library-sources") {
+  const gcWii = L("GameCube / Wii 模拟器", "GameCube / Wii emulator");
+  const dolphin = "D:\\Emulators\\Dolphin-x64\\Dolphin.exe";
+  const ryujinx = "C:\\Users\\me\\Desktop\\Switch\\ryujinx\\Ryujinx.exe";
+  overview.games.push(
+    emuGame("dolphin-rmge01", L("超级马力欧银河", "Super Mario Galaxy"), "Dolphin", gcWii, dolphin, ["{emu}/Wii/title/0001000?/524d4745/data/**"], 12.5),
+    emuGame("dolphin-gale01", "Super Smash Bros. Melee", "Dolphin", gcWii, dolphin, ["{emu}/GC/*/Card ?/01-GALE-*.gci"], 40),
+    emuGame("dolphin-gzle01", L("塞尔达传说：风之杖", "The Legend of Zelda: The Wind Waker"), "Dolphin", gcWii, dolphin, ["{emu}/GC/*/Card ?/01-GZLE-*.gci"], 22),
+    emuGame("ryujinx-0100770008dd8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-0100770008dd8000}/**"], 64),
+    emuGame("ryujinx-01006a800016e000", L("超级马力欧 奥德赛", "Super Mario Odyssey"), "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-01006a800016e000}/**"], 18),
+    // Added by hand (no rule), put in a group named by the user.
+    game("mgba-emerald", L("宝可梦 绿宝石", "Pokémon Emerald"), 0, "", "D:\\Emulators\\mGBA\\mGBA.exe", ["{install}/saves/emerald.sav"], {
+      adapter: null,
+      adapterName: null,
+      platform: null,
+      customSaves: true,
+      steam: null,
+      health: { state: "notLinked" },
+      art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+      source: { kind: "custom", name: null, detail: null, label: "mGBA" },
+    }),
+  );
+}
 
 function found(id: string, name: string, source: Found["source"], extra: Partial<Found> = {}): Found {
   return {
@@ -246,7 +292,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
   const key = args.key as string;
   switch (cmd) {
     case "get_overview": {
-      if (!mockScene) return delay(overview, 150);
+      // A copy, so the interface sees the changes the mock commands make.
       const o: Overview = JSON.parse(JSON.stringify(overview));
       if (noCloudScene) o.cloud = { kind: "none", label: null, error: null };
       if (mockScene === "settings-cloud-folder") o.cloud = { kind: "localFolder", label: "D:\\Cloud\\Ludonimbus", error: null };
@@ -499,6 +545,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     }
     case "relocate_auto":
       return delay(key === "starfield" ? null : "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.8\\fefw.exe");
+    case "update_game": {
+      const g = overview.games.find((x) => x.key === key);
+      const patch = args.patch as { name?: string; autoSync?: boolean; source?: string };
+      if (g && patch.name?.trim()) g.name = patch.name.trim();
+      if (g && patch.autoSync !== undefined) g.autoSync = patch.autoSync;
+      if (g && patch.source !== undefined) g.source = { ...g.source, label: patch.source.trim() || null };
+      return delay(undefined);
+    }
     default:
       return delay(null);
   }

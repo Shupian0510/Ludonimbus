@@ -625,6 +625,129 @@ textarea.input {
   font-weight: 700;
 }
 
+/* Library: game sources (badges, filter, groups) -------------------------- */
+.src-emulator { --src: #66c0f4; }
+.src-recomp { --src: #b48cf2; }
+.src-pc { --src: #a9b8c7; }
+.src-xbox { --src: #5ec26a; }
+.src-custom { --src: #7d8fa3; }
+.src-named { --src: #f0b04a; }
+.src-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--src);
+  flex: none;
+}
+.src-tag {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  max-width: calc(100% - 50px);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px 0 7px;
+  border-radius: 10px;
+  background: rgba(10, 14, 20, 0.74);
+  backdrop-filter: blur(4px);
+  color: #e8eff6;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.src-tag::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--src);
+  flex: none;
+}
+.src-tag.src-inline {
+  position: static;
+  max-width: none;
+  height: 18px;
+  line-height: 18px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: rgba(125, 143, 163, 0.14);
+  color: var(--text-2);
+}
+.source-chips {
+  margin: -4px 0 20px;
+}
+.source-chips .chip {
+  gap: 6px;
+  padding: 4px 11px;
+  font-size: 12.5px;
+}
+.chip-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.chip.on .chip-count {
+  color: var(--text-2);
+}
+.lib-group + .lib-group {
+  margin-top: 30px;
+}
+.lib-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.lib-group-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.lib-group-meta {
+  font-size: 12.5px;
+}
+.lib-group-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.view-menu {
+  position: relative;
+}
+.view-menu .seg button {
+  padding: 8px 10px;
+}
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 230px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.popover-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.popover-row:hover {
+  background: rgba(102, 192, 244, 0.08);
+}
+
 /* Detail ------------------------------------------------------------------ */
 .detail {
   min-height: 100%;

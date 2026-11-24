@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, errorText, GameView, LocalFile, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
 import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
+import { detectedGroup, groupBySource } from "../source";
 import { AddToSteam } from "./AddToSteam";
 import { ArtPicker } from "./ArtPicker";
 import { GameBackupPanel } from "./GameBackup";
@@ -388,7 +389,7 @@ export function GameDetail({
         )}
         {tab === "files" && <Files game={game} />}
         {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
-        {tab === "config" && <Config game={game} onChanged={onChanged} onRemoved={onRemoved} />}
+        {tab === "config" && <Config game={game} allGames={overview.games} onChanged={onChanged} onRemoved={onRemoved} />}
         {tab === "achievements" && <GameAchievements gameKey={game.key} />}
       </div>
 
@@ -475,11 +476,24 @@ function Files({ game }: { game: GameView }) {
   );
 }
 
-function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () => Promise<void>; onRemoved: () => Promise<void> }) {
+function Config({
+  game,
+  allGames,
+  onChanged,
+  onRemoved,
+}: {
+  game: GameView;
+  allGames: GameView[];
+  onChanged: () => Promise<void>;
+  onRemoved: () => Promise<void>;
+}) {
   const ui = useUi();
   const t = useT();
   const c = t.game.config;
   const [name, setName] = useState(game.name);
+  const [source, setSource] = useState(game.source.label ?? "");
+  // Suggestions: the groups already in the library (emulators, the user's own…).
+  const sourceNames = useMemo(() => groupBySource(allGames).groups.map((e) => e.group.label), [allGames]);
   const [saves, setSaves] = useState(game.customSaves ? game.saves.join("\n") : "");
   const [exclude, setExclude] = useState(game.exclude.join("\n"));
   const [waitFor, setWaitFor] = useState(game.waitFor.join("\n"));
@@ -489,7 +503,7 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
 
   const save = async () => {
     try {
-      await api.updateGame(game.key, { name, saves: lines(saves), exclude: lines(exclude), waitFor: lines(waitFor), args });
+      await api.updateGame(game.key, { name, saves: lines(saves), exclude: lines(exclude), waitFor: lines(waitFor), args, source });
       ui.toast(msg().game.config.saved);
       await onChanged();
     } catch (e) {
@@ -548,6 +562,24 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
         <label>
           <span>{t.saveFinder.name}</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          <span>{t.source.field}</span>
+          <div className="field-stack">
+            <input
+              className="input"
+              list="source-names"
+              value={source}
+              placeholder={t.source.auto(detectedGroup(game).label)}
+              onChange={(e) => setSource(e.target.value)}
+            />
+            <datalist id="source-names">
+              {sourceNames.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+            <span className="muted small">{t.source.fieldHint}</span>
+          </div>
         </label>
         <label>
           <span>{c.autoSync}</span>
