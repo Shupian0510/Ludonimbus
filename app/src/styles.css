@@ -553,6 +553,14 @@ textarea.input {
 }
 .card-sub {
   margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.card-time {
+  font-size: 12px;
+  white-space: nowrap;
 }
 .table {
   display: flex;
@@ -564,7 +572,7 @@ textarea.input {
 }
 .tr {
   display: grid;
-  grid-template-columns: 2.2fr 1fr 1.2fr 1.4fr 1fr;
+  grid-template-columns: 2.2fr 1fr 1.2fr 1.4fr 0.9fr 1fr;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
@@ -1858,6 +1866,100 @@ details.scan-group[open] > summary {
   flex-direction: column;
   gap: 4px;
 }
+.actionbar-status .playtime {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+}
+
+/* Screenshots tab */
+.shots-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.shots-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.shots-mode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.shots-mode .select {
+  width: auto;
+}
+.shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.shot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(18, 24, 33, 0.6);
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.shot:hover {
+  border-color: #3d5a78;
+}
+.shot-img {
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b1016;
+  color: var(--muted, #8a9bb0);
+}
+.shot-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shot-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 10px 10px;
+}
+.shot-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.shot-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+.shot-view img {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 4px;
+}
+.shot-view-foot {
+  justify-content: space-between;
+  margin-top: 10px;
+}
+.empty-inline {
+  padding: 24px 0;
+  text-align: center;
+}
+
 
 /* --- Achievements (components/Achievements.tsx) ----------------------------- */
 .ach { display: flex; flex-direction: column; gap: 14px; }

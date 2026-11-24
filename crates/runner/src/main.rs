@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, Result};
 use ludonimbus_core::config::GameEntry;
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution};
-use ludonimbus_core::{games, logger, paths, process, relocate, spec, util};
+use ludonimbus_core::{games, logger, paths, playtime, process, relocate, spec, util};
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -171,28 +171,46 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
 }
 
 /// `running/<key>.json`: tells the tray app (and through it the Steam plugin)
-/// that this wrapper handles the game, and what it is doing.
-struct RunningLock(PathBuf);
+/// that this wrapper handles the game, what it is doing, and since when the
+/// game runs (so the tray app can still count the playtime if this wrapper
+/// is terminated).
+struct RunningLock {
+    path: PathBuf,
+    started: std::cell::Cell<Option<chrono::DateTime<chrono::Utc>>>,
+}
 
 impl RunningLock {
     fn create(key: &str) -> Self {
-        let lock = RunningLock(paths::running_dir().join(format!("{key}.json")));
+        let lock = RunningLock {
+            path: paths::running_dir().join(format!("{key}.json")),
+            started: std::cell::Cell::new(None),
+        };
         lock.phase("preLaunch");
         lock
     }
 
-    /// "preLaunch", "playing" or "uploading".
+    /// "preLaunch", "playing" or "uploading". The first "playing" marks the
+    /// start of the play session.
     fn phase(&self, phase: &str) {
-        let _ = std::fs::write(
-            &self.0,
-            serde_json::json!({ "pid": std::process::id(), "phase": phase }).to_string(),
-        );
+        if phase == "playing" && self.started.get().is_none() {
+            self.started.set(Some(chrono::Utc::now()));
+        }
+        let mut v = serde_json::json!({ "pid": std::process::id(), "phase": phase });
+        if let Some(t) = self.started.get() {
+            v["startedAt"] = serde_json::json!(t);
+        }
+        let _ = std::fs::write(&self.path, v.to_string());
+    }
+
+    /// Mark the session as recorded so the tray app doesn't count it again.
+    fn session_recorded(&self) {
+        self.started.set(None);
     }
 }
 
 impl Drop for RunningLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -223,6 +241,10 @@ fn run(args: &[String]) -> Result<i32> {
 
     // Reload the context in case ensure_exe changed the config.
     let ctx = Ctx::load()?;
+    // Import the minutes Steam counted so far before this session adds to them.
+    if let Err(e) = playtime::ensure(&ctx.cfg, &game) {
+        log(format!("{key}: playtime: {e:#}"));
+    }
 
     if game.auto_sync {
         match sync::sync(&ctx, &game, Resolution::Auto, Trigger::PreLaunch) {
@@ -295,6 +317,17 @@ fn run(args: &[String]) -> Result<i32> {
         on_game_exit,
         &|m| log(format!("{key}: {m}")),
     )?;
+
+    if let Some(start) = lock.started.get() {
+        match playtime::record(&ctx.cfg, &game, start, chrono::Utc::now(), playtime::Via::Steam) {
+            Ok(_) => lock.session_recorded(),
+            Err(e) => log(format!("{key}: playtime: {e:#}")),
+        }
+    }
+    // Without auto-sync there is no save sync to carry the playtime upload.
+    if !game.auto_sync {
+        playtime::upload_quietly(&ctx.cfg, &key, log);
+    }
 
     if game.auto_sync {
         lock.phase("uploading");

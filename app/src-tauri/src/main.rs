@@ -72,6 +72,17 @@ fn main() {
             watcher::spawn(app.handle().clone());
             agent::spawn(app.handle().clone());
             achievements::spawn(app.handle().clone());
+            // Import the minutes Steam already counted for linked games, once
+            // per game and device, before any new session is added to them.
+            std::thread::spawn(|| {
+                if let Ok(cfg) = ludonimbus_core::config::load() {
+                    for g in cfg.games.iter().filter(|g| g.steam.is_some()) {
+                        if ludonimbus_core::playtime::load_local(&g.key).is_none() {
+                            let _ = ludonimbus_core::playtime::ensure(&cfg, g);
+                        }
+                    }
+                }
+            });
             let handle = app.handle().clone();
             std::thread::spawn(move || steam_plugin::refresh_installed(&handle));
             // Start OpenList early when the cloud is Quark, so the first sync doesn't wait for it.
@@ -96,6 +107,10 @@ fn main() {
             commands::sync_game,
             commands::backup_game,
             commands::list_snapshots,
+            commands::screenshot_gallery,
+            commands::screenshot_fetch,
+            commands::screenshot_sync,
+            commands::screenshot_reveal,
             commands::get_snapshot,
             commands::restore_snapshot,
             commands::set_snapshot,

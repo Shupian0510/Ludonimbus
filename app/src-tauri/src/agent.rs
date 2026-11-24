@@ -12,6 +12,9 @@
 //! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut
 //! POST /v1/games/{key}/sync                               start "sync now" in the background
 //! POST /v1/games/{key}/open                               show the game in the Ludonimbus window
+//! GET  /v1/games/{key}/snapshots                          version history in the cloud (API 2)
+//! POST /v1/games/{key}/restore/{id}                       restore a version in the background (API 2)
+//! GET  /v1/games/{key}/playtime                           playtime over all devices (API 2)
 //! ```
 //! Achievements (`/v1/steam/apps/{appid}/achievements`, `/v1/achievements/…`)
 //! are handled in `achievements.rs`.
@@ -21,7 +24,7 @@ use chrono::{DateTime, Utc};
 use ludonimbus_core::config::{self, GameEntry};
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution, Status, StatusReport};
-use ludonimbus_core::{logger, paths, process, state, steam, util};
+use ludonimbus_core::{logger, paths, playtime, process, state, steam, util};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,7 +32,8 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-pub const API_VERSION: u32 = 1;
+/// 2 (0.6.0): version history, restore, playtime.
+pub const API_VERSION: u32 = 2;
 
 /// A cached status younger than this is returned as is, even with `refresh=1`.
 const FRESH_SECS: i64 = 60;
@@ -188,6 +192,13 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             steam_app_status(appid, account, refresh)
         }
         (Method::Post, ["v1", "games", key, "sync"]) => start_sync(app, key),
+        (Method::Get, ["v1", "games", key, "snapshots"]) => snapshots(key),
+        (Method::Post, ["v1", "games", key, "restore", id]) => start_restore(app, key, id),
+        (Method::Get, ["v1", "games", key, "playtime"]) => {
+            let cfg = config::load()?;
+            find_by_key(&cfg, key)?;
+            Ok(serde_json::to_value(playtime::summary(&cfg, key)).map_err(anyhow::Error::from)?)
+        }
         (Method::Post, ["v1", "games", key, "open"]) => {
             find_by_key(&config::load()?, key)?;
             show_main(app);
@@ -239,6 +250,9 @@ struct GameStatus {
     checked_at: Option<DateTime<Utc>>,
     /// Interface language picked in Ludonimbus ("zh-CN" or "en"), for the plugin's texts.
     lang: &'static str,
+    /// Playtime over all devices (local data, refreshed by every sync).
+    playtime: playtime::Summary,
+    api_version: u32,
 }
 
 fn phase(g: &GameEntry) -> &'static str {
@@ -320,6 +334,8 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
         last_error: st.last_error.clone(),
         checked_at: report.as_ref().map(|r| r.checked_at),
         lang: ludonimbus_core::i18n::current().code(),
+        playtime: playtime::summary(&cfg, &g.key),
+        api_version: API_VERSION,
     };
     Ok(serde_json::to_value(body).map_err(anyhow::Error::from)?)
 }
@@ -342,6 +358,77 @@ fn start_sync(app: &AppHandle, key: &str) -> ApiResult {
         log(format!("{}: sync from Steam {:?}", g.key, result.as_ref().map_err(|e| e.to_string())));
         if let Err(e) = &result {
             let _ = state::update_game(&g.key, |s| s.last_error = Some(format!("{e:#}")));
+        }
+        commands::cache_check(&g.key, &sync::check(&ctx, &g));
+        let _ = app.emit(
+            "sync-finished",
+            watcher::SyncEvent {
+                key: g.key.clone(),
+                name: g.name.clone(),
+                outcome: result.as_ref().ok().cloned(),
+                error: result.err().map(|e| format!("{e:#}")),
+            },
+        );
+    });
+    Ok(json!({ "started": true }))
+}
+
+// ---------------------------------------------------------------------------
+// Version history (the list in Steam)
+
+fn busy_reason(g: &GameEntry) -> Option<String> {
+    if watcher::runner_active(&g.key) || process::is_running(&watcher::watch_names(g)) {
+        return Some(ludonimbus_core::tr!("游戏正在运行，请先退出游戏", "The game is running. Quit it first"));
+    }
+    if busy::is_busy(&g.key) {
+        return Some(ludonimbus_core::tr!("正在同步", "Syncing"));
+    }
+    None
+}
+
+fn snapshots(key: &str) -> ApiResult {
+    let cfg = config::load()?;
+    let g = find_by_key(&cfg, key)?;
+    let ctx = Ctx::from_config(cfg);
+    let mut list = ctx.cloud()?.list_snapshots(key)?;
+    let head = sync::mainline_head(&list).map(|h| h.id);
+    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let st = state::game(key);
+    Ok(json!({
+        "key": key,
+        "name": g.name,
+        "snapshots": list,
+        "headId": head,
+        "lastSyncedId": st.last_synced_id,
+        "deviceId": ctx.cfg.device.id,
+        "pending": st.pending.len(),
+        "busy": busy_reason(&g),
+    }))
+}
+
+fn start_restore(app: &AppHandle, key: &str, id: &str) -> ApiResult {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(ApiError::new(400, "bad version id"));
+    }
+    let cfg = config::load()?;
+    let g = find_by_key(&cfg, key)?;
+    if let Some(reason) = busy_reason(&g) {
+        return Err(ApiError::new(409, reason));
+    }
+    let guard = busy::begin(key).ok_or_else(|| ApiError::new(409, ludonimbus_core::tr!("正在同步", "Syncing")))?;
+    let (app, id) = (app.clone(), id.to_string());
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let ctx = Ctx::from_config(cfg);
+        let result = sync::restore(&ctx, &g, &id);
+        log(format!("{}: restore {id} from Steam {:?}", g.key, result.as_ref().map_err(|e| e.to_string())));
+        match &result {
+            Ok(_) => {
+                let _ = state::update_game(&g.key, |s| s.last_error = None);
+            }
+            Err(e) => {
+                let _ = state::update_game(&g.key, |s| s.last_error = Some(format!("{e:#}")));
+            }
         }
         commands::cache_check(&g.key, &sync::check(&ctx, &g));
         let _ = app.emit(

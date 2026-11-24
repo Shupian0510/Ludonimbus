@@ -1,7 +1,7 @@
 // Browser-only mock backend, used when the UI runs outside Tauri
 // (`npm run dev` in a normal browser) so the interface can be developed and
 // reviewed without the Rust side. Never loaded inside the app.
-import type { Found, GameView, Outcome, Overview, SnapshotSummary, StatusReport } from "./api";
+import type { Found, GameView, Outcome, Overview, PlaytimeDevice, PlaytimeSummary, SnapshotSummary, StatusReport } from "./api";
 
 // Sample data in the preview's language (?lang=, the saved choice, or the browser's).
 const mockLang = (() => {
@@ -109,9 +109,24 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     lastError: null,
     pending: 0,
     lastCheck: checks[key] ?? null,
+    playtime: playtime[key] ?? { totalSecs: 0, lastPlayed: null, devices: [] },
     ...extra,
   };
 }
+
+function devicePlaytime(hours: number, laptopHours: number, steamHours: number): PlaytimeSummary {
+  const devices: PlaytimeDevice[] = [
+    { device: "d-mock", deviceName: "DESKTOP-MAIN", secs: hours * 3600, lastPlayed: ago(26), thisDevice: true, steamMinutes: steamHours ? steamHours * 60 : null },
+  ];
+  if (laptopHours) devices.push({ device: "d-laptop", deviceName: "LAPTOP", secs: laptopHours * 3600, lastPlayed: ago(60 * 30), thisDevice: false, steamMinutes: null });
+  return { totalSecs: (hours + laptopHours) * 3600, lastPlayed: ago(26), devices };
+}
+
+const playtime: Record<string, PlaytimeSummary> = {
+  "zelda-oot-longshot": devicePlaytime(16.5, 4.2, 12),
+  "fe-fortunes-weave": devicePlaytime(7.3, 0, 0),
+  "bloodborne-lantern": devicePlaytime(31, 9.5, 20),
+};
 
 const overview: Overview = {
   deviceId: "d-mock",
@@ -270,6 +285,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "sync_game":
     case "backup_game":
       return delay<Outcome>({ kind: "uploaded", id: "01NEW" }, 700);
+    case "screenshot_gallery":
+      return delay(mockGallery(key), 300);
+    case "screenshot_fetch":
+      return delay(shotImage(String(args.name), Boolean(args.thumb)), 200);
+    case "screenshot_sync":
+      return delay({ uploaded: 1, downloaded: 2, failed: 0 }, 900);
+    case "screenshot_reveal":
+      return delay(undefined);
     case "list_snapshots":
       return delay({ snapshots: snapshots[key] ?? [], headId: snapshots[key]?.[0]?.id ?? null, lastSyncedId: snapshots[key]?.[0]?.id ?? null });
     case "get_snapshot": {
@@ -331,6 +354,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         runnerExists: true,
         ludusavi: "ludusavi 0.31.0",
         version: "0.5.0",
+        screenshots: "sync",
       } as Record<string, unknown>;
       if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
       if (noCloudScene) s.cloud = { kind: "none" };
@@ -478,4 +502,44 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     default:
       return delay(null);
   }
+}
+
+// Screenshots: generated pictures (a gradient per screenshot).
+const shotHues = [205, 28, 140, 265, 350, 90];
+function shotImage(name: string, thumb: boolean): string {
+  const n = [...name].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const h = shotHues[n % shotHues.length];
+  const [w, hgt] = thumb ? [200, 112] : [1280, 720];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${hgt}" viewBox="0 0 16 9"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h},55%,42%)"/><stop offset="1" stop-color="hsl(${(h + 60) % 360},45%,18%)"/></linearGradient></defs><rect width="16" height="9" fill="url(#g)"/><circle cx="${4 + (n % 8)}" cy="3" r="1.4" fill="hsla(${h},80%,85%,.55)"/><path d="M0 9 L5 5 L8 7 L12 3 L16 6 L16 9Z" fill="hsla(${h},40%,10%,.6)"/></svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function mockGallery(key: string) {
+  const shots = [
+    ["20261122223831_1.jpg", "d-mock", "DESKTOP-MAIN", true, true],
+    ["20261122153202_1.jpg", "d-mock", "DESKTOP-MAIN", true, true],
+    ["20261121201544_1.jpg", "d-laptop", "LAPTOP", true, true],
+    ["20261120175013_1.jpg", "d-mock", "DESKTOP-MAIN", true, false],
+    ["20261120172408_1.jpg", "d-laptop", "LAPTOP", false, true],
+    ["20261120164625_1.jpg", "d-mock", "DESKTOP-MAIN", true, true],
+  ] as const;
+  const parse = (n: string) => new Date(+n.slice(0, 4), +n.slice(4, 6) - 1, +n.slice(6, 8), +n.slice(8, 10), +n.slice(10, 12)).toISOString();
+  return {
+    shots: shots.map(([name, device, deviceName, onThisPc, inCloud]) => ({
+      name,
+      device,
+      deviceName,
+      size: 900_000 + name.length * 31_000,
+      takenAt: parse(name),
+      onThisPc,
+      inCloud,
+      hasThumb: true,
+      thumbUrl: onThisPc ? shotImage(name, true) : null,
+    })),
+    mode: "sync",
+    linked: key !== "custom",
+    folder: "C:\\Program Files (x86)\\Steam\\userdata\\12345678\\760\\remote\\17521518688375668736\\screenshots",
+    cloudBytes: 5_400_000,
+    cloudError: null,
+  };
 }

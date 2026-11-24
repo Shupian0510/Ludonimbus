@@ -9,6 +9,7 @@
 //! launch from Steam needs only a few requests.
 
 use super::oauth::{self, describe, GoogleClient};
+use super::store::{Entry, Store};
 use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary, Trigger};
 use crate::{paths, util};
@@ -55,6 +56,9 @@ struct DriveFile {
     app: HashMap<String, String>,
     description: String,
     size: u64,
+    is_folder: bool,
+    /// Content checksum, or modification time for files without one.
+    tag: String,
 }
 
 fn esc(s: &str) -> String {
@@ -245,7 +249,10 @@ impl GoogleDrive {
         loop {
             let mut params = vec![
                 ("q", q.to_string()),
-                ("fields", "nextPageToken,files(id,name,size,appProperties,description)".to_string()),
+                (
+                    "fields",
+                    "nextPageToken,files(id,name,size,mimeType,md5Checksum,modifiedTime,appProperties,description)".to_string(),
+                ),
                 ("pageSize", "1000".to_string()),
                 ("spaces", "drive".to_string()),
             ];
@@ -274,6 +281,12 @@ impl GoogleDrive {
                         .unwrap_or_default(),
                     description: f["description"].as_str().unwrap_or_default().to_string(),
                     size: f["size"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
+                    is_folder: f["mimeType"].as_str() == Some(FOLDER_MIME),
+                    tag: f["md5Checksum"]
+                        .as_str()
+                        .or(f["modifiedTime"].as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                 });
             }
             match v["nextPageToken"].as_str() {
@@ -626,6 +639,10 @@ impl CloudProvider for GoogleDrive {
         self.put_json(&["games", &game.key], "game.json", &serde_json::to_value(game)?)
     }
 
+    fn files(&self) -> &dyn Store {
+        self
+    }
+
     fn list_games(&self) -> Result<Vec<CloudGame>> {
         let Some(games) = self.folder_id(&["games"], false)? else {
             return Ok(Vec::new());
@@ -645,6 +662,106 @@ impl CloudProvider for GoogleDrive {
             }
         }
         Ok(out)
+    }
+}
+
+/// Split a store path into its folder segments and file name.
+fn split_path(path: &str) -> (Vec<&str>, &str) {
+    let mut parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let name = parts.pop().unwrap_or_default();
+    (parts, name)
+}
+
+/// Path-based access for data that is not a save snapshot
+/// ([`CloudProvider::files`]). Folders are resolved through the same cached
+/// folder ids as the snapshot code.
+impl Store for GoogleDrive {
+    fn kind(&self) -> &'static str {
+        "googleDrive"
+    }
+
+    fn label(&self) -> String {
+        format!("Google Drive · {}", self.folder)
+    }
+
+    fn check(&self) -> Result<()> {
+        self.root_id(true).map(|_| ())
+    }
+
+    fn list(&self, dir: &str) -> Result<Vec<Entry>> {
+        let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+        let Some(folder) = self.folder_id(&parts, false)? else {
+            return Ok(Vec::new());
+        };
+        let q = format!("'{}' in parents and trashed=false", esc(&folder));
+        Ok(GoogleDrive::list(self, &q)?
+            .into_iter()
+            .map(|f| Entry {
+                name: f.name,
+                is_dir: f.is_folder,
+                size: f.size,
+                tag: f.tag,
+            })
+            .collect())
+    }
+
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        let (parts, name) = split_path(path);
+        let Some(folder) = self.folder_id(&parts, false)? else {
+            return Ok(None);
+        };
+        match self.find_file(&folder, name)? {
+            Some(f) => Ok(Some(self.download_bytes(&f.id)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn download(&self, path: &str, dest: &Path) -> Result<()> {
+        let (parts, name) = split_path(path);
+        let f = self
+            .folder_id(&parts, false)?
+            .map(|folder| self.find_file(&folder, name))
+            .transpose()?
+            .flatten()
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud")))?;
+        let resp = self
+            .bulk
+            .get(&format!("{API}/files/{}?alt=media", f.id))
+            .set("Authorization", &self.bearer()?)
+            .call()
+            .map_err(drive_error)?;
+        let tmp = dest.with_extension("lntmp");
+        let mut out = std::fs::File::create(&tmp)?;
+        std::io::copy(&mut resp.into_reader(), &mut out)?;
+        drop(out);
+        std::fs::rename(&tmp, dest)?;
+        Ok(())
+    }
+
+    fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+        let (parts, name) = split_path(path);
+        let folder = self.writable_folder(&parts)?;
+        let mime = if name.ends_with(".json") { "application/json" } else { "application/octet-stream" };
+        match self.find_file(&folder, name)? {
+            Some(f) => self.update_content(&f.id, mime, data),
+            None => self.create_file(&folder, name, mime, json!({}), data.to_vec()).map(|_| ()),
+        }
+    }
+
+    fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        let data = std::fs::read(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
+        Store::write(self, path, &data)
+    }
+
+    fn remove(&self, path: &str) -> Result<()> {
+        let (parts, name) = split_path(path);
+        let Some(folder) = self.folder_id(&parts, false)? else {
+            return Ok(());
+        };
+        if let Some(f) = self.find_file(&folder, name)? {
+            self.delete_file(&f.id)?;
+        }
+        Ok(())
     }
 }
 

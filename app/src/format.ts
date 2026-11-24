@@ -25,6 +25,14 @@ export function relTime(iso: string | null | undefined): string {
   return dateTime(iso);
 }
 
+/** Playtime: minutes below an hour, then hours with one decimal. */
+export function duration(secs: number): string {
+  const f = msg().format;
+  if (secs < 3600) return f.minutes(Math.max(1, Math.round(secs / 60)));
+  const h = secs / 3600;
+  return f.hours(h >= 100 ? String(Math.round(h)) : h.toFixed(1));
+}
+
 export function dateTime(iso: string | number): string {
   const d = typeof iso === "number" ? new Date(iso * 1000) : new Date(iso);
   const p = (n: number) => String(n).padStart(2, "0");

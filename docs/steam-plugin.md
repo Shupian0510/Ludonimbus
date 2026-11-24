@@ -39,6 +39,9 @@ Steam 客户端
 | GET | `/v1/steam/apps/{appid}?account={id}&refresh=1` | Steam 快捷方式对应游戏的云存档状态。`account` 是 Steam 账号 id（`userdata` 下的文件夹名），同一个快捷方式在多个账号下时用来区分。`refresh=1` 时，如果缓存的检查结果超过 60 秒、或者之后又同步过，就重新向云端检查一次 |
 | POST | `/v1/games/{key}/sync` | 在后台开始「立即同步」，立即返回 `{ started: true }`。游戏运行中或已在同步时返回 409 |
 | POST | `/v1/games/{key}/open` | 显示 Ludonimbus 窗口并打开这个游戏 |
+| GET | `/v1/games/{key}/snapshots` | （API 2，0.6）云端版本列表，新的在前，外加 `headId`、`lastSyncedId`、`deviceId`、`pending`，以及现在不能恢复的原因 `busy`（游戏运行中、正在同步） |
+| POST | `/v1/games/{key}/restore/{id}` | （API 2）在后台恢复这个版本，立即返回 `{ started: true }`，进行中状态是 `syncing`。游戏运行中或已在同步时 409。和应用里的「恢复到这个版本」走同一个 `sync::restore` |
+| GET | `/v1/games/{key}/playtime` | （API 2）所有设备的游戏时间：`totalSecs`、`lastPlayed`、各设备明细 |
 
 状态的返回值（没有关联到 Ludonimbus 的游戏返回 `{ "managed": false }`）：
 
@@ -59,9 +62,13 @@ Steam 客户端
   "pending": 0,
   "conflict": false,
   "lastError": null,
-  "checkedAt": "…"
+  "checkedAt": "…",
+  "playtime": { "totalSecs": 74520, "lastPlayed": "…", "devices": [ /* 各设备明细 */ ] },   // 0.6
+  "apiVersion": 2                                                                         // 0.6
 }
 ```
+
+`apiVersion` 从 0.6 起是 2。插件按它决定点击状态项是打开版本列表（2）还是打开 Ludonimbus（旧版应用）。
 
 `phase` 的来源：应用自己正在同步（界面、本机接口、托盘监视共用一把锁，同一个游戏不会同时跑两个同步）→ `syncing`；`ludonimbus-run` 在 `running/<key>.json` 里写的阶段 → `preLaunch` / `playing` / `uploading`；否则看游戏进程是否在运行。
 
@@ -81,6 +88,8 @@ Steam 客户端
 - 状态项只借用 Steam 的类名（`GameStat`、`GameStatIcon`、`PlayBarLabel`、`PlayBarDetailLabel`）来获得原生的字体和颜色；只有找不到这些类名时才用插件自带的备用样式。
 - 只在 `SP Desktop` 窗口里工作（不处理大屏幕模式）。普通 Steam 游戏、没有加进 Ludonimbus 的快捷方式不显示任何东西。
 - 每 5 秒读一次缓存状态（很便宜），有同步在进行时改为 1.5 秒；每 2 分钟、切换游戏、同步结束时请求一次 `refresh`。
+- 点击状态项（0.6）：用 Millennium SDK 的 `showModal` + `ModalRoot` / `DialogButton` 弹出版本列表（`frontend/versions.tsx`），可以恢复、立即同步、打开 Ludonimbus。存档冲突和快捷方式失效时仍然直接打开 Ludonimbus，因为只有应用里能处理。
+- 「所有设备」游戏时间（0.6）：Ludonimbus 记录过游戏时间时，在状态项前面再插入一项，显示所有设备的总时间，悬停显示明细。Steam 自己的「游戏时间」只算这台电脑，插件不改它。
 
 ## 一键安装做了什么
 
