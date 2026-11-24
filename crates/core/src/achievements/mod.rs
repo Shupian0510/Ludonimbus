@@ -59,6 +59,16 @@ impl SourceKind {
     }
 }
 
+/// What the interface calls a binding's source: Ludonimbus's own save rules
+/// are told apart from TrophyNX's.
+pub fn binding_label(b: &Binding) -> &'static str {
+    if b.source == SourceKind::Rules && !rules::is_title(&b.source_id) {
+        "Ludonimbus"
+    } else {
+        b.source.label()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Grade {
@@ -556,7 +566,7 @@ pub fn view(key: &str) -> GameView {
     GameView {
         key: key.to_string(),
         source: binding.map(|b| b.source),
-        source_label: binding.map(|b| b.source.label()),
+        source_label: binding.map(binding_label),
         source_id: binding.map(|b| b.source_id.clone()).filter(|s| !s.is_empty()),
         title: db.schema.as_ref().and_then(|s| s.title.clone()),
         total,

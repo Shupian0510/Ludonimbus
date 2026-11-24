@@ -12,7 +12,8 @@ use ludonimbus_core::config::{AppConfig, GameEntry};
 use std::path::PathBuf;
 
 /// Every game in the real Ludonimbus config (read-only) that has save rules:
-/// downloads the TrophyNX list and evaluates it against the real saves.
+/// Ludonimbus's own list or the downloaded TrophyNX one, evaluated against
+/// the real saves.
 /// `cargo test -p ludonimbus-core --test achievements_live real_save_rules -- --ignored --nocapture`
 #[test]
 #[ignore]
@@ -22,8 +23,9 @@ fn real_save_rules() {
     let tmp = tempfile::tempdir().unwrap();
     std::env::set_var("LUDONIMBUS_HOME", tmp.path());
     for g in &cfg_real.games {
-        let Some(tid) = achievements::rules::title_id(g) else { continue };
-        let list = match achievements::rules::load_list(&tid, true) {
+        // Ludonimbus's own list (by adapter) first, else TrophyNX's (by title id).
+        let Some(tid) = achievements::rules::bundled_key(g).or_else(|| achievements::rules::title_id(g)) else { continue };
+        let list = match achievements::rules::load(&tid, true) {
             Ok(Some(l)) => l,
             other => {
                 eprintln!("{}: {tid}: no list ({:?})", g.key, other.err());

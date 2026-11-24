@@ -1,14 +1,20 @@
 //! Achievements decided by reading the game's save, for games that have no
 //! achievement system of their own (Switch games on Ryujinx and other
-//! emulators, Switch recompilations).
+//! emulators, Switch and N64 recompilations, native remakes).
 //!
 //! Lists use TrophyNX's format (github.com/Imp3r1us/TrophyNX,
 //! `romfs/games/<TITLE ID>.json`): `reader`, `save_files`, and achievements
-//! with one `rule` each. TrophyNX is GPL-2.0, so its lists are not bundled:
-//! they are downloaded from its repository when a game needs one and cached
-//! in `%APPDATA%\Ludonimbus\achievements\rules\trophynx\`. A file with the
-//! same name in `…\achievements\rules\` (made by hand or with TrophyNX's
-//! Save Lab) takes precedence.
+//! with one `rule` each. Two kinds:
+//! - Ludonimbus's own lists, `adapters/achievements/<adapter key>.json`
+//!   (MIT, bundled), for games Ludonimbus knows by adapter. They add
+//!   `name_zh` / `desc_zh`. Bindings use the adapter key as the source id.
+//! - TrophyNX's lists, by Switch title id. TrophyNX is GPL-2.0, so they are
+//!   not bundled: they are downloaded from its repository when a game needs
+//!   one and cached in `%APPDATA%\Ludonimbus\achievements\rules\trophynx\`.
+//!
+//! A file with the same name (`<title id>.json` or `<adapter key>.json`) in
+//! `…\achievements\rules\` (made by hand or with TrophyNX's Save Lab) takes
+//! precedence over both.
 //!
 //! Readers: `json` (optionally XOR-scrambled), `byml` (Nintendo BYML),
 //! `gamedata_hash` (BotW: CRC32 name hash / value pairs from 0x0C),
@@ -49,12 +55,17 @@ const WIIU_TITLES: &[(&str, &str)] = &[
     ("101c9500", "01007EF00011E000"),
 ];
 
+/// Ludonimbus's own lists, by adapter key (see `docs/achievement-rules.md`).
+const BUNDLED: &[(&str, &str)] = &[("zelda-oot-longshot", include_str!("../../../../adapters/achievements/zelda-oot-longshot.json"))];
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RuleList {
     #[serde(default)]
     pub title_id: String,
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub name_zh: Option<String>,
     #[serde(default)]
     pub reader: String,
     #[serde(default)]
@@ -75,6 +86,10 @@ pub struct RuleAchievement {
     #[serde(default)]
     pub desc: String,
     #[serde(default)]
+    pub name_zh: Option<String>,
+    #[serde(default)]
+    pub desc_zh: Option<String>,
+    #[serde(default)]
     pub points: Option<u32>,
     #[serde(default)]
     pub hidden: bool,
@@ -86,6 +101,19 @@ impl RuleList {
     /// Rules that need the save (not only play statistics).
     pub fn reads_saves(&self) -> bool {
         self.achievements.iter().any(|a| !matches!(rule_type(&a.rule), "launches" | "playtime_hours"))
+    }
+
+    /// The game's name in the interface language.
+    pub fn display_name(&self) -> String {
+        zh_or(&self.name, self.name_zh.as_deref())
+    }
+}
+
+/// `zh` when the interface is Chinese and there is one, else `en`.
+fn zh_or(en: &str, zh: Option<&str>) -> String {
+    match zh.filter(|z| !z.is_empty() && !crate::i18n::is_en()) {
+        Some(z) => z.to_string(),
+        None => en.to_string(),
     }
 }
 
@@ -132,6 +160,44 @@ pub fn rules_dir() -> PathBuf {
 
 fn valid_title(tid: &str) -> bool {
     tid.len() == 16 && tid.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Whether a binding's source id is a Switch title id (TrophyNX) rather
+/// than an adapter key (Ludonimbus's own list).
+pub fn is_title(id: &str) -> bool {
+    valid_title(id.trim())
+}
+
+/// Ludonimbus's own list for an adapter key.
+pub fn bundled(key: &str) -> Option<RuleList> {
+    let (_, text) = BUNDLED.iter().find(|(k, _)| *k == key)?;
+    match serde_json::from_str(text) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            super::log(format!("{key}: bundled achievement rules don't parse: {e}"));
+            None
+        }
+    }
+}
+
+/// The adapter key of a game that has one of Ludonimbus's own lists.
+pub fn bundled_key(g: &GameEntry) -> Option<String> {
+    g.adapter.as_deref().filter(|a| BUNDLED.iter().any(|(k, _)| k == a)).map(str::to_string)
+}
+
+/// The list a binding points at: a local file, Ludonimbus's own list (adapter
+/// key) or TrophyNX's (title id, downloaded when `fetch`).
+pub fn load(id: &str, fetch: bool) -> Result<Option<RuleList>> {
+    let id = id.trim();
+    if is_title(id) {
+        return load_list(id, fetch);
+    }
+    let local = rules_dir().join(format!("{id}.json"));
+    if !id.is_empty() && !id.contains(['/', '\\', '.']) && local.is_file() {
+        let bytes = std::fs::read(&local)?;
+        return serde_json::from_slice(&bytes).with_context(|| local.display().to_string()).map(Some);
+    }
+    Ok(bundled(id))
 }
 
 fn age(p: &Path) -> Option<Duration> {
@@ -600,7 +666,8 @@ pub fn evaluate(list: &RuleList, files: &[PathBuf], stats: Stats) -> Result<Vec<
     }
     if docs.is_empty() && list.reads_saves() {
         if let Some(e) = error {
-            super::log(format!("{}: save rules not evaluated: {e}", list.title_id));
+            let who = if list.title_id.is_empty() { &list.name } else { &list.title_id };
+            super::log(format!("{who}: save rules not evaluated: {e}"));
         }
     }
     Ok(unlocks)
@@ -610,14 +677,14 @@ pub fn schema(list: &RuleList, tid: &str) -> Schema {
     Schema {
         source: SourceKind::Rules,
         source_id: tid.to_string(),
-        title: Some(list.name.clone()).filter(|n| !n.is_empty()),
+        title: Some(list.display_name()).filter(|n| !n.is_empty()),
         achievements: list
             .achievements
             .iter()
             .map(|a| Achievement {
                 id: a.id.clone(),
-                name: if a.name.is_empty() { a.id.clone() } else { a.name.clone() },
-                description: a.desc.clone(),
+                name: Some(zh_or(&a.name, a.name_zh.as_deref())).filter(|n| !n.is_empty()).unwrap_or_else(|| a.id.clone()),
+                description: zh_or(&a.desc, a.desc_zh.as_deref()),
                 icon: None,
                 hidden: a.hidden,
                 points: a.points,
@@ -629,7 +696,7 @@ pub fn schema(list: &RuleList, tid: &str) -> Schema {
 
 pub fn scan(cfg: &AppConfig, g: &GameEntry, b: &Binding) -> Result<Scan> {
     let tid = b.source_id.trim();
-    let list = load_list(tid, true)?.ok_or_else(|| anyhow!(crate::tr!("没有这个游戏的成就规则（{tid}）", "No achievement rules for this game ({tid})")))?;
+    let list = load(tid, true)?.ok_or_else(|| anyhow!(crate::tr!("没有这个游戏的成就规则（{tid}）", "No achievement rules for this game ({tid})")))?;
     let files = find_save_files(g, &list.save_files);
     let unlocks = evaluate(&list, &files, stats(cfg, g))?;
     Ok(Scan { schema: Some(schema(&list, tid)), unlocks, quiet: Vec::new() })
@@ -637,7 +704,7 @@ pub fn scan(cfg: &AppConfig, g: &GameEntry, b: &Binding) -> Result<Scan> {
 
 /// Save files to watch while the game runs (from the cached list, no download).
 pub fn watch_files(g: &GameEntry, b: &Binding) -> Vec<PathBuf> {
-    match load_list(&b.source_id, false) {
+    match load(&b.source_id, false) {
         Ok(Some(list)) if list.reads_saves() => find_save_files(g, &list.save_files),
         _ => Vec::new(),
     }
@@ -978,6 +1045,67 @@ mod tests {
         assert_eq!(title_id(&g).as_deref(), Some("0100000000010000"));
         let g = GameEntry { key: "hk".into(), saves: vec!["{nxsave-0100633007d48000}/**".into()], ..Default::default() };
         assert_eq!(title_id(&g).as_deref(), Some("0100633007D48000"));
+    }
+
+    /// Every bundled list parses, belongs to an adapter, uses a known reader
+    /// and rule types, has unique ids and texts in both languages.
+    #[test]
+    fn bundled_lists_are_well_formed() {
+        for (key, _) in BUNDLED {
+            let l = bundled(key).unwrap_or_else(|| panic!("{key} doesn't parse"));
+            assert!(crate::adapters::find(key).is_some(), "{key} is not an adapter key");
+            assert!(["json", "byml", "gamedata_hash", "totk_progress", "binary_le"].contains(&l.reader.as_str()), "{key}: reader {}", l.reader);
+            assert!(!l.save_files.is_empty() || !l.reads_saves(), "{key}: no save files");
+            assert!(l.name_zh.is_some(), "{key}: no Chinese name");
+            let mut ids = std::collections::HashSet::new();
+            for a in &l.achievements {
+                assert!(ids.insert(a.id.clone()), "{key}: duplicate id {}", a.id);
+                assert!(!a.name.is_empty() && !a.desc.is_empty(), "{key}/{}: English text", a.id);
+                assert!(a.name_zh.as_deref().is_some_and(|s| !s.is_empty()) && a.desc_zh.as_deref().is_some_and(|s| !s.is_empty()), "{key}/{}: Chinese text", a.id);
+                assert!(matches!(rule_type(&a.rule), "flag" | "count" | "sum" | "launches" | "playtime_hours"), "{key}/{}: rule type", a.id);
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_lists_by_adapter() {
+        let g = GameEntry { key: "oot".into(), adapter: Some("zelda-oot-longshot".into()), ..Default::default() };
+        assert_eq!(bundled_key(&g).as_deref(), Some("zelda-oot-longshot"));
+        assert!(bundled_key(&GameEntry { adapter: Some("cemu".into()), ..Default::default() }).is_none());
+        assert!(is_title("01007EF00011E000") && !is_title("zelda-oot-longshot"));
+        assert!(load("zelda-oot-longshot", false).unwrap().is_some_and(|l| l.reader == "totk_progress"));
+        assert!(load("no-such-game", false).unwrap().is_none());
+        // Detected and linked automatically.
+        let c = super::super::detect::candidates(&g);
+        assert!(c.iter().any(|c| c.sure && c.binding.source == SourceKind::Rules && c.binding.source_id == "zelda-oot-longshot"), "{c:?}");
+        let b = Binding { source: SourceKind::Rules, source_id: "zelda-oot-longshot".into(), path: None, popup: None };
+        assert_eq!(super::super::binding_label(&b), "Ludonimbus");
+    }
+
+    #[test]
+    fn longshot_list_on_made_up_saves() {
+        // Longshot keeps Ocarina of Time's progress in a TotK-style progress.sav per slot.
+        let save = |pairs: &[(&str, u32)]| -> Vec<u8> {
+            let mut d = vec![0u8; 0x28];
+            d[0..4].copy_from_slice(&0x0102_0304u32.to_le_bytes());
+            for (name, v) in pairs.iter().copied().chain([("MetaData.SaveTypeHash", 0)]) {
+                d.extend(murmur3(name).to_le_bytes());
+                d.extend(v.to_le_bytes());
+            }
+            d
+        };
+        let common = [("IsGet.Weapon_Sword_Kokiri", 1), ("IsGet.Item_Stone_Forest", 1), ("IsGet.Item_Stone_Fire", 1), ("IsGet.Item_Stone_Water", 1), ("PouchData.Item_Token_Gold.StockNum", 21), ("PlayerStatus.MaxLife", 36)];
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("slot_00/progress.sav"), dir.path().join("slot_01/progress.sav"));
+        for (f, medal) in [(&a, 0), (&b, 1)] {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            let mut pairs = common.to_vec();
+            pairs.push(("IsGet.Item_Medal_Forest", medal));
+            std::fs::write(f, save(&pairs)).unwrap();
+        }
+        let l = bundled("zelda-oot-longshot").unwrap();
+        let ids: Vec<String> = evaluate(&l, &[a, b], Stats::default()).unwrap().into_iter().map(|u| u.id).collect();
+        assert_eq!(ids, ["kokiri_sword", "kokiri_emerald", "goron_ruby", "zora_sapphire", "spiritual_stones", "forest_medallion", "skulltula_10"]);
     }
 
     #[test]

@@ -111,6 +111,18 @@ pub fn candidates(g: &GameEntry) -> Vec<Candidate> {
         }
     }
 
+    // Games Ludonimbus has its own save rules for (by adapter).
+    if out.is_empty() {
+        if let Some((key, list)) = super::rules::bundled_key(g).and_then(|k| super::rules::load(&k, false).ok().flatten().map(|l| (k, l))) {
+            out.push(Candidate {
+                binding: Binding { source: SourceKind::Rules, source_id: key, path: None, popup: None },
+                title: Some(list.display_name()).filter(|n| !n.is_empty()),
+                location: "Ludonimbus".to_string(),
+                sure: true,
+            });
+        }
+    }
+
     // Switch games (emulated or recompiled): save rules in TrophyNX's format.
     if out.is_empty() {
         if let Some(tid) = super::rules::title_id(g) {
