@@ -1944,6 +1944,17 @@ details.scan-group[open] > summary {
   line-height: 1.8;
   color: var(--text-2);
 }
+.ob-plugin {
+  gap: 8px;
+  margin: 14px 0 4px;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.ob-plugin label > span:first-child {
+  padding-top: 0;
+}
 .ob-summary,
 .ob-tips {
   list-style: none;

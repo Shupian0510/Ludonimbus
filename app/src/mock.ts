@@ -22,6 +22,9 @@ const L = (zh: string, en: string) => (mockLang === "en" ? en : zh);
 const mockScene = new URLSearchParams(location.search).get("scene") ?? "";
 const noCloudScene = ["settings-cloud", "settings-cloud-quark"].includes(mockScene) || mockScene.startsWith("guide-");
 
+// Steam plugin installed in this preview session (Settings and the first-run guide).
+let steamPluginOn = false;
+
 const now = Date.now();
 const ago = (min: number) => new Date(now - min * 60000).toISOString();
 const art = (appid: number, kind: string) => `/mock-art/${appid}${kind}`;
@@ -462,13 +465,17 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         steamRoot: "C:\Program Files (x86)\Steam",
         steamRunning: true,
         bundled: true,
-        millennium: "missing",
-        pluginInstalled: false,
-        pluginEnabled: false,
-        pluginCurrent: false,
+        millennium: steamPluginOn ? "installed" : "missing",
+        pluginInstalled: steamPluginOn,
+        pluginEnabled: steamPluginOn,
+        pluginCurrent: steamPluginOn,
       });
     case "steam_plugin_install":
+      steamPluginOn = true;
       return delay({ millenniumInstalled: "v3.6.3", steamRestarted: true }, 1500);
+    case "steam_plugin_remove":
+      steamPluginOn = false;
+      return delay(undefined, 800);
     case "scan_quick":
       return delay(quickScan, 500);
     case "scan_ludusavi":

@@ -28,7 +28,15 @@
 
 ![首次使用引导：封面](/screenshots/zh-CN/guide-art.png)
 
-## 5. 完成
+## 5. 在 Steam 中显示云存档状态（可选）
+
+点「下载并安装」会安装开源的 Steam 插件框架 Millennium 和 Ludonimbus 插件，之后 Steam 游戏库的游戏页面上会显示云存档状态，还能一键同步。安装时 Steam 会暂时关闭，完成后自动重新打开。详细说明见[在 Steam 里显示云存档状态](../steam/status-in-steam.md)。
+
+不装也不影响自动同步，可以直接跳过，以后在设置里安装。没有找到 Steam 时，这一步只会提示你跳过。
+
+![首次使用引导：在 Steam 中显示云存档状态](/screenshots/zh-CN/guide-steam.png)
+
+## 6. 完成
 
 显示哪些已经配好、哪些跳过了，并按你选的用途给出下一步建议。点「扫描本机游戏」会直接打开[扫描本机](../games/scan.md)，开始添加游戏。
 

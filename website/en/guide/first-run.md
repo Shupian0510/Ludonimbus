@@ -28,7 +28,15 @@ With a free SteamGridDB API key, Ludonimbus can pick the cover, background, logo
 
 ![First-run guide: artwork](/screenshots/en/guide-art.png)
 
-## 5. Done
+## 5. Show cloud save status in Steam (optional)
+
+"Download and install" installs Millennium, an open-source plugin framework for the Steam client, together with the Ludonimbus plugin. Game pages in your Steam library then show the cloud save status, with a sync button. Steam closes during the install and reopens afterwards. Details in [Cloud save status in Steam](../steam/status-in-steam.md).
+
+Auto-sync works without it, so you can skip this and install it in Settings later. If Steam isn't found, this step only tells you to skip it.
+
+![First-run guide: cloud save status in Steam](/screenshots/en/guide-steam.png)
+
+## 6. Done
 
 Shows what's set up and what was skipped, with suggestions for what to do next based on your answers. "Scan this PC" opens [Scan this PC](../games/scan.md) right away so you can add games.
 

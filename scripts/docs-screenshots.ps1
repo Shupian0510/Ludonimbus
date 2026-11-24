@@ -41,7 +41,7 @@ $all = @(
     # Add game
     "add-game-scan", "add-game-scan-folder", "add-game-cloud", "add-game-manual", "save-finder", "add-to-steam",
     # First-run guide
-    "guide-welcome", "guide-usage", "guide-cloud", "guide-art", "guide-done"
+    "guide-welcome", "guide-usage", "guide-cloud", "guide-art", "guide-steam", "guide-done"
 )
 if ($Scenes.Count -eq 0) { $Scenes = $all }
 

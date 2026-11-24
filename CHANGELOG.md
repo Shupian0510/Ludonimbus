@@ -12,6 +12,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：Steam 截图同步（默认关闭，在「设置 → Steam → 截图同步」打开）。从 Steam 截的图会上传到云盘；选「上传并下载」时，其他电脑截的图会放进这台电脑同一个游戏的 Steam 截图文件夹。详情页新增「截图」标签，本机和云端的截图都能看。
 - 新增：在 Steam 游戏页点「Ludonimbus 云存档」，直接列出云存档的版本历史，可以恢复到任意版本，不用打开 Ludonimbus。
 - 新增：游戏来源。游戏库的封面角落用图标标出每个游戏来自哪里（Dolphin、Ryujinx 等模拟器各用所模拟机型的图标，重编译 / 移植，PC 游戏，Xbox；鼠标悬停显示名字），可以按来源筛选，或在「显示选项」里按来源分组；每个分组可以一键「全部同步」「全部备份」，同一个模拟器的游戏一起管理。标识可以关掉；在游戏的「设置」里可以把游戏放进自己起名的分组（例如手动添加的模拟器游戏）。
+- 新增：首次使用引导多了一步「在 Steam 中显示云存档状态」，可以在引导里直接安装 Steam 插件，也可以跳过。
 
 ### English
 
@@ -19,6 +20,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - New: Steam screenshot sync (off by default; turn it on in Settings → Steam → Screenshot sync). Screenshots taken in Steam are uploaded to your cloud; with "upload and download", screenshots from your other PCs go into this PC's Steam screenshot folder of the same game. The game page has a new Screenshots tab showing screenshots on this PC and in the cloud.
 - New: click "Ludonimbus Cloud Saves" on a game's page in Steam to see the version history of its cloud saves and restore any version, without opening Ludonimbus.
 - New: game sources. An icon in the corner of each cover shows where the game comes from (an emulator such as Dolphin or Ryujinx, drawn as the device it emulates; a recomp or port; a PC game; Xbox), with the name on hover. Filter the library by source, or group it by source under View options; each group has "Sync all" and "Back up all", so all games of one emulator are managed together. The badges can be turned off, and a game's Settings tab can put it in a group you name (for example an emulator game you added by hand).
+- New: the first-run guide has an optional step that installs the Steam plugin, so cloud save status shows in Steam.
 
 ## 0.5.0
 

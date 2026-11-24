@@ -4,6 +4,7 @@ import { LANGS, useI18n } from "../i18n";
 import { DISCORD_URL, docsUrl, GITHUB_URL } from "../links";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions } from "./CloudForms";
+import { MILLENNIUM_URL, SteamPluginRows, useSteamPlugin } from "./SteamPlugin";
 import { Button, Icon, Spinner, useUi } from "./ui";
 
 export type Usage = "emulators" | "recomps" | "steamThirdParty" | "multiDevice";
@@ -14,13 +15,14 @@ const USAGES: { id: Usage; icon: string }[] = [
   { id: "multiDevice", icon: "devices" },
 ];
 
-const STEPS = ["welcome", "usage", "cloud", "art", "done"] as const;
+const STEPS = ["welcome", "usage", "cloud", "art", "steam", "done"] as const;
 type Step = (typeof STEPS)[number];
 
 /**
  * First-run guide: what Ludonimbus does, what the user wants it for, then
- * a cloud and the SteamGridDB key. Every step can be skipped; closing it
- * anywhere counts as done (it can be reopened from Settings → About).
+ * a cloud, the SteamGridDB key and the Steam plugin (Millennium). Every
+ * step can be skipped; closing it anywhere counts as done (it can be
+ * reopened from Settings → About).
  */
 export function Onboarding({
   onFinish,
@@ -36,6 +38,7 @@ export function Onboarding({
   const ui = useUi();
   const { t, lang, setPref } = useI18n();
   const o = t.onboarding;
+  const p = t.steamPlugin;
   const [step, setStep] = useState<Step>(STEPS.find((s) => s === initialStep) ?? "welcome");
   const [usage, setUsage] = useState<Set<Usage>>(
     new Set(initialStep === "usage" ? ["emulators", "multiDevice"] : initialStep === "done" ? ["emulators", "steamThirdParty"] : []),
@@ -43,6 +46,7 @@ export function Onboarding({
   const [settings, setSettings] = useState<Settings | null>(null);
   const [otherCloud, setOtherCloud] = useState(false);
   const [sgdb, setSgdb] = useState<{ hasKey: boolean; keyPage: string } | null>(null);
+  const plugin = useSteamPlugin();
 
   const loadSettings = useCallback(() => api.settings().then(setSettings, (e) => ui.toast(errorText(e), "bad")), [ui]);
   const loadSgdb = useCallback(() => api.sgdbStatus().then(setSgdb, () => setSgdb(null)), []);
@@ -207,6 +211,62 @@ export function Onboarding({
             </div>
           )}
 
+          {step === "steam" && (
+            <div>
+              <h2>{o.steam.title}</h2>
+              <p className="muted">
+                {p.introBefore}{" "}
+                <button className="link" onClick={() => api.openPath(MILLENNIUM_URL)}>
+                  Millennium
+                </button>{" "}
+                {p.introAfter}
+              </p>
+              {!plugin.loaded ? (
+                <Spinner />
+              ) : !plugin.st?.steamRoot ? (
+                <div className="banner banner-info">
+                  <Icon name="steam" />
+                  <span>{o.steam.noSteam}</span>
+                </div>
+              ) : plugin.ready ? (
+                <div className="banner banner-ok">
+                  <Icon name="check" />
+                  <span>{o.steam.enabled}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="form ob-plugin">
+                    <SteamPluginRows st={plugin.st} />
+                  </div>
+                  {!plugin.st.bundled && <div className="health health-warn">{p.notBundled}</div>}
+                  {plugin.canInstall && (
+                    <>
+                      <ul className="ob-tips">
+                        {plugin.needsMillennium && <li>{p.installMillennium}</li>}
+                        <li>
+                          {p.installPlugin}
+                          {plugin.st.steamRunning ? p.closesSteam : ""}
+                        </li>
+                      </ul>
+                      {plugin.working ? (
+                        <div className="row muted small">
+                          <span className="spinner" /> {plugin.progressText}
+                        </div>
+                      ) : (
+                        <div className="row">
+                          <Button kind="primary" icon="download" onClick={plugin.install}>
+                            {plugin.needsMillennium ? p.downloadInstall : p.enablePlugin}
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+              {!plugin.ready && <p className="muted small">{o.steam.optional}</p>}
+            </div>
+          )}
+
           {step === "done" && (
             <div>
               <h2>{o.done.title}</h2>
@@ -219,6 +279,12 @@ export function Onboarding({
                   <Icon name={sgdb?.hasKey ? "check" : "x"} size={16} />
                   {sgdb?.hasKey ? o.done.artOk : o.done.artSkipped}
                 </li>
+                {plugin.st?.steamRoot && (
+                  <li className={plugin.ready ? "ok" : ""}>
+                    <Icon name={plugin.ready ? "check" : "x"} size={16} />
+                    {plugin.ready ? o.done.steamOk : o.done.steamSkipped}
+                  </li>
+                )}
               </ul>
               <p className="muted">{o.done.next}</p>
               <ul className="ob-tips">
@@ -226,10 +292,15 @@ export function Onboarding({
                 {has("recomps") && <li>{o.done.tips.recomps}</li>}
                 {has("steamThirdParty") && (
                   <li>
-                    {o.done.tips.steamThirdParty}{" "}
-                    <button className="link small" onClick={() => finish("settings")}>
-                      {o.done.openSettings}
-                    </button>
+                    {o.done.tips.steamThirdParty}
+                    {!plugin.ready && (
+                      <>
+                        {o.done.tips.steamStatus}{" "}
+                        <button className="link small" onClick={() => finish("settings")}>
+                          {o.done.openSettings}
+                        </button>
+                      </>
+                    )}
                   </li>
                 )}
                 {has("multiDevice") && <li>{o.done.tips.multiDevice}</li>}
@@ -262,7 +333,7 @@ export function Onboarding({
 
         <div className="modal-foot onboarding-foot">
           {index > 0 && step !== "done" && (
-            <Button kind="ghost" onClick={() => go(-1)}>
+            <Button kind="ghost" onClick={() => go(-1)} disabled={plugin.working}>
               {o.back}
             </Button>
           )}
@@ -272,14 +343,17 @@ export function Onboarding({
               {o.start}
             </Button>
           )}
-          {(step === "usage" || step === "cloud" || step === "art") && (
+          {(step === "usage" || step === "cloud" || step === "art" || step === "steam") && (
             <>
-              {!(step === "cloud" && connected) && !(step === "art" && sgdb?.hasKey) && step !== "usage" && (
-                <Button kind="ghost" onClick={() => go(1)}>
-                  {o.skipStep}
-                </Button>
-              )}
-              <Button kind="primary" onClick={() => go(1)}>
+              {!(step === "cloud" && connected) &&
+                !(step === "art" && sgdb?.hasKey) &&
+                !(step === "steam" && plugin.ready) &&
+                step !== "usage" && (
+                  <Button kind="ghost" onClick={() => go(1)} disabled={plugin.working}>
+                    {o.skipStep}
+                  </Button>
+                )}
+              <Button kind="primary" onClick={() => go(1)} disabled={plugin.working}>
                 {o.next}
               </Button>
             </>
