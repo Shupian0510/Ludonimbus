@@ -15,6 +15,8 @@
 | 存档规则（TrophyNX） | Ryujinx 上的 Switch 游戏、Switch 重编译游戏、Cemu 上的旷野之息 | 根据存档内容判断。规则来自社区项目 TrophyNX，运行时下载，离线时用缓存 |
 | 存档规则（Ludonimbus） | 时之笛（Longshot） | Ludonimbus 自带的规则 |
 
+存档规则不带成就图标，这些成就显示游戏自己的图标：Steam 里的图标、在 Ludonimbus 里选的图标，或者游戏程序里的图标；都没有时显示一个奖杯符号。
+
 ## 关联成就来源
 
 打开游戏详情页的「成就」标签：

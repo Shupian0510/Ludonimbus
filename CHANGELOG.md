@@ -4,6 +4,16 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.6.2
+
+### 中文
+
+- 改进：没有自己图标的成就（例如根据存档判断的时之笛、旷野之息的成就）不再显示空白方块，改为显示游戏的图标：Steam 里的图标、在 Ludonimbus 里选的图标、Steam 快捷方式的图标，或者游戏程序里的图标；都没有时显示一个奖杯符号。Ludonimbus 里的成就列表、Steam 游戏页和解锁提醒都会用上。
+
+### English
+
+- Improved: achievements without an icon of their own (such as those Ludonimbus tells from saves for Ocarina of Time and Breath of the Wild) no longer show an empty square. They show the game's icon instead: its icon in Steam, the one chosen in Ludonimbus, the Steam shortcut's icon, or the icon built into the game's program; a trophy glyph when there is none. This applies to the achievement list in Ludonimbus, the game's Steam page and unlock popups.
+
 ## 0.6.1
 
 ### 中文

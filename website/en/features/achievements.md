@@ -15,6 +15,8 @@ Achievements for emulated, recompiled and ported games: from the emulator's trop
 | Save rules (TrophyNX) | Switch games on Ryujinx, Switch recomps, Breath of the Wild on Cemu | Tells achievements from the save. Rules come from the community project TrophyNX, downloaded at runtime and cached for offline use |
 | Save rules (Ludonimbus) | Ocarina of Time on Longshot | Rules that come with Ludonimbus |
 
+Save rules have no achievement icons, so those achievements show the game's own icon: its icon in Steam, the one chosen in Ludonimbus, or the icon built into the game's program; a trophy glyph when there is none.
+
 ## Link a source
 
 Open the Achievements tab on the game's page:
