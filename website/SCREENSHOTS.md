@@ -23,6 +23,10 @@ These are made by `scripts/docs-screenshots.ps1` in the main repository: it open
 | `library-grid` | guide/what-is-ludonimbus |
 | `settings-cloud`、`add-game-scan`、`game-detail` | guide/quick-start |
 | `guide-welcome`、`guide-usage`、`guide-cloud`、`guide-art`、`guide-steam`、`guide-done` | guide/first-run |
+| `library-sources` | games/sources |
+| `game-screenshots` | features/screenshots |
+| `game-achievements`、`settings-achievements` | features/achievements |
+| `game-files`、`settings-speed` | features/game-backup |
 | `settings-cloud-google` | clouds/google-drive |
 | `settings-cloud-quark` | clouds/quark |
 | `settings-cloud-webdav` | clouds/webdav |

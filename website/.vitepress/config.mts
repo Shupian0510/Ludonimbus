@@ -125,6 +125,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '扫描文件夹', link: '/games/scan-folder' },
         { text: '手动添加', link: '/games/manual' },
         { text: '游戏位置变了', link: '/games/moved' },
+        { text: '游戏来源与分组', link: '/games/sources' },
       ],
     },
     {
@@ -134,6 +135,15 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '一键加入 Steam', link: '/steam/add-to-steam' },
         { text: '封面与 SteamGridDB', link: '/steam/artwork' },
         { text: '在 Steam 里显示云存档状态', link: '/steam/status-in-steam' },
+      ],
+    },
+    {
+      text: '不只是存档',
+      items: [
+        { text: '游戏时间', link: '/features/playtime' },
+        { text: '截图同步', link: '/features/screenshots' },
+        { text: '成就', link: '/features/achievements' },
+        { text: '游戏本体备份', link: '/features/game-backup' },
       ],
     },
     {
@@ -200,6 +210,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Scan folder', link: '/en/games/scan-folder' },
         { text: 'Add manually', link: '/en/games/manual' },
         { text: 'When a game moves', link: '/en/games/moved' },
+        { text: 'Game sources and groups', link: '/en/games/sources' },
       ],
     },
     {
@@ -209,6 +220,15 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Add to Steam', link: '/en/steam/add-to-steam' },
         { text: 'Artwork and SteamGridDB', link: '/en/steam/artwork' },
         { text: 'Cloud status inside Steam', link: '/en/steam/status-in-steam' },
+      ],
+    },
+    {
+      text: 'Beyond saves',
+      items: [
+        { text: 'Play time', link: '/en/features/playtime' },
+        { text: 'Screenshot sync', link: '/en/features/screenshots' },
+        { text: 'Achievements', link: '/en/features/achievements' },
+        { text: 'Game backup', link: '/en/features/game-backup' },
       ],
     },
     {

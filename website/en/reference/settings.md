@@ -33,11 +33,26 @@ Manual backups and locked versions are kept forever, regardless of the two setti
 |---|---|
 | Steam location | The Steam folder Ludonimbus uses, detected automatically. With several Steam installs, or when none was found: "Quick scan" looks in the registry and the usual folders on each drive (click one if it finds several); "Choose again…" lets you pick the folder Steam is installed in (it has `steam.exe`). After picking one by hand, "Detect automatically" goes back |
 | Steam account | With several Steam accounts, which account's shortcuts Ludonimbus reads and changes |
+| Screenshot sync | Off (default) / Upload this PC's screenshots / Upload, and download other PCs' screenshots; see [Screenshot sync](../features/screenshots.md) |
 | Launch wrapper | Where `ludonimbus-run.exe` is. If it says `ludonimbus-run.exe` can't be found, Steam auto-sync won't work; reinstall Ludonimbus |
 
 ### Show cloud save status in Steam
 
 Install, enable or remove the Steam plugin, and see the state of Millennium and the plugin. See [Cloud status inside Steam](../steam/status-in-steam.md).
+
+### Achievements {#achievements}
+
+| Setting | What it does |
+|---|---|
+| Show Steam's achievement popup for newly linked games | Each game can also turn popups on or off on its own Achievements tab |
+| When Steam can't show it, use a small Ludonimbus window | That window is only visible over windowed or borderless fullscreen games |
+| Test popup / Test in 8 seconds | Sends a test achievement to check that popups appear |
+| PS4 trophy key | Needed for official PS4 trophy names, kept only on this PC; shadPS4's key is used automatically when set there. See [Achievements](../features/achievements.md#ps4-trophy-key) |
+| RetroAchievements account | User name and Web API key (copy it from Settings → Keys on the RetroAchievements site); the key is kept in Windows Credential Manager |
+
+### Cloud speed test {#speed-test}
+
+Measures upload and download speed of your cloud and deletes its test files afterwards. Useful for estimating how long a [game backup](../features/game-backup.md) takes.
 
 ### Artwork (SteamGridDB)
 
@@ -62,6 +77,7 @@ Open the "Settings" tab on a game's page.
 | Setting | What it does |
 |---|---|
 | Name | The name shown in Ludonimbus |
+| Source group | The library groups games by this name; leave empty to detect it automatically. See [Game sources and groups](../games/sources.md) |
 | Auto-sync | When off, starting / quitting the game no longer syncs; manual actions (Sync now, backups) still work |
 | Upload timing | Tick "Upload when the game process exits, without waiting for the launcher to close" for launchers that stay open; needs "Game process" |
 | Save locations | Folders or files to sync, one per line. Leave empty to use the built-in rule (the grey hint shows what it uses). "Find saves…" lists folders with a similar name to tick and add; "Add folder…" lets you pick one |

@@ -22,6 +22,9 @@ export const SCENE_GAME: Record<string, string> = {
   versions: "zelda-oot-longshot",
   "game-settings": "zelda-oot-longshot",
   "art-picker": "fe-fortunes-weave",
+  "game-screenshots": "zelda-oot-longshot",
+  "game-achievements": "bloodborne-lantern",
+  "game-files": "fe-fortunes-weave",
 };
 
 /** Settings scenes and the section they scroll to. */
@@ -37,6 +40,8 @@ export const SCENE_SETTINGS: Record<string, string | null> = {
   "settings-language": "settings-language",
   "settings-sgdb": "settings-sgdb",
   "settings-steam-plugin": "settings-steam-plugin",
+  "settings-achievements": "settings-achievements",
+  "settings-speed": "settings-speed",
 };
 
 /** "Add game" scenes and their tab. */

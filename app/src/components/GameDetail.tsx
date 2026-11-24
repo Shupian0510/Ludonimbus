@@ -42,7 +42,27 @@ export function GameDetail({
   const ui = useUi();
   const t = useT();
   const g = t.game;
-  const [tab, setTab] = useState<Tab>(sceneIs("game-settings") ? "config" : "versions");
+  const [tab, setTab] = useState<Tab>(
+    sceneIs("game-settings") ? "config" : sceneIs("game-screenshots") ? "screenshots" : sceneIs("game-achievements") ? "achievements" : "versions",
+  );
+  // Docs screenshots: open on the game files card, or on the tabs.
+  useEffect(() => {
+    const target = sceneIs("game-files")
+      ? () => document.getElementById("game-backup")
+      : sceneIs("game-screenshots", "game-achievements")
+        ? () => document.querySelector(".detail-body .tabs")
+        : null;
+    if (!target) return;
+    setTimeout(() => {
+      const el = target();
+      if (!el) return;
+      el.scrollIntoView({ block: "start" });
+      // Leave room for the sticky action bar above the content.
+      let p = el.parentElement;
+      while (p && !(p.scrollHeight > p.clientHeight && getComputedStyle(p).overflowY !== "visible")) p = p.parentElement;
+      (p ?? document.scrollingElement)?.scrollBy(0, -110);
+    }, 600);
+  }, []);
   const [versionsKey, setVersionsKey] = useState(0);
   const [heroFailed, setHeroFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);

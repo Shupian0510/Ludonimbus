@@ -32,12 +32,12 @@ $Repo = Split-Path -Parent $PSScriptRoot
 
 $all = @(
     # Library, game page
-    "library-grid", "game-detail", "game-detail-steam", "game-detail-conflict", "game-detail-pending",
-    "versions", "game-settings", "art-picker",
+    "library-grid", "library-sources", "game-detail", "game-detail-steam", "game-detail-conflict", "game-detail-pending",
+    "versions", "game-settings", "art-picker", "game-screenshots", "game-achievements", "game-files",
     # Settings
     "settings", "settings-cloud", "settings-cloud-google", "settings-cloud-folder", "settings-cloud-migrate",
     "settings-cloud-webdav", "settings-cloud-s3", "settings-cloud-quark", "settings-language", "settings-sgdb",
-    "settings-steam-plugin",
+    "settings-steam-plugin", "settings-achievements", "settings-speed",
     # Add game
     "add-game-scan", "add-game-scan-folder", "add-game-cloud", "add-game-manual", "save-finder", "add-to-steam",
     # First-run guide

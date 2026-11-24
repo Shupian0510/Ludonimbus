@@ -50,8 +50,10 @@ Ludonimbus gives those games the same experience:
 - 🕘 **Every version kept**: restore, export or lock any version. Conflicts keep both sides.
 - ☁️ **Your own cloud**: Google Drive, NAS / WebDAV, S3, Quark or any folder. No third-party servers.
 - 🔍 **Finds games for you**: scans Steam shortcuts, Epic / GOG / Xbox, emulators and thousands of PC games.
-- 🎮 **Feels like part of Steam**: status on the game page, one-click *Add to Steam* with SteamGridDB artwork.
+- 🎮 **Feels like part of Steam**: status and version history on the game page, one-click *Add to Steam* with SteamGridDB artwork.
 - 🧳 **Nothing gets lost**: reinstalling, moving a game, updating an emulator or going offline doesn't break sync.
+- 🏆 **More than saves**: play time added up over your PCs, Steam screenshots on every PC, and achievements for emulators and recomps with Steam's own popup.
+- 📦 **Back up whole games**: keep a game's files in your cloud and install it again on any PC, from Ludonimbus or the Steam game page.
 
 <table>
   <tr>
@@ -145,10 +147,10 @@ More: [FAQ and troubleshooting](https://shupian0510.github.io/Ludonimbus/en/refe
 
 ## Roadmap
 
-- [ ] Sync play time and Steam screenshots across PCs
-- [ ] Version list inside Steam
-- [ ] Back up the games themselves to the cloud
-- [ ] Achievements
+- [x] Sync play time and Steam screenshots across PCs (0.6)
+- [x] Version list inside Steam (0.6)
+- [x] Back up the games themselves to the cloud (0.6)
+- [x] Achievements (0.6)
 - [ ] One-click Baidu Netdisk sign-in (waiting for Baidu's review)
 
 ## Contributing

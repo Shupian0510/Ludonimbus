@@ -13,6 +13,8 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：在 Steam 游戏页点「Ludonimbus 云存档」，直接列出云存档的版本历史，可以恢复到任意版本，不用打开 Ludonimbus。
 - 新增：游戏来源。游戏库的封面角落用图标标出每个游戏来自哪里（Dolphin、Ryujinx 等模拟器各用所模拟机型的图标，重编译 / 移植，PC 游戏，Xbox；鼠标悬停显示名字），可以按来源筛选，或在「显示选项」里按来源分组；每个分组可以一键「全部同步」「全部备份」，同一个模拟器的游戏一起管理。标识可以关掉；在游戏的「设置」里可以把游戏放进自己起名的分组（例如手动添加的模拟器游戏）。
 - 新增：首次使用引导多了一步「在 Steam 中显示云存档状态」，可以在引导里直接安装 Steam 插件，也可以跳过。
+- 新增：游戏本体备份。在游戏详情页的「游戏本体」卡片把游戏备份到云盘（不含存档、日志和缓存），以后只上传改动的部分。模拟器游戏分成程序、游戏文件、设置和 mods 几部分（可选再加密钥和固件），几个游戏共用的模拟器只传一次。游戏删了或换了电脑，可以在 Ludonimbus 或 Steam 游戏页「从云端安装」，装好后存档自动拉取。设置里新增「云盘测速」；百度网盘非会员下载很慢，备份前会提示。
+- 新增：成就。读取 shadPS4、Lantern、RPCS3 的奖杯和 RetroAchievements 的记录，也能根据存档判断成就（Switch 游戏用社区的 TrophyNX 规则，时之笛 Longshot 用 Ludonimbus 自带的规则）。Steam 游戏页显示进度和成就列表，游戏中解锁时弹出 Steam 的成就提醒，记录在多台电脑之间同步。PS4 游戏的官方奖杯名称需要在 shadPS4 或「设置 → 成就」里填写 PS4 奖杯密钥，没有时显示编号和图标。
 
 ### English
 
@@ -21,6 +23,8 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - New: click "Ludonimbus Cloud Saves" on a game's page in Steam to see the version history of its cloud saves and restore any version, without opening Ludonimbus.
 - New: game sources. An icon in the corner of each cover shows where the game comes from (an emulator such as Dolphin or Ryujinx, drawn as the device it emulates; a recomp or port; a PC game; Xbox), with the name on hover. Filter the library by source, or group it by source under View options; each group has "Sync all" and "Back up all", so all games of one emulator are managed together. The badges can be turned off, and a game's Settings tab can put it in a group you name (for example an emulator game you added by hand).
 - New: the first-run guide has an optional step that installs the Steam plugin, so cloud save status shows in Steam.
+- New: game backup. Back up a game to your cloud from the "Game files" card on its page (saves, logs and caches left out); later backups upload only what changed. Emulator games are split into the program, the game files, and settings and mods (optionally keys and firmware too), so an emulator shared by several games is uploaded once. After deleting a game or on a new PC, "Install from the cloud" in Ludonimbus or on the game's Steam page puts it back, then pulls the saves. Settings has a new cloud speed test; Baidu Netdisk without a membership downloads slowly, and you're told before backing up.
+- New: achievements. Ludonimbus reads trophies from shadPS4, Lantern and RPCS3 and your RetroAchievements records, and can tell achievements from saves (community TrophyNX rules for Switch games, Ludonimbus's own rules for Ocarina of Time on Longshot). The game's Steam page shows progress and the list, Steam's achievement popup appears when one unlocks in game, and records sync between your PCs. Official PS4 trophy names need a PS4 trophy key, set in shadPS4 or in Settings → Achievements; without one you see numbers and icons.
 
 ## 0.5.0
 

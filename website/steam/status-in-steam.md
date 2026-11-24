@@ -5,9 +5,15 @@
 ![Steam 游戏页里的 Ludonimbus 云存档状态](/screenshots/zh-CN/steam-play-bar-status.png)
 
 - 从 Steam 启动、游戏中、退出上传时都会实时更新，例如「已是最新 · 5 分钟前」「游戏运行中，退出后自动上传」「正在上传存档…」「存档冲突，点击选择保留哪一份」。
-- 点右边的按钮立即同步，点状态本身会打开 Ludonimbus 里的这个游戏。
+- 点右边的按钮立即同步。点状态本身会列出云存档的[版本历史](../sync/versions.md#restore-from-steam)，可以直接恢复；存档冲突或快捷方式失效时打开 Ludonimbus 处理。
 - 鼠标悬停能看到更多信息：上次同步的时间和设备、云端最新的版本、等待上传的版本数。
 - 只对 Ludonimbus 管理的游戏显示，普通 Steam 游戏不受影响。
+
+插件还会：
+
+- 把 Steam 自己的「游戏时间」换成所有电脑的总时间，见[游戏时间](../features/playtime.md)；
+- 显示「成就 x/y」和右栏的「成就」区块，解锁时弹出 Steam 的成就提醒，见[成就](../features/achievements.md)；
+- 游戏文件不在本机、云端有备份时显示「本机没有游戏文件 · 点击从云端安装」，见[游戏本体备份](../features/game-backup.md)。
 
 ## 安装
 

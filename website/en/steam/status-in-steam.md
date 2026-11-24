@@ -5,9 +5,15 @@ Once installed, the play bar of every Ludonimbus-managed game in your Steam libr
 ![Ludonimbus cloud save status on a Steam game page](/screenshots/zh-CN/steam-play-bar-status.png)
 
 - It updates live while launching, playing and uploading, for example "up to date · 5 minutes ago", "game running, uploads after exit", "uploading saves…" or "conflict, click to choose which to keep".
-- Click the button on the right to sync now; click the status itself to open the game in Ludonimbus.
+- Click the button on the right to sync now. Click the status itself for the cloud save [version history](../sync/versions.md#restore-from-steam), where you can restore any version; with a save conflict or a broken shortcut it opens Ludonimbus instead.
 - Hover for details: when and from which device it last synced, the newest version in the cloud, and how many versions are waiting to upload.
 - It only appears for games Ludonimbus manages; regular Steam games are not affected.
+
+The plugin also:
+
+- shows the total over all your PCs as Steam's own "Play time", see [Play time](../features/playtime.md);
+- shows "Achievements x/y" and an Achievements section in the right column, with Steam's popup when one unlocks, see [Achievements](../features/achievements.md);
+- says "Game files missing · Click to install from the cloud" when the game's files aren't on this PC and the cloud has a backup, see [Game backup](../features/game-backup.md).
 
 ## Install
 

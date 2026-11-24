@@ -28,6 +28,10 @@ Click "Restore" next to a version and confirm to put the game's saves back to th
 
 If the current saves aren't in the cloud yet, they are backed up first as a "Before restore" version, so nothing is lost. Restored the wrong one? Restore again. You can't restore while the game is running.
 
+## Restore from Steam
+
+With the [Steam plugin](../steam/status-in-steam.md), click "Ludonimbus Cloud Saves" on the game's Steam page for the same version list (time, device, file count and size, note, and the Latest / On this PC / Locked tags). Pick a version, click Restore and confirm; the restore runs in Ludonimbus and Steam shows "Syncing…" until it's done. The dialog also has "Sync now" and "Open in Ludonimbus".
+
 ## Export zip
 
 Save a version as a zip file, for example to keep a copy elsewhere or share it.
