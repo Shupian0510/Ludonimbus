@@ -38,6 +38,9 @@ pub struct FixReport {
     /// Settings files that now name the new places (each kept as
     /// `<name>.ludonimbus-bak` first).
     pub settings: Vec<String>,
+    /// The launcher to open to build the game from the restored files (what
+    /// it builds is not backed up).
+    pub build: Option<String>,
     pub shortcut: ShortcutFix,
 }
 
@@ -130,7 +133,7 @@ fn fix_settings(g: &GameEntry, m: &Manifest, bases: &Bases, program: &Path) -> V
     let roots = emugames::roots(a, Some(program));
     let mut seen = HashSet::new();
     let mut done = Vec::new();
-    for pf in a.user_files_from.iter().chain(&a.program_from).chain(&a.config_from) {
+    for pf in a.user_files_from.iter().chain(&a.config_from) {
         let Some(file) = components::settings_file(pf, &roots) else { continue };
         if !seen.insert(file.to_string_lossy().to_lowercase()) {
             continue;
@@ -162,10 +165,15 @@ fn same(a: &Path, b: &Path) -> bool {
 pub fn fix_paths(key: &str, m: &Manifest, targets: &Targets) -> Result<FixReport> {
     let bases: Bases = bases_for(m, targets);
     let program = m.components.iter().find(|c| matches!(c.kind, Kind::Program | Kind::Folder));
+    let build = program.and_then(|c| c.build.as_deref()).and_then(|b| bases.resolve(b).ok());
+    let mut unbuilt_exe = None;
     if let Some(exe) = program.and_then(|c| c.exe.as_deref()) {
         let new = bases.resolve(exe)?;
         if new.is_file() {
             games::set_exe(key, &new)?;
+        } else if build.is_some() {
+            // The launcher builds it there.
+            unbuilt_exe = Some(new);
         }
     }
     let old_program = program.and_then(|c| c.bases.get("program")).map(PathBuf::from);
@@ -176,6 +184,9 @@ pub fn fix_paths(key: &str, m: &Manifest, targets: &Targets) -> Result<FixReport
         .and_then(|s| Some((original(m, s)?, bases.resolve(s).ok()?)));
     let mut args_changed = false;
     let g = games::update_game(key, |g| {
+        if let Some(e) = &unbuilt_exe {
+            g.exe = Some(e.clone());
+        }
         if let (Some(old), Some(i)) = (&old_program, &g.install) {
             if same(i, old) {
                 g.install = Some(targets.program.clone());
@@ -200,7 +211,13 @@ pub fn fix_paths(key: &str, m: &Manifest, targets: &Targets) -> Result<FixReport
     }
     let settings = fix_settings(&g, m, &bases, &targets.program);
     let shortcut = fix_shortcut(&g);
-    Ok(FixReport { exe: g.exe.as_ref().map(|e| e.display().to_string()), args_changed, settings, shortcut })
+    Ok(FixReport {
+        exe: g.exe.as_ref().map(|e| e.display().to_string()),
+        args_changed,
+        settings,
+        build: build.map(|b| b.display().to_string()),
+        shortcut,
+    })
 }
 
 fn fix_shortcut(g: &GameEntry) -> ShortcutFix {

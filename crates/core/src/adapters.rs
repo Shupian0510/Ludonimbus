@@ -88,14 +88,16 @@ pub struct Adapter {
     /// disc image a recompilation reads).
     #[serde(default)]
     pub user_files: Vec<String>,
-    /// Game backups: game files, more program folders and settings whose
-    /// places a settings file names (a game folder set in a launcher).
+    /// Game backups: game files and settings whose places a settings file
+    /// names (a game folder set in a launcher).
     #[serde(default)]
     pub user_files_from: Vec<PathsFrom>,
     #[serde(default)]
-    pub program_from: Vec<PathsFrom>,
-    #[serde(default)]
     pub config_from: Vec<PathsFrom>,
+    /// Game backups, recompilations: the launcher builds the game from the
+    /// player's game files on this PC, so what it builds is not backed up.
+    #[serde(default)]
+    pub build: Option<Build>,
     /// Game backups, emulators: folders of add-ons (Cemu's graphic packs)
     /// that belong to the game whose id their description file lists.
     #[serde(default)]
@@ -114,9 +116,21 @@ pub struct PathsFrom {
     /// JSON keys, `/`-separated; `*` stands for every element.
     #[serde(default)]
     pub json: Vec<String>,
-    /// Left out of the folders found (patterns relative to each).
+    /// Places next to each one found (`../exefs` beside a `romfs` folder).
     #[serde(default)]
-    pub exclude: Vec<String>,
+    pub also: Vec<String>,
+}
+
+/// A launcher that builds the game on this PC.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Build {
+    /// The program to open to build it, `{root}/…`.
+    #[serde(default)]
+    pub launcher: Option<String>,
+    /// What it builds, `{root}/…` patterns.
+    #[serde(default)]
+    pub output: Vec<String>,
 }
 
 /// Add-on folders, each with a description file listing the games it is for.

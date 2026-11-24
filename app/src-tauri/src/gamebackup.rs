@@ -288,8 +288,9 @@ fn restore_defaults(cfg: &config::AppConfig, g: &GameEntry, m: &Manifest) -> Res
         .chain(cfg.games.iter().filter(|o| o.key != g.key && o.adapter.is_some() && o.adapter == g.adapter))
         .filter(|o| o.exe.as_ref().is_some_and(|e| e.is_file()))
         .find_map(ludonimbus_core::spec::install_dir);
+    // The exe tells the versions apart; for a game its launcher builds, the launcher.
     let installed_same = match (program, &installed) {
-        (Some(p), Some(dir)) => p.exe.as_deref().is_some_and(|exe| {
+        (Some(p), Some(dir)) => p.build.as_deref().or(p.exe.as_deref()).is_some_and(|exe| {
             let backed = p.files.iter().find(|f| f.p == exe).map(|f| f.h.clone());
             let local = components::split(exe).and_then(|(_, rest)| restore::safe_join(dir, rest).ok()).and_then(|f| file_hash(&f));
             backed.is_some() && backed == local
@@ -533,6 +534,13 @@ pub async fn game_backup_restore(app: AppHandle, key: String, version: String, t
                                 notes.push(tr!("没能更新 Steam 快捷方式：{e}", "Couldn't update the Steam shortcut: {e}"))
                             }
                             _ => {}
+                        }
+                        if let Some(l) = &f.build {
+                            let name = Path::new(l).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| l.clone());
+                            notes.push(tr!(
+                                "这个游戏由启动器用你的游戏文件现场编译，编译出来的文件没有备份：玩之前打开 {name} 编译一次（已经编译过就不用）",
+                                "This game is built by its launcher from your game files, and what it builds isn't backed up: open {name} and build it once before playing (not needed if it's already built)"
+                            ));
                         }
                         fixed = serde_json::to_value(&f).ok();
                     }

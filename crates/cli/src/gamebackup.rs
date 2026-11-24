@@ -241,11 +241,16 @@ fn dry_run(cfg: &config::AppConfig, key: &str, root: Option<std::path::PathBuf>,
             c.excluded_files,
             human(c.excluded_bytes)
         );
-        if std::env::var_os("LUDONIMBUS_DRY_RUN_FILES").is_some() {
-            for f in c.files.iter().take(40) {
+        if let Some(l) = &c.build {
+            println!("          {}", ludonimbus_core::tr!("由 {l} 现场编译，编译出来的文件不备份", "Built by {l} on each PC; what it builds isn't backed up"));
+        }
+        // How many files of each part to list (a number; any other value: 40).
+        if let Some(v) = std::env::var_os("LUDONIMBUS_DRY_RUN_FILES") {
+            let n = v.to_string_lossy().parse().unwrap_or(40);
+            for f in c.files.iter().take(n) {
                 println!("    {} {}", human(f.size), f.logical);
             }
-            if c.files.len() > 40 {
+            if c.files.len() > n {
                 println!("    … 共 {} 个", c.files.len());
             }
         }

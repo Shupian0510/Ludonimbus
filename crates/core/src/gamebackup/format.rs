@@ -85,6 +85,10 @@ pub struct Component {
     /// Content: the file or folder the launch options name.
     #[serde(default)]
     pub source: Option<String>,
+    /// Program: the launcher that builds the game from its files on each PC
+    /// (what it builds is not backed up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
     pub files: Vec<FileEntry>,
     /// Folders no file creates (empty, or only excluded content).
     #[serde(default)]
@@ -267,6 +271,7 @@ mod tests {
                 bases: BTreeMap::from([("content".into(), "D:\\ROMs".into())]),
                 exe: None,
                 source: Some("{content}/g.wua".into()),
+                build: None,
                 files: vec![
                     FileEntry { p: "{content}/a".into(), s: 3, h: "x".into(), m: 1, n: 0 },
                     FileEntry { p: "{content}/b/c".into(), s: 5, h: "y".into(), m: 2, n: 7 },

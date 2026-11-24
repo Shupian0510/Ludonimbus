@@ -386,6 +386,7 @@ pub fn backup(
             (Some(mut prev), _) => {
                 prev.name = p.name.clone();
                 prev.version = p.version.clone().or(prev.version);
+                prev.build = p.build.clone();
                 prev
             }
             (None, Some((chunks, hashes))) => {
@@ -399,6 +400,7 @@ pub fn backup(
                     bases: p.bases.clone(),
                     exe: p.exe.clone(),
                     source: p.source.clone(),
+                    build: p.build.clone(),
                     files: p
                         .files
                         .iter()

@@ -77,15 +77,22 @@ pub fn exe_version(_: &Path) -> Option<String> {
     None
 }
 
+/// `version` of a `package.json` in the folder (Lantern Engine's release).
+fn package_json(folder: &Path) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(folder.join("package.json")).ok()?).ok()?;
+    v["version"].as_str().filter(|s| in_name(s).as_deref() == Some(*s)).map(str::to_string)
+}
+
 /// Version of a program: recompilations are usually unpacked into a folder
-/// named after the release; emulators declare it in their exe.
+/// named after the release (or say it in a `package.json`); emulators
+/// declare it in their exe.
 pub fn program(folder: &Path, exe: Option<&Path>, emulator: bool) -> Option<String> {
     let from_name = || folder.file_name().and_then(|n| in_name(&n.to_string_lossy()));
     let from_exe = || exe.and_then(exe_version);
     if emulator {
         from_exe().or_else(from_name)
     } else {
-        from_name().or_else(from_exe)
+        from_name().or_else(|| package_json(folder)).or_else(from_exe)
     }
 }
 
@@ -210,6 +217,11 @@ mod tests {
         assert_eq!(in_name("x64"), None);
         assert_eq!(tidy([2, 6, 0, 0]), "2.6");
         assert_eq!(tidy([1, 0, 3, 0]), "1.0.3");
+        let tmp = tempfile::tempdir().unwrap();
+        let bb = tmp.path().join("BloodbornePC");
+        std::fs::create_dir_all(&bb).unwrap();
+        std::fs::write(bb.join("package.json"), r#"{ "version": "0.9.43", "engine": "x" }"#).unwrap();
+        assert_eq!(program(&bb, None, false).as_deref(), Some("0.9.43"));
     }
 
     #[test]

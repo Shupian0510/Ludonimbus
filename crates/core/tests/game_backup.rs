@@ -11,8 +11,9 @@
 //!   emulator stored once, a renamed big file not uploaded again, restoring
 //!   to new folders, reusing an installed emulator, rewriting the launch
 //!   options, cleaning up across games;
-//! - a recompilation whose game files are where its `.ini` says: backed up
-//!   as game files, and the `.ini` names their new place after a restore.
+//! - a recompilation that its launcher builds: what it builds is left out,
+//!   the game files are where its `.ini` says, which names their new place
+//!   after a restore.
 
 use ludonimbus_core::cloud::local::LocalFolder;
 use ludonimbus_core::cloud::store::Store;
@@ -485,17 +486,22 @@ fn emulator_part(tmp: &Path, store: &dyn Store) {
 }
 
 // ---------------------------------------------------------------------------
-// A recompilation whose game files are where its settings file says
+// A recompilation that its launcher builds from the game files, which are
+// where its settings file says
 
 fn settings_file_part(tmp: &Path, store: &dyn Store) {
     let prog = tmp.join("recomp/fefw-recomp-0.2.7");
     let romfs = tmp.join("dumps/romfs");
+    write(&prog.join("fefw-launcher.exe"), &random(100_000, 30));
+    // Built from the game: the program, an unpacked copy of exefs, the build state.
     write(&prog.join("fefw.exe"), &random(200_000, 31));
-    write(&prog.join("exefs/main"), &random(50_000, 32));
+    write(&prog.join("exefs/main"), &random(60_000, 32));
+    write(&prog.join("build/state.json"), b"{}");
     write(&prog.join("save/slot.sav"), b"progress");
+    write(&tmp.join("dumps/exefs/main"), &random(50_000, 34));
     write(&romfs.join("data.bin"), &random(400_000, 33));
     write(&romfs.join("sub/a.txt"), b"text");
-    let ini = format!("[paths]\nromfs = {}\nfullscreen = 1\n", romfs.display());
+    let ini = format!("[fs]\nexefs = {}\nromfs = {}\nfullscreen = 1\n", prog.join("exefs").display(), romfs.display());
     write(&prog.join("fefw.ini"), ini.as_bytes());
     let g = GameEntry {
         key: "fefw".into(),
@@ -515,19 +521,29 @@ fn settings_file_part(tmp: &Path, store: &dyn Store) {
     let (v, _, _, _) = created(run(store, &g, &opts(None)));
     let m = remote::read_manifest(store, "fefw", &v).unwrap();
     let paths = |k: Kind| m.component(k).map(|c| c.files.iter().map(|f| f.p.clone()).collect::<Vec<_>>()).unwrap_or_default();
-    assert_eq!(paths(Kind::Content), ["{content}/romfs/data.bin", "{content}/romfs/sub/a.txt", "{program}/exefs/main"]);
+    assert_eq!(paths(Kind::Content), ["{content}/exefs/main", "{content}/romfs/data.bin", "{content}/romfs/sub/a.txt"]);
     assert_eq!(paths(Kind::Config), ["{program}/fefw.ini"]);
-    assert_eq!(paths(Kind::Program), ["{program}/fefw.exe"]);
+    assert_eq!(paths(Kind::Program), ["{program}/fefw-launcher.exe"]);
+    let program = m.component(Kind::Program).unwrap();
+    assert_eq!(program.build.as_deref(), Some("{program}/fefw-launcher.exe"));
+    assert_eq!(program.exe.as_deref(), Some("{program}/fefw.exe"));
 
-    // Restored elsewhere: the ini names the new place, the old one is kept.
+    // Restored elsewhere: the ini names the new places (the old one is kept),
+    // the game points at where the launcher will build it.
     let (new_prog, new_dumps) = (tmp.join("new/fefw"), tmp.join("new/dumps"));
     restore_to(store, "fefw", &v, &to(&new_prog, Some(&new_dumps)));
     same_file(&romfs.join("data.bin"), &new_dumps.join("romfs/data.bin"));
+    same_file(&tmp.join("dumps/exefs/main"), &new_dumps.join("exefs/main"));
+    assert!(!new_prog.join("fefw.exe").exists() && !new_prog.join("exefs").exists());
     let fix = install::fix_paths("fefw", &m, &to(&new_prog, Some(&new_dumps))).unwrap();
     assert_eq!(fix.settings.len(), 1, "{:?}", fix.settings);
-    let text = std::fs::read_to_string(new_prog.join("fefw.ini")).unwrap();
     let unify = |s: String| s.replace('/', "\\").to_lowercase();
-    assert_eq!(unify(text), unify(format!("[paths]\nromfs = {}\nfullscreen = 1\n", new_dumps.join("romfs").display())));
+    assert_eq!(unify(fix.build.clone().unwrap()), unify(new_prog.join("fefw-launcher.exe").display().to_string()));
+    let exe = config::load().unwrap().game("fefw").unwrap().exe.clone().unwrap();
+    assert_eq!(unify(exe.display().to_string()), unify(new_prog.join("fefw.exe").display().to_string()));
+    let text = std::fs::read_to_string(new_prog.join("fefw.ini")).unwrap();
+    let want = format!("[fs]\nexefs = {}\nromfs = {}\nfullscreen = 1\n", new_prog.join("exefs").display(), new_dumps.join("romfs").display());
+    assert_eq!(unify(text), unify(want));
     assert_eq!(std::fs::read_to_string(new_prog.join("fefw.ini.ludonimbus-bak")).unwrap(), ini);
     // Nothing more to change the second time.
     assert!(install::fix_paths("fefw", &m, &to(&new_prog, Some(&new_dumps))).unwrap().settings.is_empty());

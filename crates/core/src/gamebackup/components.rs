@@ -160,6 +160,8 @@ pub struct Planned {
     pub exe: Option<String>,
     pub source: Option<String>,
     pub bases: BTreeMap<String, String>,
+    /// Program: the launcher that builds the game from its files.
+    pub build: Option<String>,
     pub excluded_files: u64,
     pub excluded_bytes: u64,
     pub skipped_links: u64,
@@ -364,8 +366,47 @@ pub fn paths_from(pf: &PathsFrom, roots: &BTreeMap<String, PathBuf>) -> Vec<Path
                 base.join(p)
             }
         })
+        .flat_map(|p| {
+            let also: Vec<PathBuf> = pf.also.iter().map(|a| join_rel(&p, a)).collect();
+            std::iter::once(p).chain(also)
+        })
         .filter(|p| p.exists())
         .collect()
+}
+
+/// `base` joined with a relative path (`..` goes up a folder).
+fn join_rel(base: &Path, rel: &str) -> PathBuf {
+    let mut p = base.to_path_buf();
+    for part in rel.split(['/', '\\']).filter(|s| !s.is_empty() && *s != ".") {
+        if part == ".." {
+            p.pop();
+        } else {
+            p.push(part);
+        }
+    }
+    p
+}
+
+/// What a launcher builds on this PC from the game files, as `{root}/…`
+/// patterns, and the program that builds it: from the rule, and from the
+/// `prepare` step of a RecompLauncher package's `recomplauncher.json`.
+pub fn build_of(adapter: Option<&Adapter>, root: &Path, roots: &BTreeMap<String, PathBuf>) -> (Option<PathBuf>, Vec<String>) {
+    let rule = adapter.and_then(|a| a.build.as_ref());
+    let mut launcher = rule.and_then(|b| b.launcher.as_deref()).and_then(|l| spec::expand(l, roots).ok()).filter(|p| p.is_file());
+    let mut output: Vec<String> = rule.map(|b| b.output.clone()).unwrap_or_default();
+    let manifest = std::fs::read(root.join("recomplauncher.json")).ok().and_then(|b| serde_json::from_str::<serde_json::Value>(String::from_utf8_lossy(&b).trim_start_matches('\u{feff}')).ok());
+    if let Some(prepare) = manifest.as_ref().map(|v| &v["prepare"]) {
+        let strings = |v: &serde_json::Value| v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>();
+        if launcher.is_none() {
+            launcher = strings(&prepare["program"]).iter().map(|p| root.join(p)).find(|p| p.is_file());
+        }
+        for d in strings(&prepare["done"]) {
+            if !output.contains(&d) {
+                output.push(d);
+            }
+        }
+    }
+    (launcher, output)
 }
 
 /// Add-on folders whose description file lists this game's id.
@@ -428,30 +469,19 @@ impl Builder<'_> {
         self.push(kind, name, version, list, Vec::new(), None, source, (0, 0, 0));
     }
 
-    /// A component made of folders (minus their excludes and taken files);
-    /// the first one must exist.
-    fn add_dirs(&mut self, kind: Kind, name: String, version: Option<String>, dirs: &[(PathBuf, Vec<String>)], exe: Option<&Path>) -> Result<()> {
+    /// A component made of one folder (minus excludes and taken files).
+    fn add_dir(&mut self, kind: Kind, name: String, version: Option<String>, dir: &Path, exclude: &[String], exe: Option<&Path>) -> Result<()> {
         let mut skip: HashSet<String> = self.taken.clone();
         skip.extend(self.saves.iter().cloned());
-        let (mut list, mut empty_dirs, mut counts) = (Vec::new(), Vec::new(), (0, 0, 0));
-        for (i, (dir, exclude)) in dirs.iter().enumerate() {
-            if i > 0 && !dir.is_dir() {
-                continue;
-            }
-            let sc = scan::scan_skip(dir, exclude, &skip)?;
-            for ScannedFile { abs, size, mtime, nanos, .. } in sc.files {
-                let k = path_key(&abs);
-                if !self.taken.insert(k.clone()) {
-                    continue;
-                }
-                skip.insert(k);
-                list.push(PlannedFile { logical: self.bases.tokenize(&abs), abs, size, mtime, nanos });
-            }
-            empty_dirs.extend(sc.dirs.iter().map(|d| self.bases.tokenize(&dir.join(d))));
-            counts = (counts.0 + sc.excluded_files, counts.1 + sc.excluded_bytes, counts.2 + sc.skipped_links);
+        let sc = scan::scan_skip(dir, exclude, &skip)?;
+        let mut list = Vec::new();
+        for ScannedFile { abs, size, mtime, nanos, .. } in sc.files {
+            self.taken.insert(path_key(&abs));
+            list.push(PlannedFile { logical: self.bases.tokenize(&abs), abs, size, mtime, nanos });
         }
-        let exe = exe.filter(|e| dirs.iter().any(|(d, _)| e.starts_with(d))).map(|e| self.bases.tokenize(e));
-        self.push(kind, name, version, list, empty_dirs, exe, None, counts);
+        let dirs = sc.dirs.iter().map(|d| self.bases.tokenize(&dir.join(d))).collect();
+        let exe = exe.filter(|e| e.starts_with(dir)).map(|e| self.bases.tokenize(e));
+        self.push(kind, name, version, list, dirs, exe, None, (sc.excluded_files, sc.excluded_bytes, sc.skipped_links));
         Ok(())
     }
 
@@ -474,7 +504,7 @@ impl Builder<'_> {
         let bases = self
             .bases
             .recorded(files.iter().map(|f| f.logical.as_str()).chain(dirs.iter().map(String::as_str)).chain(source.iter().map(String::as_str)));
-        self.out.push(Planned { kind, name, version, files, dirs, exe, source, bases, excluded_files, excluded_bytes, skipped_links });
+        self.out.push(Planned { kind, name, version, files, dirs, exe, source, bases, build: None, excluded_files, excluded_bytes, skipped_links });
     }
 }
 
@@ -552,7 +582,7 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
         for pf in a.config_from.iter() {
             files.extend(paths_from(pf, &roots).iter().flat_map(|p| files_under(p)));
         }
-        for pf in a.user_files_from.iter().chain(&a.program_from).chain(&a.config_from) {
+        for pf in a.user_files_from.iter().chain(&a.config_from) {
             files.extend(settings_file(pf, &roots));
         }
         if let Some(packs) = &a.game_packs {
@@ -576,6 +606,12 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
     let mut exclude: Vec<String> = scan::DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     exclude.extend(scan::save_excludes(game, &root));
     exclude.extend(opts.user_exclude.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    // What the launcher builds from the game files is built again after a
+    // restore (its folders are not recreated empty either).
+    let (launcher, built) = build_of(adapter, &root, &roots);
+    let built = rel_patterns(&root, &built, &roots);
+    let built_dirs: Vec<String> = built.iter().filter_map(|p| p.strip_suffix("/**")).map(|d| format!("{{program}}/{}", d.to_lowercase())).collect();
+    exclude.extend(built);
     match adapter {
         Some(a) => {
             exclude.extend(rel_patterns(&root, &a.saves, &roots));
@@ -586,22 +622,23 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
             }
             if !skip(Kind::Program) {
                 let version = version::program(&root, game.exe.as_deref(), a.is_emulator());
-                // More program folders a settings file names (a launcher's built game).
-                let mut dirs = vec![(root.clone(), exclude.clone())];
-                for pf in &a.program_from {
-                    let mut ex: Vec<String> = scan::DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
-                    ex.extend(pf.exclude.iter().cloned());
-                    dirs.extend(paths_from(pf, &roots).into_iter().filter(|p| p.is_dir()).map(|p| (p, ex.clone())));
-                }
-                b.add_dirs(Kind::Program, program_name(a), version, &dirs, game.exe.as_deref())?;
+                b.add_dir(Kind::Program, program_name(a), version, &root, &exclude, game.exe.as_deref())?;
             }
         }
         None => {
             if !skip(Kind::Folder) {
                 let version = game.exe.as_deref().and_then(|e| version::xbox(e).or_else(|| version::exe_version(e)));
-                b.add_dirs(Kind::Folder, crate::tr!("整个文件夹", "Whole folder"), version, &[(root.clone(), exclude.clone())], game.exe.as_deref())?;
+                b.add_dir(Kind::Folder, crate::tr!("整个文件夹", "Whole folder"), version, &root, &exclude, game.exe.as_deref())?;
             }
         }
+    }
+    let token = launcher.map(|l| b.bases.tokenize(&l)).filter(|t| t.starts_with("{program}/"));
+    if let Some(p) = b.out.iter_mut().find(|c| matches!(c.kind, Kind::Program | Kind::Folder)) {
+        p.dirs.retain(|d| {
+            let d = d.to_lowercase();
+            !built_dirs.iter().any(|b| d == *b || d.starts_with(&format!("{b}/")))
+        });
+        p.build = token;
     }
     let mut out = b.out;
     out.sort_by_key(|c| c.kind);
