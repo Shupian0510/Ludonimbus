@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
+const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 pub const SCOPES: &str = "openid email https://www.googleapis.com/auth/drive.file";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -152,6 +153,9 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
         ])
         .map_err(describe)?
         .into_json()?;
+    if !grants_drive(&resp) {
+        return Err(no_drive_scope());
+    }
     let refresh_token = resp["refresh_token"]
         .as_str()
         .ok_or_else(|| anyhow!(crate::tr!("Google 没有返回 refresh token", "Google returned no refresh token")))?
@@ -191,18 +195,36 @@ pub fn refresh(agent: &ureq::Agent, client: &GoogleClient, refresh_token: &str) 
 /// Map ureq errors: transport problems become [`super::Unavailable`].
 pub fn describe(e: ureq::Error) -> anyhow::Error {
     match e {
-        ureq::Error::Status(code, resp) => {
-            let body = resp.into_string().unwrap_or_default();
-            if code == 400 && body.contains("invalid_grant") {
-                anyhow!(crate::tr!("Google 登录已失效（{code}），请在设置里重新连接 Google Drive", "The Google sign-in has expired ({code}). Reconnect Google Drive in Settings"))
-            } else if code >= 500 {
-                anyhow!(super::Unavailable(crate::tr!("Google 服务器错误 {code}", "Google server error {code}")))
-            } else {
-                anyhow!(crate::tr!("Google 返回错误 {code}：{}", "Google returned error {code}: {}", body.chars().take(400).collect::<String>()))
-            }
-        }
+        ureq::Error::Status(code, resp) => describe_status(code, &resp.into_string().unwrap_or_default()),
         ureq::Error::Transport(t) => anyhow!(super::Unavailable(t.to_string())),
     }
+}
+
+/// Map an HTTP error status and its body.
+pub fn describe_status(code: u16, body: &str) -> anyhow::Error {
+    if code == 400 && body.contains("invalid_grant") {
+        anyhow!(crate::tr!("Google 登录已失效（{code}），请在设置里重新连接 Google Drive", "The Google sign-in has expired ({code}). Reconnect Google Drive in Settings"))
+    } else if code >= 500 {
+        anyhow!(super::Unavailable(crate::tr!("Google 服务器错误 {code}", "Google server error {code}")))
+    } else {
+        anyhow!(crate::tr!("Google 返回错误 {code}：{}", "Google returned error {code}: {}", body.chars().take(400).collect::<String>()))
+    }
+}
+
+/// The Google Drive box on the consent page was left unticked.
+pub fn no_drive_scope() -> anyhow::Error {
+    anyhow!(crate::tr!(
+        "Ludonimbus 没有拿到 Google Drive 的访问权限（Google 授权页上 Google Drive 那一项没有勾选）。请重新连接 Google Drive，并勾选这一项。",
+        "Ludonimbus wasn't given access to Google Drive (the Google Drive box on Google's consent page was left unticked). Connect Google Drive again and tick that box."
+    ))
+}
+
+/// Whether the token response grants Drive access. A response that doesn't
+/// list its scopes is trusted.
+fn grants_drive(token_response: &serde_json::Value) -> bool {
+    token_response["scope"]
+        .as_str()
+        .is_none_or(|s| s.split_whitespace().any(|x| x == DRIVE_SCOPE))
 }
 
 fn entry() -> Result<keyring::Entry> {
@@ -225,5 +247,20 @@ pub fn clear_refresh_token() -> Result<()> {
     match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(anyhow!(crate::tr!("无法删除登录凭据：{e}", "Couldn't delete the saved sign-in: {e}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn notices_unticked_drive_scope() {
+        let granted = json!({ "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file" });
+        assert!(grants_drive(&granted));
+        let unticked = json!({ "scope": "openid https://www.googleapis.com/auth/userinfo.email" });
+        assert!(!grants_drive(&unticked));
+        assert!(grants_drive(&json!({ "access_token": "x" })));
     }
 }

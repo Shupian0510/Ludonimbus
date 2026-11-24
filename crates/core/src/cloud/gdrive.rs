@@ -61,6 +61,106 @@ fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
+/// Why Drive refused a request, when the account itself is the cause.
+#[derive(Debug, PartialEq)]
+enum Refusal {
+    /// The Drive box on Google's consent page was left unticked.
+    NoScope,
+    /// A company or school account whose admin blocks Drive apps.
+    DomainPolicy,
+    /// The account has no Google Drive yet.
+    NoDrive,
+    /// Any other 403 not about a file or a limit: most often an account
+    /// that has never used Drive. Holds Google's message.
+    Forbidden(String),
+}
+
+/// 403 reasons about a file, a quota or the app's own project, not the account.
+const ORDINARY_403: &[&str] = &[
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "dailyLimitExceeded",
+    "sharingRateLimitExceeded",
+    "storageQuotaExceeded",
+    "activeItemCreationLimitExceeded",
+    "numChildrenInNonRootLimitExceeded",
+    "myDriveHierarchyDepthLimitExceeded",
+    "insufficientFilePermissions",
+    "appNotAuthorizedToFile",
+    "accessNotConfigured",
+    "SERVICE_DISABLED",
+];
+
+/// Read a Drive error body (`{"error": {"message", "errors": [{"reason"}],
+/// "details": [{"reason"}]}}`).
+fn refusal(code: u16, body: &str) -> Option<Refusal> {
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let err = &v["error"];
+    let message = err["message"].as_str().unwrap_or_default();
+    let reasons: Vec<&str> = ["errors", "details"]
+        .iter()
+        .flat_map(|k| err[*k].as_array().into_iter().flatten())
+        .filter_map(|e| e["reason"].as_str())
+        .collect();
+    let has = |r: &str| reasons.iter().any(|x| x.eq_ignore_ascii_case(r));
+    let lower = message.to_lowercase();
+    if has("insufficientPermissions")
+        || has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+        || lower.contains("insufficient authentication scopes")
+    {
+        return Some(Refusal::NoScope);
+    }
+    if has("domainPolicy") {
+        return Some(Refusal::DomainPolicy);
+    }
+    let project_side = has("accessNotConfigured") || has("SERVICE_DISABLED");
+    let no_drive_text = lower.contains("drive")
+        && ["not enabled", "not activated", "signed up", "sign up"].iter().any(|p| lower.contains(p));
+    if has("serviceNotAvailable") || (no_drive_text && !project_side) {
+        return Some(Refusal::NoDrive);
+    }
+    if code == 403 && !reasons.iter().any(|r| ORDINARY_403.iter().any(|o| o.eq_ignore_ascii_case(r))) {
+        let detail = if message.is_empty() { body.trim() } else { message };
+        return Some(Refusal::Forbidden(detail.chars().take(300).collect()));
+    }
+    None
+}
+
+/// Map Drive API errors, explaining the refusals the user can fix.
+fn drive_error(e: ureq::Error) -> anyhow::Error {
+    let (code, body) = match e {
+        ureq::Error::Status(code, resp) => (code, resp.into_string().unwrap_or_default()),
+        other => return describe(other),
+    };
+    let open_drive = crate::tr!(
+        "请先用浏览器打开 drive.google.com，用同一个 Google 账号登录并完成开通，然后回到 Ludonimbus 重试。",
+        "Open drive.google.com in a browser, sign in with the same Google account and finish setting it up, then try again in Ludonimbus."
+    );
+    match refusal(code, &body) {
+        Some(Refusal::NoScope) => oauth::no_drive_scope(),
+        Some(Refusal::DomainPolicy) => anyhow!(crate::tr!(
+            "这个 Google 账号所属的组织（公司或学校）不允许第三方应用使用 Google Drive。请联系组织的管理员，或者换一个个人 Google 账号。",
+            "The organization (company or school) that manages this Google account doesn't let third-party apps use Google Drive. Ask its administrator, or use a personal Google account."
+        )),
+        Some(Refusal::NoDrive) => anyhow!(crate::tr!(
+            "这个 Google 账号还没有开通 Google Drive。{open_drive}",
+            "This Google account doesn't have Google Drive yet. {open_drive}"
+        )),
+        Some(Refusal::Forbidden(detail)) => {
+            let hint = crate::tr!(
+                "无法访问 Google Drive（{code}）。如果这个 Google 账号从没用过 Google Drive，可能还没有开通：{open_drive}",
+                "Can't access Google Drive ({code}). If this Google account has never used Google Drive, it may not be set up yet. {open_drive}"
+            );
+            if detail.is_empty() {
+                anyhow!(hint)
+            } else {
+                anyhow!(crate::tr!("{hint}（Google 返回：{detail}）", "{hint} (Google said: {detail})"))
+            }
+        }
+        None => oauth::describe_status(code, &body),
+    }
+}
+
 impl GoogleDrive {
     pub fn new(client: GoogleClient, refresh_token: String, folder: String, timeout: Duration) -> Self {
         GoogleDrive {
@@ -112,7 +212,7 @@ impl GoogleDrive {
                 Ok(!v["trashed"].as_bool().unwrap_or(false))
             }
             Err(ureq::Error::Status(404, _)) => Ok(false),
-            Err(e) => Err(describe(e)),
+            Err(e) => Err(drive_error(e)),
         }
     }
 
@@ -158,7 +258,7 @@ impl GoogleDrive {
                 .get(url.as_str())
                 .set("Authorization", &self.bearer()?)
                 .call()
-                .map_err(describe)?
+                .map_err(drive_error)?
                 .into_json()?;
             for f in v["files"].as_array().into_iter().flatten() {
                 out.push(DriveFile {
@@ -190,7 +290,7 @@ impl GoogleDrive {
             .post(&format!("{API}/files?fields=id"))
             .set("Authorization", &self.bearer()?)
             .send_json(json!({ "name": name, "mimeType": FOLDER_MIME, "parents": [parent] }))
-            .map_err(describe)?
+            .map_err(drive_error)?
             .into_json()?;
         v["id"]
             .as_str()
@@ -278,7 +378,7 @@ impl GoogleDrive {
             .set("X-Upload-Content-Type", mime)
             .set("X-Upload-Content-Length", &body.len().to_string())
             .send_json(meta)
-            .map_err(describe)?;
+            .map_err(drive_error)?;
         let location = resp
             .header("Location")
             .ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?
@@ -288,7 +388,7 @@ impl GoogleDrive {
             .put(&location)
             .set("Content-Type", mime)
             .send_bytes(&body)
-            .map_err(describe)?
+            .map_err(drive_error)?
             .into_json()?;
         v["id"]
             .as_str()
@@ -302,7 +402,7 @@ impl GoogleDrive {
             .set("Authorization", &self.bearer()?)
             .set("Content-Type", mime)
             .send_bytes(body)
-            .map_err(describe)?;
+            .map_err(drive_error)?;
         Ok(())
     }
 
@@ -311,7 +411,7 @@ impl GoogleDrive {
             .request("PATCH", &format!("{API}/files/{file_id}"))
             .set("Authorization", &self.bearer()?)
             .send_json(body)
-            .map_err(describe)?;
+            .map_err(drive_error)?;
         Ok(())
     }
 
@@ -321,7 +421,7 @@ impl GoogleDrive {
             .get(&format!("{API}/files/{file_id}?alt=media"))
             .set("Authorization", &self.bearer()?)
             .call()
-            .map_err(describe)?;
+            .map_err(drive_error)?;
         let mut buf = Vec::new();
         resp.into_reader().read_to_end(&mut buf)?;
         Ok(buf)
@@ -332,7 +432,7 @@ impl GoogleDrive {
             .delete(&format!("{API}/files/{file_id}"))
             .set("Authorization", &self.bearer()?)
             .call()
-            .map_err(describe)?;
+            .map_err(drive_error)?;
         Ok(())
     }
 
@@ -397,7 +497,7 @@ impl CloudProvider for GoogleDrive {
             .get(&format!("{API}/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)"))
             .set("Authorization", &self.bearer()?)
             .call()
-            .map_err(describe)?
+            .map_err(drive_error)?
             .into_json()?;
         let num = |p: &str| v["storageQuota"][p].as_str().and_then(|s| s.parse().ok());
         Ok(AccountInfo {
@@ -470,7 +570,7 @@ impl CloudProvider for GoogleDrive {
             .get(&format!("{API}/files/{}?alt=media", f.id))
             .set("Authorization", &self.bearer()?)
             .call()
-            .map_err(describe)?;
+            .map_err(drive_error)?;
         let mut out = std::fs::File::create(dest)?;
         std::io::copy(&mut resp.into_reader(), &mut out)?;
         Ok(())
@@ -545,5 +645,52 @@ impl CloudProvider for GoogleDrive {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(reason: &str, message: &str) -> String {
+        json!({ "error": { "code": 403, "message": message, "errors": [{ "domain": "global", "reason": reason, "message": message }] } })
+            .to_string()
+    }
+
+    #[test]
+    fn unticked_drive_scope() {
+        let b = body("insufficientPermissions", "Request had insufficient authentication scopes.");
+        assert_eq!(refusal(403, &b), Some(Refusal::NoScope));
+        let b = json!({ "error": { "code": 403, "message": "x", "details": [{ "reason": "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } }).to_string();
+        assert_eq!(refusal(403, &b), Some(Refusal::NoScope));
+    }
+
+    #[test]
+    fn organization_blocks_drive() {
+        let b = body("domainPolicy", "The domain administrators have disabled Drive apps.");
+        assert_eq!(refusal(403, &b), Some(Refusal::DomainPolicy));
+    }
+
+    #[test]
+    fn account_without_drive() {
+        assert_eq!(refusal(400, &body("serviceNotAvailable", "Drive service not enabled")), Some(Refusal::NoDrive));
+        assert_eq!(refusal(403, &body("forbidden", "The user has not enabled Google Drive.")), Some(Refusal::NoDrive));
+        // The app's own project having the API off is not the user's problem.
+        let b = body("accessNotConfigured", "Google Drive API has not been used in project 1 before or it is not enabled.");
+        assert_eq!(refusal(403, &b), None);
+    }
+
+    #[test]
+    fn other_403_hints_at_drive_setup() {
+        assert_eq!(refusal(403, &body("forbidden", "Forbidden")), Some(Refusal::Forbidden("Forbidden".into())));
+        assert_eq!(refusal(403, "nope"), Some(Refusal::Forbidden("nope".into())));
+    }
+
+    #[test]
+    fn ordinary_errors_keep_their_message() {
+        assert_eq!(refusal(403, &body("userRateLimitExceeded", "User Rate Limit Exceeded")), None);
+        assert_eq!(refusal(403, &body("storageQuotaExceeded", "The user's Drive storage quota has been exceeded.")), None);
+        assert_eq!(refusal(404, &body("notFound", "File not found: x.")), None);
+        assert_eq!(refusal(400, &body("invalid", "Invalid Value")), None);
     }
 }
