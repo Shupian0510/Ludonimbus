@@ -46,7 +46,7 @@ export function GameAchievements({ gameKey }: { gameKey: string }) {
   if (!view) return <Spinner />;
   if (!view.source) return <LinkSource gameKey={gameKey} onLinked={setView} />;
 
-  const pct = Math.round((100 * view.unlocked) / Math.max(1, view.total));
+  const pct = Math.floor((100 * view.unlocked) / Math.max(1, view.total));
   const noNames = view.source === "lantern" && view.items.every((i) => !i.description);
 
   const refresh = async () => {

@@ -1,8 +1,14 @@
-// "Achievements 12 / 40" in a game's play bar, next to the cloud save status,
-// and the list that opens when it is clicked. Only games with an achievement
-// source linked in Ludonimbus show it. Styling borrows Steam's play bar
-// classes, like the cloud status item (see playbar.ts).
+// Achievements on a game's library page, where Steam shows them for its own
+// games:
+//   - the play bar stat "Achievements 12/40" with a progress bar (Steam's
+//     `GameStat MiniAchievements` markup and classes), before the cloud item;
+//   - an "Achievements" section at the top of the right column (Steam's
+//     `AppDetailsSection` / `RightColumnSection` / `SectionHeader` classes),
+//     with progress, unlocked and locked icons and "View all".
+// Both open the full list. Only games with an achievement source linked in
+// Ludonimbus show them. Class names are hashed and looked up at run time.
 
+import { findClassModule } from 'millennium';
 import { cls, currentAccount, currentAppId } from './playbar';
 
 const MARK = 'data-ludonimbus-ach';
@@ -17,12 +23,23 @@ const CSS = `
 .ludonimbus-ach { display: flex; align-items: center; cursor: pointer; min-width: 0; }
 .ludonimbus-ach .ludonimbus-icon { display: flex; flex: none; }
 .ludonimbus-ach .ludonimbus-icon svg { width: 26px; height: 26px; }
-.ludonimbus-ach .ludonimbus-bar-track { height: 3px; margin-top: 4px; width: 120px; background: rgba(255,255,255,0.12); border-radius: 2px; overflow: hidden; }
-.ludonimbus-ach .ludonimbus-bar-fill { height: 100%; background: #1a9fff; }
 .ludonimbus-ach.ludonimbus-plain { gap: 6px; }
 .ludonimbus-ach.ludonimbus-plain .ludonimbus-icon { margin: 3px; color: rgba(255,255,255,0.4); }
 .ludonimbus-ach.ludonimbus-plain .ludonimbus-label { font-size: 14px; text-transform: uppercase; color: rgba(255,255,255,0.52); }
 .ludonimbus-ach.ludonimbus-plain .ludonimbus-detail { font-size: 13px; color: rgba(255,255,255,0.32); }
+.ludonimbus-ach-plainbar { height: 3px; margin-top: 4px; width: 64px; background: rgba(255,255,255,0.12); border-radius: 2px; overflow: hidden; }
+.ludonimbus-ach-row-inline { display: flex; align-items: center; gap: 8px; }
+.ludonimbus-ach-section .ludonimbus-ach-sec-body { padding: 12px 16px 14px; cursor: pointer; }
+.ludonimbus-ach-section .ludonimbus-ach-sec-body:hover { background: rgba(255,255,255,0.04); }
+.ludonimbus-ach-sec-plainhead { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: rgba(255,255,255,0.8); padding: 0 0 8px 2px; }
+.ludonimbus-ach-sec-summary { font-size: 13px; color: #c6d4df; }
+.ludonimbus-ach-sec-progress { height: 6px; margin: 8px 0 12px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+.ludonimbus-ach-sec-progress > div { height: 100%; background: linear-gradient(90deg, #1a9fff, #66c0f4); }
+.ludonimbus-ach-sec-icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 6px; }
+.ludonimbus-ach-sec-icons > img, .ludonimbus-ach-sec-icons > div { width: 100%; aspect-ratio: 1; border-radius: 3px; object-fit: cover; background: rgba(255,255,255,0.06); }
+.ludonimbus-ach-sec-icons > img[data-locked="1"] { filter: grayscale(1) brightness(0.45); }
+.ludonimbus-ach-sec-icons > .ludonimbus-ach-sec-rest { display: flex; align-items: center; justify-content: center; font-size: 12px; color: #8f98a0; }
+.ludonimbus-ach-sec-all { margin-top: 12px; font-size: 12px; color: #66c0f4; text-align: right; }
 .ludonimbus-ach-backdrop { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; }
 .ludonimbus-ach-panel { width: min(760px, 92vw); max-height: 84vh; display: flex; flex-direction: column; background: #1b2838; color: #dcdedf; border-radius: 4px; box-shadow: 0 12px 48px rgba(0,0,0,0.6); font-family: "Motiva Sans", Arial, sans-serif; }
 .ludonimbus-ach-head { padding: 18px 22px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
@@ -67,6 +84,8 @@ const TEXTS = {
 		grades: { platinum: '白金', gold: '金', silver: '银', bronze: '铜' } as Record<string, string>,
 		pts: (p: number) => `${p} 分`,
 		close: '关闭',
+		summary: (u: number, n: number, pct: number) => `您已解锁 ${u}/${n}（${pct}%）`,
+		viewAll: '查看所有成就',
 	},
 	en: {
 		label: 'Achievements',
@@ -82,6 +101,8 @@ const TEXTS = {
 		grades: { platinum: 'Platinum', gold: 'Gold', silver: 'Silver', bronze: 'Bronze' } as Record<string, string>,
 		pts: (p: number) => `${p} pts`,
 		close: 'Close',
+		summary: (u: number, n: number, pct: number) => `You've unlocked ${u}/${n} (${pct}%)`,
+		viewAll: 'View all achievements',
 	},
 };
 
@@ -129,8 +150,10 @@ function parse(value: unknown): AchievementsReply {
 	return (v ?? { managed: false }) as AchievementsReply;
 }
 
-/** Whether a reply should show the play bar item. */
-export function shows(r: AchievementsReply | null): r is AchievementsReply & { key: string; total: number; unlocked: number } {
+type Shown = AchievementsReply & { key: string; total: number; unlocked: number };
+
+/** Whether a reply should show the play bar item and the section. */
+export function shows(r: AchievementsReply | null): r is Shown {
 	return !!r && r.managed && !!r.source && typeof r.key === 'string' && (r.total ?? 0) > 0;
 }
 
@@ -228,52 +251,175 @@ export class AchievementsBar {
 
 	private render(): void {
 		const r = this.reply;
-		const stats = cls('GameStatsSection').split(/\s+/)[0];
-		const section = stats ? this.doc.querySelector(`.${stats}`) : null;
-		if (!shows(r) || !section) {
-			if (!shows(r)) this.doc.querySelectorAll(`[${MARK}]`).forEach((el) => el.remove());
+		if (!shows(r)) {
+			this.doc.querySelectorAll(`[${MARK}]:not([${MARK}="list"])`).forEach((el) => el.remove());
 			return;
 		}
-		let item = section.querySelector<HTMLElement>(`:scope > [${MARK}]`);
-		if (!item) {
-			item = this.create();
-			section.appendChild(item);
-		}
-		const m = tx();
-		const detail = item.querySelector('.ludonimbus-detail');
-		const text = m.detail(r.unlocked, r.total);
-		if (detail && detail.textContent !== text) detail.textContent = text;
-		const label = item.querySelector('.ludonimbus-label');
-		if (label && label.textContent !== m.label) label.textContent = m.label;
-		const fill = item.querySelector<HTMLElement>('.ludonimbus-bar-fill');
-		if (fill) fill.style.width = `${Math.round((100 * r.unlocked) / Math.max(1, r.total))}%`;
-		item.title = m.tip;
+		this.renderStats(r);
+		this.renderSection(r);
 	}
 
-	private create(): HTMLElement {
+	/** Steam's play bar stat, in every stats row (Steam keeps more than one). */
+	private renderStats(r: Shown): void {
+		const stats = cls('GameStatsSection').split(/\s+/)[0];
+		if (!stats) return;
+		const m = tx();
+		const pct = Math.floor((100 * r.unlocked) / Math.max(1, r.total));
+		for (const section of Array.from(this.doc.querySelectorAll(`.${stats}`))) {
+			let item = section.querySelector<HTMLElement>(`:scope > [${MARK}="stat"]`);
+			if (!item) item = this.createStat();
+			// Steam's order: last played, play time, achievements. The cloud item stays last.
+			const cloud = section.querySelector(':scope > [data-ludonimbus="stat"]');
+			if (cloud) {
+				if (item.nextElementSibling !== cloud) section.insertBefore(item, cloud);
+			} else if (item.parentElement !== section) {
+				section.appendChild(item);
+			}
+			const label = item.querySelector('.ludonimbus-label');
+			if (label && label.textContent !== m.label) label.textContent = m.label;
+			const count = item.querySelector('.ludonimbus-detail');
+			const text = `${r.unlocked}/${r.total}`;
+			if (count && count.textContent !== text) count.textContent = text;
+			const fill = item.querySelector<HTMLElement>('.ludonimbus-fill');
+			if (fill && fill.style.width !== `${pct}%`) fill.style.width = `${pct}%`;
+			if (item.title !== m.tip) item.title = m.tip;
+		}
+	}
+
+	private createStat(): HTMLElement {
 		const d = this.doc;
-		const item = d.createElement('div');
-		item.setAttribute(MARK, '1');
 		const native = !!(cls('GameStat') && cls('PlayBarLabel') && cls('PlayBarDetailLabel'));
-		item.className = ['ludonimbus-ach', native ? '' : 'ludonimbus-plain', cls('GameStat'), cls('ClickablePlayBarItem')].filter(Boolean).join(' ');
+		const item = d.createElement('div');
+		item.setAttribute(MARK, 'stat');
+		item.className = ['ludonimbus-ach', native ? '' : 'ludonimbus-plain', cls('GameStat'), cls('MiniAchievements'), cls('ClickablePlayBarItem')]
+			.filter(Boolean)
+			.join(' ');
 		const icon = d.createElement('div');
-		icon.className = ['ludonimbus-icon', cls('GameStatIcon')].filter(Boolean).join(' ');
+		icon.className = ['ludonimbus-icon', cls('GameStatIcon'), cls('AchievementSVG')].filter(Boolean).join(' ');
 		icon.innerHTML = TROPHY_SVG;
-		const text = d.createElement('div');
-		text.className = ['ludonimbus-text', cls('GameStatRight')].filter(Boolean).join(' ');
+		const right = d.createElement('div');
+		right.className = ['ludonimbus-text', cls('GameStatRight'), cls('AchievementRight')].filter(Boolean).join(' ');
 		const label = d.createElement('div');
-		label.className = ['ludonimbus-label', cls('PlayBarLabel')].filter(Boolean).join(' ');
-		const detail = d.createElement('div');
-		detail.className = ['ludonimbus-detail', cls('PlayBarDetailLabel')].filter(Boolean).join(' ');
+		label.className = ['ludonimbus-label', cls('PlayBarLabel'), cls('AchievementLabel')].filter(Boolean).join(' ');
+		const row = d.createElement('div');
+		row.className = cls('AchievementProgressRow') || 'ludonimbus-ach-row-inline';
+		const count = d.createElement('div');
+		count.className = ['ludonimbus-detail', cls('PlayBarDetailLabel'), cls('AchievementCountLabel')].filter(Boolean).join(' ');
+		// Steam's progress bar (DetailsProgressContainer > DetailsProgressBar), or our own.
 		const track = d.createElement('div');
-		track.className = 'ludonimbus-bar-track';
+		track.className = cls('DetailsProgressContainer') || 'ludonimbus-ach-plainbar';
 		const fill = d.createElement('div');
-		fill.className = 'ludonimbus-bar-fill';
+		fill.className = ['ludonimbus-fill', cls('DetailsProgressBar')].filter(Boolean).join(' ');
+		if (!cls('DetailsProgressBar')) {
+			fill.style.height = '100%';
+			fill.style.background = '#1a9fff';
+		}
 		track.appendChild(fill);
-		text.append(label, detail, track);
-		item.append(icon, text);
+		row.append(count, track);
+		right.append(label, row);
+		item.append(icon, right);
 		item.addEventListener('click', () => this.openList());
 		return item;
+	}
+
+	/** The "Achievements" section at the top of the right column. */
+	private renderSection(r: Shown): void {
+		const sec = findClassModule((mod: any) => !!(mod.AppDetailsSection && mod.RightColumnSection && mod.AppDetailsSectionContainer)) as
+			| Record<string, string>
+			| undefined;
+		if (!sec) return;
+		const first = (c: string) => c.split(/\s+/)[0];
+		const columns = new Set<Element>();
+		for (const el of Array.from(this.doc.querySelectorAll(`.${first(sec.RightColumnSection)}`))) {
+			if (el.closest(`[${MARK}]`)) continue;
+			const column = el.closest(`.${first(sec.AppDetailsSection)}`)?.parentElement;
+			if (column) columns.add(column);
+		}
+		for (const column of columns) {
+			let el = column.querySelector<HTMLElement>(`:scope > [${MARK}="section"]`);
+			if (!el) el = this.createSection(sec);
+			if (column.firstElementChild !== el) column.insertBefore(el, column.firstElementChild);
+			this.fillSection(el, r);
+		}
+	}
+
+	private createSection(sec: Record<string, string>): HTMLElement {
+		const d = this.doc;
+		const head = findClassModule((mod: any) => !!(mod.SectionHeader && mod.LabelText && mod.PadLeft)) as Record<string, string> | undefined;
+		const el = d.createElement('div');
+		el.setAttribute(MARK, 'section');
+		el.className = ['ludonimbus-ach-section', sec.AppDetailsSection].join(' ');
+		const header = d.createElement('div');
+		header.className = head ? [head.SectionHeader, head.PadLeft].join(' ') : 'ludonimbus-ach-sec-plainhead';
+		const label = d.createElement('div');
+		label.className = head?.Label ?? '';
+		const text = d.createElement('div');
+		text.className = ['ludonimbus-ach-sec-title', head?.LabelText ?? ''].join(' ');
+		label.appendChild(text);
+		header.appendChild(label);
+		const body = d.createElement('div');
+		body.className = ['ludonimbus-ach-sec-body', sec.AppDetailsSectionContainer, sec.AppDetailsSectionHasLabel, sec.RightColumnSection]
+			.filter(Boolean)
+			.join(' ');
+		body.addEventListener('click', () => this.openList());
+		el.append(header, body);
+		return el;
+	}
+
+	private fillSection(el: HTMLElement, r: Shown): void {
+		const m = tx();
+		const items = r.items ?? [];
+		const unlocked = items.filter((i) => i.unlockedAt);
+		const locked = items.filter((i) => !i.unlockedAt);
+		// Rebuild only when something shown changed (the observer calls this often).
+		const sig = [lang, r.unlocked, r.total, unlocked.map((i) => i.id).join(',')].join('|');
+		if (el.dataset.sig === sig) return;
+		el.dataset.sig = sig;
+		const title = el.querySelector('.ludonimbus-ach-sec-title');
+		if (title) title.textContent = m.label;
+		const body = el.querySelector<HTMLElement>('.ludonimbus-ach-sec-body');
+		if (!body) return;
+		const d = this.doc;
+		const pct = Math.floor((100 * r.unlocked) / Math.max(1, r.total));
+		body.replaceChildren();
+		const summary = d.createElement('div');
+		summary.className = 'ludonimbus-ach-sec-summary';
+		summary.textContent = m.summary(r.unlocked, r.total, pct);
+		const bar = d.createElement('div');
+		bar.className = 'ludonimbus-ach-sec-progress';
+		const fill = d.createElement('div');
+		fill.style.width = `${pct}%`;
+		bar.appendChild(fill);
+		const grid = d.createElement('div');
+		grid.className = 'ludonimbus-ach-sec-icons';
+		// Newest unlocks first, then locked ones; the last tile counts the rest.
+		const MAX = 12;
+		const order = [...unlocked.slice(0, 6), ...locked, ...unlocked.slice(6)];
+		const tiles = order.length > MAX ? order.slice(0, MAX - 1) : order;
+		for (const a of tiles) {
+			const isLocked = !a.unlockedAt;
+			if (!a.iconUrl && !a.hasIcon) {
+				grid.appendChild(d.createElement('div'));
+				continue;
+			}
+			const img = d.createElement('img');
+			img.alt = '';
+			img.title = isLocked && a.hidden ? m.hidden : a.name;
+			img.dataset.locked = isLocked ? '1' : '0';
+			if (a.iconUrl) img.src = a.iconUrl;
+			else localIcon(r.key, a.id).then((u) => u && (img.src = u));
+			grid.appendChild(img);
+		}
+		if (order.length > tiles.length) {
+			const more = d.createElement('div');
+			more.className = 'ludonimbus-ach-sec-rest';
+			more.textContent = `+${order.length - tiles.length}`;
+			grid.appendChild(more);
+		}
+		const all = d.createElement('div');
+		all.className = 'ludonimbus-ach-sec-all';
+		all.textContent = m.viewAll;
+		body.append(summary, bar, grid, all);
 	}
 
 	private openList(): void {
@@ -313,7 +459,7 @@ export class AchievementsBar {
 		btn.textContent = '×';
 		btn.addEventListener('click', close);
 		title.append(name, btn);
-		const pct = Math.round((100 * r.unlocked) / Math.max(1, r.total));
+		const pct = Math.floor((100 * r.unlocked) / Math.max(1, r.total));
 		const sub = d.createElement('div');
 		sub.className = 'ludonimbus-ach-sub';
 		sub.textContent =
