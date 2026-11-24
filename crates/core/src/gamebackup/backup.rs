@@ -159,17 +159,21 @@ pub fn backup(
     }
     stop()?;
 
+    // Same files (and folders) as the newest version: nothing to do. The
+    // patterns themselves are not compared: they list the save files that
+    // exist right now, which change without the game changing.
     let versions = remote::list_versions(store, key)?;
+    let mut previous = None;
     if let Some(last) = versions.last() {
         if let Ok(m) = remote::read_manifest(store, key, last) {
             let same = m.chunking == opts.params
-                && m.exclude == exclude
                 && m.dirs == sc.dirs
                 && m.files.len() == sc.files.len()
-                && m.files.iter().zip(&sc.files).all(|(a, b)| a.p == b.rel && a.s == b.size && a.m == b.mtime);
+                && m.files.iter().zip(&sc.files).all(|(a, b)| a.p == b.rel && a.s == b.size && a.m == b.mtime && a.n == b.nanos);
             if same {
                 return Ok(Outcome::Unchanged { version: last.clone() });
             }
+            previous = Some((last.clone(), m));
         }
     }
 
@@ -271,6 +275,17 @@ pub fn backup(
     if hashes.len() != sc.files.len() {
         bail!(crate::tr!("读取文件时出错，请重试", "Reading the files went wrong. Try again"));
     }
+    // Files touched but not changed: same content as the newest version.
+    if let Some((last, m)) = &previous {
+        let same = m.chunking == opts.params
+            && m.dirs == sc.dirs
+            && m.files.len() == sc.files.len()
+            && m.files.iter().zip(sc.files.iter().zip(&hashes)).all(|(a, (b, h))| a.p == b.rel && a.s == b.size && &a.h == h);
+        if same {
+            lock.release()?;
+            return Ok(Outcome::Unchanged { version: last.clone() });
+        }
+    }
 
     report("verifying", 0, refs.len() as u64, uploaded.load(Ordering::SeqCst), new_chunks.load(Ordering::SeqCst), reused.load(Ordering::SeqCst));
     let present = remote::list_chunks(store, key)?;
@@ -311,7 +326,7 @@ pub fn backup(
             .files
             .iter()
             .zip(hashes)
-            .map(|(f, h)| FileEntry { p: f.rel.clone(), s: f.size, h, m: f.mtime })
+            .map(|(f, h)| FileEntry { p: f.rel.clone(), s: f.size, h, m: f.mtime, n: f.nanos })
             .collect(),
         dirs: sc.dirs.clone(),
         chunks: refs,

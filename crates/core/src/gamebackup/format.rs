@@ -23,6 +23,13 @@ pub struct FileEntry {
     pub h: String,
     /// Modification time, Unix seconds.
     pub m: i64,
+    /// Nanoseconds of the modification time.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub n: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// One chunk of the stream, in order.
@@ -183,8 +190,8 @@ mod tests {
             exclude: vec!["**/*.log".into()],
             user_exclude: Vec::new(),
             files: vec![
-                FileEntry { p: "a".into(), s: 3, h: "x".into(), m: 1 },
-                FileEntry { p: "b/c".into(), s: 5, h: "y".into(), m: 2 },
+                FileEntry { p: "a".into(), s: 3, h: "x".into(), m: 1, n: 0 },
+                FileEntry { p: "b/c".into(), s: 5, h: "y".into(), m: 2, n: 7 },
             ],
             dirs: vec!["empty".into()],
             chunks: vec![ChunkRef { h: "z".into(), s: 8, z: 14 }],

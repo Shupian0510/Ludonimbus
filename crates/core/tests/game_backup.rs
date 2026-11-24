@@ -189,8 +189,17 @@ fn game_backup_end_to_end() {
     assert_eq!(rep.files, v2.file_count);
     same_tree(&root, &r1);
     let mt = |p: &Path| std::fs::metadata(p).unwrap().modified().unwrap();
-    let secs = |t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    assert_eq!(secs(mt(&r1.join("data/patch.txt"))), secs(mt(&root.join("data/patch.txt"))));
+    assert_eq!(mt(&r1.join("data/patch.txt")), mt(&root.join("data/patch.txt")), "modification time kept");
+    // A backup of the restored folder finds nothing new.
+    let mut from_restore = g.clone();
+    from_restore.exe = Some(r1.join("game.exe"));
+    assert!(matches!(run(&store, &from_restore, &opts(&r1, None)), Outcome::Unchanged { .. }));
+    // Touched but not changed: no new version.
+    let same = std::fs::read(root.join("data/patch.txt")).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    write(&root.join("data/patch.txt"), &same);
+    assert!(matches!(run(&store, &g, &opts(&root, None)), Outcome::Unchanged { .. }));
+    assert_eq!(remote::list_versions(&store, "zelda").unwrap().len(), 2);
 
     // A stopped restore continues where it stopped.
     let r2 = tmp.path().join("restored2");

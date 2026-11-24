@@ -29,7 +29,9 @@ pub struct ScannedFile {
     pub rel: String,
     pub abs: PathBuf,
     pub size: u64,
+    /// Modification time: Unix seconds and nanoseconds.
     pub mtime: i64,
+    pub nanos: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -102,12 +104,12 @@ fn rel_slash(base: &Path, p: &Path) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-fn mtime(meta: &std::fs::Metadata) -> i64 {
+fn mtime(meta: &std::fs::Metadata) -> (i64, u32) {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+        .map(|d| (d.as_secs() as i64, d.subsec_nanos()))
+        .unwrap_or((0, 0))
 }
 
 /// Patterns that exclude the game's saves inside `root`: save rules whose
@@ -194,7 +196,8 @@ pub fn scan(root: &Path, exclude: &[String]) -> Result<Scan> {
             continue;
         }
         s.total += meta.len();
-        s.files.push(ScannedFile { rel, abs: e.path().to_path_buf(), size: meta.len(), mtime: mtime(&meta) });
+        let (mtime, nanos) = mtime(&meta);
+        s.files.push(ScannedFile { rel, abs: e.path().to_path_buf(), size: meta.len(), mtime, nanos });
     }
     s.files.sort_by(|a, b| a.rel.cmp(&b.rel));
     let mut created = HashSet::new();

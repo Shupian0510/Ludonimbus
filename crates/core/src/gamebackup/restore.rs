@@ -399,7 +399,7 @@ pub fn restore(
     run.report("finishing", 0, 0);
     for (f, p) in m.files.iter().zip(&run.paths) {
         if let Ok(file) = std::fs::OpenOptions::new().write(true).open(p) {
-            let t = std::time::UNIX_EPOCH + Duration::from_secs(f.m.max(0) as u64);
+            let t = std::time::UNIX_EPOCH + Duration::new(f.m.max(0) as u64, f.n.min(999_999_999));
             let _ = file.set_modified(t);
         }
     }
