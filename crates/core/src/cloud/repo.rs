@@ -190,17 +190,4 @@ impl<S: Store> CloudProvider for Repo<S> {
         }
         Ok(out)
     }
-
-    fn list_files(&self, dir: &str) -> Result<Vec<String>> {
-        Ok(self.store.list(dir)?.into_iter().filter(|e| !e.is_dir).map(|e| e.name).collect())
-    }
-
-    fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        self.store.read(path)
-    }
-
-    fn write_file(&self, path: &str, data: &[u8]) -> Result<()> {
-        self.forget(path);
-        self.store.write(path, data)
-    }
 }
