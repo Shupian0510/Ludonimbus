@@ -110,8 +110,8 @@ pub fn known_limits(kind: &str) -> Vec<String> {
             "Baidu Netdisk throttles downloads without membership: 9 MB took about 116 s in a test (about 80 KB/s), so a 10 GB game takes over a day and a half to download. Uploads go in 4 MB slices with 3 or more requests per file."
         )],
         "quark" => vec![crate::tr!(
-            "夸克网盘经过本机的 OpenList 中转：每个请求约 1 到 7 秒，实测上传约 0.2 到 0.5 MB/s，下载约 1 到 4 MB/s；非会员下载可能限速。",
-            "Quark goes through the OpenList server on this PC: each request takes about 1 to 7 s; tests measured about 0.2 to 0.5 MB/s up and 1 to 4 MB/s down. Downloads may be throttled without membership."
+            "夸克网盘经过本机的 OpenList 中转：每个请求有 1 秒以上的固定开销，大文件的速度取决于你的宽带。",
+            "Quark goes through the OpenList server on this PC: each request has a fixed cost of a second or more; big files go as fast as your connection allows."
         )],
         "googleDrive" => vec![crate::tr!(
             "Google Drive 每个账号每天最多上传 750 GB，超过后要等第二天（备份会从断点继续）。免费空间 15 GB，和 Gmail、相册共用。",

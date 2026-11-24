@@ -176,11 +176,8 @@ export const gameBackupApi = {
   pickFile: (start?: string | null) => invoke<string | null>("game_backup_pick_file", { start: start ?? null }),
 };
 
-/** Throughput assumed for slow clouds before a speed test (bytes/s; see the plan, 1.2). */
-export const SLOW_RATES: Record<string, { up: number; down: number }> = {
-  baiduPan: { up: 2 * 1024 * 1024, down: 80 * 1024 },
-  quark: { up: 0.5 * 1024 * 1024, down: 2.5 * 1024 * 1024 },
-};
+/** Baidu Netdisk's download speed without membership (bytes/s; see the plan, 1.2). */
+export const BAIDU_FREE_DOWN = 80 * 1024;
 
 /** Seconds to move `bytes` at `bps`, or null when nothing was measured. */
 export function etaSecs(bytes: number, bps: number): number | null {

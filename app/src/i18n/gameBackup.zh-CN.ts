@@ -66,7 +66,6 @@ export const gameBackup = {
     excludeHint: "每行一条，相对这个文件夹，例如 mods/old 或 **/*.bak。存档、日志、崩溃转储和着色器缓存会自动排除。",
     defaults: (list: string) => `默认排除：${list}`,
     slowBaidu: (size: string, down: string) => `百度网盘非会员下载约 80 KB/s：以后恢复 ${size} 预计要 ${down}。会员不限速。`,
-    slowQuark: (size: string, up: string) => `夸克网盘经本机 OpenList 中转，上传较慢：备份 ${size} 预计要 ${up}。`,
     slowTitle: "确定备份到这个云盘？",
     slowConfirm: "仍然备份",
     deleteTitle: "删除这个版本？",

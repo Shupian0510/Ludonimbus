@@ -80,9 +80,11 @@ pub(crate) fn retry<T>(cancel: &AtomicBool, mut f: impl FnMut() -> Result<T>) ->
     }
 }
 
-/// Clouds where backups work but are slow (see the plan, section 1.4).
+/// Clouds where restoring is slow for reasons of their own: Baidu Netdisk
+/// throttles downloads without membership (see the plan, section 1.4).
+/// Otherwise speed is the user's own connection.
 pub fn is_slow_cloud(kind: &str) -> bool {
-    matches!(kind, "baiduPan" | "quark")
+    kind == "baiduPan"
 }
 
 /// Parallel uploads / downloads by default for a cloud kind.

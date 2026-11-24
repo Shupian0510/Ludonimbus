@@ -68,7 +68,6 @@ export const gameBackup: typeof Zh.gameBackup = {
     excludeHint: "One per line, relative to this folder, for example mods/old or **/*.bak. Saves, logs, crash dumps and shader caches are left out automatically.",
     defaults: (list) => `Left out by default: ${list}`,
     slowBaidu: (size, down) => `Baidu Netdisk downloads at about 80 KB/s without membership: restoring ${size} later takes about ${down}. Members aren't throttled.`,
-    slowQuark: (size, up) => `Quark goes through OpenList on this PC and uploads slowly: backing up ${size} takes about ${up}.`,
     slowTitle: "Back up to this cloud?",
     slowConfirm: "Back up anyway",
     deleteTitle: "Delete this version?",

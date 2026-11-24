@@ -7,6 +7,7 @@ import { api, errorText, GameView, inTauri } from "../api";
 import { bytes, dateTime } from "../format";
 import "../gameBackup.css";
 import {
+  BAIDU_FREE_DOWN,
   BackupFinished,
   BackupInfo,
   BackupJob,
@@ -16,7 +17,6 @@ import {
   PartSummary,
   PreviewPart,
   SettingsPatch,
-  SLOW_RATES,
   Targets,
   VersionSummary,
 } from "../gameBackupApi";
@@ -139,26 +139,17 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
   const latest: VersionSummary | undefined = info.versions[0];
   const previewBytes = preview?.reduce((n, p) => n + p.bytes, 0);
   const size = previewBytes ?? latest?.totalSize ?? 0;
-  const slowRate = SLOW_RATES[info.cloudKind];
-  const slowText =
-    info.slow && slowRate && size > 0
-      ? info.cloudKind === "baiduPan"
-        ? c.slowBaidu(bytes(size), duration(etaSecs(size, slowRate.down)))
-        : c.slowQuark(bytes(size), duration(etaSecs(size, slowRate.up)))
-      : null;
+  // Baidu Netdisk without membership: restoring takes long.
+  const slowText = info.slow && size > 0 ? c.slowBaidu(bytes(size), duration(etaSecs(size, BAIDU_FREE_DOWN))) : null;
   const busy = !!job;
 
   const startBackup = async () => {
-    // First backup on a slow cloud: say how long it takes, ask once.
+    // First backup on Baidu Netdisk: say how long restoring would take, ask once.
     if (info.slow && info.versions.length === 0) {
       const p = preview ?? (await gameBackupApi.preview(key));
       setPreview(p);
       const total = p.reduce((n, x) => n + x.bytes, 0);
-      const rate = SLOW_RATES[info.cloudKind];
-      const text =
-        info.cloudKind === "baiduPan"
-          ? c.slowBaidu(bytes(total), duration(etaSecs(total, rate.down)))
-          : c.slowQuark(bytes(total), duration(etaSecs(total, rate.up)));
+      const text = c.slowBaidu(bytes(total), duration(etaSecs(total, BAIDU_FREE_DOWN)));
       const ok = await ui.confirm({ title: c.slowTitle, text, confirm: c.slowConfirm });
       if (!ok) return;
     }
@@ -532,7 +523,7 @@ function RestoreDialog({
 
   const slow =
     info.cloudKind === "baiduPan"
-      ? t.gameBackup.card.slowBaidu(bytes(version.totalSize), duration(etaSecs(version.totalSize, SLOW_RATES.baiduPan.down)))
+      ? t.gameBackup.card.slowBaidu(bytes(version.totalSize), duration(etaSecs(version.totalSize, BAIDU_FREE_DOWN)))
       : null;
 
   return (
