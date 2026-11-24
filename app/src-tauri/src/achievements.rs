@@ -16,7 +16,7 @@ use crate::commands::{blocking, CmdResult};
 use crate::watcher;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use ludonimbus_core::achievements::{self as ach, detect, retro, trophy, Binding, GameView, NewUnlock, SourceKind};
+use ludonimbus_core::achievements::{self as ach, detect, retro, Binding, GameView, NewUnlock, SourceKind};
 use ludonimbus_core::config::{self, AppConfig, GameEntry};
 use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{logger, process};
@@ -259,9 +259,9 @@ struct Watch {
     last_error: Option<Instant>,
 }
 
-fn fingerprint(b: &Binding) -> u64 {
+fn fingerprint(g: &GameEntry, b: &Binding) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    for f in trophy::watch_files(b) {
+    for f in ach::watch_files(g, b) {
         f.hash(&mut h);
         if let Ok(m) = std::fs::metadata(&f) {
             m.len().hash(&mut h);
@@ -342,7 +342,7 @@ pub fn spawn(app: AppHandle) {
                             }
                         }
                         _ => {
-                            let fp = fingerprint(b);
+                            let fp = fingerprint(g, b);
                             if fp != w.fingerprint || !was {
                                 w.fingerprint = fp;
                                 check(&app, &cfg, g, true)
@@ -498,6 +498,8 @@ pub struct AchievementSettings {
     ra_connected: bool,
     steam_popup: bool,
     fallback_popup: bool,
+    /// Where the PS4 trophy key comes from (shadPS4 or these settings), if anywhere.
+    ps4_key_source: Option<ach::trp::KeySource>,
 }
 
 #[tauri::command]
@@ -509,7 +511,22 @@ pub async fn achievements_settings() -> CmdResult<AchievementSettings> {
             ra_user: s.ra_user,
             steam_popup: s.steam_popup,
             fallback_popup: s.fallback_popup,
+            ps4_key_source: ach::trp::trophy_key().map(|(_, from)| from),
         })
+    })
+    .await
+}
+
+/// Set (or clear, with an empty text) the PS4 trophy key kept in this PC's settings.
+#[tauri::command]
+pub async fn achievements_set_ps4_key(key: String) -> CmdResult<()> {
+    blocking(move || {
+        let key = key.trim().to_string();
+        if !key.is_empty() && ach::trp::parse_hex_key(&key).is_none() {
+            return Err(anyhow!(ludonimbus_core::tr!("密钥应该是 32 个十六进制字符", "The key should be 32 hexadecimal characters")));
+        }
+        ach::update_settings(|s| s.ps4_trophy_key = (!key.is_empty()).then(|| key.to_ascii_uppercase()))?;
+        Ok(())
     })
     .await
 }

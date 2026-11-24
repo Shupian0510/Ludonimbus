@@ -9,7 +9,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return (await mockAchievements(cmd, args ?? {})) as T;
 }
 
-export type SourceKind = "retroachievements" | "shadps4" | "lantern" | "rpcs3";
+export type SourceKind = "retroachievements" | "shadps4" | "lantern" | "rpcs3" | "ps4port" | "rules";
 export type Grade = "platinum" | "gold" | "silver" | "bronze";
 
 export interface Binding {
@@ -61,6 +61,8 @@ export interface AchievementSettings {
   raConnected: boolean;
   steamPopup: boolean;
   fallbackPopup: boolean;
+  /** Where the PS4 trophy key comes from, or null when none is set up. */
+  ps4KeySource: "shadps4" | "settings" | null;
 }
 
 export interface RaGame {
@@ -106,6 +108,7 @@ export const achievementsApi = {
   settings: () => invoke<AchievementSettings>("achievements_settings"),
   saveSettings: (steamPopup: boolean, fallbackPopup: boolean) =>
     invoke<void>("achievements_save_settings", { steamPopup, fallbackPopup }),
+  setPs4Key: (key: string) => invoke<void>("achievements_set_ps4_key", { key }),
   testPopup: (delaySecs = 0, key?: string) => invoke<void>("achievements_test_popup", { key: key ?? null, delaySecs }),
   toastNext: () => invoke<ToastPayload | null>("achievement_toast_next"),
   raConnect: (user: string, key: string) => invoke<RaProfile>("ra_connect", { user, key }),

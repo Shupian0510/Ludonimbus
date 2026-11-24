@@ -209,6 +209,7 @@ fn main() {
             achievements::achievements_set_popup,
             achievements::achievements_settings,
             achievements::achievements_save_settings,
+            achievements::achievements_set_ps4_key,
             achievements::achievements_test_popup,
             achievements::achievement_toast_next,
             achievements::ra_connect,

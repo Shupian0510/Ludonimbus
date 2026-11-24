@@ -82,7 +82,7 @@ const demoRa: AchievementsView = {
   ],
 };
 
-const settings: AchievementSettings = { raUser: null, raConnected: false, steamPopup: true, fallbackPopup: true };
+const settings: AchievementSettings = { raUser: null, raConnected: false, steamPopup: true, fallbackPopup: true, ps4KeySource: null };
 const views: Record<string, AchievementsView> = { "bloodborne-lantern": bloodborne };
 
 const none = (key: string): AchievementsView => ({
@@ -136,6 +136,9 @@ export async function mockAchievements(cmd: string, args: Record<string, unknown
     case "achievements_save_settings":
       settings.steamPopup = args.steamPopup as boolean;
       settings.fallbackPopup = args.fallbackPopup as boolean;
+      return delay(undefined);
+    case "achievements_set_ps4_key":
+      settings.ps4KeySource = (args.key as string) ? "settings" : null;
       return delay(undefined);
     case "ra_connect":
       settings.raUser = args.user as string;

@@ -301,6 +301,7 @@ export function AchievementSettingsPanel() {
   const [user, setUser] = useState("");
   const [key, setKey] = useState("");
   const [working, setWorking] = useState(false);
+  const [ps4Key, setPs4Key] = useState("");
 
   const load = useCallback(() => achievementsApi.settings().then(setS, () => setS(null)), []);
   useEffect(() => {
@@ -330,6 +331,16 @@ export function AchievementSettingsPanel() {
     await achievementsApi.raDisconnect();
     ui.toast(msg().achievements.raDisconnected);
     load();
+  };
+  const savePs4Key = async (key: string) => {
+    try {
+      await achievementsApi.setPs4Key(key);
+      ui.toast(key ? msg().achievements.ps4KeySaved : msg().achievements.ps4KeyCleared);
+      setPs4Key("");
+      await load();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
   };
   const test = async (delay = 0) => {
     try {
@@ -366,6 +377,30 @@ export function AchievementSettingsPanel() {
           {a.testInGame}
         </Button>
       </div>
+
+      <h4>{a.ps4Key}</h4>
+      <p className="muted small">
+        {s.ps4KeySource === "shadps4" ? a.ps4KeyFromShadps4 : s.ps4KeySource === "settings" ? a.ps4KeySet : a.ps4KeyNone}
+      </p>
+      <p className="muted small">{a.ps4KeyHint}</p>
+      {s.ps4KeySource !== "shadps4" && (
+        <>
+          <label>
+            <span>{a.ps4KeyLabel}</span>
+            <input className="input" type="password" value={ps4Key} onChange={(e) => setPs4Key(e.target.value)} autoComplete="off" spellCheck={false} />
+          </label>
+          <div className="row">
+            <Button small kind="primary" icon="check" disabled={!ps4Key.trim()} onClick={() => savePs4Key(ps4Key)}>
+              {a.ps4KeySave}
+            </Button>
+            {s.ps4KeySource === "settings" && (
+              <Button small kind="ghost" icon="x" onClick={() => savePs4Key("")}>
+                {a.ps4KeyClear}
+              </Button>
+            )}
+          </div>
+        </>
+      )}
 
       <h4>{a.raAccount}</h4>
       {s.raConnected && s.raUser ? (
