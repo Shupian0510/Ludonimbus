@@ -303,6 +303,9 @@ pub fn spawn(app: AppHandle) {
         // Catch up quietly: what happened while the app wasn't running is history.
         std::thread::sleep(Duration::from_secs(5));
         if let Ok(cfg) = config::load() {
+            for key in ach::link_obvious(&cfg) {
+                log(format!("{key}: achievement source linked automatically"));
+            }
             let ctx = Ctx::from_config(cfg.clone());
             for key in ach::settings().games.keys() {
                 if let Some(g) = cfg.game(key) {
@@ -601,6 +604,8 @@ mod tests {
 
     #[test]
     fn plugin_event_queue() {
+        // Logs go to a scratch data folder, never the real one.
+        std::env::set_var("LUDONIMBUS_HOME", std::env::temp_dir().join(format!("ludonimbus-app-test-{}", std::process::id())));
         let g = GameEntry {
             key: "g".into(),
             name: "Game".into(),

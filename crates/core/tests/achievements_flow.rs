@@ -135,4 +135,25 @@ fn two_devices() {
     let mut ids: Vec<&str> = file.unlocks.iter().map(|u| u.id.as_str()).collect();
     ids.sort();
     assert_eq!(ids, vec!["0", "1", "2"]);
+
+    // --- Obvious sources are linked automatically, unless the user unlinked them.
+    let cfg_c = device(&tmp.path().join("home-c"), "dev-c", "Handheld");
+    let game_dir = tmp.path().join("BloodbornePC");
+    fs::create_dir_all(game_dir.join("user/savedata/1")).unwrap();
+    fs::write(game_dir.join("Bloodborne.exe"), b"exe").unwrap();
+    fs::write(game_dir.join("Lantern Engine.exe"), b"exe").unwrap();
+    let mut cfg_c = cfg_c;
+    cfg_c.games.push(GameEntry {
+        key: "bb".into(),
+        name: "Bloodborne".into(),
+        adapter: Some("bloodborne-lantern".into()),
+        exe: Some(game_dir.join("Bloodborne.exe")),
+        ..Default::default()
+    });
+    cfg_c.games.push(game.clone());
+    assert_eq!(achievements::link_obvious(&cfg_c), vec!["bb".to_string()]);
+    assert_eq!(achievements::settings().games["bb"].source, SourceKind::Lantern);
+    assert!(achievements::link_obvious(&cfg_c).is_empty(), "already linked");
+    achievements::unlink("bb").unwrap();
+    assert!(achievements::link_obvious(&cfg_c).is_empty(), "the user unlinked it");
 }

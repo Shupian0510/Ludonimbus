@@ -102,6 +102,8 @@ pub struct Settings {
     pub steam_popup: bool,
     /// Ludonimbus's own topmost window when Steam could not show the popup.
     pub fallback_popup: bool,
+    /// Games the user unlinked: never linked automatically again.
+    pub unlinked: BTreeSet<String>,
 }
 
 impl Default for Settings {
@@ -112,6 +114,7 @@ impl Default for Settings {
             games: BTreeMap::new(),
             steam_popup: true,
             fallback_popup: true,
+            unlinked: BTreeSet::new(),
         }
     }
 }
@@ -297,9 +300,30 @@ pub fn update_db<T>(key: &str, f: impl FnOnce(&mut GameDb) -> T) -> Result<T> {
     Ok(out)
 }
 
+/// Link games whose source is unambiguous (e.g. Bloodborne on Lantern),
+/// except ones the user unlinked. Returns the keys linked.
+pub fn link_obvious(cfg: &AppConfig) -> Vec<String> {
+    let st = settings();
+    let mut linked = Vec::new();
+    for g in &cfg.games {
+        if st.games.contains_key(&g.key) || st.unlinked.contains(&g.key) {
+            continue;
+        }
+        let Some(c) = detect::candidates(g).into_iter().find(|c| c.sure) else { continue };
+        match link(cfg, g, c.binding) {
+            Ok(_) => linked.push(g.key.clone()),
+            Err(e) => log(format!("{}: automatic achievement link failed: {e:#}", g.key)),
+        }
+    }
+    linked
+}
+
 /// Forget a game's source and cached data (local only; the cloud keeps its records).
 pub fn unlink(key: &str) -> Result<()> {
-    update_settings(|s| s.games.remove(key))?;
+    update_settings(|s| {
+        s.games.remove(key);
+        s.unlinked.insert(key.to_string());
+    })?;
     let _guard = lock()?;
     let _ = std::fs::remove_file(db_file(key));
     Ok(())
@@ -308,7 +332,10 @@ pub fn unlink(key: &str) -> Result<()> {
 /// Link a game to a source. Unlocks that already exist are not announced.
 pub fn link(cfg: &AppConfig, game: &GameEntry, binding: Binding) -> Result<GameDb> {
     let same = settings().games.get(&game.key) == Some(&binding);
-    update_settings(|s| s.games.insert(game.key.clone(), binding.clone()))?;
+    update_settings(|s| {
+        s.games.insert(game.key.clone(), binding.clone());
+        s.unlinked.remove(&game.key);
+    })?;
     if !same {
         let _guard = lock()?;
         let _ = std::fs::remove_file(db_file(&game.key));
