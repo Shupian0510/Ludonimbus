@@ -6,9 +6,9 @@
 
 ## 已经自动验证过的
 
-- **解析**（`crates/core/src/achievements/`，用构造的样本文件）：RPCS3 的 `TROPCONF.SFM` 和 `TROPUSR.DAT`（含时间换算）、shadPS4 的奖杯 XML 和每个用户的解锁文件、Lantern 的 `trophies.log`（几种可能的行格式）和引擎日志里的 `Runtime: trophy N unlocked`、从 `trophy00.trp` 取图标、RetroAchievements 接口文档里的返回样例（不保存触发逻辑 `MemAddr`）。
+- **解析**（`crates/core/src/achievements/`，用构造的样本文件）：PS4 `trophy00.trp` 的解密（用编造的测试密钥加密再解开；没有密钥时只取图标）、RPCS3 的 `TROPCONF.SFM` 和 `TROPUSR.DAT`（含时间换算）、shadPS4 的奖杯 XML 和每个用户的解锁文件、Lantern 的 `trophies.log`（几种可能的行格式）和引擎日志里的 `Runtime: trophy N unlocked`、从 `trophy00.trp` 取图标、RetroAchievements 接口文档里的返回样例（不保存触发逻辑 `MemAddr`）。
 - **合并和云端**（`tests/achievements_flow.rs`）：两台模拟设备共用一个本机文件夹云盘；只有游戏运行中新出现的解锁才弹窗，关联前已有的不弹；同一个成就取最早的解锁时间；本机奖杯被重置、本地数据库被删掉后，云端这台设备的记录也不会少。
-- **你这台电脑上的真实数据**（只读，`tests/achievements_live.rs`）：Bloodborne 自动认出 Lantern，奖杯组 `NPWR05818_00`（从游戏的 `npbind.dat` 读出），40 个奖杯都有图标，已解锁 0 个。
+- **你这台电脑上的真实数据**（只读，`tests/achievements_live.rs`）：Bloodborne 自动认出 Lantern，奖杯组 `NPWR05818_00`（从游戏的 `npbind.dat` 读出），40 个奖杯都有图标，已解锁 0 个。仓库里没有奖杯密钥，所以这个测试在没有密钥时只检查编号和图标，有密钥（shadPS4 的 `TrophyKey` 或设置里填的）时才检查名称。
 - **应用**：给插件的事件队列（插件重新加载后不补弹旧事件、按序号取新事件、ack 后不再走兜底窗口、失败时走兜底窗口）。
 - **插件**：类型检查通过；`toast.ts` 用模拟的 `NotificationStore` 测过：按 `strTest: "Achievement"` 找到通知类型，游戏的 Overlay 在运行时投到 Overlay，否则走桌面通知，Steam 改版找不到接口时报出原因。
 - **界面**：浏览器预览（示例数据）里点过游戏页的「成就」标签（已关联、未关联两种）、设置里的「成就」、RetroAchievements 连接、兜底小窗口，中英文，控制台没有报错。
@@ -53,9 +53,26 @@
 
 ### 3. 应用里的成就页
 
-1. Bloodborne →「成就」标签：「找到的奖杯数据」里有 Lantern，点「关联」后列出 40 个奖杯（编号和图标，Lantern 不提供名称）。下面有「解锁时在 Steam 里弹出成就提醒」开关和关掉 Lantern 自带通知的提示。
+**PS4 奖杯密钥**：Ludonimbus 不附带密钥，Bloodborne 要显示官方名称需要你自己的密钥（32 个十六进制字符，来自你自己的主机或模拟器配置）。两种方式任选一种：
+- 在 shadPS4 的设置里填 `TrophyKey`（写在 shadPS4 的 `config.toml`），Ludonimbus 自动使用；
+- 或在 Ludonimbus「设置 → 成就 → PS4 奖杯密钥」粘贴后点「保存密钥」，状态变成「已设置」。密钥只保存在这台电脑的 `%APPDATA%\Ludonimbus\achievements\settings.json`，不会上传到云盘。
+
+没有密钥时奖杯显示为「奖杯 N」和图标，其他功能照常。
+
+1. Bloodborne →「成就」标签：「找到的奖杯数据」里有 Lantern，点「关联」后列出 40 个奖杯和图标。
+   - **有密钥**：名称和说明是官方简体中文（例如「亚南日出」），有等级（白金 / 金 / 银 / 铜）；界面切到 English 后点「刷新」变成英文名称。之前没有密钥、后来才填的，填好后点「刷新」就变成名称。
+   - **没有密钥**：显示「奖杯 1」…「奖杯 40」和图标。
+   - 在设置里点「清除」后再「刷新」，名称变回编号（用 shadPS4 的 `TrophyKey` 时设置里没有「清除」，要在 shadPS4 里删掉）。下面有「解锁时在 Steam 里弹出成就提醒」开关和关掉 Lantern 自带通知的提示。
 2. 「刷新」「取消关联」能用，取消后可以重新关联。
-3. 「设置 → 成就」：两个开关的状态重新打开应用后保持。
+3. 「设置 → 成就」：两个开关的状态重新打开应用后保持；PS4 奖杯密钥的状态（来自 shadPS4 / 已设置 / 未设置）也保持。填一个不是 32 个十六进制字符的值，提示格式不对、不保存。
+
+### 3b. 存档规则和 PS4 移植（2026-11-24 新增）
+
+1. **BotW（Cemu）**：打开 Ludonimbus 后过几秒，BotW 自动关联到「TrophyNX」，「成就」标签列出 33 个成就（英文），已解锁的有 Rise and Shine、Sheikah Slate、Out of the Cave、Marathon Runner（按你现在的存档）。Steam 里 BotW 的游戏页也显示「成就 4/33」。
+2. 在 BotW 里拿一个新的（例如再开一座神庙、拿到一个规则里的道具），存档后退出：几秒内成就数增加，游戏运行中存档时会弹出 Steam 的成就提醒。
+3. 断网后打开 Ludonimbus：BotW 的成就照常显示（用的是缓存的规则）。
+4. 有 Ryujinx 游戏或 Switch 重编译游戏（Super Mario Odyssey、Hollow Knight、Slay the Spire …）时：加进 Ludonimbus 后自动关联「TrophyNX」，成就数和存档进度对得上。
+5. 有 PS4 移植版（Diablo III、Dead Nation、Resogun、Uncharted …）时：自动关联「PS4 port」，有 PS4 奖杯密钥时名称是官方中文（没有时是编号）；解锁一个奖杯后几秒内出现。**这条没有真实样本，最需要确认**，把 `achievements.log` 和移植版文件夹里的奖杯记录文件位置发给我。
 
 ### 4. 多台电脑（可选，有第二台电脑时）
 

@@ -3,6 +3,7 @@
 > **进度（2026-11-23）**
 > - 调研完成。第 8 节的决定：弹窗由你装测试版验证；第一批做本地奖杯 + RetroAchievements（RA 先用文档样例测，真实账号以后再测）；Steam 弹窗默认开启并提示关掉模拟器自带的通知；Lantern 先显示编号和图标，检测到 shadPS4 解出的 `TROP.XML` 时自动用里面的名称。
 > - **P0–P4 已实现**（分支 `claude/achievements-730281`）：core 模块 `crates/core/src/achievements/`、托盘程序的检测线程和事件队列 `app/src-tauri/src/achievements.rs`、兜底小窗口、本机接口、插件的 Steam 弹窗 `toast.ts` 和游戏页成就项 `achievements.ts`、应用里的「成就」标签和设置。自动测试和你这台电脑上的只读检查见 [testing-achievements.md](testing-achievements.md)。
+> - **扩大覆盖面**（2026-11-24）：「Ludonimbus 自己维护成就库」的评估见 [plan-achievements-coverage.md](plan-achievements-coverage.md)：PS4 的官方名单可以用奖杯密钥从用户自己的游戏文件解出（已在 Bloodborne 上验证；Ludonimbus 不附带密钥，用 shadPS4 的 `TrophyKey` 或用户在设置里填的）；Switch 有社区规则库 TrophyNX 可用；重编译游戏用自己的存档规则库。
 > - **待你实测**：按 [testing-achievements.md](testing-achievements.md)，重点是第 1 节（Steam 弹窗，桌面和游戏内）和 Lantern 的 `trophies.log` 格式。
 > - 云端读写：2026-11-23 已合并 `main`（05dfbfc、9c1097d），成就记录和主会话的游戏时间一样走 `CloudProvider::files()` 返回的路径式 `Store`（Google Drive 也实现了 `Store`），成就这边没有再改 `cloud/` 下的文件。
 
@@ -41,8 +42,10 @@
 |---|---|---|---|---|---|
 | RetroAchievements | RA Web API | ✓（图标是 RA 的网址） | ✓ 含时间、硬核模式 | RA 用户名 + Web API Key | 第一批 |
 | shadPS4 | `user/trophy/<NPWR…>/Xml/TROP*.XML` + `user/home/<用户>/trophy/<NPWR…>.xml` | ✓（前提是用户在 shadPS4 里配置过奖杯密钥） | ✓ Unix 秒 | 无 | 第一批 |
-| Lantern Engine（Bloodborne） | 存档文件夹里的 `trophies.log` + `trophy00.trp` 里的图标 | 只有图标和编号，名称见 8.4 | ✓ | 无 | 第一批 |
+| Lantern Engine（Bloodborne） | 存档文件夹里的 `trophies.log` + 游戏的 `trophy00.trp` | ✓（2026-11-24 起有奖杯密钥时解密游戏自己的 `trophy00.trp`，见 1.3；没有密钥时只有编号和图标） | ✓ | 奖杯密钥（可选） | 第一批 |
 | RPCS3 | `dev_hdd0/home/00000001/trophy/<NPWR…>/` 下的 `TROPCONF.SFM`、`TROPUSR.DAT`、`TROPnnn.PNG` | ✓ | ✓ | 无 | 第一批 |
+| PS4 移植 / 重编译（2026-11-24） | 移植版文件夹里原版游戏的 `trophy00.trp`（解密）+ `trophies.log` / `unlocked.txt` / `progress_user*.txt` / `trophies.dat` / 运行日志 | ✓ | ✓ | 无 | 已实现，见 [plan-achievements-coverage.md](plan-achievements-coverage.md) |
+| 存档规则（TrophyNX 格式，2026-11-24） | Switch 游戏（模拟器、重编译）和 Cemu 上的 BotW 的存档 | ✓（英文） | ✓ | 无 | 已实现，同上 |
 | Vita3K | `ux0/user/00/trophy/…`（PS3 系的 TROPUSR 格式，待核实） | | | 无 | 第二批 |
 | Xenia Canary | 档案里的 `<TitleID>.gpd`（XDBF 格式） | ✓ | ✓ | 无 | 第二批 |
 | 基于存档的规则成就 | 存档文件 | 规则文件里写 | 同步时判定 | 无 | 第二批 |
@@ -87,7 +90,7 @@
 **Lantern Engine**（你的 Bloodborne，0.9.43）基于 shadPS4，但奖杯是自己实现的：
 - 按启动器里的说明，它在当前档案的存档文件夹里写 **`trophies.log`，每次解锁一行（id 和时间）**；游戏引擎的日志 `logs/last_session.log` 里会出现 `Runtime: trophy N unlocked`，启动器读这一行来弹它自己的奖杯通知。
 - 图标：启动器解到 `%APPDATA%\Lantern Engine\trophy-icons\<哈希>\TROP000.PNG…`。Ludonimbus 也可以自己从 `trophy00.trp` 里取（PNG 不加密，文件头和条目表格式简单）。
-- **名称**：Lantern 把 Bloodborne 40 个奖杯的名称内置在启动器里，不写到文件；`user/trophy/` 是空的。所以 Ludonimbus 只能显示「奖杯 12」加图标，见 8.4。
+- **名称**：Lantern 把名称内置在启动器里，不写到文件。**2026-11-24 起** Ludonimbus 用奖杯密钥解密游戏自己的 `sce_sys/trophy/trophy00.trp`。**Ludonimbus 不附带密钥**：先用 shadPS4 `config.toml` 里的 `TrophyKey`，其次用用户在「设置 → 成就 → PS4 奖杯密钥」里填的（只存在这台电脑的 `achievements\settings.json`，不上传；Lantern 没有类似设置）。没有密钥时只取图标，奖杯显示为「奖杯 N」。解密后得到官方名称、说明、等级和是否隐藏，按界面语言选 `TROP_XX`（简体中文是 `TROP_11`），图标也从这里取，都缓存在 `%APPDATA%\Ludonimbus\achievements\trophies\<NPWR>\`。游戏文件夹来自 Lantern 的 `settings.json`（`game_dir`）或 shadPS4 的 `installDirs`，用 `npbind.dat` 里的奖杯组编号对应。实现见 `crates/core/src/achievements/trp.rs`，评估见 [plan-achievements-coverage.md](plan-achievements-coverage.md)。
 - 你这台电脑上还没有 `trophies.log`（还没解锁过奖杯），**具体的行格式要等你解锁一个奖杯后确认**。实现时两边都读：`trophies.log` 是记录，`last_session.log` 用来及时发现新解锁。
 - Lantern 自己会在游戏里弹奖杯通知（设置项 `trophy_notifications`），会和 Steam 的弹窗重复，见 4.4。
 
@@ -152,7 +155,7 @@ Goldberg Steam Emulator、CODEX、RUNE、Ali213 等破解补丁会在本地生�
 
 ### 2.2 本机
 
-- `%APPDATA%\Ludonimbus\achievements\settings.json`：RA 用户名、每个游戏的来源（`key → {source, sourceId, path}`）、弹窗设置。**不改 `config.rs` 的 `GameEntry`**，避免和主会话冲突；以后合并时可以再搬进去。
+- `%APPDATA%\Ludonimbus\achievements\settings.json`：RA 用户名、每个游戏的来源（`key → {source, sourceId, path}`）、弹窗设置、PS4 奖杯密钥（可选，只在这台电脑，不上传）。**不改 `config.rs` 的 `GameEntry`**，避免和主会话冲突；以后合并时可以再搬进去。
 - `%APPDATA%\Ludonimbus\achievements\<key>.json`：缓存的定义、合并后的解锁记录（每条带设备）、已经弹过窗的 id（防止重复弹窗）。
 - 图标缓存放 `%APPDATA%\Ludonimbus\achievements\icons\`（RA 徽章下载后放这里；本地奖杯直接读原文件）。
 
@@ -341,7 +344,7 @@ RA 的实测需要你的 RA 用户名和 Web API Key（RA 网站 → 设置 → 
 
 模拟器自己也会弹。默认「开」并提示关掉模拟器自己的通知，还是默认「关」、由你在每个游戏里打开？
 
-### 8.4 Lantern 奖杯的名称
+### 8.4 Lantern 奖杯的名称（2026-11-24 已解决：有奖杯密钥时从游戏自己的奖杯文件解密，见 1.3）
 
 Lantern 不把名称写到文件里，Ludonimbus 只能显示「奖杯 12」和图标。可选：
 - a. 先这样，以后 Lantern 提供文件再接；
