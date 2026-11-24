@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod achievements;
 mod agent;
 mod art;
 mod busy;
@@ -70,6 +71,7 @@ fn main() {
             tray.build(app)?;
             watcher::spawn(app.handle().clone());
             agent::spawn(app.handle().clone());
+            achievements::spawn(app.handle().clone());
             let handle = app.handle().clone();
             std::thread::spawn(move || steam_plugin::refresh_installed(&handle));
             // Start OpenList early when the cloud is Quark, so the first sync doesn't wait for it.
@@ -168,6 +170,22 @@ fn main() {
             steam_plugin::steam_plugin_remove,
             updater::check_update,
             updater::install_update,
+            achievements::achievements_view,
+            achievements::achievements_candidates,
+            achievements::achievements_link,
+            achievements::achievements_link_file,
+            achievements::achievements_pick_file,
+            achievements::achievements_unlink,
+            achievements::achievements_refresh,
+            achievements::achievements_icon,
+            achievements::achievements_set_popup,
+            achievements::achievements_settings,
+            achievements::achievements_save_settings,
+            achievements::achievements_test_popup,
+            achievements::achievement_toast_next,
+            achievements::ra_connect,
+            achievements::ra_disconnect,
+            achievements::ra_recent_games,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Ludonimbus")

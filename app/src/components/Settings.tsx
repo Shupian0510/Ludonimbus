@@ -4,6 +4,7 @@ import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions, MigrateBanner } from "./CloudForms";
 import { SteamPluginPanel } from "./SteamPlugin";
+import { AchievementSettingsPanel } from "./Achievements";
 import { Badge, Button, Icon, PathChoice, PathField, samePath, Spinner, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 import { LANGS, LangPref, msg, useI18n, useT } from "../i18n";
@@ -230,6 +231,8 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
       </section>
 
       <SteamPluginPanel key={s.steamRoot ?? ""} />
+
+      <AchievementSettingsPanel />
 
       <SgdbPanel />
 

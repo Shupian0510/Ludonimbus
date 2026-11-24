@@ -1858,3 +1858,45 @@ details.scan-group[open] > summary {
   flex-direction: column;
   gap: 4px;
 }
+
+/* --- Achievements (components/Achievements.tsx) ----------------------------- */
+.ach { display: flex; flex-direction: column; gap: 14px; }
+.ach h4 { margin: 12px 0 6px; font-size: 13px; color: var(--text-2); font-weight: 600; }
+.ach .panel-head .grow { flex: 1; }
+.ach-progress { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin: 4px 0 8px; }
+.ach-progress > div { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+.ach-popup { display: flex; gap: 12px; align-items: flex-start; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ach-list { display: flex; flex-direction: column; background: var(--panel); border-radius: var(--radius); overflow: hidden; }
+.ach-row { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.ach-row:last-child { border-bottom: 0; }
+.ach-row img, .ach-row .ach-noicon { width: 52px; height: 52px; border-radius: 6px; flex: none; object-fit: cover; background: var(--panel-2); }
+.ach-row.locked img { filter: grayscale(1) brightness(0.5); }
+.ach-row.locked .ach-name { color: var(--muted); }
+.ach-text { flex: 1; min-width: 0; }
+.ach-name { color: var(--text); font-weight: 500; }
+.ach-meta { text-align: right; white-space: nowrap; }
+.ach-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 17px; background: var(--panel-2); color: var(--text-2); vertical-align: 1px; }
+.ach-tag.ach-platinum { background: #6c8ead; color: #fff; }
+.ach-tag.ach-gold { background: #b8912b; color: #fff; }
+.ach-tag.ach-silver { background: #8a8f98; color: #fff; }
+.ach-tag.ach-bronze { background: #8c5a33; color: #fff; }
+.ach-candidate { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.ach-candidate .path { font-size: 12px; }
+.ach-raid { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.form .ach-toggle { display: flex; align-items: center; gap: 12px; }
+.form .ach-toggle > span:first-child { min-width: 0; }
+.ach-popup .toggle, .ach-toggle .toggle { margin-left: 0; flex: none; }
+
+/* The fallback popup window: transparent, only the card is drawn. */
+html.toast-window, html.toast-window body, html.toast-window #root { background: transparent !important; overflow: hidden; }
+.ach-toast { position: fixed; inset: 6px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 6px;
+  background: linear-gradient(135deg, rgba(36, 52, 72, 0.97), rgba(23, 26, 33, 0.97)); color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(102, 192, 244, 0.35); animation: ach-in 0.35s ease-out; font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif; }
+.ach-toast.leaving { animation: ach-out 0.5s ease-in forwards; }
+.ach-toast img, .ach-toast .ach-noicon { width: 64px; height: 64px; border-radius: 4px; flex: none; object-fit: cover; background: rgba(255, 255, 255, 0.08); }
+.ach-toast-text { min-width: 0; }
+.ach-toast-title { font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+.ach-toast-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ach-toast-game { font-size: 12px; color: #a9b8c7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes ach-in { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes ach-out { to { transform: translateY(-14px); opacity: 0; } }

@@ -28,6 +28,20 @@ pub fn scan(_cfg: &AppConfig, _game: &GameEntry, b: &Binding) -> Result<Scan> {
     }
 }
 
+/// Files that change when a trophy unlocks (watched while the game runs).
+pub fn watch_files(b: &Binding) -> Vec<PathBuf> {
+    let Some(path) = &b.path else { return Vec::new() };
+    match b.source {
+        SourceKind::Shadps4 => shadps4_save_files(path, &b.source_id),
+        SourceKind::Lantern => lantern_log(path)
+            .into_iter()
+            .chain(path.parent().map(|p| p.join("logs").join("last_session.log")))
+            .collect(),
+        SourceKind::Rpcs3 => vec![path.join("TROPUSR.DAT")],
+        SourceKind::Retroachievements => Vec::new(),
+    }
+}
+
 fn norm_id(s: &str) -> Option<String> {
     s.trim().parse::<u32>().ok().map(|n| n.to_string())
 }

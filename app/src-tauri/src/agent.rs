@@ -13,8 +13,10 @@
 //! POST /v1/games/{key}/sync                               start "sync now" in the background
 //! POST /v1/games/{key}/open                               show the game in the Ludonimbus window
 //! ```
+//! Achievements (`/v1/steam/apps/{appid}/achievements`, `/v1/achievements/…`)
+//! are handled in `achievements.rs`.
 
-use crate::{busy, commands, show_main, watcher};
+use crate::{achievements, busy, commands, show_main, watcher};
 use chrono::{DateTime, Utc};
 use ludonimbus_core::config::{self, GameEntry};
 use ludonimbus_core::snapshot::Trigger;
@@ -192,6 +194,13 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             let _ = app.emit("open-game", key.to_string());
             Ok(json!({ "ok": true }))
         }
+        (Method::Get, ["v1", "steam", "apps", appid, "achievements"]) => {
+            let appid: u32 = appid.parse().map_err(|_| ApiError::new(400, "bad appid"))?;
+            Ok(achievements::api_app(appid, query_param(query, "account").filter(|a| !a.is_empty()))?)
+        }
+        (Method::Get, ["v1", "games", key, "achievements", id, "icon"]) => Ok(achievements::api_icon(key, id)?),
+        (Method::Get, ["v1", "achievements", "events"]) => Ok(achievements::api_events(query_param(query, "after"))?),
+        (Method::Post, ["v1", "achievements", "events", seq, "ack"]) => Ok(achievements::api_ack(seq, query_param(query, "shown"), query_param(query, "reason"))?),
         _ => Err(ApiError::new(404, "not found")),
     }
 }
@@ -256,7 +265,7 @@ fn find_by_key(cfg: &config::AppConfig, key: &str) -> Result<GameEntry, ApiError
         .ok_or_else(|| ApiError::new(404, ludonimbus_core::tr!("Ludonimbus 里没有这个游戏（{key}）", "This game isn't in Ludonimbus ({key})")))
 }
 
-fn find_game(cfg: &config::AppConfig, appid: u32, account: Option<&str>) -> Option<GameEntry> {
+pub(crate) fn find_game(cfg: &config::AppConfig, appid: u32, account: Option<&str>) -> Option<GameEntry> {
     let linked = |g: &&GameEntry| g.steam.as_ref().is_some_and(|l| l.appid == appid);
     let same_account = |g: &&GameEntry| account.is_none_or(|a| g.steam.as_ref().is_some_and(|l| l.account == a));
     cfg.games

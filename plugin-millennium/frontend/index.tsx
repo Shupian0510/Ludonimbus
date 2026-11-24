@@ -3,10 +3,14 @@
 
 import { definePlugin, Field, Millennium } from 'millennium';
 import { useEffect, useState } from 'react';
+import { AchievementsBar } from './achievements';
 import { PlayBarStatus } from './playbar';
 import { parseReply, setLang, t } from './status';
+import { AchievementToasts } from './toast';
 
 const bars = new Map<Document, PlayBarStatus>();
+const achievementBars = new Map<Document, AchievementsBar>();
+const toasts = new AchievementToasts();
 
 function attach(name: string | undefined, doc: Document | undefined): void {
 	// Only the desktop library window ("SP Desktop_uid0"), not Big Picture.
@@ -15,11 +19,16 @@ function attach(name: string | undefined, doc: Document | undefined): void {
 		if (!old.defaultView || old.defaultView.closed) {
 			bar.stop();
 			bars.delete(old);
+			achievementBars.get(old)?.stop();
+			achievementBars.delete(old);
 		}
 	}
 	const bar = new PlayBarStatus(doc);
 	bars.set(doc, bar);
 	bar.start();
+	const achievements = new AchievementsBar(doc);
+	achievementBars.set(doc, achievements);
+	achievements.start();
 }
 
 /** Windows that already existed when the plugin loaded. */
@@ -50,6 +59,8 @@ const QuickAccess = () => {
 export default definePlugin(() => {
 	Millennium.AddWindowCreateHook?.((ctx: any) => attach(ctx?.m_strName, ctx?.m_popup?.document));
 	attachExisting();
+	// New achievement unlocks: shown with Steam's own popup (toast.ts).
+	toasts.start();
 
 	return {
 		title: t().label,
