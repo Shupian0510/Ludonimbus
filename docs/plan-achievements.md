@@ -176,8 +176,8 @@ games/<key>/achievements/<device-id>.json     这台设备的解锁记录，只�
 ### 3.1 游戏页
 
 放在 Steam 给自己的游戏显示成就的两个位置（2026-11-23 按你的反馈改，Steam 前端里的对应组件是 `MiniAchievements` 和右栏的成就区块）：
-- 「开始游戏」栏：「成就 12/40」加细进度条，用 Steam 自己的 `GameStat MiniAchievements`、`AchievementProgressRow`、`DetailsProgressContainer` 等类名，排在「游戏时间」「所有设备」之后、Ludonimbus 云存档之前。Steam 页面里有不止一行统计（有一行是隐藏的），每一行都要放。
-- 右栏最上面：「成就」区块（Steam 的 `AppDetailsSection` / `RightColumnSection` / `SectionHeader` 类名，和「笔记」「录像及截图」一样的样式），显示「您已解锁 7/40（17%）」、进度条、最近解锁的 6 个图标和未解锁的灰色图标、「查看所有成就」。
+- 「开始游戏」栏：「成就 12/40」加细进度条，用 Steam 自己的 `GameStat MiniAchievements`、`AchievementProgressRow`、`DetailsProgressContainer` 等类名，排在 Ludonimbus 云存档之后（Ludonimbus 的项目依次是云存档、成就、所有设备）：这一行放不下时会换行，而第二行不显示，所以最重要的排在前面。Steam 页面里有不止一行统计（有一行是隐藏的），每一行都要放。
+- 右栏最上面，只放一个（Steam 把「录像及截图」等区块包在右栏里的一个子容器中，要放在最外层，不能放进子容器）：「成就」区块（Steam 的 `AppDetailsSection` / `RightColumnSection` / `SectionHeader` 类名，和「笔记」「录像及截图」一样的样式），显示「您已解锁 7/40（17%）」、进度条、最近解锁的 6 个图标和未解锁的灰色图标、「查看所有成就」。
 - 来源明确的游戏（例如 Lantern 上的 Bloodborne）在应用启动时自动关联；手动「取消关联」过的不再自动关联。
 - 点开是成就列表（插件自己画的弹出层，Steam 深色风格）：顶部是总进度；已解锁的在前（图标、名称、说明、解锁时间和设备），未解锁的变灰；未解锁的隐藏成就显示「隐藏成就」。RA 显示分数和硬核标记，奖杯显示等级。
 - 数据：插件后端调用本机接口 `GET /v1/steam/apps/{appid}/achievements`。本地奖杯的图标由后端转成 data URL（插件页面读不到本地文件）；RA 的图标直接用网址。
