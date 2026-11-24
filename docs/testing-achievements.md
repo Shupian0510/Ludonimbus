@@ -12,7 +12,7 @@
 - **应用**：给插件的事件队列（插件重新加载后不补弹旧事件、按序号取新事件、ack 后不再走兜底窗口、失败时走兜底窗口）。
 - **插件**：类型检查通过；`toast.ts` 用模拟的 `NotificationStore` 测过：按 `strTest: "Achievement"` 找到通知类型，游戏的 Overlay 在运行时投到 Overlay，否则走桌面通知，Steam 改版找不到接口时报出原因。
 - **界面**：浏览器预览（示例数据）里点过游戏页的「成就」标签（已关联、未关联两种）、设置里的「成就」、RetroAchievements 连接、兜底小窗口，中英文，控制台没有报错。
-- **没验证的**：真实 Steam 里的弹窗（桌面和游戏内）、Overlay 能不能通过 `ludonimbus-run` 加载到游戏里、兜底小窗口在真实应用里的样子和位置、RetroAchievements 真实账号、Lantern 的 `trophies.log` 的真实格式、Google Drive 上的成就文件（新加的读写小文件方法只在本机文件夹云盘上测过）。
+- **没验证的**：真实 Steam 里的弹窗（桌面和游戏内）、Overlay 能不能通过 `ludonimbus-run` 加载到游戏里、兜底小窗口在真实应用里的样子和位置、RetroAchievements 真实账号、Lantern 的 `trophies.log` 的真实格式、Google Drive 上的成就文件（成就走主会话的 `CloudProvider::files()`，这里只在本机文件夹云盘上测过）。
 
 ## 需要在真实环境确认的
 

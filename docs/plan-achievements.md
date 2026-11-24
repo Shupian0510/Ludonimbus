@@ -4,7 +4,7 @@
 > - 调研完成。第 8 节的决定：弹窗由你装测试版验证；第一批做本地奖杯 + RetroAchievements（RA 先用文档样例测，真实账号以后再测）；Steam 弹窗默认开启并提示关掉模拟器自带的通知；Lantern 先显示编号和图标，检测到 shadPS4 解出的 `TROP.XML` 时自动用里面的名称。
 > - **P0–P4 已实现**（分支 `claude/achievements-730281`）：core 模块 `crates/core/src/achievements/`、托盘程序的检测线程和事件队列 `app/src-tauri/src/achievements.rs`、兜底小窗口、本机接口、插件的 Steam 弹窗 `toast.ts` 和游戏页成就项 `achievements.ts`、应用里的「成就」标签和设置。自动测试和你这台电脑上的只读检查见 [testing-achievements.md](testing-achievements.md)。
 > - **待你实测**：按 [testing-achievements.md](testing-achievements.md)，重点是第 1 节（Steam 弹窗，桌面和游戏内）和 Lantern 的 `trophies.log` 格式。
-> - 和主会话的共享改动：`CloudProvider` 新加了 `list_files` / `read_file` / `write_file`（`Repo` 和 Google Drive 都实现了），主会话的游戏时间可以直接用；如果主会话已经加了同类方法，合并时以主会话的为准，`achievements/cloud.rs` 只用到这三个调用。
+> - 云端读写：2026-11-23 已合并 `main`（05dfbfc、9c1097d），成就记录和主会话的游戏时间一样走 `CloudProvider::files()` 返回的路径式 `Store`（Google Drive 也实现了 `Store`），成就这边没有再改 `cloud/` 下的文件。
 
 > **背景**：给 Steam 里的非 Steam 游戏补上成就：记录、跨设备同步、在 Steam 游戏页显示、游戏中解锁时弹窗。对应 [plan-phase1.md](plan-phase1.md) 第 10 节的「成就」和第 9 节的「Steam 风格的通知」。和主会话的 0.6（截图、游戏时间、Steam 里的版本列表）、游戏本体云备份分开实现。
 >
@@ -166,7 +166,7 @@ games/<key>/achievements/<device-id>.json     这台设备的解锁记录，只�
 - 设备文件只增不减：`{ "device", "deviceName", "updatedAt", "unlocks": [ {id, unlockedAt, hardcore, source} ] }`。本机发现新解锁就追加，从不删除；在某台设备上重置了奖杯，云端的记录也不会被抹掉。
 - 合并：所有设备文件取并集，同一个成就取**最早**的解锁时间，并记下是哪台设备。
 - 上传时机：游戏退出后（托盘程序或 `ludonimbus-run`，和存档上传一起），以及应用启动时补传上次失败的。没有变化就不写。
-- 风格和主会话的 `games/<key>/playtime/<device>.json` 一致。Google Drive 没有走 `Store`（它直接实现 `CloudProvider`），所以要在 `CloudProvider` 上加读写小文件的方法，和主会话的游戏时间共用，见第 6 节。
+- 风格和主会话的 `games/<key>/playtime/<device>.json` 一致，读写都通过 `CloudProvider::files()`（路径式的 `Store`，所有云盘包括 Google Drive 都支持）。其他设备的文件按 `Entry.tag` 判断，没变就不重新下载。
 - 图标不上传：RA 只存网址；本地奖杯的图标在每台电脑的游戏文件里都有。
 
 ---
@@ -283,7 +283,6 @@ RetroArch 等 rcheevos 模拟器、shadPS4、RPCS3、Lantern 都会在游戏里�
 | 文件 | 改动 |
 |---|---|
 | `crates/core/src/lib.rs` | `pub mod achievements;` |
-| `crates/core/src/cloud/mod.rs`、`repo.rs`、`gdrive.rs` | `CloudProvider` 加三个读写小文件的方法（`list_files`、`read_file`、`write_file`），`Repo` 和 Google Drive 各实现一次。**主会话的游戏时间也需要同样的东西**，已经问过主会话；合并时以主会话的接口为准 |
 | `crates/runner/src/main.rs` | 游戏退出、上传存档之后调用一次 `achievements::after_exit`（读取 + 上传成就记录），托盘程序没开时也能记录 |
 | `app/src-tauri/src/agent.rs` | 路由里加 4 个端点，转给 `achievements.rs`；`find_game` 改成 `pub(crate)` |
 | `app/src-tauri/src/main.rs` | `mod achievements;`、启动检测线程、注册 16 个命令 |
