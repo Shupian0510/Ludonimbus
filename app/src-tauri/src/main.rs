@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod achievements;
 mod agent;
 mod art;
 mod busy;
@@ -71,6 +72,7 @@ fn main() {
             tray.build(app)?;
             watcher::spawn(app.handle().clone());
             agent::spawn(app.handle().clone());
+            achievements::spawn(app.handle().clone());
             // Import the minutes Steam already counted for linked games, once
             // per game and device, before any new session is added to them.
             std::thread::spawn(|| {
@@ -196,6 +198,22 @@ fn main() {
             gamebackup::game_backup_cancel,
             gamebackup::game_backup_job,
             gamebackup::game_backup_take_install,
+            achievements::achievements_view,
+            achievements::achievements_candidates,
+            achievements::achievements_link,
+            achievements::achievements_link_file,
+            achievements::achievements_pick_file,
+            achievements::achievements_unlink,
+            achievements::achievements_refresh,
+            achievements::achievements_icon,
+            achievements::achievements_set_popup,
+            achievements::achievements_settings,
+            achievements::achievements_save_settings,
+            achievements::achievements_test_popup,
+            achievements::achievement_toast_next,
+            achievements::ra_connect,
+            achievements::ra_disconnect,
+            achievements::ra_recent_games,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Ludonimbus")

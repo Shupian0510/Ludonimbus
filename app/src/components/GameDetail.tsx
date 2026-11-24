@@ -13,8 +13,9 @@ import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Versions } from "./Versions";
+import { GameAchievements } from "./Achievements";
 
-type Tab = "versions" | "files" | "config" | "screenshots";
+type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
 
 /** Xbox app games start through this; their own programs are protected. */
 const XBOX_HELPER = /gamelaunchhelper\.exe$/i;
@@ -377,6 +378,9 @@ export function GameDetail({
           <button className={tab === "config" ? "on" : ""} onClick={() => setTab("config")}>
             {g.tabConfig}
           </button>
+          <button className={tab === "achievements" ? "on" : ""} onClick={() => setTab("achievements")}>
+            {t.achievements.tab}
+          </button>
         </div>
 
         {tab === "versions" && (
@@ -385,6 +389,7 @@ export function GameDetail({
         {tab === "files" && <Files game={game} />}
         {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
         {tab === "config" && <Config game={game} onChanged={onChanged} onRemoved={onRemoved} />}
+        {tab === "achievements" && <GameAchievements gameKey={game.key} />}
       </div>
 
       {dialog === "art" && (

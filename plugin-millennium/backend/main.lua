@@ -191,6 +191,71 @@ function ping()
     return request("GET", "/v1/ping")
 end
 
+-- Achievements -------------------------------------------------------------
+
+---@ffi
+--- Achievement progress and list of a Steam shortcut, as JSON text.
+---@param appid string
+---@param account string
+---@return string
+function get_achievements(appid, account)
+    local id = digits(appid)
+    if not id then
+        return failure("bad_request")
+    end
+    local path = "/v1/steam/apps/" .. id .. "/achievements"
+    local acc = digits(account)
+    if acc then
+        path = path .. "?account=" .. acc
+    end
+    return request("GET", path)
+end
+
+---@ffi
+--- A local achievement icon as a data URL ({ dataUrl }).
+---@param key string
+---@param id string
+---@return string
+function get_achievement_icon(key, id)
+    local k = key_part(key)
+    local i = key_part(id)
+    if not k or not i then
+        return failure("bad_request")
+    end
+    return request("GET", "/v1/games/" .. k .. "/achievements/" .. i .. "/icon")
+end
+
+---@ffi
+--- New achievement unlocks after the given sequence number.
+---@param after string
+---@return string
+function get_events(after)
+    local seq = digits(after) or "0"
+    return request("GET", "/v1/achievements/events?after=" .. seq)
+end
+
+local function urlencode(value)
+    local s = tostring(value or ""):sub(1, 300)
+    return (s:gsub("[^%w%-_%.~]", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end))
+end
+
+---@ffi
+--- Tell the app whether Steam showed the popup ("steam" or "failed", with why).
+---@param seq string
+---@param shown string
+---@param reason string
+---@return string
+function ack_event(seq, shown, reason)
+    local s = digits(seq)
+    if not s then
+        return failure("bad_request")
+    end
+    local how = shown == "steam" and "steam" or "failed"
+    return request("POST", "/v1/achievements/events/" .. s .. "/ack?shown=" .. how .. "&reason=" .. urlencode(reason))
+end
+
 local function on_load()
     logger:info("Ludonimbus plugin loaded (Millennium " .. millennium.version() .. ")")
     millennium.ready()

@@ -20,6 +20,7 @@
 //! - [`i18n`]     interface language for texts made in Rust (`tr!`)
 //! - [`xbox`]     Xbox app games: launch helper, real game processes
 
+pub mod achievements;
 pub mod adapters;
 pub mod cloud;
 pub mod config;

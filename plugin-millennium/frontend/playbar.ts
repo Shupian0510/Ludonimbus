@@ -68,18 +68,18 @@ const CSS = `
 @keyframes ludonimbus-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 `;
 
-function cls(name: string): string {
+export function cls(name: string): string {
 	return ((playSectionClasses as Record<string, string> | undefined)?.[name] ?? '').trim();
 }
 
-function currentAppId(): string | null {
+export function currentAppId(): string | null {
 	const path: string = (window as any).MainWindowBrowserManager?.m_lastLocation?.pathname ?? '';
 	const m = /\/library\/app\/(\d+)/.exec(path);
 	return m ? m[1] : null;
 }
 
 /** Steam account id (the `userdata` folder name) of the signed-in user. */
-function currentAccount(): string {
+export function currentAccount(): string {
 	try {
 		const id: string | undefined = (window as any).App?.m_CurrentUser?.strSteamID;
 		return id ? (BigInt(id) - STEAMID64_BASE).toString() : '';
