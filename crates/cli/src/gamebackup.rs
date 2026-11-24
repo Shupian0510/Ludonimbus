@@ -219,14 +219,51 @@ fn parts(list: &[gamebackup::format::ComponentSummary]) -> String {
         .join(" · ")
 }
 
+/// The parts a backup of `key` would have, from this PC only (no cloud).
+fn dry_run(cfg: &config::AppConfig, key: &str, root: Option<std::path::PathBuf>, exclude: Vec<String>, firmware: bool) -> Result<()> {
+    let g = cfg.require_game(key)?.clone();
+    let mut comp = gamebackup::options(&gamebackup::settings(key), None);
+    if root.is_some() {
+        comp.root = root;
+    }
+    if !exclude.is_empty() {
+        comp.user_exclude = exclude;
+    }
+    comp.firmware |= firmware;
+    for c in gamebackup::components::plan(&g, &comp)? {
+        println!(
+            "{:<9} {:<28} {:<12} {:>6} 个文件 {:>9}（排除 {} 个，{}）",
+            format!("{:?}", c.kind),
+            c.name,
+            c.version.clone().unwrap_or_default(),
+            c.files.len(),
+            human(c.total()),
+            c.excluded_files,
+            human(c.excluded_bytes)
+        );
+        if std::env::var_os("LUDONIMBUS_DRY_RUN_FILES").is_some() {
+            for f in c.files.iter().take(40) {
+                println!("    {} {}", human(f.size), f.logical);
+            }
+            if c.files.len() > 40 {
+                println!("    … 共 {} 个", c.files.len());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn run(cmd: Cmd) -> Result<()> {
     use gamebackup::{backup, install, remote, restore};
     let cfg = config::load()?;
+    if let Cmd::Backup { key, root, exclude, firmware, dry_run: true, .. } = cmd {
+        return dry_run(&cfg, &key, root, exclude, firmware);
+    }
     let provider = gamebackup::open(&cfg)?;
     let store = provider.files();
     let cancel = AtomicBool::new(false);
     match cmd {
-        Cmd::Backup { key, root, threads, keep, exclude, firmware, dry_run } => {
+        Cmd::Backup { key, root, threads, keep, exclude, firmware, .. } => {
             let g = cfg.require_game(&key)?.clone();
             let s = gamebackup::settings(&key);
             let latest = gamebackup::latest(store, &key).ok().flatten();
@@ -238,21 +275,6 @@ pub fn run(cmd: Cmd) -> Result<()> {
                 comp.user_exclude = exclude;
             }
             comp.firmware |= firmware;
-            if dry_run {
-                for c in backup::preview(&g, &comp)? {
-                    println!(
-                        "{:<9} {:<28} {:<10} {:>6} 个文件 {:>9}（排除 {} 个，{}）",
-                        format!("{:?}", c.kind),
-                        c.name,
-                        c.version.unwrap_or_default(),
-                        c.files,
-                        human(c.bytes),
-                        c.excluded_files,
-                        human(c.excluded_bytes)
-                    );
-                }
-                return Ok(());
-            }
             let opts = backup::BackupOptions {
                 components: comp,
                 threads: threads.unwrap_or_else(|| gamebackup::default_threads(store.kind())),

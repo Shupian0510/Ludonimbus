@@ -158,6 +158,32 @@ fn switch_version(source: &Path) -> Option<String> {
     Some(format!("v{n}"))
 }
 
+/// `title_version` of a Wii U update installed among `files` (a game's
+/// `meta/meta.xml` below `…/0005000e/<id>/`), which is the version that runs.
+pub fn installed_update(files: &[std::path::PathBuf]) -> Option<String> {
+    files.iter().find_map(|f| {
+        let s = f.to_string_lossy().replace('\\', "/").to_lowercase();
+        if !(s.contains("/0005000e/") && s.ends_with("/meta/meta.xml")) {
+            return None;
+        }
+        wiiu_version(f.parent()?.parent()?)
+    })
+}
+
+/// The version in an Xbox app game's `appxmanifest.xml` (next to its launch
+/// helper), not the helper's own version (which is Windows').
+pub fn xbox(exe: &Path) -> Option<String> {
+    if !crate::xbox::is_launch_helper(exe) {
+        return None;
+    }
+    let text = std::fs::read_to_string(exe.parent()?.join("appxmanifest.xml")).ok()?;
+    let id = &text[text.find("<Identity")?..];
+    let id = &id[..id.find('>')?];
+    let start = id.find("Version=\"")? + 9;
+    let end = start + id[start..].find('"')?;
+    Some(id[start..end].to_string())
+}
+
 /// Version of the game an emulator shortcut starts.
 pub fn content(game_id: Option<&str>, g: &EmuGame) -> Option<String> {
     let source = g.source.as_deref()?;
@@ -184,6 +210,22 @@ mod tests {
         assert_eq!(in_name("x64"), None);
         assert_eq!(tidy([2, 6, 0, 0]), "2.6");
         assert_eq!(tidy([1, 0, 3, 0]), "1.0.3");
+    }
+
+    #[test]
+    fn xbox_and_wiiu_update_versions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let content = tmp.path().join("Content");
+        std::fs::create_dir_all(&content).unwrap();
+        std::fs::write(content.join("gamelaunchhelper.exe"), b"x").unwrap();
+        std::fs::write(content.join("appxmanifest.xml"), r#"<Package><Identity Name="X" Publisher="CN=1" Version="1.0.56.0" ProcessorArchitecture="x64" /></Package>"#).unwrap();
+        assert_eq!(xbox(&content.join("gamelaunchhelper.exe")).as_deref(), Some("1.0.56.0"));
+        assert_eq!(xbox(&content.join("other.exe")), None);
+        let meta = tmp.path().join("mlc01/usr/title/0005000e/101c9400/meta/meta.xml");
+        std::fs::create_dir_all(meta.parent().unwrap()).unwrap();
+        std::fs::write(&meta, "<menu><title_version type=\"unsignedInt\">208</title_version></menu>").unwrap();
+        let files = vec![tmp.path().join("Games/x/code/a.rpx"), meta];
+        assert_eq!(installed_update(&files).as_deref(), Some("v208"));
     }
 
     #[test]

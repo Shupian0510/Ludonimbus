@@ -88,6 +88,49 @@ pub struct Adapter {
     /// disc image a recompilation reads).
     #[serde(default)]
     pub user_files: Vec<String>,
+    /// Game backups: game files, more program folders and settings whose
+    /// places a settings file names (a game folder set in a launcher).
+    #[serde(default)]
+    pub user_files_from: Vec<PathsFrom>,
+    #[serde(default)]
+    pub program_from: Vec<PathsFrom>,
+    #[serde(default)]
+    pub config_from: Vec<PathsFrom>,
+    /// Game backups, emulators: folders of add-ons (Cemu's graphic packs)
+    /// that belong to the game whose id their description file lists.
+    #[serde(default)]
+    pub game_packs: Option<Packs>,
+}
+
+/// Places read from a settings file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PathsFrom {
+    /// The settings file, `{root}/…`.
+    pub file: String,
+    /// INI keys (in any section) whose values are paths.
+    #[serde(default)]
+    pub ini: Vec<String>,
+    /// JSON keys, `/`-separated; `*` stands for every element.
+    #[serde(default)]
+    pub json: Vec<String>,
+    /// Left out of the folders found (patterns relative to each).
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+/// Add-on folders, each with a description file listing the games it is for.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Packs {
+    /// `{root}/…` holding the add-ons.
+    pub dir: String,
+    /// The description file in each add-on folder.
+    pub file: String,
+    /// The key listing game ids, comma-separated.
+    pub key: String,
+    /// The game id with `<placeholders>`.
+    pub id: String,
 }
 
 impl Adapter {

@@ -19,6 +19,7 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/shadercache/**",
     "**/shader_cache/**",
     "**/__pycache__/**",
+    "**/pipeline_cache.bin",
     "**/Thumbs.db",
     "**/desktop.ini",
     ".ludonimbus-restore.json",

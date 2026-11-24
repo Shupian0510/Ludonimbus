@@ -25,9 +25,20 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 ## 已经自动验证过的
 
 - 单元测试：切块、块的压缩和校验、清单、扫描和排除、路径安全、各部分的路径（`{program}`、`{content}` …）、版本号（文件夹名、Switch 文件名）、启动参数里路径的改写。
-- 本地文件夹和内存里的 WebDAV 服务器上的完整流程（`crates/core/tests/game_backup.rs`），两部分：
+- 本地文件夹和内存里的 WebDAV 服务器上的完整流程（`crates/core/tests/game_backup.rs`），三部分：
   - **普通 PC 游戏（整个文件夹）**：备份 → 没变化时不上传 → 改 100 字节加一个文件后只传几个块 → 恢复后逐字节一致、修改时间一致、存档和日志不在里面、空文件夹还在 → 从恢复出来的文件夹再备份不产生新版本 → 只碰了文件没改内容不产生新版本 → 恢复到已经完整的文件夹什么都不写 → 停止的恢复从断点继续 → 停止的备份只补传缺的块 → 8 MB 以上的大文件没变时不再读 → 保留 2 个版本时清理旧版本和只有它们用的块 → 手动删除后清理 → 另一台设备持有锁时报出它的名字、清理会推迟 → 云端的块损坏时恢复报错 → 恢复后游戏的程序路径指向新位置。
   - **两个共用一个 Cemu 的 Wii U 游戏**：分成程序（Cemu 2.6）、游戏文件（游戏文件夹加上 MLC 里的更新，版本 v208）、设置（这个游戏的 gameProfile）；程序里没有存档、别的游戏的更新、ROM、着色器缓存、keys.txt；勾选后 keys.txt 才作为「密钥和固件」→ 第二个游戏只上传它自己的部分 → ROM 里的大文件改名后再备份什么都不上传 → 恢复到新文件夹（新电脑）后各部分都在原来的相对位置、没备份的东西都不在 → 第二个游戏恢复时本机已有的 Cemu 一个文件都不重写 → 选择保留本机另一个版本的 Cemu 时只恢复游戏自己的部分 → 恢复后游戏的程序和启动参数（游戏的新路径）都改好了 → 删掉一个游戏的全部版本后，另一个游戏的数据还在、还能恢复。
+  - **位置写在设置文件里的重编译游戏**（用 fefw recomp 的规则）：`fefw.ini` 里 `romfs` 指向程序文件夹外的游戏文件，备份时它们和 `exefs` 一起算作游戏文件，`fefw.ini` 算作设置 → 恢复到新的程序和游戏文件夹后，新的 `fefw.ini` 里 `romfs` 指向新位置，原内容留在 `fefw.ini.ludonimbus-bak` → 再修正一次什么都不改。
+- 用你本机的游戏做的只读「计算大小」（`game-backup backup <游戏> --dry-run`，不连云盘、不写任何文件）：
+
+  | 游戏 | 程序 | 游戏文件 | 设置和 mods |
+  |---|---|---|---|
+  | 塞尔达 时之笛 Longshot | 26.2 GB（启动器加上它构建的游戏，含 25 GB 的 romfs） | 23.9 GB（.nup） | 2 个文件 |
+  | Bloodborne（Lantern Engine） | 4.0 GB | 29.3 GB（CUSA…） | 1 个文件 |
+  | 火焰纹章 fefw recomp | 709.6 MB | 27.1 GB（romfs + exefs） | 1 个文件 |
+  | 旷野之息（Cemu 1.26.2） | 295.2 MB | 14.0 GB，v208 | 2.4 GB（图形包和 mods） |
+  | DOOM（Xbox 版） | 整个文件夹 89.5 GB，版本 1.0.56.0 | | |
+
 - 测速：本地文件夹和 WebDAV 上四轮都有数据，取消和到时间上限都能正确结束，测试文件全部删掉（`tests/speed_test.rs`）。
 - 命令行 `ludonimbus game-backup backup --dry-run / backup / list / check / restore` 在临时数据目录里跑通。
 - 浏览器预览（示例数据）里看过测速卡片、「游戏本体」卡片（各部分、备份设置）、恢复对话框（使用本机已有的程序 / 程序装到 / 游戏文件放到）。
@@ -67,6 +78,8 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 
 1. 「计算大小」：「程序」带版本号（来自发布包文件夹名，如 0.2.7，或程序里的版本信息）。
 2. N64Recomp 游戏（Zelda 64、Banjo 等）：「游戏文件」里应该有你第一次启动时选的 ROM（.z64），「设置和 mods」里有它的 `*.json` 和 `mods`。如果没有，告诉我 ROM 实际放在哪里。
+3. Longshot、fefw recomp、Bloodborne（Lantern Engine）：数字应该和上面「已经自动验证过的」表格差不多。「游戏文件」是你导出的游戏（.nup、romfs、CUSA…），不在程序里。
+4. **注意**：Lantern Engine、Longshot、N64Recomp 的设置文件在 `%APPDATA%` / `%LOCALAPPDATA%` 里，恢复时会写回这些真实位置（内容和备份时一样的话不改）。测恢复前先把对应文件夹复制一份，或者只用第 5 节的模拟器游戏测恢复。
 
 ### 5. 恢复到临时文件夹（不动真实游戏）
 
@@ -139,4 +152,4 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 
 ## 反馈
 
-每一节通过或不通过都告诉我；不通过的话附上：截图、`gamebackup.log` / `agent.log` 里对应时间的几行、用的是哪种云盘和模拟器。也可以用命令行看一个游戏会备份什么：`cargo run -p ludonimbus-cli -- game-backup backup <游戏 key> --dry-run`。
+每一节通过或不通过都告诉我；不通过的话附上：截图、`gamebackup.log` / `agent.log` 里对应时间的几行、用的是哪种云盘和模拟器。也可以用命令行看一个游戏会备份什么：`cargo run -p ludonimbus-cli -- game-backup backup <游戏 key> --dry-run`（不连云盘；设环境变量 `LUDONIMBUS_DRY_RUN_FILES=1` 会列出每个部分的前 40 个文件）。

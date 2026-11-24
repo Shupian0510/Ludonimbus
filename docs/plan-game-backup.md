@@ -5,6 +5,7 @@
 > - **待你实测**：[testing-game-backup.md](testing-game-backup.md)（已按 v0.3 更新）。
 > - **v0.4（游戏文件来自云盘里已有的文件）**：你提出游戏文件往往已经在网盘里，可以指定云盘里的源文件夹、通过 Ludonimbus 下载，或用官方客户端上传后交给 Ludonimbus。设计写在第 10 节，取舍按建议写在第 11 节（实现前还可以改）。先做实测 E1（10.9，`./scripts/cloud-sources-e1.ps1`），确认夸克、百度能读哪些目录、能不能网盘内部复制、带不带哈希；阶段 A 的测试先做（测速跳过，见 1.3）。原来的阶段 B（官方下载）并进第 10 节的 B3。
 > - 阶段 A 和第 8 节草案不同的地方：没变化的判断按部分做（一个部分的文件列表、大小、修改时间都没变就直接沿用上一版本的那部分，不重读）；恢复的进度记在本机数据文件夹（`gamebackup-restore\<游戏>.json`），不再放进目标文件夹；已经在目标位置、内容一样的文件不再写（这就是「复用本机已有的程序」）；Ryujinx 的 `updates.json` / `dlc.json` 指向的更新和 DLC 文件还不会备份，只备份这两个列表本身（列表格式没有核对，暂不改写）；Cemu、Dolphin、Ryujinx、shadPS4、RPCS3 的 `gameFiles` / `gameConfig` / `programExclude` / `firmware` 按资料写，没有用真实模拟器核对，测试时请看「计算大小」列出的内容。
+> - **用你本机的游戏核对规则（2026-11-24）**：命令行 `ludonimbus game-backup backup <游戏> --dry-run` 不连云盘、只读文件，列出每个部分有哪些文件。对 5 个游戏跑过后发现：Longshot、fefw recomp、Lantern Engine 的游戏文件不在程序文件夹里，位置写在它们自己的设置文件里；Cemu 的图形包（含几 GB 的 mods）原来算进了程序。改法见 8.4 末尾：规则新增 `userFilesFrom` / `programFrom` / `configFrom`（从设置文件读位置）和 `gamePacks`（按说明文件里的游戏 ID 找附加包），恢复并修正路径时把这些设置文件里的旧位置改成新位置（改之前留一份 `<文件名>.ludonimbus-bak`）。
 > - **测速**：已完成。`crates/core/src/gamebackup/speedtest.rs`（单线程、并行各上传下载一轮，每轮有时间上限，测完删除），命令行 `ludonimbus speedtest`，脚本 `./scripts/cloud-speedtest.ps1`，设置页「云盘测速」。本机文件夹跑通；真实云盘你已确认都能跑满宽带，不再单独测（1.3）。
 > - **取舍**：第 7 节的 5 项你都选了 A（2026-11-23）。
 > - **v0.2 实现**：已完成，在分支 `claude/game-backup-09ab8a`。core（`crates/core/src/gamebackup/`：扫描、切块、块对象、清单、云端布局和锁、备份、恢复、恢复后修正路径）、命令行 `ludonimbus game-backup …`、应用游戏详情页「游戏本体」卡片和恢复对话框、本机接口两个端点、Steam 插件「从云端安装」。本地文件夹和内存 WebDAV 上的集成测试通过（`tests/game_backup.rs`）。
@@ -342,6 +343,22 @@ v0.2 把一个文件夹整个备份。你指出：重编译游戏和模拟器游
 Switch 模拟器的更新和 DLC 不一定在模拟器文件夹里：以 Ryujinx 为例，它在每个游戏的配置里记下更新和 DLC 文件的路径（`games/<标题 ID>/updates.json`、`dlc.json`），这两个列表里的文件也算游戏内容，恢复后改写成新路径（格式写代码时核对）。
 
 重编译规则（`builtin.yaml`、`recomplauncher.yaml`）加 `userFiles`、`mods`、`release`。`recomplauncher.yaml` 是从 RecompLauncher 的目录（`pc-catalog.json`）生成的，目录里每个游戏都有 GitHub 仓库、版本号、标签和各系统的发布包文件名（2026-11-23 的目录：1969 个游戏里 1892 个有 Windows 包，其中 1871 个带 SHA-256），还写了需要用户自备什么（`needs`，如「你自己的《姆吉拉的假面》」），导入脚本直接生成 `release`。
+
+**位置写在设置文件里的游戏**（阶段 A 实现时补的）。有的启动器把游戏文件放在用户自己选的地方，只在设置文件里记下路径。规则用三个字段读出这些路径，`ini` 是键名（任何小节），`json` 是键路径（`*` 代表数组或对象的每一项）：
+
+```yaml
+- key: zelda-oot-longshot
+  userFilesFrom: [{ file: "{localappdata}/LongshotLauncher/settings.json", json: ["nup"] }]          # 游戏文件
+  programFrom:   [{ file: "{localappdata}/LongshotLauncher/builds.json", json: ["builds/*/folder"],  # 程序的一部分
+                    exclude: ["cache/**", "logs/**"] }]
+- key: bloodborne-lantern
+  userFilesFrom: [{ file: "{appdata}/Lantern Engine/settings.json", json: ["game_dir", "dlc_dir"] }]
+  configFrom:    [{ file: "{appdata}/Lantern Engine/settings.json", json: ["mods_dir", "patches_dir"] }]  # 设置和 mods
+```
+
+设置文件本身算作「设置和 mods」。恢复后修正路径时，把设置文件里各部分的旧位置换成新位置：普通写法和 JSON 转义（`C:\\Games\\x`）都换，斜杠方向保持原样，`D:\Games\x` 不会误换 `D:\Games\x2`；不是 UTF-8 的文件不动。
+
+Cemu 的图形包放在 `graphicPacks` 下的各个文件夹里，每个包的 `rules.txt` 用 `titleIds` 写明适用哪些游戏。规则 `gamePacks: { dir, file, key, id }` 找出说明文件里列了这个游戏 ID 的包，算作它的「设置和 mods」，不再算进程序（用你的《旷野之息》核对：程序从 2.7 GB 降到 295 MB，mods 2.4 GB 归到设置）。说明文件不一定是 UTF-8（有中文注释），按宽松方式读。
 
 ### 8.5 版本号
 

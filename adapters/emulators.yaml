@@ -13,6 +13,7 @@
 #   gameConfig      这个游戏自己的设置、材质包、mods，写法同 gameSaves
 #   programExclude  备份模拟器程序时去掉的、属于所有游戏的数据（装进模拟器的游戏、主机存储、缓存）
 #   firmware        密钥、固件、BIOS：用户在卡片里勾选后才备份
+#   gamePacks       附加包文件夹（Cemu 的图形包）：说明文件里列出这个游戏 ID 的，算作这个游戏的设置和 mods
 #
 # 只同步存档：不含密钥、固件、着色器缓存、即时存档（state）。
 # Switch 模拟器的存档文件夹和本机的用户档案、存档编号绑定，换到另一台电脑后对不上：
@@ -65,6 +66,7 @@
     default: ["{mlc}/usr/title/00050000/<low>/**", "{mlc}/usr/title/0005000e/<low>/**", "{mlc}/usr/title/0005000c/<low>/**"]
   gameConfig:
     default: ["{install}/gameProfiles/<high><low>.ini"]
+  gamePacks: { dir: "{install}/graphicPacks", file: rules.txt, key: titleIds, id: "<high><low>" }
   programExclude: ["{mlc}/**", "{install}/shaderCache/**", "{install}/log.txt", "{install}/keys.txt", "{install}/gameProfiles/0005*.ini"]
   firmware: ["{install}/keys.txt", "{install}/portable/keys.txt", "{appdata}/Cemu/keys.txt", "{mlc}/sys/**"]
 

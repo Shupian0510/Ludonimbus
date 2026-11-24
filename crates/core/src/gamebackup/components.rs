@@ -12,7 +12,7 @@
 use super::format::Kind;
 use super::scan::{self, path_key, ScannedFile};
 use super::version;
-use crate::adapters::{self, Adapter};
+use crate::adapters::{self, Adapter, Packs, PathsFrom};
 use crate::config::GameEntry;
 use crate::emulators::{self, EmuGame};
 use crate::{emugames, snapshot, spec, util};
@@ -299,6 +299,94 @@ pub fn game_root(game_id: Option<&str>, source: &Path) -> PathBuf {
     }
 }
 
+/// INI values of `keys` (in any section), as text.
+fn ini_values(text: &str, keys: &[String]) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.starts_with([';', '#', '[']) {
+                return None;
+            }
+            let (k, v) = l.split_once('=')?;
+            keys.iter().any(|x| x.eq_ignore_ascii_case(k.trim())).then(|| v.trim().trim_matches('"').to_string())
+        })
+        .collect()
+}
+
+fn json_values(v: &serde_json::Value, pointer: &[&str], out: &mut Vec<String>) {
+    let Some((first, rest)) = pointer.split_first() else {
+        match v {
+            serde_json::Value::String(s) => out.push(s.clone()),
+            serde_json::Value::Array(a) => out.extend(a.iter().filter_map(|x| x.as_str().map(str::to_string))),
+            _ => {}
+        }
+        return;
+    };
+    match (*first, v) {
+        ("*", serde_json::Value::Array(a)) => a.iter().for_each(|x| json_values(x, rest, out)),
+        ("*", serde_json::Value::Object(o)) => o.values().for_each(|x| json_values(x, rest, out)),
+        (k, serde_json::Value::Object(o)) => {
+            if let Some(x) = o.get(k) {
+                json_values(x, rest, out)
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The settings file of `pf` on this PC.
+pub fn settings_file(pf: &PathsFrom, roots: &BTreeMap<String, PathBuf>) -> Option<PathBuf> {
+    spec::expand(&pf.file, roots).ok().filter(|p| p.is_file())
+}
+
+/// The existing places a settings file names.
+pub fn paths_from(pf: &PathsFrom, roots: &BTreeMap<String, PathBuf>) -> Vec<PathBuf> {
+    let Some(file) = settings_file(pf, roots) else { return Vec::new() };
+    let Ok(bytes) = std::fs::read(&file) else { return Vec::new() };
+    let text = String::from_utf8_lossy(&bytes);
+    let mut values = ini_values(&text, &pf.ini);
+    if !pf.json.is_empty() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) {
+            for ptr in &pf.json {
+                json_values(&v, &ptr.split('/').filter(|s| !s.is_empty()).collect::<Vec<_>>(), &mut values);
+            }
+        }
+    }
+    let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
+    values
+        .into_iter()
+        .filter(|v| !v.trim().is_empty())
+        .map(|v| {
+            let p = PathBuf::from(v.trim());
+            if p.is_absolute() {
+                p
+            } else {
+                base.join(p)
+            }
+        })
+        .filter(|p| p.exists())
+        .collect()
+}
+
+/// Add-on folders whose description file lists this game's id.
+fn pack_dirs(packs: &Packs, roots: &BTreeMap<String, PathBuf>, g: Option<&EmuGame>) -> Vec<PathBuf> {
+    let (Ok(dir), Some(id)) = (spec::expand(&packs.dir, roots), fill(&packs.id, g)) else { return Vec::new() };
+    walkdir::WalkDir::new(&dir)
+        .max_depth(4)
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_file() && e.file_name().to_string_lossy().eq_ignore_ascii_case(&packs.file))
+        .filter(|e| {
+            // Not always UTF-8 (comments in other encodings): read leniently.
+            let text = String::from_utf8_lossy(&std::fs::read(e.path()).unwrap_or_default()).into_owned();
+            ini_values(&text, std::slice::from_ref(&packs.key))
+                .iter()
+                .any(|v| v.split(',').any(|x| x.trim().eq_ignore_ascii_case(&id)))
+        })
+        .filter_map(|e| e.path().parent().map(Path::to_path_buf))
+        .collect()
+}
+
 /// The program's name: an emulator rule's name ("Cemu"); for games, the
 /// platform without the console in brackets ("Zelda 64: Recompiled").
 fn program_name(a: &Adapter) -> String {
@@ -340,19 +428,30 @@ impl Builder<'_> {
         self.push(kind, name, version, list, Vec::new(), None, source, (0, 0, 0));
     }
 
-    /// A component made of one folder (minus excludes and taken files).
-    fn add_dir(&mut self, kind: Kind, name: String, version: Option<String>, dir: &Path, exclude: &[String], exe: Option<&Path>) -> Result<()> {
+    /// A component made of folders (minus their excludes and taken files);
+    /// the first one must exist.
+    fn add_dirs(&mut self, kind: Kind, name: String, version: Option<String>, dirs: &[(PathBuf, Vec<String>)], exe: Option<&Path>) -> Result<()> {
         let mut skip: HashSet<String> = self.taken.clone();
         skip.extend(self.saves.iter().cloned());
-        let sc = scan::scan_skip(dir, exclude, &skip)?;
-        let mut list = Vec::new();
-        for ScannedFile { abs, size, mtime, nanos, .. } in sc.files {
-            self.taken.insert(path_key(&abs));
-            list.push(PlannedFile { logical: self.bases.tokenize(&abs), abs, size, mtime, nanos });
+        let (mut list, mut empty_dirs, mut counts) = (Vec::new(), Vec::new(), (0, 0, 0));
+        for (i, (dir, exclude)) in dirs.iter().enumerate() {
+            if i > 0 && !dir.is_dir() {
+                continue;
+            }
+            let sc = scan::scan_skip(dir, exclude, &skip)?;
+            for ScannedFile { abs, size, mtime, nanos, .. } in sc.files {
+                let k = path_key(&abs);
+                if !self.taken.insert(k.clone()) {
+                    continue;
+                }
+                skip.insert(k);
+                list.push(PlannedFile { logical: self.bases.tokenize(&abs), abs, size, mtime, nanos });
+            }
+            empty_dirs.extend(sc.dirs.iter().map(|d| self.bases.tokenize(&dir.join(d))));
+            counts = (counts.0 + sc.excluded_files, counts.1 + sc.excluded_bytes, counts.2 + sc.skipped_links);
         }
-        let dirs = sc.dirs.iter().map(|d| self.bases.tokenize(&dir.join(d))).collect();
-        let exe = exe.filter(|e| e.starts_with(dir)).map(|e| self.bases.tokenize(e));
-        self.push(kind, name, version, list, dirs, exe, None, (sc.excluded_files, sc.excluded_bytes, sc.skipped_links));
+        let exe = exe.filter(|e| dirs.iter().any(|(d, _)| e.starts_with(d))).map(|e| self.bases.tokenize(e));
+        self.push(kind, name, version, list, empty_dirs, exe, None, counts);
         Ok(())
     }
 
@@ -406,8 +505,10 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
     let emu = adapter.filter(|a| a.is_emulator());
     let emu_game = emu.and_then(|a| game.exe.as_deref().and_then(|exe| emulators::identify_any(a, exe, &game.args)));
     let game_dir = emu_game.as_ref().and_then(|g| g.source.as_deref()).map(|s| game_root(emu.and_then(|a| a.game_id.as_deref()), s));
+    let from_settings: Vec<PathBuf> = adapter.map(|a| a.user_files_from.iter().flat_map(|pf| paths_from(pf, &roots)).collect()).unwrap_or_default();
     let content_base = game_dir
         .clone()
+        .or_else(|| from_settings.first().cloned())
         .or_else(|| opts.extra_content.first().cloned())
         .as_deref()
         .and_then(Path::parent)
@@ -427,20 +528,36 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
             content.extend(glob_files(&p, &roots));
         }
     }
+    for p in &from_settings {
+        content.extend(files_under(p));
+    }
     for p in &opts.extra_content {
         content.extend(files_under(p));
     }
     if !skip(Kind::Content) {
-        let version = emu_game.as_ref().and_then(|g| version::content(emu.and_then(|a| a.game_id.as_deref()), g));
+        let version = emu_game
+            .as_ref()
+            .and_then(|_| version::installed_update(&content))
+            .or_else(|| emu_game.as_ref().and_then(|g| version::content(emu.and_then(|a| a.game_id.as_deref()), g)));
         let source = emu_game.as_ref().and_then(|g| g.source.clone());
         b.add_files(Kind::Content, game.name.clone(), version, content, source.as_deref());
     } else {
         b.taken.extend(content.iter().map(|p| path_key(p)));
     }
 
-    // Settings and mods.
+    // Settings and mods, including the settings files that name the game's
+    // places (they are rewritten after a restore).
     if let Some(a) = adapter {
-        let files: Vec<PathBuf> = by_kind(&a.game_config, emu_game.as_ref()).iter().flat_map(|p| glob_files(p, &roots)).collect();
+        let mut files: Vec<PathBuf> = by_kind(&a.game_config, emu_game.as_ref()).iter().flat_map(|p| glob_files(p, &roots)).collect();
+        for pf in a.config_from.iter() {
+            files.extend(paths_from(pf, &roots).iter().flat_map(|p| files_under(p)));
+        }
+        for pf in a.user_files_from.iter().chain(&a.program_from).chain(&a.config_from) {
+            files.extend(settings_file(pf, &roots));
+        }
+        if let Some(packs) = &a.game_packs {
+            files.extend(pack_dirs(packs, &roots, emu_game.as_ref()).iter().flat_map(|d| files_under(d)));
+        }
         if skip(Kind::Config) {
             b.taken.extend(files.iter().map(|p| path_key(p)));
         } else {
@@ -469,13 +586,20 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
             }
             if !skip(Kind::Program) {
                 let version = version::program(&root, game.exe.as_deref(), a.is_emulator());
-                b.add_dir(Kind::Program, program_name(a), version, &root, &exclude, game.exe.as_deref())?;
+                // More program folders a settings file names (a launcher's built game).
+                let mut dirs = vec![(root.clone(), exclude.clone())];
+                for pf in &a.program_from {
+                    let mut ex: Vec<String> = scan::DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
+                    ex.extend(pf.exclude.iter().cloned());
+                    dirs.extend(paths_from(pf, &roots).into_iter().filter(|p| p.is_dir()).map(|p| (p, ex.clone())));
+                }
+                b.add_dirs(Kind::Program, program_name(a), version, &dirs, game.exe.as_deref())?;
             }
         }
         None => {
             if !skip(Kind::Folder) {
-                let version = game.exe.as_deref().and_then(version::exe_version);
-                b.add_dir(Kind::Folder, crate::tr!("整个文件夹", "Whole folder"), version, &root, &exclude, game.exe.as_deref())?;
+                let version = game.exe.as_deref().and_then(|e| version::xbox(e).or_else(|| version::exe_version(e)));
+                b.add_dirs(Kind::Folder, crate::tr!("整个文件夹", "Whole folder"), version, &[(root.clone(), exclude.clone())], game.exe.as_deref())?;
             }
         }
     }

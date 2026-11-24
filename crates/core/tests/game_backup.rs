@@ -10,7 +10,9 @@
 //!   in Cemu's MLC), settings and firmware as separate components, the
 //!   emulator stored once, a renamed big file not uploaded again, restoring
 //!   to new folders, reusing an installed emulator, rewriting the launch
-//!   options, cleaning up across games.
+//!   options, cleaning up across games;
+//! - a recompilation whose game files are where its `.ini` says: backed up
+//!   as game files, and the `.ini` names their new place after a restore.
 
 use ludonimbus_core::cloud::local::LocalFolder;
 use ludonimbus_core::cloud::store::Store;
@@ -482,6 +484,55 @@ fn emulator_part(tmp: &Path, store: &dyn Store) {
     same_file(&emu.join("Cemu.exe"), &tmp.join("third/Cemu/Cemu.exe"));
 }
 
+// ---------------------------------------------------------------------------
+// A recompilation whose game files are where its settings file says
+
+fn settings_file_part(tmp: &Path, store: &dyn Store) {
+    let prog = tmp.join("recomp/fefw-recomp-0.2.7");
+    let romfs = tmp.join("dumps/romfs");
+    write(&prog.join("fefw.exe"), &random(200_000, 31));
+    write(&prog.join("exefs/main"), &random(50_000, 32));
+    write(&prog.join("save/slot.sav"), b"progress");
+    write(&romfs.join("data.bin"), &random(400_000, 33));
+    write(&romfs.join("sub/a.txt"), b"text");
+    let ini = format!("[paths]\nromfs = {}\nfullscreen = 1\n", romfs.display());
+    write(&prog.join("fefw.ini"), ini.as_bytes());
+    let g = GameEntry {
+        key: "fefw".into(),
+        name: "FE".into(),
+        exe: Some(prog.join("fefw.exe")),
+        adapter: Some("fe-fortunes-weave".into()),
+        saves: vec!["{install}/save/**".into()],
+        auto_sync: true,
+        ..Default::default()
+    };
+    config::update(|c| {
+        c.games.push(g.clone());
+        Ok(())
+    })
+    .unwrap();
+
+    let (v, _, _, _) = created(run(store, &g, &opts(None)));
+    let m = remote::read_manifest(store, "fefw", &v).unwrap();
+    let paths = |k: Kind| m.component(k).map(|c| c.files.iter().map(|f| f.p.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    assert_eq!(paths(Kind::Content), ["{content}/romfs/data.bin", "{content}/romfs/sub/a.txt", "{program}/exefs/main"]);
+    assert_eq!(paths(Kind::Config), ["{program}/fefw.ini"]);
+    assert_eq!(paths(Kind::Program), ["{program}/fefw.exe"]);
+
+    // Restored elsewhere: the ini names the new place, the old one is kept.
+    let (new_prog, new_dumps) = (tmp.join("new/fefw"), tmp.join("new/dumps"));
+    restore_to(store, "fefw", &v, &to(&new_prog, Some(&new_dumps)));
+    same_file(&romfs.join("data.bin"), &new_dumps.join("romfs/data.bin"));
+    let fix = install::fix_paths("fefw", &m, &to(&new_prog, Some(&new_dumps))).unwrap();
+    assert_eq!(fix.settings.len(), 1, "{:?}", fix.settings);
+    let text = std::fs::read_to_string(new_prog.join("fefw.ini")).unwrap();
+    let unify = |s: String| s.replace('/', "\\").to_lowercase();
+    assert_eq!(unify(text), unify(format!("[paths]\nromfs = {}\nfullscreen = 1\n", new_dumps.join("romfs").display())));
+    assert_eq!(std::fs::read_to_string(new_prog.join("fefw.ini.ludonimbus-bak")).unwrap(), ini);
+    // Nothing more to change the second time.
+    assert!(install::fix_paths("fefw", &m, &to(&new_prog, Some(&new_dumps))).unwrap().settings.is_empty());
+}
+
 #[test]
 fn game_backup_end_to_end() {
     let tmp = tempfile::tempdir().unwrap();
@@ -490,6 +541,7 @@ fn game_backup_end_to_end() {
     let store = LocalFolder::new(tmp.path().join("cloud"));
     pc_game_part(tmp.path(), &store);
     emulator_part(tmp.path(), &store);
+    settings_file_part(tmp.path(), &store);
 
     // The same against WebDAV.
     let port = start_dav();
