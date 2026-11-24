@@ -4,6 +4,24 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.5.0
+
+### 中文
+
+- 新增：夸克网盘一键连接（实验性）。在「设置 → 云盘」用夸克 App 扫码登录，Ludonimbus 会下载开源工具 OpenList（只在第一次，约 57 MB，校验 SHA-256），在本机后台运行它，自动挂载夸克并连接。存档放在网盘的「Ludonimbus」文件夹里；登录失效时扫码重新登录即可。夸克的登录信息只保存在本机，断开时删除。
+- 新增：英文界面。默认跟随 Windows 的显示语言，可以在「设置 → 语言 / Language」切换，立即生效；托盘菜单、从 Steam 启动时的弹窗和 Steam 里的云存档状态也跟着切换。
+- 新增：首次使用引导。第一次打开时介绍功能、问你的用途，带你连接云盘、填写 SteamGridDB API Key，最后可以直接扫描本机游戏。每一步都能跳过，在「设置 → 关于」里可以重新打开。
+- 新增：使用文档网站 <https://shupian0510.github.io/Ludonimbus/>，中英双语，每个功能都有图文说明。「设置 → 关于」里加了文档、GitHub 和反馈问题的链接。
+- 改进：WebDAV 服务器返回 5xx 错误时，提示里会带上服务器给出的原因。
+
+### English
+
+- New: one-click Quark (experimental). Scan a QR code with the Quark app in Settings → Cloud; Ludonimbus downloads the open-source OpenList (only the first time, about 57 MB, SHA-256 checked), runs it in the background on this PC, mounts Quark and connects to it. Saves go in the "Ludonimbus" folder of your drive; when the sign-in expires, scan again. The Quark sign-in stays on this PC and is deleted when you disconnect.
+- New: English interface. It follows the Windows display language and can be changed in Settings → Language / 语言, right away; the tray menu, the dialogs shown when a game starts from Steam and the cloud status inside Steam follow it too.
+- New: a first-run guide that introduces Ludonimbus, asks what you use it for, helps you connect a cloud and enter a SteamGridDB API key, and ends with a scan of this PC. Every step can be skipped; reopen it from Settings → About.
+- New: documentation site at <https://shupian0510.github.io/Ludonimbus/> in Chinese and English, with step-by-step screenshots. Settings → About links to it, to GitHub and to issue reporting.
+- Improved: WebDAV 5xx errors now include the server's message.
+
 ## 0.4.0
 
 ### 中文

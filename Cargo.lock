@@ -2656,7 +2656,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-app"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2676,7 +2676,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2688,7 +2688,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "aes",
  "anyhow",
@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-runner"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
