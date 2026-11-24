@@ -98,6 +98,35 @@ pub fn candidates(g: &GameEntry) -> Vec<Candidate> {
         }
     }
 
+    // PS4 ports and recompilations: the original game's files in their folder.
+    let platform = g.adapter.as_deref().and_then(crate::adapters::find).and_then(|a| a.platform.clone()).unwrap_or_default();
+    if let Some(dir) = install.as_ref().filter(|_| platform.contains("PS4") && !shad) {
+        if let Some((npwr, _)) = trophy::port_set(dir) {
+            out.push(Candidate {
+                binding: Binding { source: SourceKind::Ps4port, source_id: npwr, path: Some(dir.clone()), popup: None },
+                title: Some(g.name.clone()),
+                location: dir.display().to_string(),
+                sure: true,
+            });
+        }
+    }
+
+    // Switch games (emulated or recompiled): save rules in TrophyNX's format.
+    if out.is_empty() {
+        if let Some(tid) = super::rules::title_id(g) {
+            match super::rules::load_list(&tid, true) {
+                Ok(Some(list)) => out.push(Candidate {
+                    binding: Binding { source: SourceKind::Rules, source_id: tid, path: None, popup: None },
+                    title: Some(list.name).filter(|n| !n.is_empty()),
+                    location: "TrophyNX".to_string(),
+                    sure: true,
+                }),
+                Ok(None) => {}
+                Err(e) => super::log(format!("{}: achievement rules unavailable: {e:#}", g.key)),
+            }
+        }
+    }
+
     // Prefer a set whose title matches the game's name.
     let name = g.name.to_lowercase();
     out.sort_by_key(|c| !c.title.as_ref().is_some_and(|t| !name.is_empty() && (t.to_lowercase().contains(&name) || name.contains(&t.to_lowercase()))));

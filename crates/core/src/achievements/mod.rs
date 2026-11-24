@@ -19,7 +19,9 @@
 pub mod cloud;
 pub mod detect;
 pub mod retro;
+pub mod rules;
 pub mod trophy;
+pub mod trp;
 
 use crate::config::{AppConfig, GameEntry};
 use crate::lockfile::FileLock;
@@ -38,6 +40,10 @@ pub enum SourceKind {
     Shadps4,
     Lantern,
     Rpcs3,
+    /// A PS4 port / recompilation in its own folder.
+    Ps4port,
+    /// Save rules (TrophyNX format).
+    Rules,
 }
 
 impl SourceKind {
@@ -47,6 +53,8 @@ impl SourceKind {
             SourceKind::Shadps4 => "shadPS4",
             SourceKind::Lantern => "Lantern Engine",
             SourceKind::Rpcs3 => "RPCS3",
+            SourceKind::Ps4port => "PS4 port",
+            SourceKind::Rules => "TrophyNX",
         }
     }
 }
@@ -104,6 +112,10 @@ pub struct Settings {
     pub fallback_popup: bool,
     /// Games the user unlinked: never linked automatically again.
     pub unlinked: BTreeSet<String>,
+    /// PS4 trophy key the user entered (32 hex characters), to read trophy
+    /// names from their own games' `trophy00.trp`. Only in this PC's
+    /// settings file: never uploaded, never shipped with Ludonimbus.
+    pub ps4_trophy_key: Option<String>,
 }
 
 impl Default for Settings {
@@ -115,6 +127,7 @@ impl Default for Settings {
             steam_popup: true,
             fallback_popup: true,
             unlinked: BTreeSet::new(),
+            ps4_trophy_key: None,
         }
     }
 }
@@ -351,7 +364,16 @@ pub fn link(cfg: &AppConfig, game: &GameEntry, binding: Binding) -> Result<GameD
 pub fn scan(cfg: &AppConfig, game: &GameEntry, binding: &Binding) -> Result<Scan> {
     match binding.source {
         SourceKind::Retroachievements => retro::scan(&settings(), binding),
-        SourceKind::Shadps4 | SourceKind::Lantern | SourceKind::Rpcs3 => trophy::scan(cfg, game, binding),
+        SourceKind::Shadps4 | SourceKind::Lantern | SourceKind::Rpcs3 | SourceKind::Ps4port => trophy::scan(cfg, game, binding),
+        SourceKind::Rules => rules::scan(cfg, game, binding),
+    }
+}
+
+/// Files that change when an achievement unlocks (watched while the game runs).
+pub fn watch_files(game: &GameEntry, binding: &Binding) -> Vec<PathBuf> {
+    match binding.source {
+        SourceKind::Rules => rules::watch_files(game, binding),
+        _ => trophy::watch_files(binding),
     }
 }
 
@@ -405,7 +427,7 @@ pub fn refresh(cfg: &AppConfig, game: &GameEntry, announce: bool) -> Result<Vec<
     })?
 }
 
-fn log(msg: impl AsRef<str>) {
+pub(crate) fn log(msg: impl AsRef<str>) {
     crate::logger::log("achievements", msg);
 }
 

@@ -24,7 +24,8 @@ pub fn scan(_cfg: &AppConfig, _game: &GameEntry, b: &Binding) -> Result<Scan> {
         SourceKind::Shadps4 => shadps4(&path, &b.source_id),
         SourceKind::Lantern => lantern(&path, &b.source_id),
         SourceKind::Rpcs3 => rpcs3(&path),
-        SourceKind::Retroachievements => bail!("not a trophy source"),
+        SourceKind::Ps4port => ps4port(&path, &b.source_id),
+        SourceKind::Retroachievements | SourceKind::Rules => bail!("not a trophy source"),
     }
 }
 
@@ -38,7 +39,8 @@ pub fn watch_files(b: &Binding) -> Vec<PathBuf> {
             .chain(path.parent().map(|p| p.join("logs").join("last_session.log")))
             .collect(),
         SourceKind::Rpcs3 => vec![path.join("TROPUSR.DAT")],
-        SourceKind::Retroachievements => Vec::new(),
+        SourceKind::Ps4port => port_files(path),
+        SourceKind::Retroachievements | SourceKind::Rules => Vec::new(),
     }
 }
 
@@ -226,11 +228,19 @@ pub fn shadps4(user: &Path, npwr: &str) -> Result<Scan> {
         npwr.to_string()
     };
     let set_dir = user.join("trophy").join(&npwr);
-    let icons = set_dir.join("Icons");
+    let mut icons = set_dir.join("Icons");
     let mut scan = Scan::default();
     if let Some(xml) = shadps4_xml(&set_dir.join("Xml")) {
         let set = read_xml(&xml)?;
         scan.schema = Some(schema_from(&set, SourceKind::Shadps4, &npwr, Some(&icons)));
+    } else if let Some(dir) = decrypted_set(&npwr) {
+        // shadPS4 has no trophy key set: decrypt the game's trophy file ourselves.
+        if !icons.is_dir() {
+            icons = dir.clone();
+        }
+        if let Some(xml) = shadps4_xml(&dir) {
+            scan.schema = Some(schema_from(&read_xml(&xml)?, SourceKind::Shadps4, &npwr, Some(&icons)));
+        }
     }
     let mut unlocks: BTreeMap<String, Unlock> = BTreeMap::new();
     for f in shadps4_save_files(user, &npwr) {
@@ -339,8 +349,10 @@ pub fn parse_session_log(text: &str) -> (Vec<String>, Vec<String>) {
     let mut unlocked = Vec::new();
     let mut earned = Vec::new();
     for line in text.lines() {
-        let Some(rest) = line.split("Runtime: trophy ").nth(1) else { continue };
-        let mut parts = rest.split_whitespace();
+        // "Runtime: trophy 12 unlocked", "Trophies: trophy 0 (platinum) unlocked"
+        // (the forms PSerban93/Achievements also reads for PS4 ports).
+        let Some(rest) = line.split("Runtime: trophy ").nth(1).or_else(|| line.split("Trophies: trophy ").nth(1)) else { continue };
+        let mut parts = rest.split_whitespace().filter(|p| *p != "(platinum)");
         let Some(id) = parts.next().and_then(norm_id) else { continue };
         match parts.next() {
             Some("unlocked") if !unlocked.contains(&id) => unlocked.push(id),
@@ -375,7 +387,7 @@ fn lantern_icons(user: &Path, npwr: &str) -> Option<PathBuf> {
     // Extract from the game's trophy00.trp (game folder from Lantern's settings).
     let trp = lantern_game_dir().map(|g| g.join("sce_sys").join("trophy").join("trophy00.trp"))?;
     let key = if npwr.is_empty() { "lantern".to_string() } else { npwr.to_string() };
-    let out = super::dir().join("icons").join(key);
+    let out = super::dir().join("trophies").join(key);
     if out.join("TROP000.PNG").is_file() || extract_trp_icons(&trp, &out).is_ok_and(|n| n > 0) {
         return Some(out);
     }
@@ -390,13 +402,35 @@ pub fn lantern_game_dir() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
+/// Definitions and icons decrypted from the game's own `trophy00.trp`
+/// (cached locally), when the game folder can be found.
+pub fn decrypted_set(npwr: &str) -> Option<PathBuf> {
+    if !is_npwr(npwr) {
+        return None;
+    }
+    let trp = super::trp::find_trp(npwr)?;
+    match super::trp::cached(&trp, npwr) {
+        Ok(dir) => Some(dir),
+        Err(e) => {
+            crate::logger::log("achievements", format!("{npwr}: reading {} failed: {e:#}", trp.display()));
+            None
+        }
+    }
+}
+
 pub fn lantern(user: &Path, npwr: &str) -> Result<Scan> {
     let mut scan = Scan::default();
-    let icons = lantern_icons(user, npwr);
-    // Names: a shadPS4-style XML for the same set, when one exists.
+    let decrypted = decrypted_set(npwr);
+    let icons = decrypted
+        .clone()
+        .filter(|d| d.join("TROP000.PNG").is_file())
+        .or_else(|| lantern_icons(user, npwr));
+    // Names: a shadPS4-style XML for the same set, else the official
+    // definitions decrypted from the game's trophy file.
     let xml = (!npwr.is_empty())
         .then(|| shadps4_xml(&user.join("trophy").join(npwr).join("Xml")))
         .flatten()
+        .or_else(|| decrypted.as_deref().and_then(shadps4_xml))
         .and_then(|p| read_xml(&p).ok());
     if let Some(set) = &xml {
         scan.schema = Some(schema_from(set, SourceKind::Lantern, npwr, icons.as_deref()));
@@ -460,6 +494,132 @@ pub fn lantern(user: &Path, npwr: &str) -> Result<Scan> {
     Ok(scan)
 }
 
+// ---------------------------------------------------------------------------
+// PS4 ports and recompilations (one folder per game)
+//
+// Ports keep the original game's files (and its `trophy00.trp`) and record
+// unlocks in one of a few shapes, the same ones PSerban93/Achievements reads:
+// `trophies.log` / `unlocked.txt` ("<id> <unix seconds>"), `progress_user*.txt`
+// ("DCP-TROPHIES 1", "npcommid …", then "unlocked <id> <time>"), `trophies.dat`
+// / `CUSAxxxxx-userN.bin` (128-bit bitmap, little-endian words), shadPS4-style
+// `<NPWR>.xml`, or run logs with "Runtime: trophy N unlocked".
+
+/// The trophy set of a port: `sce_sys/npbind.dat` and `sce_sys/trophy/trophy00.trp` under its folder.
+pub fn port_set(install: &Path) -> Option<(String, PathBuf)> {
+    walkdir::WalkDir::new(install)
+        .max_depth(4)
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || e.file_type().is_dir())
+        .flatten()
+        .filter(|e| e.file_name().eq_ignore_ascii_case("sce_sys"))
+        .find_map(|e| {
+            let game = e.path().parent()?.to_path_buf();
+            let npwr = npbind_id(&game)?;
+            let trp = e.path().join("trophy").join("trophy00.trp");
+            trp.is_file().then_some((npwr, trp))
+        })
+}
+
+/// Unlock records a port may have written.
+fn port_files(install: &Path) -> Vec<PathBuf> {
+    let wanted = |name: &str| {
+        let n = name.to_ascii_lowercase();
+        n == "trophies.log"
+            || n == "unlocked.txt"
+            || n == "trophies.dat"
+            || (n.starts_with("progress_user") && n.ends_with(".txt"))
+            || (n.starts_with("cusa") && n.contains("-user") && n.ends_with(".bin"))
+            || n == "last_run.log"
+            || n == "last_session.log"
+            || n == "game.log"
+            || (is_npwr(n.trim_end_matches(".xml")) && n.ends_with(".xml"))
+    };
+    let mut out = Vec::new();
+    for (dir, depth) in [(install.to_path_buf(), 1), (install.join("logs"), 1), (install.join("user"), 6), (install.join("bin").join("user"), 6)] {
+        for e in walkdir::WalkDir::new(&dir).max_depth(depth).into_iter().flatten() {
+            if e.file_type().is_file() && wanted(&e.file_name().to_string_lossy()) {
+                out.push(e.into_path());
+            }
+        }
+    }
+    out
+}
+
+/// Ids set in a 16-byte trophy bitmap.
+pub fn decode_bitset(data: &[u8]) -> Vec<String> {
+    if data.len() != 16 {
+        return Vec::new();
+    }
+    (0..128u32)
+        .filter(|id| {
+            let w = u32::from_le_bytes(data[(id / 32) as usize * 4..(id / 32) as usize * 4 + 4].try_into().unwrap());
+            w & (1 << (id % 32)) != 0
+        })
+        .map(|id| id.to_string())
+        .collect()
+}
+
+pub fn ps4port(install: &Path, npwr: &str) -> Result<Scan> {
+    let mut scan = Scan::default();
+    let found = port_set(install);
+    let npwr = if npwr.is_empty() { found.as_ref().map(|(n, _)| n.clone()).unwrap_or_default() } else { npwr.to_string() };
+    let trp = found.map(|(_, t)| t).or_else(|| super::trp::find_trp(&npwr));
+    if let Some(dir) = trp.filter(|_| is_npwr(&npwr)).and_then(|t| super::trp::cached(&t, &npwr).ok()) {
+        if let Some(xml) = shadps4_xml(&dir) {
+            scan.schema = Some(schema_from(&read_xml(&xml)?, SourceKind::Ps4port, &npwr, Some(&dir)));
+        }
+    }
+    let mut unlocks: BTreeMap<String, Unlock> = BTreeMap::new();
+    for f in port_files(install) {
+        let name = f.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+        let mtime = file_time(&f);
+        let Ok(bytes) = std::fs::read(&f) else { continue };
+        let text = || String::from_utf8_lossy(&bytes).to_string();
+        let mut add = |id: String, at: DateTime<Utc>| keep_earliest(&mut unlocks, Unlock { id, unlocked_at: at, hardcore: false });
+        if name == "trophies.dat" || name.ends_with(".bin") {
+            for id in decode_bitset(&bytes) {
+                add(id, mtime);
+            }
+        } else if name.ends_with(".xml") {
+            if !name.eq_ignore_ascii_case(&format!("{npwr}.xml")) {
+                continue;
+            }
+            for t in read_xml(&f).map(|s| s.trophies).unwrap_or_default() {
+                if let Some(at) = t.unlocked {
+                    add(t.id, at);
+                }
+            }
+        } else if name.ends_with(".log") && name != "trophies.log" {
+            let (unlocked, earned) = parse_session_log(&text());
+            for id in unlocked {
+                add(id, mtime);
+            }
+            for id in earned {
+                if !scan.quiet.contains(&id) {
+                    scan.quiet.push(id.clone());
+                }
+                add(id, mtime);
+            }
+        } else {
+            for line in text().lines() {
+                let l = line.trim();
+                if l.starts_with("DCP-TROPHIES") || l.to_ascii_lowercase().starts_with("npcommid") {
+                    continue;
+                }
+                if let Some((id, at)) = parse_log_line(l) {
+                    add(id, at.unwrap_or(mtime));
+                }
+            }
+        }
+    }
+    // Ids in quiet that also have a real unlock line stay announceable.
+    scan.unlocks = unlocks.into_values().collect();
+    if scan.schema.is_none() && scan.unlocks.is_empty() {
+        bail!(crate::tr!("在 {} 里没有找到 PS4 奖杯数据", "No PS4 trophy data in {}", install.display()));
+    }
+    Ok(scan)
+}
+
 fn file_time(p: &Path) -> DateTime<Utc> {
     std::fs::metadata(p)
         .and_then(|m| m.modified())
@@ -472,36 +632,7 @@ fn file_time(p: &Path) -> DateTime<Utc> {
 
 /// Copy the PNG entries of a `.trp` file into `out`. Returns how many.
 pub fn extract_trp_icons(trp: &Path, out: &Path) -> Result<usize> {
-    let data = std::fs::read(trp).with_context(|| trp.display().to_string())?;
-    let be32 = |o: usize| -> Option<u32> { data.get(o..o + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap())) };
-    let be64 = |o: usize| -> Option<u64> { data.get(o..o + 8).map(|b| u64::from_be_bytes(b.try_into().unwrap())) };
-    if be32(0) != Some(0xDCA2_4D00) {
-        bail!("not a trophy file");
-    }
-    let count = be32(0x10).unwrap_or(0) as usize;
-    let size = be32(0x14).unwrap_or(0x40) as usize;
-    if count > 4096 || size < 0x30 {
-        bail!("bad trophy file header");
-    }
-    std::fs::create_dir_all(out)?;
-    let mut n = 0;
-    for i in 0..count {
-        let e = 0x60 + i * size;
-        let Some(raw) = data.get(e..e + 32) else { break };
-        let name: String = raw.iter().take_while(|&&b| b != 0).map(|&b| b as char).collect();
-        if !name.to_ascii_uppercase().ends_with(".PNG") || name.contains(['/', '\\']) || name.contains("..") {
-            continue;
-        }
-        let (Some(pos), Some(len)) = (be64(e + 32), be64(e + 40)) else { continue };
-        let (pos, len) = (pos as usize, len as usize);
-        let Some(png) = data.get(pos..pos.saturating_add(len)) else { continue };
-        if !png.starts_with(&[0x89, b'P', b'N', b'G']) {
-            continue;
-        }
-        crate::util::atomic_write(&out.join(name.to_ascii_uppercase()), png)?;
-        n += 1;
-    }
-    Ok(n)
+    super::trp::extract_with(trp, None, out, None).map(|(icons, _)| icons)
 }
 
 /// The trophy set id in a PS4 game's `sce_sys/npbind.dat`.
@@ -729,10 +860,12 @@ mod tests {
 
     #[test]
     fn session_log() {
-        let text = "x\nRuntime: trophy 3 earned in this save as own\nRuntime: trophy 12 unlocked as own\nRuntime: trophy 12 unlocked\nRuntime: trophy 5 unlocked as guest\n";
+        let text = "x\nRuntime: trophy 3 earned in this save as own\nRuntime: trophy 12 unlocked as own\nRuntime: trophy 12 unlocked\nRuntime: trophy 5 unlocked as guest\nTrophies: trophy 0 (platinum) unlocked\n";
         let (unlocked, earned) = parse_session_log(text);
-        assert_eq!(unlocked, vec!["12".to_string(), "5".to_string()]);
+        assert_eq!(unlocked, vec!["12".to_string(), "5".to_string(), "0".to_string()]);
         assert_eq!(earned, vec!["3".to_string()]);
+        // trophies.log rows are "<id> <unix seconds>" (confirmed by PSerban93/Achievements).
+        assert_eq!(parse_log_line("12 1795428000").unwrap(), ("12".into(), Utc.timestamp_opt(1_795_428_000, 0).single()));
     }
 
     #[test]
@@ -762,6 +895,30 @@ mod tests {
         let out = dir.path().join("icons");
         assert_eq!(extract_trp_icons(&trp, &out).unwrap(), 1);
         assert_eq!(std::fs::read(out.join("TROP000.PNG")).unwrap(), png);
+    }
+
+    #[test]
+    fn ps4_port_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = dir.path();
+        let user = port.join("user");
+        std::fs::create_dir_all(user.join("trophies/CUSA00001")).unwrap();
+        // Bitmap: trophies 0 and 33 (word 1, bit 1).
+        let mut bits = [0u8; 16];
+        bits[0] = 0b1;
+        bits[4] = 0b10;
+        std::fs::write(user.join("trophies.dat"), bits).unwrap();
+        std::fs::write(user.join("progress_user1.txt"), "DCP-TROPHIES 1\nnpcommid NPWR00001_00\nunlocked 5 1795428000\n").unwrap();
+        std::fs::write(user.join("trophies/CUSA00001/unlocked.txt"), "7 1795428100\n").unwrap();
+        std::fs::write(port.join("last_run.log"), "boot\nRuntime: trophy 9 unlocked\nRuntime: trophy 3 earned in this save\n").unwrap();
+        assert_eq!(decode_bitset(&bits), vec!["0".to_string(), "33".to_string()]);
+        let scan = ps4port(port, "NPWR00001_00").unwrap();
+        let mut ids: Vec<&str> = scan.unlocks.iter().map(|u| u.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, vec!["0", "3", "33", "5", "7", "9"], "the progress header is not trophy 1");
+        assert_eq!(scan.quiet, vec!["3".to_string()]);
+        let five = scan.unlocks.iter().find(|u| u.id == "5").unwrap();
+        assert_eq!(five.unlocked_at.timestamp(), 1_795_428_000);
     }
 
     #[test]
