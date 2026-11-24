@@ -38,9 +38,6 @@ pub struct FixReport {
     /// Settings files that now name the new places (each kept as
     /// `<name>.ludonimbus-bak` first).
     pub settings: Vec<String>,
-    /// The launcher to open to build the game from the restored files (what
-    /// it builds is not backed up).
-    pub build: Option<String>,
     pub shortcut: ShortcutFix,
 }
 
@@ -165,13 +162,12 @@ fn same(a: &Path, b: &Path) -> bool {
 pub fn fix_paths(key: &str, m: &Manifest, targets: &Targets) -> Result<FixReport> {
     let bases: Bases = bases_for(m, targets);
     let program = m.components.iter().find(|c| matches!(c.kind, Kind::Program | Kind::Folder));
-    let build = program.and_then(|c| c.build.as_deref()).and_then(|b| bases.resolve(b).ok());
     let mut unbuilt_exe = None;
     if let Some(exe) = program.and_then(|c| c.exe.as_deref()) {
         let new = bases.resolve(exe)?;
         if new.is_file() {
             games::set_exe(key, &new)?;
-        } else if build.is_some() {
+        } else if program.is_some_and(|c| c.build.is_some()) {
             // The launcher builds it there.
             unbuilt_exe = Some(new);
         }
@@ -211,13 +207,7 @@ pub fn fix_paths(key: &str, m: &Manifest, targets: &Targets) -> Result<FixReport
     }
     let settings = fix_settings(&g, m, &bases, &targets.program);
     let shortcut = fix_shortcut(&g);
-    Ok(FixReport {
-        exe: g.exe.as_ref().map(|e| e.display().to_string()),
-        args_changed,
-        settings,
-        build: build.map(|b| b.display().to_string()),
-        shortcut,
-    })
+    Ok(FixReport { exe: g.exe.as_ref().map(|e| e.display().to_string()), args_changed, settings, shortcut })
 }
 
 fn fix_shortcut(g: &GameEntry) -> ShortcutFix {

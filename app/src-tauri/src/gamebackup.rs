@@ -535,13 +535,6 @@ pub async fn game_backup_restore(app: AppHandle, key: String, version: String, t
                             }
                             _ => {}
                         }
-                        if let Some(l) = &f.build {
-                            let name = Path::new(l).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| l.clone());
-                            notes.push(tr!(
-                                "这个游戏由启动器用你的游戏文件现场编译，编译出来的文件没有备份：玩之前打开 {name} 编译一次（已经编译过就不用）",
-                                "This game is built by its launcher from your game files, and what it builds isn't backed up: open {name} and build it once before playing (not needed if it's already built)"
-                            ));
-                        }
                         fixed = serde_json::to_value(&f).ok();
                     }
                     Err(e) => notes.push(tr!("没能修正游戏路径：{e:#}", "Couldn't fix the game's paths: {e:#}")),

@@ -538,7 +538,6 @@ fn settings_file_part(tmp: &Path, store: &dyn Store) {
     let fix = install::fix_paths("fefw", &m, &to(&new_prog, Some(&new_dumps))).unwrap();
     assert_eq!(fix.settings.len(), 1, "{:?}", fix.settings);
     let unify = |s: String| s.replace('/', "\\").to_lowercase();
-    assert_eq!(unify(fix.build.clone().unwrap()), unify(new_prog.join("fefw-launcher.exe").display().to_string()));
     let exe = config::load().unwrap().game("fefw").unwrap().exe.clone().unwrap();
     assert_eq!(unify(exe.display().to_string()), unify(new_prog.join("fefw.exe").display().to_string()));
     let text = std::fs::read_to_string(new_prog.join("fefw.ini")).unwrap();
