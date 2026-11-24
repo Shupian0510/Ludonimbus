@@ -16,7 +16,7 @@ const descriptionEn =
 // Site ownership tokens from Google Search Console and Bing Webmaster Tools
 // ("HTML tag" verification method: paste only the content="…" value).
 // Empty strings add no tag.
-const googleSiteVerification = ''
+const googleSiteVerification = '13I1PFIduYetwaPSPLsT6NntscGMQNRCWshdpX2KB30'
 const bingSiteVerification = ''
 
 /** The app's current version, shown in the structured data of the home pages. */
