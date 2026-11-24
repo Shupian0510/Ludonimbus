@@ -197,6 +197,8 @@ pub struct GameDb {
     /// Hash of the last uploaded device file / schema.
     pub uploaded: Option<String>,
     pub uploaded_schema: Option<String>,
+    /// Change tags of other devices' cloud files already merged.
+    pub remote_tags: BTreeMap<String, String>,
     pub checked_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     /// The source was read successfully at least once (what it had then is
@@ -395,7 +397,7 @@ pub fn after_exit(ctx: &crate::sync::Ctx, game: &GameEntry) {
 /// Merge other devices' records and upload this device's. Errors are logged.
 pub fn sync_cloud(ctx: &crate::sync::Ctx, key: &str) {
     let Ok(cloud) = ctx.cloud() else { return };
-    if let Err(e) = cloud::sync(cloud, key, &ctx.cfg.device.id, &ctx.cfg.device.name) {
+    if let Err(e) = cloud::sync(cloud.files(), key, &ctx.cfg.device.id, &ctx.cfg.device.name) {
         log(format!("{key}: achievement cloud sync failed: {e:#}"));
     }
 }

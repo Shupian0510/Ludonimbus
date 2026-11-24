@@ -5,8 +5,7 @@
 
 use ludonimbus_core::achievements::{self, cloud, Binding, SourceKind};
 use ludonimbus_core::cloud::local::LocalFolder;
-use ludonimbus_core::cloud::repo::Repo;
-use ludonimbus_core::cloud::CloudProvider;
+use ludonimbus_core::cloud::store::Store;
 use ludonimbus_core::config::{AppConfig, GameEntry};
 use std::fs;
 use std::path::Path;
@@ -61,7 +60,7 @@ fn two_devices() {
     let tmp = tempfile::tempdir().unwrap();
     let cloud_dir = tmp.path().join("cloud");
     fs::create_dir_all(&cloud_dir).unwrap();
-    let repo = Repo::new(LocalFolder::new(cloud_dir.clone()));
+    let repo = LocalFolder::new(cloud_dir.clone());
     let game = GameEntry { key: "demo".into(), name: "Test Game".into(), ..Default::default() };
 
     // --- Device A: link an RPCS3 trophy set that already has one unlock.
@@ -94,9 +93,9 @@ fn two_devices() {
 
     assert!(cloud::push(&repo, "demo", "dev-a", "Desktop").unwrap());
     assert!(!cloud::push(&repo, "demo", "dev-a", "Desktop").unwrap(), "unchanged: nothing written");
-    let files = repo.list_files("games/demo/achievements").unwrap();
+    let files: Vec<String> = repo.list("games/demo/achievements").unwrap().into_iter().map(|e| e.name).collect();
     assert!(files.contains(&"dev-a.json".to_string()) && files.contains(&"schema.json".to_string()));
-    let schema = String::from_utf8(repo.read_file("games/demo/achievements/schema.json").unwrap().unwrap()).unwrap();
+    let schema = String::from_utf8(repo.read("games/demo/achievements/schema.json").unwrap().unwrap()).unwrap();
     assert!(!schema.contains("TROP002.PNG"), "local icon paths stay local");
 
     // --- Device B: no source of its own yet; sees A's records.
@@ -132,7 +131,7 @@ fn two_devices() {
     fs::write(set_a.join("TROPUSR.DAT"), tropusr(&[(0, 1_764_000_000)])).unwrap();
     achievements::refresh(&cfg_a, &game, true).unwrap();
     cloud::push(&repo, "demo", "dev-a", "Desktop").unwrap();
-    let file: cloud::DeviceFile = serde_json::from_slice(&repo.read_file("games/demo/achievements/dev-a.json").unwrap().unwrap()).unwrap();
+    let file: cloud::DeviceFile = serde_json::from_slice(&repo.read("games/demo/achievements/dev-a.json").unwrap().unwrap()).unwrap();
     let mut ids: Vec<&str> = file.unlocks.iter().map(|u| u.id.as_str()).collect();
     ids.sort();
     assert_eq!(ids, vec!["0", "1", "2"]);

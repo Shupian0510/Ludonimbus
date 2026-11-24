@@ -7,11 +7,13 @@
 //!
 //! A device file only ever gains entries, so resetting trophies on one PC
 //! never erases another's records. All device files are merged; the
-//! earliest unlock of an achievement wins.
+//! earliest unlock of an achievement wins. Same style as playtime
+//! (`games/<key>/playtime/<device-id>.json`). Everything goes through the
+//! cloud's path-based [`Store`] (`CloudProvider::files()`); other devices'
+//! files are only downloaded again when their change tag moved.
 
 use super::{GameDb, Schema, Unlock};
-use crate::cloud::store::join;
-use crate::cloud::CloudProvider;
+use crate::cloud::store::{join, Store};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -48,29 +50,36 @@ fn portable(schema: &Schema) -> Schema {
 
 /// Read the other devices' files and merge them into the local database.
 /// Returns how many unlocks were added or moved earlier.
-pub fn pull(cloud: &dyn CloudProvider, key: &str, device: &str) -> Result<usize> {
+pub fn pull(files: &dyn Store, key: &str, device: &str) -> Result<usize> {
     let d = dir(key);
-    let names = cloud.list_files(&d)?;
-    let mut files = Vec::new();
-    for name in names.iter().filter(|n| n.ends_with(".json") && n.as_str() != SCHEMA) {
-        if name.trim_end_matches(".json") == device {
+    let entries = files.list(&d)?;
+    let known = super::load_db(key).remote_tags;
+    let mut read = Vec::new();
+    let mut tags = Vec::new();
+    for e in entries.iter().filter(|e| !e.is_dir && e.name.ends_with(".json") && e.name != SCHEMA) {
+        if e.name.trim_end_matches(".json") == device {
             continue;
         }
-        if let Some(bytes) = cloud.read_file(&join(&[&d, name]))? {
+        if !e.tag.is_empty() && known.get(&e.name) == Some(&e.tag) {
+            continue;
+        }
+        if let Some(bytes) = files.read(&join(&[&d, &e.name]))? {
             if let Ok(f) = serde_json::from_slice::<DeviceFile>(&bytes) {
-                files.push(f);
+                read.push(f);
+                tags.push((e.name.clone(), e.tag.clone()));
             }
         }
     }
-    let need_schema = super::load_db(key).schema.is_none() && names.iter().any(|n| n == SCHEMA);
+    let need_schema = super::load_db(key).schema.is_none() && entries.iter().any(|e| e.name == SCHEMA);
     let schema = if need_schema {
-        cloud
-            .read_file(&join(&[&d, SCHEMA]))?
-            .and_then(|b| serde_json::from_slice::<Schema>(&b).ok())
+        files.read(&join(&[&d, SCHEMA]))?.and_then(|b| serde_json::from_slice::<Schema>(&b).ok())
     } else {
         None
     };
-    super::update_db(key, |db| merge_files(db, &files, schema))
+    super::update_db(key, |db| {
+        db.remote_tags.extend(tags);
+        merge_files(db, &read, schema)
+    })
 }
 
 fn merge_files(db: &mut GameDb, files: &[DeviceFile], schema: Option<Schema>) -> usize {
@@ -89,7 +98,7 @@ fn merge_files(db: &mut GameDb, files: &[DeviceFile], schema: Option<Schema>) ->
 }
 
 /// Upload this device's unlocks (and the definitions) when they changed.
-pub fn push(cloud: &dyn CloudProvider, key: &str, device: &str, device_name: &str) -> Result<bool> {
+pub fn push(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Result<bool> {
     let db = super::load_db(key);
     let mut wrote = false;
     if !db.mine.is_empty() {
@@ -105,7 +114,7 @@ pub fn push(cloud: &dyn CloudProvider, key: &str, device: &str, device_name: &st
             // (e.g. after the local database was deleted).
             let path = join(&[&dir(key), &format!("{device}.json")]);
             let mut out = file;
-            if let Some(old) = cloud.read_file(&path)?.and_then(|b| serde_json::from_slice::<DeviceFile>(&b).ok()) {
+            if let Some(old) = files.read(&path)?.and_then(|b| serde_json::from_slice::<DeviceFile>(&b).ok()) {
                 for u in old.unlocks {
                     if !out.unlocks.iter().any(|m| m.id == u.id) {
                         out.unlocks.push(u);
@@ -113,7 +122,7 @@ pub fn push(cloud: &dyn CloudProvider, key: &str, device: &str, device_name: &st
                 }
             }
             out.updated_at = Some(Utc::now());
-            cloud.write_file(&path, &serde_json::to_vec_pretty(&out)?)?;
+            files.write(&path, &serde_json::to_vec_pretty(&out)?)?;
             super::update_db(key, |db| db.uploaded = Some(h))?;
             wrote = true;
         }
@@ -122,7 +131,7 @@ pub fn push(cloud: &dyn CloudProvider, key: &str, device: &str, device_name: &st
         let body = serde_json::to_vec_pretty(&portable(schema))?;
         let h = hash(&body);
         if db.uploaded_schema.as_deref() != Some(h.as_str()) {
-            cloud.write_file(&join(&[&dir(key), SCHEMA]), &body)?;
+            files.write(&join(&[&dir(key), SCHEMA]), &body)?;
             super::update_db(key, |db| db.uploaded_schema = Some(h))?;
             wrote = true;
         }
@@ -131,9 +140,9 @@ pub fn push(cloud: &dyn CloudProvider, key: &str, device: &str, device_name: &st
 }
 
 /// Pull, then push.
-pub fn sync(cloud: &dyn CloudProvider, key: &str, device: &str, device_name: &str) -> Result<()> {
-    pull(cloud, key, device)?;
-    push(cloud, key, device, device_name)?;
+pub fn sync(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Result<()> {
+    pull(files, key, device)?;
+    push(files, key, device, device_name)?;
     Ok(())
 }
 
