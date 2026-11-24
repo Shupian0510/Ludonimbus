@@ -17,14 +17,15 @@ The game then starts as usual. The Steam shortcut doesn't need changing, so emul
 
 The "Game location" section of the game page shows "Not found" and says the original location no longer exists:
 
-- Click "Relocate": Ludonimbus first looks nearby, then lets you pick the new program.
+- Click "Find automatically": Ludonimbus looks for the new program near the old location and asks you to confirm what it found.
+- Click "Choose again…" to pick the new program yourself.
 - Or use the store folder shortcuts below it (Steam, Xbox, Epic, GOG, EA, Ubisoft).
 
-When the location is fine, the button reads "Change location…", which you can use to switch to another program.
+When the location is fine, "Choose again…" switches to another program.
 
 ## Saves found, but no game program
 
-Games added from Ludusavi's database or found by their saves may have no game program yet. On the game page, click "Find automatically…": Ludonimbus looks for the game in Steam, Xbox, Epic, GOG and installed programs, and asks you to confirm the location it found. A game needs its program before it can be added to Steam.
+Games added from Ludusavi's database or found by their saves may have no game program yet. On the game page, click "Find automatically": Ludonimbus looks for the game in Steam, Xbox, Epic, GOG and installed programs, and asks you to confirm the location it found. A game needs its program before it can be added to Steam.
 
 ## Reinstalled, or moved to another folder
 

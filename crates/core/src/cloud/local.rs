@@ -26,6 +26,71 @@ impl LocalFolder {
     }
 }
 
+/// A folder a sync client (OneDrive, Dropbox, Google Drive for desktop…)
+/// keeps in the cloud, offered as a place for the "local folder" cloud.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncFolder {
+    /// The sync client, e.g. "OneDrive".
+    pub label: String,
+    /// `Ludonimbus` inside the synced folder: where saves would go.
+    pub path: String,
+    /// That folder is already there (another PC may have put saves in it).
+    pub existing: bool,
+}
+
+/// Synced folders found on this PC.
+pub fn sync_folders() -> Vec<SyncFolder> {
+    let mut list: Vec<(String, PathBuf)> = Vec::new();
+    for var in ["OneDrive", "OneDriveConsumer", "OneDriveCommercial"] {
+        if let Some(p) = std::env::var_os(var).map(PathBuf::from) {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+            list.push((name.unwrap_or_else(|| "OneDrive".into()), p));
+        }
+    }
+    // Dropbox writes where its folders are to info.json.
+    for base in [dirs::config_dir(), dirs::data_local_dir()].into_iter().flatten() {
+        let Ok(text) = std::fs::read_to_string(base.join("Dropbox").join("info.json")) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        for kind in ["personal", "business"] {
+            if let Some(p) = v.get(kind).and_then(|k| k.get("path")).and_then(|p| p.as_str()) {
+                list.push(("Dropbox".into(), PathBuf::from(p)));
+            }
+        }
+    }
+    if let Some(h) = dirs::home_dir() {
+        list.push(("Dropbox".into(), h.join("Dropbox")));
+        list.push(("iCloud Drive".into(), h.join("iCloudDrive")));
+        list.push(("Google Drive".into(), h.join("Google Drive")));
+        list.push(("Synology Drive".into(), h.join("SynologyDrive")));
+        list.push((crate::tr!("坚果云", "Nutstore"), h.join("Nutstore")));
+        list.push((crate::tr!("百度网盘同步空间", "Baidu Sync"), h.join("BaiduSyncdisk")));
+    }
+    // Google Drive for desktop shows up as a drive with "My Drive" in it.
+    for letter in b'C'..=b'Z' {
+        let drive = PathBuf::from(format!("{}:\\", letter as char));
+        if !drive.is_dir() {
+            continue;
+        }
+        for sub in ["My Drive", "我的云端硬盘"] {
+            list.push(("Google Drive".into(), drive.join(sub)));
+        }
+        list.push((crate::tr!("百度网盘同步空间", "Baidu Sync"), drive.join("BaiduSyncdisk")));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let list: Vec<(String, PathBuf)> =
+        list.into_iter().filter(|(_, p)| p.is_dir() && seen.insert(util::norm_path(&p.to_string_lossy()))).collect();
+    let count = |l: &str| list.iter().filter(|(x, _)| x == l).count();
+    list.iter()
+        .map(|(label, p)| {
+            let dir = p.join("Ludonimbus");
+            let label = if count(label) > 1 { format!("{label} · {}", p.display()) } else { label.clone() };
+            SyncFolder { label, existing: dir.is_dir(), path: dir.display().to_string() }
+        })
+        .collect()
+}
+
 impl Store for LocalFolder {
     fn kind(&self) -> &'static str {
         "localFolder"

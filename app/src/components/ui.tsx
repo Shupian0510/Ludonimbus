@@ -99,7 +99,11 @@ type BtnProps = {
 export function Button({ children, onClick, kind = "secondary", icon, disabled, small, title, busyText }: BtnProps) {
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
-  useEffect(() => () => void (mounted.current = false), []);
+  // Set again on mount: StrictMode (dev) unmounts and remounts once.
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
   const click = async () => {
     if (!onClick || busy) return;
     const r = onClick();
@@ -190,6 +194,98 @@ export function Modal({
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Path settings
+
+/** Same Windows path, ignoring case, slash direction and a trailing slash. */
+export function samePath(a: string | null | undefined, b: string | null | undefined): boolean {
+  const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return !!a && !!b && norm(a) === norm(b);
+}
+
+export interface PathChoice {
+  path: string;
+  label?: string;
+  note?: string;
+}
+
+/**
+ * A path the user can change: shows it with "Quick scan" (look for it on
+ * this PC) and "Choose again…" (a file / folder dialog) next to it. A scan
+ * that finds several places lists them under the field to pick from.
+ */
+export function PathField({
+  path,
+  empty,
+  badge,
+  onScan,
+  onPick,
+  scanText,
+  pickText,
+  choices,
+  choicesText,
+  onChoose,
+  children,
+}: {
+  path: string | null;
+  /** Shown when there is no path. */
+  empty?: ReactNode;
+  badge?: ReactNode;
+  onScan?: () => Promise<unknown>;
+  onPick?: () => Promise<unknown>;
+  scanText?: string;
+  pickText?: string;
+  /** What the last scan found. */
+  choices?: PathChoice[] | null;
+  choicesText?: string;
+  onChoose?: (c: PathChoice) => Promise<unknown>;
+  /** More buttons after scan / pick. */
+  children?: ReactNode;
+}) {
+  const t = useT();
+  const p = t.pathField;
+  return (
+    <div className="path-field">
+      {(path || empty) && (
+        <div className="path-field-value">
+          {path ? <code className="path">{path}</code> : <span className="muted">{empty}</span>}
+          {badge}
+        </div>
+      )}
+      <div className="row">
+        {onScan && (
+          <Button small icon="search" onClick={onScan}>
+            {scanText ?? p.scan}
+          </Button>
+        )}
+        {onPick && (
+          <Button small icon="folder" onClick={onPick}>
+            {pickText ?? (path ? p.repick : p.pick)}
+          </Button>
+        )}
+        {children}
+      </div>
+      {choices && choices.length > 0 && (
+        <div className="path-choices">
+          <span className="muted small">{choicesText ?? p.found}</span>
+          {choices.map((c) => (
+            <button
+              key={c.path}
+              className={`path-choice${samePath(c.path, path) ? " on" : ""}`}
+              onClick={() => !samePath(c.path, path) && onChoose?.(c)}
+              disabled={!onChoose}
+            >
+              {c.label && <b>{c.label}</b>}
+              <code>{c.path}</code>
+              {samePath(c.path, path) ? <span className="badge badge-ok">{p.current}</span> : c.note && <span className="badge badge-muted">{c.note}</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

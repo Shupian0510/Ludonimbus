@@ -38,6 +38,54 @@ pub fn detect_root() -> Option<PathBuf> {
     fallback.is_dir().then_some(fallback)
 }
 
+/// A folder Steam is installed in (it holds `steam.exe`, or Steam's own
+/// `config` and `steamapps` folders).
+pub fn is_root(p: &Path) -> bool {
+    p.join("steam.exe").is_file() || (p.join("config").is_dir() && p.join("steamapps").is_dir())
+}
+
+/// The Steam install folder a picked folder is in: the folder itself or one
+/// of its parents (someone may pick `Steam\steamapps` or `Steam\userdata`).
+pub fn root_of(p: &Path) -> Option<PathBuf> {
+    p.ancestors().find(|a| is_root(a)).map(Path::to_path_buf)
+}
+
+/// Every Steam install found here: the registry entries first, then the
+/// usual folders on each drive.
+pub fn find_roots() -> Vec<PathBuf> {
+    let mut cands: Vec<PathBuf> = Vec::new();
+    #[cfg(windows)]
+    {
+        use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        let reg = [
+            (HKEY_CURRENT_USER, "Software\\Valve\\Steam", "SteamPath"),
+            (HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath"),
+            (HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam", "InstallPath"),
+        ];
+        for (hive, path, value) in reg {
+            if let Ok(key) = winreg::RegKey::predef(hive).open_subkey(path) {
+                if let Ok(p) = key.get_value::<String, _>(value) {
+                    cands.push(PathBuf::from(p.replace('/', "\\")));
+                }
+            }
+        }
+    }
+    for letter in b'C'..=b'Z' {
+        let drive = PathBuf::from(format!("{}:\\", letter as char));
+        if !drive.is_dir() {
+            continue;
+        }
+        for sub in [r"Program Files (x86)\Steam", r"Program Files\Steam", "Steam", r"Games\Steam", r"Program Files (x86)\Valve\Steam"] {
+            cands.push(drive.join(sub));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    cands
+        .into_iter()
+        .filter(|p| is_root(p) && seen.insert(util::norm_path(&p.to_string_lossy())))
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -436,7 +484,10 @@ pub fn shutdown(root: &Path) -> Result<()> {
 /// A running Steam overwrites `shortcuts.vdf` in its own install folder, so
 /// edits there need Steam closed. Other folders (tests, copies) are fine.
 fn ensure_steam_closed(root: &Path) -> Result<()> {
-    let live = detect_root().is_some_and(|r| util::same_path(&r.to_string_lossy(), &root.to_string_lossy()));
+    // A folder picked in Settings may differ from the registry entry; it is
+    // still the real Steam when it holds steam.exe.
+    let live = root.join("steam.exe").is_file()
+        || detect_root().is_some_and(|r| util::same_path(&r.to_string_lossy(), &root.to_string_lossy()));
     if live && !cfg!(test) && is_running() {
         bail!(crate::tr!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）", "STEAM_RUNNING: Steam needs to be closed before changing its shortcuts (it overwrites changes while running)"));
     }
@@ -578,6 +629,18 @@ mod tests {
 
     const APPID: i32 = -1633758279;
     const EXE: &str = r"C:\Games\fefw\fefw.exe";
+
+    #[test]
+    fn picked_folder_resolves_to_steam_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Steam");
+        std::fs::create_dir_all(root.join("steamapps").join("common")).unwrap();
+        assert!(root_of(&root).is_none());
+        std::fs::write(root.join("steam.exe"), b"").unwrap();
+        assert_eq!(root_of(&root).as_deref(), Some(root.as_path()));
+        assert_eq!(root_of(&root.join("steamapps").join("common")).as_deref(), Some(root.as_path()));
+        assert!(root_of(dir.path()).is_none());
+    }
 
     fn s(v: &str) -> vdf::Value {
         vdf::Value::Str(v.as_bytes().to_vec())

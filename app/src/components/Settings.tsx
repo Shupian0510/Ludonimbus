@@ -4,7 +4,7 @@ import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions, MigrateBanner } from "./CloudForms";
 import { SteamPluginPanel } from "./SteamPlugin";
-import { Badge, Button, Icon, Spinner, useUi } from "./ui";
+import { Badge, Button, Icon, PathChoice, PathField, samePath, Spinner, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 import { LANGS, LangPref, msg, useI18n, useT } from "../i18n";
 import { DISCORD_URL, docsUrl, GITHUB_URL } from "../links";
@@ -200,10 +200,7 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
           <Icon name="steam" />
           <h3>Steam</h3>
         </div>
-        <label>
-          <span>{st.steamRoot}</span>
-          <code className="path">{s.steamRoot ?? t.steamPlugin.noSteam}</code>
-        </label>
+        <SteamRootField settings={s} done={done} />
         {steamAccounts.length > 0 && (
           <label>
             <span>{t.addToSteam.account}</span>
@@ -232,7 +229,7 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
         </label>
       </section>
 
-      <SteamPluginPanel />
+      <SteamPluginPanel key={s.steamRoot ?? ""} />
 
       <SgdbPanel />
 
@@ -288,6 +285,74 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
         </label>
       </section>
       {update && <UpdateDialog info={update} onClose={() => setUpdate(null)} />}
+    </div>
+  );
+}
+
+/** Where Steam is installed: auto-detected, found by a scan, or picked by hand. */
+function SteamRootField({ settings: s, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
+  const ui = useUi();
+  const t = useT();
+  const st = t.settings;
+  const [choices, setChoices] = useState<PathChoice[] | null>(null);
+
+  const use = async (path: string | null) => {
+    try {
+      const now = await api.steamSetRoot(path);
+      setChoices(null);
+      await done(path === null ? msg().settings.steamBackedAuto : msg().settings.steamSet(now ?? path));
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  const scan = async () => {
+    try {
+      const found = await api.steamFindRoots();
+      if (found.length === 0) {
+        setChoices(null);
+        ui.toast(msg().settings.steamNoneFound, "warn");
+      } else if (found.length === 1 && samePath(found[0], s.steamRoot)) {
+        setChoices(null);
+        ui.toast(msg().settings.steamOnlyCurrent, "info");
+      } else if (found.length === 1) {
+        await use(found[0]);
+      } else {
+        setChoices(found.map((path) => ({ path })));
+      }
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  const pick = async () => {
+    const dir = await api.pickFolder(msg().settings.steamPickTitle, s.steamRoot);
+    if (dir) await use(dir);
+  };
+
+  return (
+    <div className="field">
+      <span>{st.steamRoot}</span>
+      <PathField
+        path={s.steamRoot}
+        empty={t.steamPlugin.noSteam}
+        badge={s.steamRoot && <Badge tone={s.steamRootCustom ? "info" : "muted"}>{s.steamRootCustom ? st.steamCustom : st.steamAuto}</Badge>}
+        onScan={scan}
+        onPick={pick}
+        choices={choices}
+        onChoose={(c) => use(c.path)}
+      >
+        {s.steamRoot && (
+          <Button small kind="ghost" onClick={() => api.openPath(s.steamRoot!).catch((e) => ui.toast(errorText(e), "bad"))}>
+            {st.open}
+          </Button>
+        )}
+        {s.steamRootCustom && (
+          <Button small kind="ghost" onClick={() => use(null)}>
+            {st.steamBackAuto}
+          </Button>
+        )}
+      </PathField>
     </div>
   );
 }

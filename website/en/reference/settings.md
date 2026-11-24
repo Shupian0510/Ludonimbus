@@ -31,7 +31,7 @@ Manual backups and locked versions are kept forever, regardless of the two setti
 
 | Setting | What it does |
 |---|---|
-| Steam location | The Steam folder Ludonimbus found |
+| Steam location | The Steam folder Ludonimbus uses, detected automatically. With several Steam installs, or when none was found: "Quick scan" looks in the registry and the usual folders on each drive (click one if it finds several); "Choose again…" lets you pick the folder Steam is installed in (it has `steam.exe`). After picking one by hand, "Detect automatically" goes back |
 | Steam account | With several Steam accounts, which account's shortcuts Ludonimbus reads and changes |
 | Launch wrapper | Where `ludonimbus-run.exe` is. If it says `ludonimbus-run.exe` can't be found, Steam auto-sync won't work; reinstall Ludonimbus |
 
@@ -64,9 +64,9 @@ Open the "Settings" tab on a game's page.
 | Name | The name shown in Ludonimbus |
 | Auto-sync | When off, starting / quitting the game no longer syncs; manual actions (Sync now, backups) still work |
 | Upload timing | Tick "Upload when the game process exits, without waiting for the launcher to close" for launchers that stay open; needs "Game process" |
-| Save locations | Folders or files to sync, one per line. Leave empty to use the built-in rule (the grey hint shows what it uses). "Add folder…" lets you pick one |
-| Exclude | Files not to sync, written the same way |
-| Game process | The game's real process name, for example `game.exe`, used to tell whether it's still running. Leave empty to use the built-in rule |
+| Save locations | Folders or files to sync, one per line. Leave empty to use the built-in rule (the grey hint shows what it uses). "Find saves…" lists folders with a similar name to tick and add; "Add folder…" lets you pick one |
+| Exclude | Files not to sync, written the same way. "Exclude folder…" adds a folder you pick |
+| Game process | The game's real process name, for example `game.exe`, used to tell whether it's still running. Leave empty to use the built-in rule. "Choose program…" adds the file name of a program you pick |
 | Launch options | Extra arguments passed to the game |
 
 Click "Save settings" when done. The game id is shown at the bottom; your PCs find the same cloud saves through it, see [Multiple devices](../sync/devices.md).

@@ -10,8 +10,11 @@ Good for:
 
 ## Connect
 
-1. Open Settings → Cloud and click "Choose folder…" under "Local / synced folder".
-2. Pick a folder, for example `D:\OneDrive\Ludonimbus`.
+1. Open Settings → Cloud and find "Local / synced folder".
+2. Click "Quick scan": it lists the folders synced by OneDrive, Dropbox, Google Drive for desktop, iCloud and similar apps on this PC. Click one to keep saves in a `Ludonimbus` folder inside it (one that already exists, for example because another PC uses it, is marked "exists").
+3. Or click "Choose folder…" to pick a folder yourself, for example a NAS share or a folder on a USB drive.
+
+Once connected, the current folder is shown there; "Choose again…" switches to another one and "Open" shows it.
 
 ![Settings → Cloud: local / synced folder](/screenshots/en/settings-cloud-folder.png)
 

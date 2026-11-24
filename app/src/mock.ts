@@ -319,6 +319,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         retention: { keepRecent: 20, keepDailyDays: 30 },
         networkTimeoutSecs: 8,
         steamRoot: "C:\\Program Files (x86)\\Steam",
+        steamRootCustom: false,
         steamAccount: "12345678",
         cloud: { kind: "googleDrive", clientId: "", clientSecret: "", folder: "Ludonimbus", account: "player@example.com" },
         previousCloud: { kind: "localFolder", name: L("本地 / 同步文件夹（D:\\Cloud\\Ludonimbus）", "Local / synced folder (D:\\Cloud\\Ludonimbus)") },
@@ -413,6 +414,18 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(`${(args.start as string | null) ?? "C:\\Games"}\\Starfield\\Starfield.exe`);
     case "pick_folder":
       return delay("D:\\Games");
+    case "steam_find_roots":
+      return delay(["C:\\Program Files (x86)\\Steam", "D:\\Steam"], 400);
+    case "steam_set_root":
+      return delay((args.path as string | null) ?? "C:\\Program Files (x86)\\Steam");
+    case "cloud_folder_suggestions":
+      return delay(
+        [
+          { label: "OneDrive", path: "C:\\Users\\me\\OneDrive\\Ludonimbus", existing: false },
+          { label: "Google Drive", path: "G:\\My Drive\\Ludonimbus", existing: true },
+        ],
+        400,
+      );
     case "add_found":
       return delay((args.found as Found).addedKey ?? (args.name as string).toLowerCase().replace(/[^a-z0-9]+/g, "-"), 300);
     case "detect_adapter": {

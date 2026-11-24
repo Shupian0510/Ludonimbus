@@ -7,7 +7,7 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, localart, ludusavi, paths, process, relocate, spec, steam};
+use ludonimbus_core::{adapters, games, localart, ludusavi, paths, process, relocate, spec, steam, util};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -667,6 +667,8 @@ pub struct SettingsView {
     retention: Retention,
     network_timeout_secs: u64,
     steam_root: Option<String>,
+    /// The Steam folder was picked in Settings (not auto-detected).
+    steam_root_custom: bool,
     steam_account: Option<String>,
     cloud: CloudConfig,
     /// Cloud used before the last switch whose data can still be copied.
@@ -711,6 +713,7 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             retention: cfg.retention.clone(),
             network_timeout_secs: cfg.network_timeout_secs,
             steam_account: root.as_deref().and_then(|r| steam::default_account(&cfg, r)),
+            steam_root_custom: cfg.steam.root.as_deref().is_some_and(|r| root.as_deref() == Some(r)),
             steam_root: root.map(|r| r.display().to_string()),
             previous_cloud: cfg.previous_cloud.as_ref().map(|p| PreviousCloud {
                 kind: cloud::kind_id(p).to_string(),
@@ -832,6 +835,47 @@ fn previous_name(c: &CloudConfig) -> String {
     } else {
         ludonimbus_core::tr!("{}（{detail}）", "{} ({detail})", cloud::kind_name(c))
     }
+}
+
+/// Steam install folders found on this PC.
+#[tauri::command]
+pub async fn steam_find_roots() -> CmdResult<Vec<String>> {
+    blocking(|| Ok(steam::find_roots().iter().map(|p| p.display().to_string()).collect())).await
+}
+
+/// Use the Steam install a picked folder is in; `None` goes back to
+/// detecting it. Returns the folder now in use.
+#[tauri::command]
+pub async fn steam_set_root(path: Option<String>) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let root = match path.filter(|p| !p.trim().is_empty()) {
+            None => None,
+            Some(p) => Some(steam::root_of(Path::new(p.trim())).ok_or_else(|| {
+                anyhow!(ludonimbus_core::tr!(
+                    "这个文件夹里没有 Steam（找不到 steam.exe）：{p}",
+                    "Steam isn't in this folder (no steam.exe): {p}"
+                ))
+            })?),
+        };
+        // The folder Steam itself registered needs no pinning: keep following it.
+        let detected = steam::detect_root();
+        let pinned = root.filter(|r| {
+            !detected.as_ref().is_some_and(|d| util::same_path(&d.to_string_lossy(), &r.to_string_lossy()))
+        });
+        config::update(|c| {
+            c.steam.root = pinned;
+            Ok(())
+        })?;
+        Ok(steam::root(&config::load()?).map(|r| r.display().to_string()))
+    })
+    .await
+}
+
+/// Folders kept in sync by OneDrive, Dropbox, Google Drive for desktop and
+/// the like, for the "local folder" cloud.
+#[tauri::command]
+pub async fn cloud_folder_suggestions() -> CmdResult<Vec<cloud::local::SyncFolder>> {
+    blocking(|| Ok(cloud::local::sync_folders())).await
 }
 
 #[tauri::command]

@@ -4,7 +4,7 @@ import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgr
 import { bytes } from "../format";
 import { Messages, msg, useI18n, useT } from "../i18n";
 import { scene, sceneIs } from "../scene";
-import { Button, Toggle, useUi } from "./ui";
+import { Button, PathChoice, PathField, Toggle, useUi } from "./ui";
 
 type Preset<T> = { label: string; apply: (c: T) => T; hint: string };
 
@@ -542,31 +542,80 @@ export function GoogleOption({ settings, done }: { settings: Settings; done: (ms
   );
 }
 
-export function FolderOption({ done, note }: { done: (msg: string) => Promise<void>; note?: string }) {
+export function FolderOption({ settings, done, note }: { settings: Settings; done: (msg: string) => Promise<void>; note?: string }) {
   const ui = useUi();
   const t = useT();
-  const pick = async () => {
-    const dir = await api.pickFolder(msg().settings.pickCloudFolder);
-    if (!dir) return;
+  const st = t.settings;
+  const current = settings.cloud.kind === "localFolder" ? settings.cloud.path : null;
+  const [choices, setChoices] = useState<PathChoice[] | null>(null);
+
+  const use = async (dir: string) => {
     try {
       await api.cloudUseFolder(dir);
+      setChoices(null);
       await done(msg().settings.folderSet);
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
   };
+
+  const pick = async () => {
+    const dir = await api.pickFolder(msg().settings.pickCloudFolder, current);
+    if (dir) await use(dir);
+  };
+
+  // Folders kept in sync by OneDrive, Dropbox, Google Drive for desktop…
+  const scan = async () => {
+    try {
+      const list = await api.cloudFolderSuggestions();
+      if (list.length === 0) {
+        setChoices(null);
+        ui.toast(msg().settings.folderScanNone, "warn");
+        return;
+      }
+      setChoices(list.map((f) => ({ path: f.path, label: f.label, note: f.existing ? msg().settings.folderHasData : undefined })));
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  const choose = async (c: PathChoice) => {
+    const m = msg().settings;
+    const ok = await ui.confirm({
+      title: m.folderUseTitle,
+      text: (
+        <>
+          <code className="path">{c.path}</code>
+          <p className="muted">{m.folderUseText(!!c.note)}</p>
+        </>
+      ),
+      confirm: m.folderUse,
+    });
+    if (ok) await use(c.path);
+  };
+
   return (
     <div className="cloud-option">
       <div className="cloud-option-head">
         <b>{t.cloudNames.localFolder}</b>
-        <span className="muted small">{t.settings.folderIntro}</span>
+        <span className="muted small">{st.folderIntro}</span>
       </div>
       {note && <p className="health health-warn small">{note}</p>}
-      <div className="row">
-        <Button icon="folder" onClick={pick}>
-          {t.saveFinder.pickFolder}
-        </Button>
-      </div>
+      <PathField
+        path={current}
+        onScan={scan}
+        onPick={pick}
+        pickText={current ? undefined : t.saveFinder.pickFolder}
+        choices={choices}
+        choicesText={st.folderFound}
+        onChoose={choose}
+      >
+        {current && (
+          <Button small kind="ghost" onClick={() => api.openPath(current).catch((e) => ui.toast(errorText(e), "bad"))}>
+            {st.open}
+          </Button>
+        )}
+      </PathField>
     </div>
   );
 }
@@ -593,7 +642,7 @@ export function CloudOptions({
   const folderNote = guide?.multiDevice ? t.onboarding.cloud.folderMultiDevice : undefined;
   const all = {
     google: <GoogleOption key={`google-${k}`} settings={settings} done={done} />,
-    folder: <FolderOption key="folder" done={done} note={folderNote} />,
+    folder: <FolderOption key="folder" settings={settings} done={done} note={folderNote} />,
     baidu: baidu ? <BaiduOption key={`baidu-${k}`} settings={settings} done={done} /> : null,
     quark: <QuarkOption key={`quark-${k}`} settings={settings} done={done} />,
     webdav: <WebDavOption key={`webdav-${k}`} settings={settings} done={done} />,

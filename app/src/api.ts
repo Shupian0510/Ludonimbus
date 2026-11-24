@@ -224,6 +224,13 @@ export interface GameFolder {
   path: string;
 }
 
+/** A folder a sync client (OneDrive, Dropbox…) keeps in the cloud; `path` is `Ludonimbus` inside it. */
+export interface SyncFolder {
+  label: string;
+  path: string;
+  existing: boolean;
+}
+
 /** A folder that may hold a game's saves. */
 export interface SaveCandidate {
   path: string;
@@ -313,6 +320,8 @@ export interface Settings {
   retention: { keepRecent: number; keepDailyDays: number };
   networkTimeoutSecs: number;
   steamRoot: string | null;
+  /** The Steam folder was picked by hand (not auto-detected). */
+  steamRootCustom: boolean;
   steamAccount: string | null;
   cloud: CloudConfig;
   /** Cloud used before the last switch whose saves can still be copied. */
@@ -444,6 +453,10 @@ export const api = {
     steamAccount?: string;
   }) => invoke<void>("save_settings", { patch }),
   cloudUseFolder: (path: string) => invoke<void>("cloud_use_folder", { path }),
+  cloudFolderSuggestions: () => invoke<SyncFolder[]>("cloud_folder_suggestions"),
+  steamFindRoots: () => invoke<string[]>("steam_find_roots"),
+  /** `null` goes back to auto-detecting; returns the Steam folder now in use. */
+  steamSetRoot: (path: string | null) => invoke<string | null>("steam_set_root", { path }),
   cloudConnectGoogle: (clientId: string, clientSecret: string) =>
     invoke<string>("cloud_connect_google", { clientId, clientSecret }),
   cloudDisconnect: () => invoke<void>("cloud_disconnect"),

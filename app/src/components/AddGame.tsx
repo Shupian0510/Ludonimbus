@@ -6,7 +6,7 @@ import { scene, SCENE_ADD, sceneIs } from "../scene";
 import { AddToSteam, SteamCandidate } from "./AddToSteam";
 import { PlatformFolders } from "./PlatformFolders";
 import { FinderGame, SaveFinder } from "./SaveFinder";
-import { Badge, Button, Empty, Icon, Modal, Spinner, useUi } from "./ui";
+import { Badge, Button, Empty, Icon, Modal, PathField, Spinner, useUi } from "./ui";
 
 type Tab = "scan" | "cloud" | "ludusavi" | "manual";
 
@@ -683,7 +683,7 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
   const [name, setName] = useState("");
 
   const pick = async () => {
-    const exe = await api.pickExe();
+    const exe = await api.pickExe(game?.exe);
     if (exe) await chooseExe(exe);
   };
 
@@ -728,10 +728,10 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
           <span>{t.saveFinder.name}</span>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
-        <label>
+        <div className="field">
           <span>{t.saveFinder.program}</span>
-          <code className="path">{game.exe}</code>
-        </label>
+          <PathField path={game.exe} onPick={pick} />
+        </div>
         <div className="row">
           <Button kind="primary" icon="plus" onClick={() => add(name.trim(), [], null).catch((e) => ui.toast(errorText(e), "bad"))} disabled={!name.trim()}>
             {t.saveFinder.add}
@@ -740,5 +740,14 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
       </div>
     );
   }
-  return <SaveFinder game={game} onBack={() => setGame(null)} onDone={(c) => add(c.name, c.saves, c.ludusaviTitle)} />;
+  // Keyed by the program so picking another one starts the search over.
+  return (
+    <SaveFinder
+      key={game.exe ?? ""}
+      game={game}
+      onBack={() => setGame(null)}
+      onChangeExe={(exe) => void chooseExe(exe)}
+      onDone={(c) => add(c.name, c.saves, c.ludusaviTitle)}
+    />
+  );
 }

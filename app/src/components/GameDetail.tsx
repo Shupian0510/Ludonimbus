@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, errorText, GameView, LocalFile, Outcome, Overview, StatusReport } from "../api";
+import { api, errorText, GameView, LocalFile, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
 import { bytes, dateTime, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
@@ -8,7 +8,8 @@ import { ArtPicker } from "./ArtPicker";
 import { PlatformFolders } from "./PlatformFolders";
 import { StatusBadge } from "./Library";
 import { withSteamClosed } from "./steamAction";
-import { Badge, Button, Icon, Modal, Toggle, useUi } from "./ui";
+import { SaveCandidates } from "./SaveFinder";
+import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Versions } from "./Versions";
 
 type Tab = "versions" | "files" | "config";
@@ -121,42 +122,51 @@ export function GameDetail({
     await steamAction((close) => api.steamRemoveGame(game.key, close), msg().game.removedSteam);
   };
 
-  const relocate = async () => {
+  /** Quick scan: near the old location, or in the stores when there is none yet. */
+  const findExe = async () => {
     try {
       const found = await api.relocateAuto(game.key);
-      if (found) {
-        const ok = await ui.confirm({
-          title: game.exe ? g.foundNewTitle : g.foundTitle,
-          text: game.exe ? (
-            <>
-              <p>{g.foundNear}</p>
-              <code className="path">{found}</code>
-              <p className="muted">{g.foundNearHint}</p>
-            </>
-          ) : (
-            <>
-              <p>{g.foundExe(game.name)}</p>
-              <code className="path">{found}</code>
-              <p className="muted">{g.foundExeHint}</p>
-            </>
-          ),
-          confirm: g.useLocation,
-        });
-        if (ok) {
-          await api.setGameExe(game.key, found);
-          ui.toast(msg().game.locationUpdated);
-          await onChanged();
-          return;
-        }
-      }
-      const picked = await api.pickExe(game.exe);
-      if (picked) {
-        await api.setGameExe(game.key, picked);
-        ui.toast(msg().game.locationUpdated);
-        await onChanged();
-      } else if (!found) {
+      if (!found) {
         ui.toast(game.exe ? msg().game.notFoundMoved : msg().game.notFoundAnywhere, "info");
+        return;
       }
+      if (samePath(found, game.exe)) {
+        ui.toast(msg().game.alreadyHere, "info");
+        return;
+      }
+      const ok = await ui.confirm({
+        title: game.exe ? g.foundNewTitle : g.foundTitle,
+        text: game.exe ? (
+          <>
+            <p>{g.foundNear}</p>
+            <code className="path">{found}</code>
+            <p className="muted">{g.foundNearHint}</p>
+          </>
+        ) : (
+          <>
+            <p>{g.foundExe(game.name)}</p>
+            <code className="path">{found}</code>
+            <p className="muted">{g.foundExeHint}</p>
+          </>
+        ),
+        confirm: g.useLocation,
+      });
+      if (!ok) return;
+      await api.setGameExe(game.key, found);
+      ui.toast(msg().game.locationUpdated);
+      await onChanged();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  const pickExe = async () => {
+    try {
+      const picked = await api.pickExe(game.exe ?? game.install);
+      if (!picked) return;
+      await api.setGameExe(game.key, picked);
+      ui.toast(msg().game.locationUpdated);
+      await onChanged();
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
@@ -299,7 +309,23 @@ export function GameDetail({
               <h3>{g.location}</h3>
               {game.exe && (game.exeExists ? <Badge tone="ok">{g.ok}</Badge> : <Badge tone="warn">{g.missing}</Badge>)}
             </div>
-            {game.exe ? <code className="path">{game.exe}</code> : <p className="muted">{g.noExe}</p>}
+            {game.exe && !game.exeExists && (
+              <p className="health health-warn">{g.moved}</p>
+            )}
+            <PathField
+              path={game.exe}
+              empty={g.noExe}
+              onScan={findExe}
+              onPick={pickExe}
+              scanText={g.findAuto}
+              pickText={game.exe ? undefined : g.pickExe}
+            >
+              {game.exe && game.exeExists && (
+                <Button small kind="ghost" icon="folder" onClick={() => run(() => api.openPath(game.exe!))}>
+                  {g.openFolder}
+                </Button>
+              )}
+            </PathField>
             {xboxProtected && game.exeExists && (
               <>
                 <p className="health health-warn">{g.xboxProtected}</p>
@@ -313,19 +339,6 @@ export function GameDetail({
             {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && (
               <p className="muted small">{g.xboxHelper}</p>
             )}
-            {game.exe && !game.exeExists && (
-              <p className="health health-warn">{g.moved}</p>
-            )}
-            <div className="row">
-              <Button small icon="locate" onClick={relocate}>
-                {!game.exe ? g.findAuto : game.exeExists ? g.change : g.relocate}
-              </Button>
-              {game.exe && game.exeExists && (
-                <Button small kind="ghost" icon="folder" onClick={() => run(() => api.openPath(game.exe!))}>
-                  {g.openFolder}
-                </Button>
-              )}
-            </div>
             {(!game.exe || !game.exeExists) && (
               <PlatformFolders
                 onPick={async (exe) => {
@@ -455,11 +468,30 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
     }
   };
 
+  const [scanning, setScanning] = useState(false);
+  const append = (set: (f: (s: string) => string) => void, items: string[]) =>
+    set((s) => {
+      const have = lines(s);
+      const add = items.filter((i) => !have.some((h) => h.toLowerCase() === i.toLowerCase()));
+      return [...have, ...add].join("\n");
+    });
+
   const addFolder = async () => {
     const dir = await api.pickFolder(msg().saveFinder.pickTitle, game.install);
     if (!dir) return;
-    const p = await api.folderToPattern(dir, game.exe);
-    setSaves((s) => (s.trim() ? `${s.trim()}\n${p}` : p));
+    append(setSaves, [await api.folderToPattern(dir, game.exe)]);
+  };
+
+  const excludeFolder = async () => {
+    const dir = await api.pickFolder(msg().game.config.excludePickTitle, game.install);
+    if (!dir) return;
+    append(setExclude, [await api.folderToPattern(dir, game.exe)]);
+  };
+
+  const pickProcess = async () => {
+    const exe = await api.pickExe(game.exe ?? game.install);
+    const name = exe?.split(/[\\/]/).pop();
+    if (name) append(setWaitFor, [name]);
   };
 
   const remove = async () => {
@@ -482,84 +514,160 @@ function Config({ game, onChanged, onRemoved }: { game: GameView; onChanged: () 
   };
 
   return (
-    <div className="panel form">
-      <label>
-        <span>{t.saveFinder.name}</span>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <label>
-        <span>{c.autoSync}</span>
-        <div className="row">
-          <Toggle
-            checked={game.autoSync}
-            onChange={(v) =>
-              api.updateGame(game.key, { autoSync: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
-            }
-          />
-          <span className="muted small">{c.autoSyncHint}</span>
-        </div>
-      </label>
-      <label>
-        <span>{c.uploadWhen}</span>
-        <div>
+    <>
+      <div className="panel form">
+        <label>
+          <span>{t.saveFinder.name}</span>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          <span>{c.autoSync}</span>
           <div className="row">
             <Toggle
-              checked={game.uploadOnGameExit}
-              disabled={!game.hasGameProcess}
+              checked={game.autoSync}
               onChange={(v) =>
-                api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
+                api.updateGame(game.key, { autoSync: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
               }
             />
-            <span>{c.uploadOnExit}</span>
+            <span className="muted small">{c.autoSyncHint}</span>
           </div>
-          <p className="muted small">
-            {game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess}
-          </p>
-        </div>
-      </label>
-      <label>
-        <span>{c.saves}</span>
-        <textarea
-          className="input mono"
-          rows={3}
-          value={saves}
-          placeholder={game.defaultSaves.length ? c.builtinSaves(game.defaultSaves) : "{install}/save/**"}
-          onChange={(e) => setSaves(e.target.value)}
-        />
-        <div className="row">
-          <Button small icon="folder" onClick={addFolder}>
-            {c.addFolder}
+        </label>
+        <label>
+          <span>{c.uploadWhen}</span>
+          <div>
+            <div className="row">
+              <Toggle
+                checked={game.uploadOnGameExit}
+                disabled={!game.hasGameProcess}
+                onChange={(v) =>
+                  api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
+                }
+              />
+              <span>{c.uploadOnExit}</span>
+            </div>
+            <p className="muted small">
+              {game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess}
+            </p>
+          </div>
+        </label>
+        <label>
+          <span>{c.saves}</span>
+          <div className="field-stack">
+            <textarea
+              className="input mono"
+              rows={3}
+              value={saves}
+              placeholder={game.defaultSaves.length ? c.builtinSaves(game.defaultSaves) : "{install}/save/**"}
+              onChange={(e) => setSaves(e.target.value)}
+            />
+            <div className="row">
+              <Button small icon="search" onClick={() => setScanning(true)}>
+                {c.scanSaves}
+              </Button>
+              <Button small icon="folder" onClick={addFolder}>
+                {c.addFolder}
+              </Button>
+            </div>
+            <span className="muted small">{c.savesHint}</span>
+          </div>
+        </label>
+        <label>
+          <span>{c.exclude}</span>
+          <div className="field-stack">
+            <textarea className="input mono" rows={2} value={exclude} placeholder="{install}/save/cache/**" onChange={(e) => setExclude(e.target.value)} />
+            <div className="row">
+              <Button small icon="folder" onClick={excludeFolder}>
+                {c.excludeFolder}
+              </Button>
+            </div>
+          </div>
+        </label>
+        <label>
+          <span>{c.process}</span>
+          <div className="field-stack">
+            <textarea
+              className="input mono"
+              rows={2}
+              value={waitFor}
+              placeholder={game.defaultWaitFor.length ? c.builtinProcess(game.defaultWaitFor) : c.processPlaceholder}
+              onChange={(e) => setWaitFor(e.target.value)}
+            />
+            <div className="row">
+              <Button small icon="folder" onClick={pickProcess}>
+                {c.pickProcess}
+              </Button>
+            </div>
+          </div>
+        </label>
+        <label>
+          <span>{c.args}</span>
+          <input className="input mono" value={args} onChange={(e) => setArgs(e.target.value)} />
+        </label>
+        <div className="row space">
+          <Button kind="primary" onClick={save}>
+            {c.save}
           </Button>
-          <span className="muted small">{c.savesHint}</span>
+          <Button kind="danger" icon="trash" onClick={remove}>
+            {c.remove}
+          </Button>
         </div>
-      </label>
-      <label>
-        <span>{c.exclude}</span>
-        <textarea className="input mono" rows={2} value={exclude} placeholder="{install}/save/cache/**" onChange={(e) => setExclude(e.target.value)} />
-      </label>
-      <label>
-        <span>{c.process}</span>
-        <textarea
-          className="input mono"
-          rows={2}
-          value={waitFor}
-          placeholder={game.defaultWaitFor.length ? c.builtinProcess(game.defaultWaitFor) : c.processPlaceholder}
-          onChange={(e) => setWaitFor(e.target.value)}
-        />
-      </label>
-      <label>
-        <span>{c.args}</span>
-        <input className="input mono" value={args} onChange={(e) => setArgs(e.target.value)} />
-      </label>
-      <div className="row space">
-        <Button kind="primary" onClick={save}>
-          {c.save}
-        </Button>
-        <Button kind="danger" icon="trash" onClick={remove}>
-          {c.remove}
-        </Button>
+        <p className="muted small">{c.gameId(game.key)}</p>
       </div>
-      <p className="muted small">{c.gameId(game.key)}</p>
-    </div>
+      {/* Outside the form: its label grid would squash the candidate rows. */}
+      {scanning && <SaveScan game={game} onAdd={(p) => append(setSaves, p)} onClose={() => setScanning(false)} />}
+    </>
+  );
+}
+
+/** Quick scan for the save folder: likely folders to tick and add. */
+function SaveScan({ game, onAdd, onClose }: { game: GameView; onAdd: (patterns: string[]) => void; onClose: () => void }) {
+  const ui = useUi();
+  const t = useT();
+  const c = t.game.config;
+  const [list, setList] = useState<SaveCandidate[] | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    api.saveSuggest(game.name, game.exe, game.install).then(setList, (e) => {
+      ui.toast(errorText(e), "bad");
+      setList([]);
+    });
+  }, [game.key]);
+
+  const toggle = (s: SaveCandidate) => {
+    const next = new Set(picked);
+    if (!next.delete(s.path)) next.add(s.path);
+    setPicked(next);
+  };
+
+  const add = async () => {
+    try {
+      onAdd(await Promise.all([...picked].map((p) => api.folderToPattern(p, game.exe))));
+      onClose();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  return (
+    <Modal
+      title={c.scanTitle}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <Button kind="ghost" onClick={onClose}>
+            {t.common.cancel}
+          </Button>
+          <Button kind="primary" icon="plus" onClick={add} disabled={picked.size === 0}>
+            {c.scanAdd(picked.size)}
+          </Button>
+        </>
+      }
+    >
+      <div className="finder">
+        <p className="muted small">{c.scanText}</p>
+        {!list ? <Spinner /> : list.length === 0 ? <p className="muted">{c.scanNone}</p> : <SaveCandidates list={list} isPicked={(p) => picked.has(p)} onToggle={toggle} />}
+      </div>
+    </Modal>
   );
 }

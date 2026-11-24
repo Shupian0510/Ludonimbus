@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, SaveCandidate } from "../api";
 import { bytes, relTime } from "../format";
 import { msg, useT } from "../i18n";
-import { Button, Icon, Spinner, useUi } from "./ui";
+import { Button, Icon, PathField, Spinner, useUi } from "./ui";
 
 export interface FinderGame {
   name: string;
@@ -19,8 +19,44 @@ export interface FinderChoice {
 
 const BIG = 200 * 1024 * 1024;
 
+/** Folders that may hold saves, each with a checkbox. */
+export function SaveCandidates({ list, isPicked, onToggle }: { list: SaveCandidate[]; isPicked: (path: string) => boolean; onToggle: (c: SaveCandidate) => void }) {
+  const t = useT();
+  const f = t.saveFinder;
+  return (
+    <>
+      {list.map((c) => (
+        <label key={c.path} className={`finder-item${isPicked(c.path) ? " picked" : ""}`}>
+          <input type="checkbox" checked={isPicked(c.path)} onChange={() => onToggle(c)} />
+          <div className="add-info">
+            <code className="path small">{c.path}</code>
+            <span className="muted small">
+              {t.library.files(c.files)} · {bytes(c.bytes)}
+              {c.modified ? ` · ${f.modified(relTime(c.modified))}` : ""} · {c.reason}
+            </span>
+            {c.sample.length > 0 && <span className="muted small">{f.sample(c.sample)}</span>}
+          </div>
+        </label>
+      ))}
+    </>
+  );
+}
+
 /** Guided setup for a game whose save location Ludonimbus does not know. */
-export function SaveFinder({ game, onBack, onDone, submitText }: { game: FinderGame; onBack: () => void; onDone: (c: FinderChoice) => Promise<void>; submitText?: string }) {
+export function SaveFinder({
+  game,
+  onBack,
+  onDone,
+  submitText,
+  onChangeExe,
+}: {
+  game: FinderGame;
+  onBack: () => void;
+  onDone: (c: FinderChoice) => Promise<void>;
+  submitText?: string;
+  /** Lets the user pick the game's program again. */
+  onChangeExe?: (exe: string) => void;
+}) {
   const ui = useUi();
   const t = useT();
   const f = t.saveFinder;
@@ -96,20 +132,7 @@ export function SaveFinder({ game, onBack, onDone, submitText }: { game: FinderG
 
   const big = [...picked.values()].some((c) => c && c.bytes > BIG);
 
-  const candidateList = (list: SaveCandidate[]) =>
-    list.map((c) => (
-      <label key={c.path} className={`finder-item${picked.has(c.path) ? " picked" : ""}`}>
-        <input type="checkbox" checked={picked.has(c.path)} onChange={() => toggle(c)} />
-        <div className="add-info">
-          <code className="path small">{c.path}</code>
-          <span className="muted small">
-            {t.library.files(c.files)} · {bytes(c.bytes)}
-            {c.modified ? ` · ${f.modified(relTime(c.modified))}` : ""} · {c.reason}
-          </span>
-          {c.sample.length > 0 && <span className="muted small">{f.sample(c.sample)}</span>}
-        </div>
-      </label>
-    ));
+  const candidateList = (list: SaveCandidate[]) => <SaveCandidates list={list} isPicked={(p) => picked.has(p)} onToggle={toggle} />;
 
   return (
     <div className="finder">
@@ -121,11 +144,22 @@ export function SaveFinder({ game, onBack, onDone, submitText }: { game: FinderG
           <span>{f.name}</span>
           <input className="input" value={name} placeholder={f.namePlaceholder} onChange={(e) => setName(e.target.value)} />
         </label>
-        {game.exe && (
-          <label>
+        {(game.exe || onChangeExe) && (
+          <div className="field">
             <span>{f.program}</span>
-            <code className="path small">{game.exe}</code>
-          </label>
+            <PathField
+              path={game.exe}
+              empty={f.noProgram}
+              onPick={
+                onChangeExe &&
+                (async () => {
+                  const exe = await api.pickExe(game.exe ?? game.install);
+                  if (exe) onChangeExe(exe);
+                })
+              }
+              pickText={game.exe ? undefined : t.game.pickExe}
+            />
+          </div>
         )}
       </div>
 
