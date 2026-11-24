@@ -320,5 +320,8 @@ fn run(args: &[String]) -> Result<i32> {
             }
         }
     }
+    // Achievements earned in this session are recorded and uploaded even
+    // when the tray app isn't running (popups are the tray app's job).
+    ludonimbus_core::achievements::after_exit(&ctx, &game);
     Ok(code)
 }
