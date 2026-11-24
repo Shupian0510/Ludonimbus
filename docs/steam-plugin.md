@@ -39,6 +39,8 @@ Steam 客户端
 | GET | `/v1/steam/apps/{appid}?account={id}&refresh=1` | Steam 快捷方式对应游戏的云存档状态。`account` 是 Steam 账号 id（`userdata` 下的文件夹名），同一个快捷方式在多个账号下时用来区分。`refresh=1` 时，如果缓存的检查结果超过 60 秒、或者之后又同步过，就重新向云端检查一次 |
 | POST | `/v1/games/{key}/sync` | 在后台开始「立即同步」，立即返回 `{ started: true }`。游戏运行中或已在同步时返回 409 |
 | POST | `/v1/games/{key}/open` | 显示 Ludonimbus 窗口并打开这个游戏 |
+| GET | `/v1/games/{key}/gamebackup` | 游戏本体备份的状态：`{ exeMissing, checked, latest: { versionId, createdAt, totalSize, deviceName } \| null, job: { kind, phase, done, total, … } \| null, lang }`。不等云端：本体缺失时在后台查一次最新备份（缓存 5 分钟），还没查到时 `checked` 为 `false`。见 [plan-game-backup.md](plan-game-backup.md) |
+| POST | `/v1/games/{key}/gamebackup/install` | 显示 Ludonimbus 窗口，打开这个游戏的「从云端恢复」对话框（安装位置在应用里选） |
 
 状态的返回值（没有关联到 Ludonimbus 的游戏返回 `{ "managed": false }`）：
 

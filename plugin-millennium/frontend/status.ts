@@ -49,6 +49,43 @@ export interface View {
 	busy: boolean;
 	/** Clicking opens the game in Ludonimbus. */
 	key: string | null;
+	/** Clicking opens the restore dialog ("install from the cloud"). */
+	install?: boolean;
+}
+
+/** `GET /v1/games/{key}/gamebackup`. */
+export interface BackupStatus {
+	exeMissing: boolean;
+	latest: { versionId: string; createdAt: string; totalSize: number; deviceName: string } | null;
+	job: { kind: string; phase: string; done: number; total: number } | null;
+}
+
+export function parseBackup(value: unknown): BackupStatus | null {
+	const r = parseReply(value) as unknown as Partial<BackupStatus> & { error?: string };
+	return r && !r.error && typeof r.exeMissing === 'boolean' ? (r as BackupStatus) : null;
+}
+
+/** The play bar item while the game's files are missing or being restored. */
+export function describeInstall(b: BackupStatus | null, key: string): View | null {
+	if (!b) return null;
+	const m = t();
+	if (b.job?.kind === 'restore') {
+		const pct = b.job.total > 0 && b.job.phase === 'downloading' ? Math.floor((b.job.done / b.job.total) * 100) : null;
+		return { text: m.installing(pct), tone: 'info', tip: m.clickToOpen, canSync: false, busy: true, key };
+	}
+	if (b.exeMissing && b.latest) {
+		const gb = (b.latest.totalSize / 1024 ** 3).toFixed(1);
+		return {
+			text: m.installFromCloud,
+			tone: 'info',
+			tip: m.installTip(dateTime(b.latest.createdAt), b.latest.deviceName, gb),
+			canSync: false,
+			busy: false,
+			key,
+			install: true,
+		};
+	}
+	return null;
 }
 
 /**
@@ -131,6 +168,10 @@ const TEXTS = {
 		empty: '还没有存档',
 		error: '读取存档出错',
 		checking: '正在检查…',
+		installFromCloud: '本机没有游戏文件 · 点击从云端安装',
+		installing: (pct: number | null) => (pct === null ? '正在从云端安装…' : `正在从云端安装 ${pct}%`),
+		installTip: (at: string, device: string, gb: string) => `云端有游戏本体备份：${at}，来自 ${device}，${gb} GB
+点击在 Ludonimbus 里选择安装位置`,
 	},
 	en: {
 		label: 'Ludonimbus Cloud Saves',
@@ -172,6 +213,11 @@ const TEXTS = {
 		empty: 'No saves yet',
 		error: 'Error reading saves',
 		checking: 'Checking…',
+		installFromCloud: 'Game files missing · Click to install from the cloud',
+		installing: (pct: number | null) => (pct === null ? 'Installing from the cloud…' : `Installing from the cloud ${pct}%`),
+		installTip: (at: string, device: string, gb: string) =>
+			`The cloud has a backup of the game files: ${at}, from ${device}, ${gb} GB
+Click to choose where to install it in Ludonimbus`,
 	},
 };
 

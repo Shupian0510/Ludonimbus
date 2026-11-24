@@ -35,9 +35,13 @@ cargo run -p ludonimbus-cli -- status
 cargo run -p ludonimbus-cli -- steam shortcuts
 cargo run -p ludonimbus-cli -- snapshots fe-fortunes-weave
 cargo run -p ludonimbus-cli -- discover --ludusavi --folder D:\Games   # 扫描本机能添加的游戏
+cargo run -p ludonimbus-cli -- speedtest --mb 200 --threads 4           # 当前云盘的上传 / 下载速度（测完删除）
+cargo run -p ludonimbus-cli -- game-backup list zelda64recomp           # 游戏本体备份的版本
 ```
 
-日志在 `%APPDATA%\Ludonimbus\logs\`：`runner.log`（从 Steam 启动时）、`sync.log`、`watcher.log`（托盘后台监视）、`agent.log`（本机接口）、`steam-plugin.log`（安装 / 更新插件）。
+`./scripts/cloud-speedtest.ps1 -Threads 2,4,8` 用你的真实设置测当前云盘，报告写到 `%LOCALAPPDATA%\Ludonimbus-speedtest\`。
+
+日志在 `%APPDATA%\Ludonimbus\logs\`：`runner.log`（从 Steam 启动时）、`sync.log`、`watcher.log`（托盘后台监视）、`agent.log`（本机接口）、`steam-plugin.log`（安装 / 更新插件）、`gamebackup.log`（游戏本体的备份、恢复、删除）。
 
 手动测试清单：[testing-v0.1.md](testing-v0.1.md)、[testing-v0.2.md](testing-v0.2.md)、[testing-v0.3.md](testing-v0.3.md)、[testing-v0.4.md](testing-v0.4.md)。
 
@@ -138,6 +142,7 @@ scripts/             构建与发布脚本
 - [plan-phase1.md](plan-phase1.md)：整体设计、阶段划分、路线图
 - [plan-phase2.md](plan-phase2.md)：下一阶段（更多云盘、添加游戏、截图与游戏时间、一键加入 Steam）
 - [steam-plugin.md](steam-plugin.md)：Steam 插件、本机接口和一键安装
+- [plan-game-backup.md](plan-game-backup.md)：游戏本体备份（切块、去重、云端布局、恢复）和云盘测速
 - 同步判定规则：[`crates/core/src/sync.rs`](../crates/core/src/sync.rs) 顶部的表格
 
 云端目录结构：
@@ -146,6 +151,8 @@ scripts/             构建与发布脚本
 Ludonimbus/devices/<设备>.json
 Ludonimbus/games/<游戏>/game.json
 Ludonimbus/games/<游戏>/snapshots/<版本>.zip
+Ludonimbus/gamebackup/<游戏>/chunks/<blake3>          游戏本体备份的数据块（见 plan-game-backup.md）
+Ludonimbus/gamebackup/<游戏>/versions/<版本>.manifest  + <版本>.json
 ```
 
 每个版本是一个只追加、不可修改的 zip 快照，带父版本指针和设备信息；最新的主线版本就是「云端当前版本」。

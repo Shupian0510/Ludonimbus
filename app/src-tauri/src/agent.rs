@@ -12,6 +12,8 @@
 //! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut
 //! POST /v1/games/{key}/sync                               start "sync now" in the background
 //! POST /v1/games/{key}/open                               show the game in the Ludonimbus window
+//! GET  /v1/games/{key}/gamebackup                         game files missing? newest game backup, running job
+//! POST /v1/games/{key}/gamebackup/install                 show the game with the restore dialog open
 //! ```
 
 use crate::{busy, commands, show_main, watcher};
@@ -186,6 +188,8 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             steam_app_status(appid, account, refresh)
         }
         (Method::Post, ["v1", "games", key, "sync"]) => start_sync(app, key),
+        (Method::Get, ["v1", "games", key, "gamebackup"]) => Ok(crate::gamebackup::agent_status(key)?),
+        (Method::Post, ["v1", "games", key, "gamebackup", "install"]) => Ok(crate::gamebackup::agent_install(app, key)?),
         (Method::Post, ["v1", "games", key, "open"]) => {
             find_by_key(&config::load()?, key)?;
             show_main(app);

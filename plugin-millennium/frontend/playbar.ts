@@ -6,7 +6,7 @@
 // often, so a MutationObserver puts the item back whenever it disappears.
 
 import { playSectionClasses } from 'millennium';
-import { describe, isGame, parseReply, Reply, t, View } from './status';
+import { BackupStatus, describe, describeInstall, isGame, parseBackup, parseReply, Reply, t, View } from './status';
 
 const MARK = 'data-ludonimbus';
 const STYLE_ID = 'ludonimbus-style';
@@ -68,6 +68,8 @@ function currentAccount(): string {
 export class PlayBarStatus {
 	private appId: string | null = null;
 	private reply: Reply | null = null;
+	private backup: BackupStatus | null = null;
+	private view: View | null = null;
 	private observer: MutationObserver | null = null;
 	private timer: number | undefined;
 	private fast = false;
@@ -117,6 +119,7 @@ export class PlayBarStatus {
 		if (appId !== this.appId) {
 			this.appId = appId;
 			this.reply = null;
+			this.backup = null;
 			this.lastPhase = null;
 			this.removeAll();
 			if (appId) {
@@ -150,7 +153,7 @@ export class PlayBarStatus {
 	}
 
 	private busy(): boolean {
-		return isGame(this.reply) && this.reply.phase !== 'idle';
+		return (isGame(this.reply) && this.reply.phase !== 'idle') || !!this.backup?.job;
 	}
 
 	private async load(appId: string, refresh: boolean): Promise<void> {
@@ -162,6 +165,17 @@ export class PlayBarStatus {
 			reply = { error: 'backend', detail: String(e) };
 		}
 		if (appId !== this.appId) return;
+		// Game files missing or being restored (game backups).
+		let backup: BackupStatus | null = null;
+		if (isGame(reply)) {
+			try {
+				backup = parseBackup(await backend.gamebackup_status(reply.key));
+			} catch {
+				backup = null;
+			}
+			if (appId !== this.appId) return;
+		}
+		this.backup = backup;
 		const phase = isGame(reply) ? reply.phase : null;
 		const finished = this.lastPhase !== null && this.lastPhase !== 'idle' && phase === 'idle';
 		this.lastPhase = phase;
@@ -190,7 +204,9 @@ export class PlayBarStatus {
 	}
 
 	private render(): void {
-		const view = this.appId ? describe(this.reply, this.appId) : null;
+		const status = this.appId ? describe(this.reply, this.appId) : null;
+		const view = (isGame(this.reply) && describeInstall(this.backup, this.reply.key)) || status;
+		this.view = view;
 		if (!view) {
 			this.removeAll();
 			return;
@@ -280,6 +296,8 @@ export class PlayBarStatus {
 	}
 
 	private openInApp(): void {
-		if (isGame(this.reply)) backend.open_game(this.reply.key);
+		if (!isGame(this.reply)) return;
+		if (this.view?.install) backend.gamebackup_install(this.reply.key);
+		else backend.open_game(this.reply.key);
 	}
 }
