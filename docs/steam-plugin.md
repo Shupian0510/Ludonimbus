@@ -96,3 +96,19 @@ Steam 客户端
 应用每次启动时，如果 Steam 里已经装了插件、但和安装包里的不一样，会直接替换文件（Steam 运行时也可以），下次打开 Steam 生效。
 
 「移除插件」会删除插件文件并从 `enabledPlugins` 里去掉；Millennium 本身保留。
+
+## 成就
+
+设计见 [plan-achievements.md](plan-achievements.md)。本机接口多了 4 个端点（`app/src-tauri/src/achievements.rs`）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/v1/steam/apps/{appid}/achievements?account={id}` | 游戏页的成就进度和列表；没有关联来源时 `source` 为 `null` |
+| GET | `/v1/games/{key}/achievements/{id}/icon` | 本地奖杯图标，`{ dataUrl }` |
+| GET | `/v1/achievements/events?after={seq}` | 游戏运行中新解锁的成就；`after=0` 只返回当前序号（插件重新加载后不补弹旧的） |
+| POST | `/v1/achievements/events/{seq}/ack?shown=steam\|failed&reason=` | 插件报告弹窗结果；3.5 秒内没有 `steam`（或插件 10 秒内没来取过事件）时，应用用自己的置顶小窗口提醒 |
+
+插件里：
+
+- `frontend/toast.ts` 每 2 秒取一次新事件，用 Steam 前端的 `window.NotificationStore` 弹出 Steam 自己的成就通知：在 `GetNotificationTargets()` 里按 `strTest === "Achievement"` 找到通知类型和 protobuf 类，照 Steam 的 `TestAchievement` 构造数据；这个游戏的 Overlay 在运行时用 `AddAppOverlayNotification`（游戏内），否则用 `OnNotification`（桌面）。都是没有文档的内部接口，按名字查找，找不到时把原因报给应用。
+- `frontend/achievements.ts` 在「开始游戏」栏加「成就 x / y」项（借用 Steam 的类名），点开是插件自己画的列表，每 20 秒或收到解锁时刷新。

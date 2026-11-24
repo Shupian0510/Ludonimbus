@@ -1,8 +1,10 @@
 # Ludonimbus 成就方案（草案 v0.1 · 2026-11-23）
 
 > **进度（2026-11-23）**
-> - 调研完成，方案见下文。第 8 节有几件事需要你决定。
-> - 原型和第一批来源：未开始。
+> - 调研完成。第 8 节的决定：弹窗由你装测试版验证；第一批做本地奖杯 + RetroAchievements（RA 先用文档样例测，真实账号以后再测）；Steam 弹窗默认开启并提示关掉模拟器自带的通知；Lantern 先显示编号和图标，检测到 shadPS4 解出的 `TROP.XML` 时自动用里面的名称。
+> - **P0–P4 已实现**（分支 `claude/achievements-730281`）：core 模块 `crates/core/src/achievements/`、托盘程序的检测线程和事件队列 `app/src-tauri/src/achievements.rs`、兜底小窗口、本机接口、插件的 Steam 弹窗 `toast.ts` 和游戏页成就项 `achievements.ts`、应用里的「成就」标签和设置。自动测试和你这台电脑上的只读检查见 [testing-achievements.md](testing-achievements.md)。
+> - **待你实测**：按 [testing-achievements.md](testing-achievements.md)，重点是第 1 节（Steam 弹窗，桌面和游戏内）和 Lantern 的 `trophies.log` 格式。
+> - 和主会话的共享改动：`CloudProvider` 新加了 `list_files` / `read_file` / `write_file`（`Repo` 和 Google Drive 都实现了），主会话的游戏时间可以直接用；如果主会话已经加了同类方法，合并时以主会话的为准，`achievements/cloud.rs` 只用到这三个调用。
 
 > **背景**：给 Steam 里的非 Steam 游戏补上成就：记录、跨设备同步、在 Steam 游戏页显示、游戏中解锁时弹窗。对应 [plan-phase1.md](plan-phase1.md) 第 10 节的「成就」和第 9 节的「Steam 风格的通知」。和主会话的 0.6（截图、游戏时间、Steam 里的版本列表）、游戏本体云备份分开实现。
 >
@@ -276,17 +278,25 @@ RetroArch 等 rcheevos 模拟器、shadPS4、RPCS3、Lantern 都会在游戏里�
 | `app/src/components/Achievements*.tsx` | 应用里的成就区块和设置 |
 | `plugin-millennium/frontend/achievements.ts`、`toast.ts` | 游戏页成就项和列表、Steam 弹窗 |
 
-**要改的共享文件**（每处几行，集中在一起）：
+**改到的共享文件**（每处几行，集中在一起）：
 
 | 文件 | 改动 |
 |---|---|
 | `crates/core/src/lib.rs` | `pub mod achievements;` |
-| `crates/core/src/cloud/mod.rs`、`repo.rs`、`gdrive.rs` | `CloudProvider` 加三个读写小文件的方法（`list_files`、`read_file`、`write_file`），`Repo` 和 Google Drive 各实现一次。**主会话的游戏时间也需要同样的东西**，已经问过主会话，以它的接口为准 |
-| `app/src-tauri/src/agent.rs` | 路由里加 4 个端点，转给 `achievements.rs` |
-| `app/src-tauri/src/main.rs` | 启动检测线程、注册命令 |
-| `crates/runner/src/main.rs` | 游戏退出后调用一次 `achievements::after_exit`（扫描 + 上传），托盘程序没开时也能记录 |
-| `plugin-millennium/frontend/index.tsx`、`playbar.ts`、`backend/main.lua` | 挂上成就项和事件轮询；Lua 后端加 4 个转发函数 |
-| `app/src/i18n/*.ts`、`GameDetail.tsx`、`Settings.tsx`、`api.ts`、`mock.ts` | 新词条和入口 |
+| `crates/core/src/cloud/mod.rs`、`repo.rs`、`gdrive.rs` | `CloudProvider` 加三个读写小文件的方法（`list_files`、`read_file`、`write_file`），`Repo` 和 Google Drive 各实现一次。**主会话的游戏时间也需要同样的东西**，已经问过主会话；合并时以主会话的接口为准 |
+| `crates/runner/src/main.rs` | 游戏退出、上传存档之后调用一次 `achievements::after_exit`（读取 + 上传成就记录），托盘程序没开时也能记录 |
+| `app/src-tauri/src/agent.rs` | 路由里加 4 个端点，转给 `achievements.rs`；`find_game` 改成 `pub(crate)` |
+| `app/src-tauri/src/main.rs` | `mod achievements;`、启动检测线程、注册 16 个命令 |
+| `app/src-tauri/capabilities/default.json` | 窗口列表加上兜底小窗口 `achievement-toast` |
+| `plugin-millennium/frontend/index.tsx` | 每个桌面窗口挂上成就项；启动弹窗轮询 |
+| `plugin-millennium/frontend/playbar.ts` | `cls`、`currentAppId`、`currentAccount` 加 `export` |
+| `plugin-millennium/backend/main.lua` | 末尾加 4 个转发函数 |
+| `app/src/main.tsx` | `index.html?toast` 渲染兜底小窗口 |
+| `app/src/components/GameDetail.tsx`、`Settings.tsx` | 「成就」标签、设置里的「成就」面板（各几行） |
+| `app/src/i18n/zh-CN.ts`、`en.ts` | 末尾加 `achievements` 一组词条 |
+| `app/src/styles.css` | 末尾加一段成就样式 |
+
+前端的接口和示例数据放在新文件 `app/src/achievementsApi.ts`、`achievementsMock.ts`，没有改 `api.ts`、`mock.ts`。
 
 **本机接口（新增）**：
 
@@ -295,7 +305,7 @@ RetroArch 等 rcheevos 模拟器、shadPS4、RPCS3、Lantern 都会在游戏里�
 | GET | `/v1/steam/apps/{appid}/achievements?account=` | 游戏页用：`{ managed, key, total, unlocked, items: [...] }`；没有来源时 `{ managed: true, source: null }` |
 | GET | `/v1/games/{key}/achievements/{id}/icon` | 本地图标，返回 `{ dataUrl }` |
 | GET | `/v1/achievements/events?after={seq}` | 新解锁事件（含 appid、名称、说明、图标） |
-| POST | `/v1/achievements/events/{seq}/ack?shown=steam\|failed` | 插件告诉应用弹窗结果 |
+| POST | `/v1/achievements/events/{seq}/ack?shown=steam\|failed&reason=` | 插件告诉应用弹窗结果；没弹出来时带上原因，写进 `achievements.log` |
 
 ---
 
@@ -313,7 +323,7 @@ RetroArch 等 rcheevos 模拟器、shadPS4、RPCS3、Lantern 都会在游戏里�
 
 ---
 
-## 8. 需要你决定的事
+## 8. 需要你决定的事（2026-11-23 已决定，见开头的进度）
 
 ### 8.1 怎么验证 Steam 弹窗（最关键）
 
