@@ -90,12 +90,21 @@ pub fn escape_glob(s: &str) -> String {
 /// The game an emulator shortcut starts, when the rule has per-game saves
 /// and the game can be identified.
 pub fn identify(a: &Adapter, exe: &Path, args: &str) -> Option<EmuGame> {
-    if !a.is_emulator() || a.game_saves.is_empty() {
+    if a.game_saves.is_empty() {
+        return None;
+    }
+    identify_any(a, exe, args).filter(|g| !g.saves(a).is_empty())
+}
+
+/// The game an emulator shortcut starts, whether or not the rule has
+/// per-game saves (game backups need the disc image either way).
+pub fn identify_any(a: &Adapter, exe: &Path, args: &str) -> Option<EmuGame> {
+    if !a.is_emulator() {
         return None;
     }
     let toks = tokens(args);
     let paths = existing_paths(exe, &toks);
-    let g = match a.game_id.as_deref()? {
+    let g = match a.game_id.as_deref().unwrap_or_default() {
         "gc-wii" => paths.iter().find_map(|p| gc_wii(p)),
         "wiiu" => paths.iter().find_map(|p| wiiu(p)).or_else(|| hex_id_in(args, "0005").map(|id| wiiu_game(&id, None))),
         "3ds" => paths.iter().find_map(|p| n3ds(p)).or_else(|| hex_id_in(args, "0004").map(|id| n3ds_game(&id, None))),
@@ -106,8 +115,13 @@ pub fn identify(a: &Adapter, exe: &Path, args: &str) -> Option<EmuGame> {
         "rom" => rom(&toks, &paths),
         "switch" => switch_game(exe, args, &paths),
         _ => None,
-    }?;
-    (!g.saves(a).is_empty()).then_some(g)
+    };
+    // No way to identify it: the file the launch options name is still the game.
+    g.or_else(|| {
+        let p = paths.iter().find(|p| !["dll", "cfg", "ini", "json", "exe", "yml", "yaml"].contains(&ext_lower(p).as_str()))?;
+        let stem = p.file_stem()?.to_string_lossy().into_owned();
+        Some(EmuGame::new(stem.clone(), "default", &[("stem", escape_glob(&stem))], Some(p)))
+    })
 }
 
 /// Launch options split like a command line; `--opt=value` also yields `value`.

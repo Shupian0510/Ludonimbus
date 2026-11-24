@@ -37,6 +37,7 @@ cargo run -p ludonimbus-cli -- snapshots fe-fortunes-weave
 cargo run -p ludonimbus-cli -- discover --ludusavi --folder D:\Games   # 扫描本机能添加的游戏
 cargo run -p ludonimbus-cli -- speedtest --mb 200 --threads 4           # 当前云盘的上传 / 下载速度（测完删除）
 cargo run -p ludonimbus-cli -- game-backup list zelda64recomp           # 游戏本体备份的版本
+cargo run -p ludonimbus-cli -- game-backup backup botw --dry-run        # 会备份哪些部分、多大
 ```
 
 `./scripts/cloud-speedtest.ps1 -Threads 2,4,8` 用你的真实设置测当前云盘，报告写到 `%LOCALAPPDATA%\Ludonimbus-speedtest\`。
@@ -151,8 +152,8 @@ scripts/             构建与发布脚本
 Ludonimbus/devices/<设备>.json
 Ludonimbus/games/<游戏>/game.json
 Ludonimbus/games/<游戏>/snapshots/<版本>.zip
-Ludonimbus/gamebackup/<游戏>/chunks/<blake3>          游戏本体备份的数据块（见 plan-game-backup.md）
-Ludonimbus/gamebackup/<游戏>/versions/<版本>.manifest  + <版本>.json
+Ludonimbus/gamebackup/chunks/<blake3>                  游戏本体备份的数据块，所有游戏共用（见 plan-game-backup.md）
+Ludonimbus/gamebackup/games/<游戏>/versions/<版本>.manifest  + <版本>.json
 ```
 
 每个版本是一个只追加、不可修改的 zip 快照，带父版本指针和设备信息；最新的主线版本就是「云端当前版本」。

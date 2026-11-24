@@ -196,6 +196,7 @@ fn main() {
             gamebackup::game_backup_cancel,
             gamebackup::game_backup_job,
             gamebackup::game_backup_take_install,
+            gamebackup::game_backup_pick_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Ludonimbus")

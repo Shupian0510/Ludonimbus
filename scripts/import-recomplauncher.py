@@ -112,6 +112,19 @@ def n64recomp_saves(app: dict) -> list[str]:
     return []
 
 
+def n64recomp_backup(how: str, saves: list[str]) -> list[str]:
+    """Game backups: N64ModernRuntime stores the ROM the player picked (a
+    .z64) and its settings (*.json, mods) in the app folder next to saves."""
+    if how != "n64recomp":
+        return []
+    app = [s[: -len("/saves")] for s in saves if s.endswith("/saves") and not s.startswith("{install}")]
+    if not app:
+        return []
+    files = [f"{a}/*.z64" for a in app] + ["{install}/*.z64"]
+    config = [f"{a}/*.json" for a in app] + [f"{a}/mods/**" for a in app] + ["{install}/mods/**"]
+    return [f"  userFiles: {yaml_list(files)}", "  gameConfig:", f"    default: {yaml_list(config)}"]
+
+
 def convert(template: str, exes: list[str]) -> str | None:
     t = template.strip().replace("\\", "/").rstrip("/")
     if not t.startswith("{") or "}" not in t:
@@ -207,6 +220,7 @@ def main() -> None:
         if wait:
             lines.append(f"  waitFor: {yaml_list(wait)}")
         lines.append("  skipJunk: true")
+        lines += n64recomp_backup(how, saves)
         entries.append("\n".join(lines))
 
     today = datetime.date.today().isoformat()
@@ -215,7 +229,7 @@ def main() -> None:
 #
 # 来源：RecompLauncher 的游戏目录（{source}，{today}）
 #   - 开发者在 recomplauncher.json 里声明的存档位置：{counts['declared']} 个
-#   - N64Recomp 游戏（存档在 <应用文件夹>/saves）：{counts['n64recomp']} 个
+#   - N64Recomp 游戏（存档在 <应用文件夹>/saves；游戏本体备份另外带上那里的 ROM、设置和 mods）：{counts['n64recomp']} 个
 # RecompLauncher：https://recomplauncher.com/  https://github.com/elripalda/RecompLauncher
 #
 # {{install}} 是发布包的根目录：exe 在子文件夹里时 match 写的是相对路径。

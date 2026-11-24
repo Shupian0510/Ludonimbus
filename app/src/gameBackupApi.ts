@@ -46,6 +46,17 @@ export interface SpeedProgress {
   elapsedSecs: number;
 }
 
+/** Parts of a game backup (docs/plan-game-backup.md, section 8). */
+export type PartKind = "program" | "content" | "config" | "firmware" | "folder";
+
+export interface PartSummary {
+  kind: PartKind;
+  name: string;
+  version: string | null;
+  totalSize: number;
+  fileCount: number;
+}
+
 export interface VersionSummary {
   id: string;
   game: string;
@@ -54,24 +65,43 @@ export interface VersionSummary {
   deviceId: string;
   deviceName: string;
   appVersion: string;
-  root: string;
+  components: PartSummary[];
   totalSize: number;
   storedSize: number;
   newBytes: number;
   fileCount: number;
-  chunkCount: number;
   comment: string;
 }
 
 export interface BackupJob {
   kind: "backup" | "restore" | "delete";
-  /** starting, scanning, listing, uploading, verifying, committing, cleaning, preparing, downloading, finishing, fixing, saves */
+  /** starting, scanning, listing, uploading, verifying, committing, cleaning, preparing, checking, downloading, finishing, fixing, saves */
   phase: string;
   done: number;
   total: number;
   uploaded: number;
   elapsedSecs: number;
   target: string | null;
+}
+
+/** Where a restore puts things. */
+export interface Targets {
+  program: string;
+  /** false keeps the program already in `program`. */
+  restoreProgram: boolean;
+  /** null = don't restore the game's own files. */
+  content: string | null;
+}
+
+export interface RestoreDefaults {
+  hasProgram: boolean;
+  hasContent: boolean;
+  programName: string | null;
+  programVersion: string | null;
+  installedProgram: string | null;
+  installedSame: boolean;
+  programDir: string | null;
+  contentDir: string | null;
 }
 
 export interface BackupInfo {
@@ -89,20 +119,26 @@ export interface BackupInfo {
   keep: number;
   exclude: string[];
   defaultExclude: string[];
-  fileOutside: string | null;
+  firmwareAvailable: boolean;
+  firmware: boolean;
+  skip: PartKind[];
+  extraContent: string[];
+  /** The game's rule describes its parts; otherwise the whole folder. */
+  byParts: boolean;
   job: BackupJob | null;
-  pendingRestore: { version: string; target: string } | null;
-  defaultTarget: string | null;
+  pendingRestore: { version: string; targets: Targets } | null;
+  restore: RestoreDefaults | null;
   error: string | null;
 }
 
-export interface ScanSummary {
-  root: string;
+export interface PreviewPart {
+  kind: PartKind;
+  name: string;
+  version: string | null;
   files: number;
   bytes: number;
   excludedFiles: number;
   excludedBytes: number;
-  skippedLinks: number;
 }
 
 export interface BackupFinished {
@@ -114,22 +150,30 @@ export interface BackupFinished {
   outcome: unknown;
 }
 
+export interface SettingsPatch {
+  root?: string;
+  exclude?: string[];
+  keep?: number;
+  firmware?: boolean;
+  skip?: PartKind[];
+  extraContent?: string[];
+}
+
 export const gameBackupApi = {
   speedTest: (mb?: number, threads?: number) => invoke<SpeedReport>("speed_test", { mb, threads }),
   speedTestCancel: () => invoke<void>("speed_test_cancel"),
   info: (key: string) => invoke<BackupInfo>("game_backup_info", { key }),
-  preview: (key: string) => invoke<ScanSummary>("game_backup_preview", { key }),
-  set: (key: string, patch: { root?: string; exclude?: string[]; keep?: number }) =>
-    invoke<void>("game_backup_set", { key, root: patch.root ?? null, exclude: patch.exclude ?? null, keep: patch.keep ?? null }),
+  preview: (key: string) => invoke<PreviewPart[]>("game_backup_preview", { key }),
+  set: (key: string, patch: SettingsPatch) => invoke<void>("game_backup_set", { key, patch }),
   start: (key: string) => invoke<void>("game_backup_start", { key }),
-  resolveTarget: (chosen: string, root: string, version: string) =>
-    invoke<string>("game_backup_resolve_target", { chosen, root, version }),
-  restore: (key: string, version: string, target: string, fix: boolean) =>
-    invoke<void>("game_backup_restore", { key, version, target, fix }),
+  resolveTarget: (chosen: string, original: string) => invoke<string>("game_backup_resolve_target", { chosen, original }),
+  restore: (key: string, version: string, targets: Targets, fix: boolean) =>
+    invoke<void>("game_backup_restore", { key, version, targets, fix }),
   remove: (key: string, version: string) => invoke<void>("game_backup_delete", { key, version }),
   cancel: (key: string) => invoke<void>("game_backup_cancel", { key }),
   job: (key: string) => invoke<BackupJob | null>("game_backup_job", { key }),
   takeInstall: (key: string) => invoke<boolean>("game_backup_take_install", { key }),
+  pickFile: (start?: string | null) => invoke<string | null>("game_backup_pick_file", { start: start ?? null }),
 };
 
 /** Throughput assumed for slow clouds before a speed test (bytes/s; see the plan, 1.2). */

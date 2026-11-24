@@ -67,6 +67,27 @@ pub struct Adapter {
     /// checked by hand.
     #[serde(default)]
     pub skip_junk: bool,
+    /// Game backups, emulators: a game's own files besides the disc image /
+    /// game folder the shortcut names (updates, DLC), by kind of game like
+    /// `game_saves`, with the same `<placeholders>`.
+    #[serde(default)]
+    pub game_files: BTreeMap<String, Vec<String>>,
+    /// Game backups: a game's own settings and mods (emulators: by kind of
+    /// game with `<placeholders>`; games: under `default`).
+    #[serde(default)]
+    pub game_config: BTreeMap<String, Vec<String>>,
+    /// Game backups: keys, firmware and BIOS files, backed up only when the
+    /// user ticks them.
+    #[serde(default)]
+    pub firmware: Vec<String>,
+    /// Game backups, emulators: left out of the program because it is data
+    /// of all games (installed titles, the console's storage, caches).
+    #[serde(default)]
+    pub program_exclude: Vec<String>,
+    /// Game backups, games: files the player provides (the original ROM or
+    /// disc image a recompilation reads).
+    #[serde(default)]
+    pub user_files: Vec<String>,
 }
 
 impl Adapter {
