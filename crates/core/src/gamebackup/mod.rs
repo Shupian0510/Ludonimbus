@@ -2,11 +2,15 @@
 //! that is gone from this PC can be installed again from there. Design and
 //! cloud layout: docs/plan-game-backup.md.
 //!
-//! Everything here works on a path-based [`Store`]; callers pass
+//! Everything here works on a path-based [`Store`](crate::cloud::store::Store); callers pass
 //! `provider.files()` of the current cloud, tests a local folder or WebDAV.
 //!
+//! - [`chunker`]   content-defined chunking of the folder stream
+//! - [`chunk`]     stored chunk objects (zstd or raw), named by BLAKE3
 //! - [`speedtest`] upload / download speed of a cloud
 
+pub mod chunk;
+pub mod chunker;
 pub mod speedtest;
 
 use crate::cloud::{self, CloudProvider, NotConfigured};

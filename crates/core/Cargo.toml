@@ -31,6 +31,7 @@ keyring = { version = "3", features = ["windows-native"] }
 crc32fast = "1"
 notify = "9.0.0"
 aes = "0.8"
+zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
