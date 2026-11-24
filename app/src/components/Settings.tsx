@@ -4,6 +4,7 @@ import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions, MigrateBanner } from "./CloudForms";
 import { SteamPluginPanel } from "./SteamPlugin";
+import { SpeedTestPanel } from "./SpeedTest";
 import { Badge, Button, Icon, PathChoice, PathField, samePath, Spinner, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 import { LANGS, LangPref, msg, useI18n, useT } from "../i18n";
@@ -160,6 +161,8 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
 
         <CloudOptions settings={s} done={done} />
       </section>
+
+      <SpeedTestPanel hasCloud={s.cloud.kind !== "none"} />
 
       <LanguagePanel />
 

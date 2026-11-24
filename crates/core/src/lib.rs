@@ -16,6 +16,7 @@
 //! - [`millennium`] Millennium install and the Ludonimbus Steam plugin
 //! - [`openlist`] the OpenList server used to reach Quark
 //! - [`games`]    high-level library operations shared by CLI / runner / app
+//! - [`gamebackup`] game files in the cloud, speed test of the cloud
 //! - [`i18n`]     interface language for texts made in Rust (`tr!`)
 //! - [`xbox`]     Xbox app games: launch helper, real game processes
 
@@ -25,6 +26,7 @@ pub mod config;
 pub mod discover;
 pub mod emugames;
 pub mod emulators;
+pub mod gamebackup;
 pub mod games;
 pub mod i18n;
 pub mod localart;

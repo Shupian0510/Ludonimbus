@@ -9,6 +9,8 @@ use ludonimbus_core::sync::{self, Ctx, Resolution};
 use ludonimbus_core::{discover, games, ludusavi, paths, steam};
 use std::path::PathBuf;
 
+mod gamebackup;
+
 #[derive(Parser)]
 #[command(name = "ludonimbus", version, about = "Cloud saves for Steam non-Steam games")]
 struct Cli {
@@ -67,6 +69,11 @@ enum Cmd {
     },
     /// Print the data folder
     Paths,
+    /// Measure upload / download speed of the current cloud (test files are deleted)
+    Speedtest(gamebackup::SpeedArgs),
+    /// Game backups: the game's own files in the cloud
+    #[command(subcommand)]
+    GameBackup(gamebackup::Cmd),
 }
 
 #[derive(Subcommand)]
@@ -164,7 +171,7 @@ fn main() {
     }
 }
 
-fn human(bytes: u64) -> String {
+pub(crate) fn human(bytes: u64) -> String {
     const U: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut v = bytes as f64;
     let mut i = 0;
@@ -216,6 +223,8 @@ fn account_or_default(account: Option<String>) -> Result<String> {
 
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
+        Cmd::Speedtest(a) => gamebackup::speed(a)?,
+        Cmd::GameBackup(c) => gamebackup::run(c)?,
         Cmd::Status { key } => {
             let ctx = Ctx::load()?;
             for g in ctx.cfg.games.iter().filter(|g| key.as_ref().is_none_or(|k| k == &g.key)) {

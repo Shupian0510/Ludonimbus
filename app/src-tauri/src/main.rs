@@ -4,6 +4,7 @@ mod agent;
 mod art;
 mod busy;
 mod commands;
+mod gamebackup;
 mod library;
 mod quark_login;
 mod steam_plugin;
@@ -183,6 +184,18 @@ fn main() {
             steam_plugin::steam_plugin_remove,
             updater::check_update,
             updater::install_update,
+            gamebackup::speed_test,
+            gamebackup::speed_test_cancel,
+            gamebackup::game_backup_info,
+            gamebackup::game_backup_preview,
+            gamebackup::game_backup_set,
+            gamebackup::game_backup_start,
+            gamebackup::game_backup_resolve_target,
+            gamebackup::game_backup_restore,
+            gamebackup::game_backup_delete,
+            gamebackup::game_backup_cancel,
+            gamebackup::game_backup_job,
+            gamebackup::game_backup_take_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Ludonimbus")

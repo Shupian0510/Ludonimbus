@@ -751,3 +751,5 @@ export const onboarding: typeof Zh.onboarding = {
     scan: "Scan this PC",
   },
 };
+
+export { gameBackup } from "./gameBackup.en";

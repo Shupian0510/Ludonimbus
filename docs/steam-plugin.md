@@ -42,6 +42,8 @@ Steam 客户端
 | GET | `/v1/games/{key}/snapshots` | （API 2，0.6）云端版本列表，新的在前，外加 `headId`、`lastSyncedId`、`deviceId`、`pending`，以及现在不能恢复的原因 `busy`（游戏运行中、正在同步） |
 | POST | `/v1/games/{key}/restore/{id}` | （API 2）在后台恢复这个版本，立即返回 `{ started: true }`，进行中状态是 `syncing`。游戏运行中或已在同步时 409。和应用里的「恢复到这个版本」走同一个 `sync::restore` |
 | GET | `/v1/games/{key}/playtime` | （API 2）所有设备的游戏时间：`totalSecs`、`lastPlayed`、各设备明细 |
+| GET | `/v1/games/{key}/gamebackup` | （API 2）游戏本体备份的状态：`{ exeMissing, checked, latest: { versionId, createdAt, totalSize, deviceName } \| null, job: { kind, phase, done, total, … } \| null, lang }`。不等云端：本体缺失时在后台查一次最新备份（缓存 5 分钟），还没查到时 `checked` 为 `false`。见 [plan-game-backup.md](plan-game-backup.md) |
+| POST | `/v1/games/{key}/gamebackup/install` | （API 2）显示 Ludonimbus 窗口，打开这个游戏的「从云端恢复」对话框（安装位置在应用里选） |
 
 状态的返回值（没有关联到 Ludonimbus 的游戏返回 `{ "managed": false }`）：
 

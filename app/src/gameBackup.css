@@ -1,0 +1,53 @@
+/* Game backups and the cloud speed test. */
+.speed-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  max-width: 560px;
+}
+.speed-table th,
+.speed-table td {
+  text-align: left;
+  padding: 4px 18px 4px 0;
+  font-weight: normal;
+}
+.speed-table th {
+  color: var(--text-2);
+}
+.gb-versions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gb-version {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.gb-version .grow {
+  flex: 1;
+  min-width: 0;
+}
+.gb-warn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(247, 201, 127, 0.08);
+  border: 1px solid rgba(247, 201, 127, 0.3);
+  font-size: 13px;
+}
+#game-backup .grow,
+.gb-restore .grow {
+  flex: 1;
+  min-width: 0;
+}
+#game-backup .path {
+  padding: 3px 8px;
+}
+.gb-check {
+  margin-top: 12px;
+  flex-wrap: nowrap;
+  cursor: pointer;
+}

@@ -15,6 +15,8 @@
 //! GET  /v1/games/{key}/snapshots                          version history in the cloud (API 2)
 //! POST /v1/games/{key}/restore/{id}                       restore a version in the background (API 2)
 //! GET  /v1/games/{key}/playtime                           playtime over all devices (API 2)
+//! GET  /v1/games/{key}/gamebackup                         game files missing? newest game backup, running job (API 2)
+//! POST /v1/games/{key}/gamebackup/install                 show the game with the restore dialog open (API 2)
 //! ```
 
 use crate::{busy, commands, show_main, watcher};
@@ -197,6 +199,8 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             find_by_key(&cfg, key)?;
             Ok(serde_json::to_value(playtime::summary(&cfg, key)).map_err(anyhow::Error::from)?)
         }
+        (Method::Get, ["v1", "games", key, "gamebackup"]) => Ok(crate::gamebackup::agent_status(key)?),
+        (Method::Post, ["v1", "games", key, "gamebackup", "install"]) => Ok(crate::gamebackup::agent_install(app, key)?),
         (Method::Post, ["v1", "games", key, "open"]) => {
             find_by_key(&config::load()?, key)?;
             show_main(app);

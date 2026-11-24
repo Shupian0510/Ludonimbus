@@ -161,6 +161,30 @@ function restore(key, id)
 end
 
 ---@ffi
+--- Game backup state of a game: files missing, newest backup, running restore.
+---@param key string
+---@return string
+function gamebackup_status(key)
+    local k = key_part(key)
+    if not k then
+        return failure("bad_request")
+    end
+    return request("GET", "/v1/games/" .. k .. "/gamebackup")
+end
+
+---@ffi
+--- Show the game in Ludonimbus with the restore dialog open.
+---@param key string
+---@return string
+function gamebackup_install(key)
+    local k = key_part(key)
+    if not k then
+        return failure("bad_request")
+    end
+    return request("POST", "/v1/games/" .. k .. "/gamebackup/install")
+end
+
+---@ffi
 --- Whether the Ludonimbus app is running, as JSON text.
 ---@return string
 function ping()

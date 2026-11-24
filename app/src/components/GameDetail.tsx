@@ -5,6 +5,7 @@ import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { AddToSteam } from "./AddToSteam";
 import { ArtPicker } from "./ArtPicker";
+import { GameBackupPanel } from "./GameBackup";
 import { PlatformFolders } from "./PlatformFolders";
 import { StatusBadge } from "./Library";
 import { withSteamClosed } from "./steamAction";
@@ -360,6 +361,8 @@ export function GameDetail({
             )}
           </section>
         </div>
+
+        <GameBackupPanel game={game} onChanged={onChanged} />
 
         <div className="tabs">
           <button className={tab === "versions" ? "on" : ""} onClick={() => setTab("versions")}>
