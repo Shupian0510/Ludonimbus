@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorText, GameView, LocalFile, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
-import { bytes, dateTime, healthText, outcomeText, relTime } from "../format";
+import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { AddToSteam } from "./AddToSteam";
@@ -10,9 +10,10 @@ import { StatusBadge } from "./Library";
 import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
+import { Screenshots } from "./Screenshots";
 import { Versions } from "./Versions";
 
-type Tab = "versions" | "files" | "config";
+type Tab = "versions" | "files" | "config" | "screenshots";
 
 /** Xbox app games start through this; their own programs are protected. */
 const XBOX_HELPER = /gamelaunchhelper\.exe$/i;
@@ -213,6 +214,11 @@ export function GameDetail({
             {game.lastSyncedDevice ? ` · ${game.lastSyncedDevice}` : ""}
             {check ? ` · ${g.local(check.localFiles, bytes(check.localSize))}` : ""}
           </span>
+          {game.playtime.totalSecs > 0 && (
+            <span className="muted playtime" title={playtimeTip(game)}>
+              <Icon name="clock" size={13} /> {g.playtime(duration(game.playtime.totalSecs))}
+            </span>
+          )}
         </div>
       </div>
 
@@ -362,6 +368,9 @@ export function GameDetail({
           <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>
             {g.tabFiles}
           </button>
+          <button className={tab === "screenshots" ? "on" : ""} onClick={() => setTab("screenshots")}>
+            {g.tabScreenshots}
+          </button>
           <button className={tab === "config" ? "on" : ""} onClick={() => setTab("config")}>
             {g.tabConfig}
           </button>
@@ -371,6 +380,7 @@ export function GameDetail({
           <Versions key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} />
         )}
         {tab === "files" && <Files game={game} />}
+        {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
         {tab === "config" && <Config game={game} onChanged={onChanged} onRemoved={onRemoved} />}
       </div>
 
@@ -394,6 +404,17 @@ export function GameDetail({
       )}
     </div>
   );
+}
+
+/** Per-device breakdown shown when hovering the playtime. */
+function playtimeTip(game: GameView): string {
+  const g = msg().game;
+  const lines = [g.playtimeTitle];
+  for (const d of game.playtime.devices) {
+    lines.push(g.playtimeDevice(d.deviceName, duration(d.secs), d.thisDevice));
+    if (d.steamMinutes) lines.push(g.playtimeSteam(duration(d.steamMinutes * 60)));
+  }
+  return lines.join("\n");
 }
 
 function Files({ game }: { game: GameView }) {

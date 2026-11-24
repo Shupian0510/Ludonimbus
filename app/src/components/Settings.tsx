@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AccountInfo, api, CloudKind, errorText, Settings, SteamAccount, UpdateInfo } from "../api";
+import { AccountInfo, api, CloudKind, errorText, ScreenshotMode, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions, MigrateBanner } from "./CloudForms";
@@ -220,6 +220,26 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
             </select>
           </label>
         )}
+        <label>
+          <span>{t.screenshots.mode}</span>
+          <div>
+            <select
+              className="input select"
+              value={s.screenshots}
+              onChange={async (e) => {
+                await api.saveSettings({ screenshots: e.target.value as ScreenshotMode });
+                await done(msg().settings.saved);
+              }}
+            >
+              {(["off", "upload", "sync"] as const).map((m) => (
+                <option key={m} value={m}>
+                  {t.screenshots.modes[m]}
+                </option>
+              ))}
+            </select>
+            <div className="muted small">{st.screenshotsHint}</div>
+          </div>
+        </label>
         <label>
           <span>{st.runner}</span>
           <div>

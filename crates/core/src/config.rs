@@ -25,6 +25,20 @@ pub struct AppConfig {
     pub language: String,
     /// First-run guide. Stays on this PC.
     pub onboarding: Onboarding,
+    /// Steam screenshots of linked games in the cloud.
+    pub screenshots: ScreenshotMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScreenshotMode {
+    /// Screenshots stay on this PC (they can take a lot of cloud space).
+    #[default]
+    Off,
+    /// Upload screenshots taken on this PC.
+    Upload,
+    /// Upload, and download the other devices' into this PC's Steam.
+    Sync,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -49,6 +63,7 @@ impl Default for AppConfig {
             previous_cloud: None,
             language: "system".into(),
             onboarding: Onboarding::default(),
+            screenshots: ScreenshotMode::Off,
         }
     }
 }

@@ -10,6 +10,8 @@
 //! - [`snapshot`] scanning, hashing, zip snapshots, restoring
 //! - [`cloud`]    cloud providers (local folder, Google Drive, WebDAV, S3)
 //! - [`sync`]     Steam-Cloud-like sync decisions and conflict handling
+//! - [`playtime`] play sessions per device, totals over all devices
+//! - [`screenshots`] Steam screenshots of linked shortcuts in the cloud
 //! - [`steam`]    Steam install, accounts, non-Steam shortcuts, artwork
 //! - [`millennium`] Millennium install and the Ludonimbus Steam plugin
 //! - [`openlist`] the OpenList server used to reach Quark
@@ -33,9 +35,11 @@ pub mod millennium;
 pub mod openlist;
 pub mod recomplauncher;
 pub mod paths;
+pub mod playtime;
 pub mod process;
 pub mod relocate;
 pub mod savefind;
+pub mod screenshots;
 pub mod snapshot;
 pub mod spec;
 pub mod state;

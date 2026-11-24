@@ -120,6 +120,23 @@ export interface GameView {
   lastError: string | null;
   pending: number;
   lastCheck: StatusReport | null;
+  playtime: PlaytimeSummary;
+}
+
+export interface PlaytimeDevice {
+  device: string;
+  deviceName: string;
+  secs: number;
+  lastPlayed: string | null;
+  thisDevice: boolean;
+  /** Minutes imported from Steam (played before Ludonimbus kept time). */
+  steamMinutes: number | null;
+}
+
+export interface PlaytimeSummary {
+  totalSecs: number;
+  lastPlayed: string | null;
+  devices: PlaytimeDevice[];
 }
 
 export interface Overview {
@@ -314,7 +331,38 @@ export interface MigrateReport {
   bytes: number;
 }
 
+export type ScreenshotMode = "off" | "upload" | "sync";
+
+export interface Shot {
+  name: string;
+  /** Device that took it. */
+  device: string;
+  deviceName: string | null;
+  size: number;
+  takenAt: string | null;
+  onThisPc: boolean;
+  inCloud: boolean;
+  hasThumb: boolean;
+  thumbUrl: string | null;
+}
+
+export interface Gallery {
+  shots: Shot[];
+  mode: ScreenshotMode;
+  linked: boolean;
+  folder: string | null;
+  cloudBytes: number;
+  cloudError: string | null;
+}
+
+export interface ScreenshotReport {
+  uploaded: number;
+  downloaded: number;
+  failed: number;
+}
+
 export interface Settings {
+  screenshots: ScreenshotMode;
   deviceId: string;
   deviceName: string;
   retention: { keepRecent: number; keepDailyDays: number };
@@ -451,7 +499,13 @@ export const api = {
     keepDailyDays?: number;
     networkTimeoutSecs?: number;
     steamAccount?: string;
+    screenshots?: ScreenshotMode;
   }) => invoke<void>("save_settings", { patch }),
+  screenshots: (key: string) => invoke<Gallery>("screenshot_gallery", { key }),
+  screenshotFetch: (key: string, device: string, name: string, thumb: boolean) =>
+    invoke<string>("screenshot_fetch", { key, device, name, thumb }),
+  screenshotSync: (key: string) => invoke<ScreenshotReport>("screenshot_sync", { key }),
+  screenshotReveal: (key: string, device: string, name: string) => invoke<void>("screenshot_reveal", { key, device, name }),
   cloudUseFolder: (path: string) => invoke<void>("cloud_use_folder", { path }),
   cloudFolderSuggestions: () => invoke<SyncFolder[]>("cloud_folder_suggestions"),
   steamFindRoots: () => invoke<string[]>("steam_find_roots"),

@@ -7,7 +7,7 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, localart, ludusavi, paths, process, relocate, spec, steam, util};
+use ludonimbus_core::{adapters, games, localart, ludusavi, paths, playtime, process, relocate, screenshots, spec, steam, util};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -77,6 +77,8 @@ pub struct GameView {
     last_error: Option<String>,
     pending: usize,
     last_check: Option<serde_json::Value>,
+    /// Playtime over all devices (from local data; refreshed by every sync).
+    playtime: playtime::Summary,
 }
 
 fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
@@ -136,6 +138,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
         last_error: st.last_error,
         pending: st.pending.len(),
         last_check: st.last_check,
+        playtime: playtime::summary(cfg, &g.key),
     }
 }
 
@@ -683,6 +686,7 @@ pub struct SettingsView {
     runner_exists: bool,
     ludusavi: Option<String>,
     version: String,
+    screenshots: config::ScreenshotMode,
 }
 
 #[derive(Serialize)]
@@ -728,6 +732,7 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             runner_path: runner.display().to_string(),
             ludusavi: ludusavi::version(),
             version: ludonimbus_core::APP_VERSION.to_string(),
+            screenshots: cfg.screenshots,
         })
     })
     .await
@@ -741,6 +746,7 @@ pub struct SettingsPatch {
     keep_daily_days: Option<i64>,
     network_timeout_secs: Option<u64>,
     steam_account: Option<String>,
+    screenshots: Option<config::ScreenshotMode>,
 }
 
 /// First-run guide state.
@@ -806,6 +812,9 @@ pub async fn save_settings(patch: SettingsPatch) -> CmdResult<()> {
             }
             if let Some(a) = patch.steam_account {
                 c.steam.account = Some(a);
+            }
+            if let Some(m) = patch.screenshots {
+                c.screenshots = m;
             }
             Ok(())
         })?;
@@ -1119,4 +1128,106 @@ pub async fn ludusavi_search(query: String) -> CmdResult<Vec<String>> {
 #[tauri::command]
 pub async fn ludusavi_preview(title: String) -> CmdResult<Vec<String>> {
     blocking(move || Ok(ludusavi::resolve_files(&title)?.iter().map(|p| p.display().to_string()).collect())).await
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotView {
+    #[serde(flatten)]
+    shot: screenshots::Shot,
+    /// Thumbnail (or image) already on this PC, as a `ludoart://` URL.
+    thumb_url: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GalleryView {
+    shots: Vec<ShotView>,
+    mode: config::ScreenshotMode,
+    linked: bool,
+    folder: Option<String>,
+    /// Space the screenshots take in the cloud (images only).
+    cloud_bytes: u64,
+    /// The cloud couldn't be listed; only this PC's screenshots are shown.
+    cloud_error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn screenshot_gallery(key: String) -> CmdResult<GalleryView> {
+    blocking(move || {
+        let ctx = Ctx::load()?;
+        let g = ctx.game(&key)?;
+        let cloud = ctx.cloud().ok();
+        let (mut shots, cloud_error) = match screenshots::gallery(cloud.map(|c| c.files()), &ctx.cfg, &g) {
+            Ok(s) => (s, None),
+            Err(e) => (screenshots::gallery(None, &ctx.cfg, &g)?, Some(format!("{e:#}"))),
+        };
+        let mut names: BTreeMap<String, String> = cloud
+            .and_then(|c| c.list_devices().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect();
+        names.insert(ctx.cfg.device.id.clone(), ctx.cfg.device.name.clone());
+        for s in &mut shots {
+            s.device_name = names.get(&s.device).cloned();
+        }
+        let cloud_bytes = shots.iter().filter(|s| s.in_cloud).map(|s| s.size).sum();
+        Ok(GalleryView {
+            shots: shots
+                .into_iter()
+                .map(|s| ShotView {
+                    thumb_url: screenshots::local_file(&ctx.cfg, &g, &s.device, &s.name, true)
+                        .or_else(|| screenshots::local_file(&ctx.cfg, &g, &s.device, &s.name, false))
+                        .map(|f| art::shot_url(&key, &s.device, &s.name, true, &f)),
+                    shot: s,
+                })
+                .collect(),
+            mode: ctx.cfg.screenshots,
+            linked: g.steam.is_some(),
+            folder: screenshots::steam_dir(&ctx.cfg, &g).filter(|d| d.is_dir()).map(|d| d.display().to_string()),
+            cloud_bytes,
+            cloud_error,
+        })
+    })
+    .await
+}
+
+/// Make a screenshot (or its thumbnail) available on this PC and return its URL.
+#[tauri::command]
+pub async fn screenshot_fetch(key: String, device: String, name: String, thumb: bool) -> CmdResult<String> {
+    blocking(move || {
+        let ctx = Ctx::load()?;
+        let g = ctx.game(&key)?;
+        let file = match screenshots::local_file(&ctx.cfg, &g, &device, &name, thumb) {
+            Some(f) => f,
+            None => screenshots::fetch(ctx.cloud()?.files(), &ctx.cfg, &g, &device, &name, thumb)?,
+        };
+        Ok(art::shot_url(&key, &device, &name, thumb, &file))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn screenshot_sync(app: tauri::AppHandle, key: String) -> CmdResult<screenshots::Report> {
+    tauri::async_runtime::spawn_blocking(move || watcher::sync_screenshots(&app, Some(key)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Show a screenshot in Explorer (this PC's Steam folder or the cache).
+#[tauri::command]
+pub async fn screenshot_reveal(key: String, device: String, name: String) -> CmdResult<()> {
+    blocking(move || {
+        let ctx = Ctx::load()?;
+        let g = ctx.game(&key)?;
+        let file = screenshots::local_file(&ctx.cfg, &g, &device, &name, false)
+            .ok_or_else(|| anyhow!(ludonimbus_core::tr!("这张截图不在本机", "This screenshot isn't on this PC")))?;
+        opener::reveal(&file)?;
+        Ok(())
+    })
+    .await
 }

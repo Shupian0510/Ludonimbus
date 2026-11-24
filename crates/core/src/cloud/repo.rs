@@ -190,4 +190,8 @@ impl<S: Store> CloudProvider for Repo<S> {
         }
         Ok(out)
     }
+
+    fn files(&self) -> &dyn Store {
+        &self.store
+    }
 }
