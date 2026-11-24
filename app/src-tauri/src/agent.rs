@@ -10,6 +10,7 @@
 //! ```text
 //! GET  /v1/ping
 //! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut
+//! GET  /v1/steam/playtime[?account={id}]                  playtime totals of every linked shortcut (API 2)
 //! POST /v1/games/{key}/sync                               start "sync now" in the background
 //! POST /v1/games/{key}/open                               show the game in the Ludonimbus window
 //! GET  /v1/games/{key}/snapshots                          version history in the cloud (API 2)
@@ -193,6 +194,7 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             let refresh = query_param(query, "refresh").is_some_and(|v| v == "1" || v == "true");
             steam_app_status(appid, account, refresh)
         }
+        (Method::Get, ["v1", "steam", "playtime"]) => steam_playtimes(query_param(query, "account").filter(|a| !a.is_empty())),
         (Method::Post, ["v1", "games", key, "sync"]) => start_sync(app, key),
         (Method::Get, ["v1", "games", key, "snapshots"]) => snapshots(key),
         (Method::Post, ["v1", "games", key, "restore", id]) => start_restore(app, key, id),
@@ -375,6 +377,25 @@ fn start_sync(app: &AppHandle, key: &str) -> ApiResult {
         );
     });
     Ok(json!({ "started": true }))
+}
+
+/// Playtime over all devices of every game linked to a shortcut (of `account`
+/// when given), in minutes: the plugin shows it as Steam's own playtime.
+fn steam_playtimes(account: Option<&str>) -> ApiResult {
+    let cfg = config::load()?;
+    let apps: Vec<Value> = cfg
+        .games
+        .iter()
+        .filter_map(|g| {
+            let link = g.steam.as_ref()?;
+            if account.is_some_and(|a| a != link.account) {
+                return None;
+            }
+            let sum = playtime::summary(&cfg, &g.key);
+            (sum.total_secs > 0).then(|| json!({ "appid": link.appid, "key": g.key, "minutes": sum.total_secs / 60 }))
+        })
+        .collect();
+    Ok(json!({ "apps": apps }))
 }
 
 // ---------------------------------------------------------------------------

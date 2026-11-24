@@ -6,7 +6,7 @@
 // often, so a MutationObserver puts the item back whenever it disappears.
 
 import { playSectionClasses } from 'millennium';
-import { BackupStatus, describe, describeInstall, isGame, parseBackup, parseReply, playtimeView, Reply, t, View } from './status';
+import { BackupStatus, describe, describeInstall, isGame, parseBackup, parseReply, Reply, t, View } from './status';
 import { showVersions } from './versions';
 
 const MARK = 'data-ludonimbus';
@@ -18,8 +18,6 @@ const STEAMID64_BASE = BigInt('76561197960265728');
 
 const CLOUD_SVG =
 	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>';
-const CLOCK_SVG =
-	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7z"/></svg>';
 const SYNC_SVG =
 	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
 
@@ -45,7 +43,6 @@ const CSS = `
 .ludonimbus-plain .ludonimbus-label { font-size: 14px; text-transform: uppercase; color: rgba(255, 255, 255, 0.52); white-space: nowrap; }
 .ludonimbus-plain .ludonimbus-detail { font-size: 13px; color: rgba(255, 255, 255, 0.32); }
 .ludonimbus-bar { padding: 8px 16px; background: rgba(0,0,0,0.2); }
-.ludonimbus-playtime { cursor: default; }
 .ludonimbus-versions-modal { min-width: 560px; }
 .ludonimbus-versions { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
 .ludonimbus-version { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 3px; background: rgba(255,255,255,0.04); }
@@ -243,48 +240,13 @@ export class PlayBarStatus {
 						: null;
 			if (!item) {
 				item = this.create(mode);
-				if (mode === 'stat') el.appendChild(item);
+				// Before the other Ludonimbus items: the cloud status matters most, and
+				// whatever doesn't fit in the row wraps out of sight from the end.
+				if (mode === 'stat') el.insertBefore(item, el.querySelector(':scope > [data-ludonimbus-ach]'));
 				else el.insertAdjacentElement('afterend', item);
 			}
 			this.fill(item, view);
-			if (mode === 'stat') this.renderPlaytime(el, item);
 		}
-	}
-
-	/** "All devices" playtime next to Steam's own (this PC only) playtime. */
-	private renderPlaytime(stats: Element, status: HTMLElement): void {
-		const pt = playtimeView(this.reply);
-		let item = stats.querySelector<HTMLElement>(`:scope > [${MARK}="playtime"]`);
-		if (!pt) {
-			item?.remove();
-			return;
-		}
-		if (!item) {
-			const d = this.doc;
-			item = d.createElement('div');
-			item.setAttribute(MARK, 'playtime');
-			const native = !!(cls('GameStat') && cls('PlayBarLabel') && cls('PlayBarDetailLabel'));
-			item.className = ['ludonimbus-stat', 'ludonimbus-playtime', native ? '' : 'ludonimbus-plain', cls('GameStat')]
-				.filter(Boolean)
-				.join(' ');
-			const icon = d.createElement('div');
-			icon.className = ['ludonimbus-icon', cls('GameStatIcon')].filter(Boolean).join(' ');
-			icon.innerHTML = CLOCK_SVG;
-			const text = d.createElement('div');
-			text.className = ['ludonimbus-text', cls('GameStatRight')].filter(Boolean).join(' ');
-			const label = d.createElement('div');
-			label.className = ['ludonimbus-label', cls('PlayBarLabel')].filter(Boolean).join(' ');
-			const detail = d.createElement('div');
-			detail.className = ['ludonimbus-detail', cls('PlayBarDetailLabel')].filter(Boolean).join(' ');
-			text.append(label, detail);
-			item.append(icon, text);
-			stats.insertBefore(item, status);
-		}
-		const label = item.querySelector('.ludonimbus-label');
-		if (label && label.textContent !== t().allDevices) label.textContent = t().allDevices;
-		const detail = item.querySelector('.ludonimbus-detail');
-		if (detail && detail.textContent !== pt.text) detail.textContent = pt.text;
-		if (item.title !== pt.tip) item.title = pt.tip;
 	}
 
 	private create(mode: 'stat' | 'bar'): HTMLElement {

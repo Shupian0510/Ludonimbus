@@ -31,7 +31,7 @@
 
 1. 打开 Ludonimbus 后，游戏库（列表视图有「游戏时间」列）里关联了 Steam 的游戏显示的时间，应该和 Steam 游戏页里的「游戏时间」差不多：这是第一次打开时从 Steam 导入的。对不上的话，把 `%APPDATA%\Ludonimbus\playtime\<游戏 id>.json` 里的 `steamBaseline.minutes` 和 Steam 显示的数字发给我。
 2. 从 Steam 启动一个游戏，玩 2 分钟以上再退出。详情页的「游戏时间」增加了这段时间；鼠标悬停显示各设备明细。
-3. Steam 游戏页的「开始游戏」栏，Ludonimbus 云存档旁边多了一项「所有设备」，显示总时间，悬停显示明细。Steam 自己的「游戏时间」不变（它只算这台电脑，Ludonimbus 不改它）。
+3. Steam 游戏页的「游戏时间」显示的是 Ludonimbus 记录的所有设备总时间（和 Ludonimbus 详情页的数字一致，最多差 30 秒的刷新），游戏库里鼠标悬停、按游戏时间排序也是总数。退出 Ludonimbus 并重启 Steam 后，又变回 Steam 自己记的这台电脑的时间（说明只改了显示）。Ludonimbus 云存档一直显示在 Steam 自己的项目后面（窗口再窄也是它最后被藏起来）。
 4. Ludonimbus 在托盘里时，不经过 Steam、直接双击游戏程序启动，玩 1 分钟以上退出：时间也加上了（`watcher` 日志里有 `recorded …s of playtime`）。
 5. 从 Steam 启动后在 Steam 里点「停止」强制结束：这次的时间也算上了（同样看 `watcher` 日志）。
 6. 第二台电脑（笔记本 / GPD）装同一版本、玩一次并同步后：两台电脑显示的总时间都是两边相加。
