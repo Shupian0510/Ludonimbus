@@ -22,6 +22,15 @@
 #   quiesce    这些文件存在时说明游戏还在写存档，要等它们消失
 #   relocate   游戏换到新文件夹（比如解压了新版本）时怎么自动找到它
 #   uploadOnGameExit  游戏进程（waitFor）一退出就上传，不等一直开着的启动器关闭
+#
+# 游戏本体备份（docs/plan-game-backup.md 第 8 节）用的字段：
+#   userFiles       玩家自己提供的文件（原版 ROM、从自己主机导出的游戏数据）
+#   userFilesFrom / configFrom
+#                   某个设置文件里写的位置：{ file: 设置文件, ini: [键] 或 json: [键路径，* 代表每一项], also: [旁边的位置，如 ../exefs] }
+#                   分别算作游戏文件、设置；设置文件本身算作设置，恢复后里面的路径改成新位置
+#   build           启动器用玩家的游戏文件现场编译游戏：{ launcher: 启动器, output: [编译出来的文件] }
+#                   编译出来的不备份，恢复后提示打开启动器编译一次。RecompLauncher 发布包的
+#                   recomplauncher.json 里写了 prepare（编译步骤）的，不用在这里写也会照它处理
 
 - key: zelda-oot-longshot
   name: 塞尔达传说：时之笛
@@ -29,10 +38,14 @@
   match: { exe: LongshotLauncher.exe }
   roots: { data: "{appdata}/Longshot" }
   saves: ["{data}/save/**"]
-  exclude: ["{data}/save-work/**"]
+  # *.old 是自动更新留下的上一版启动器
+  exclude: ["{data}/save-work/**", "{install}/*.old"]
   waitFor: ["longshot.exe"]
   quiesce: { absent: ["{data}/save-work/*.lock"] }
   uploadOnGameExit: true
+  # 启动器用你的游戏（.nup，或导出的 romfs、exefs）在另一个文件夹里现场构建游戏，构建结果不备份
+  userFilesFrom: [{ file: "{localappdata}/LongshotLauncher/settings.json", json: ["nup", "romfs", "exefs"] }]
+  build: { launcher: "{install}/LongshotLauncher.exe" }
 
 - key: fe-fortunes-weave
   name: 火焰纹章：万缕千丝
@@ -40,8 +53,14 @@
   recomplauncher: [fefw-recomp, fefw-recomp-2]
   match: { exe: fefw.exe }
   saves: ["{install}/save/**"]
+  # update/old 是自动更新留下的上一版程序；pipeline_keys.bin、shader_order.txt 是运行时的着色器缓存
+  exclude: ["{install}/update/old/**", "{install}/pipeline_keys.bin", "{install}/shader_order.txt", "{install}/*.log.prev"]
   waitFor: ["fefw.exe"]
   relocate: { exe: fefw.exe, dirPattern: "fefw-recomp-*" }
+  # 你的游戏（exefs、romfs 两个文件夹）：fefw.ini 写了 romfs 的位置，exefs 在它旁边
+  userFilesFrom: [{ file: "{install}/fefw.ini", ini: ["romfs"], also: ["../exefs"] }]
+  # fefw-launcher 用你的游戏编译出 fefw.exe（{install}/exefs 是解包后的副本），编译结果不备份
+  build: { launcher: "{install}/fefw-launcher.exe", output: ["{install}/fefw.exe", "{install}/exefs/**", "{install}/build/**", "{install}/fefw.sites"] }
 
 - key: bloodborne-lantern
   name: Bloodborne
@@ -52,6 +71,23 @@
   exclude: ["{install}/user/launcher-backups/**", "{install}/user/cache/**"]
   waitFor: ["Lantern Engine.exe"]
   relocate: { exe: Bloodborne.exe, sibling: "Lantern Engine.exe" }
+  # 你导出的 PS4 游戏（CUSA…）的位置写在 Lantern Engine 的设置里
+  userFilesFrom: [{ file: "{appdata}/Lantern Engine/settings.json", json: ["game_dir", "dlc_dir"] }]
+  configFrom: [{ file: "{appdata}/Lantern Engine/settings.json", json: ["mods_dir", "patches_dir"] }]
+  # Lantern Engine 用你的游戏在 engine/out 里编译出游戏代码（engine/out 里其余的是发布包自带的），
+  # 并生成 engine-assets（4K 界面等），这些都不备份
+  build:
+    launcher: "{install}/Lantern Engine.exe"
+    output:
+      - "{install}/engine/out/eboot.elf"
+      - "{install}/engine/out/boot-linked.bin"
+      - "{install}/engine/out/content.bin"
+      - "{install}/engine/out/patches.bin"
+      - "{install}/engine/out/prepared.json"
+      - "{install}/engine/out/game_dir.txt"
+      - "{install}/engine/out/game-code.txt"
+      - "{install}/engine/out/file-fixes.txt"
+      - "{install}/engine-assets/**"
 
 # --- 移植 / 重编译（存档位置按源码或 PCGamingWiki 核对过）---------------------
 # 更多重编译游戏的规则在 recomplauncher.yaml（自动生成），模拟器在 emulators.yaml。

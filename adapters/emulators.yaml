@@ -10,6 +10,13 @@
 #   icon       游戏库里代表这个模拟器的图标（机型的样子，不用商标）：cube、tablet、dual-screen、hybrid、
 #              disc、handheld、layers；不写时用手柄图标。见 app/src/source.ts
 #
+# 游戏本体备份（docs/plan-game-backup.md 第 8 节）用的字段：
+#   gameFiles       除了快捷方式指向的光盘镜像 / 游戏文件夹以外，这个游戏自己的文件（更新、DLC），写法同 gameSaves
+#   gameConfig      这个游戏自己的设置、材质包、mods，写法同 gameSaves
+#   programExclude  备份模拟器程序时去掉的、属于所有游戏的数据（装进模拟器的游戏、主机存储、缓存）
+#   firmware        密钥、固件、BIOS：用户在卡片里勾选后才备份
+#   gamePacks       附加包文件夹（Cemu 的图形包）：说明文件里列出这个游戏 ID 的，算作这个游戏的设置和 mods
+#
 # 只同步存档：不含密钥、固件、着色器缓存、即时存档（state）。
 # Switch 模拟器的存档文件夹和本机的用户档案、存档编号绑定，换到另一台电脑后对不上：
 # Ryujinx 按游戏同步时在每台电脑上查存档编号（没有就新建），其他 Switch 模拟器整个一起同步（连同用户档案）。
@@ -33,6 +40,19 @@
     # GameCube 存档要用「GCI 文件夹」记忆卡（Dolphin 的默认设置）；.raw 记忆卡是所有游戏共用的
     gc: ["{emu}/GC/*/Card ?/<maker>-<id4>-*.gci"]
     wii: ["{emu}/Wii/title/0001000?/<id4hex>/data/**"]
+  gameConfig:
+    default: ["{emu}/GameSettings/<id>.ini", "{emu}/Load/Textures/<id>/**"]
+  programExclude:
+    - "{emu}/Cache/**"
+    - "{emu}/Wii/**"
+    - "{emu}/GC/**"
+    - "{emu}/StateSaves/**"
+    - "{emu}/ScreenShots/**"
+    - "{emu}/Dump/**"
+    - "{emu}/Logs/**"
+    - "{emu}/Load/**"
+    - "{emu}/GameSettings/**"
+  firmware: ["{emu}/GC/*/IPL.bin", "{emu}/Wii/title/00000001/**", "{emu}/Wii/sys/**"]
 
 - key: cemu
   name: Cemu
@@ -45,6 +65,14 @@
   gameId: wiiu
   gameSaves:
     default: ["{mlc}/usr/save/<high>/<low>/**"]
+  # 装进 MLC 的游戏本体、更新（0005000e）、DLC（0005000c）
+  gameFiles:
+    default: ["{mlc}/usr/title/00050000/<low>/**", "{mlc}/usr/title/0005000e/<low>/**", "{mlc}/usr/title/0005000c/<low>/**"]
+  gameConfig:
+    default: ["{install}/gameProfiles/<high><low>.ini"]
+  gamePacks: { dir: "{install}/graphicPacks", file: rules.txt, key: titleIds, id: "<high><low>" }
+  programExclude: ["{mlc}/**", "{install}/shaderCache/**", "{install}/log.txt", "{install}/keys.txt", "{install}/gameProfiles/0005*.ini"]
+  firmware: ["{install}/keys.txt", "{install}/portable/keys.txt", "{appdata}/Cemu/keys.txt", "{mlc}/sys/**"]
 
 - key: azahar
   name: Azahar
@@ -101,6 +129,11 @@
   gameId: switch
   gameSaves:
     default: ["{nxsave-<id>}/**", "{nxdevice-<id>}/**"]
+  # games/<标题 ID>/ 里有这个游戏的更新和 DLC 列表；列表指向的文件还不会备份（plan 第 8.4 节）
+  gameConfig:
+    default: ["{emu}/games/<id>/*.json", "{emu}/mods/contents/<id>/**"]
+  programExclude: ["{emu}/bis/**", "{emu}/sdcard/**", "{emu}/system/**", "{emu}/games/**", "{emu}/mods/**", "{emu}/Logs/**", "{emu}/screenshots/**"]
+  firmware: ["{emu}/system/prod.keys", "{emu}/system/title.keys", "{emu}/bis/system/Contents/registered/**"]
 
 - key: eden
   name: Eden
@@ -162,6 +195,8 @@
   gameId: ps4
   gameSaves:
     default: ["{user}/savedata/1/<id>/**"]
+  programExclude: ["{user}/savedata/**", "{user}/shader/**", "{user}/log/**", "{user}/screenshots/**", "{user}/sys_modules/**"]
+  firmware: ["{user}/sys_modules/**"]
 
 - key: rpcs3
   name: RPCS3
@@ -173,6 +208,13 @@
   gameId: ps3
   gameSaves:
     default: ["{install}/dev_hdd0/home/00000001/savedata/<id>*/**"]
+  # dev_hdd0/game/<序列号> 是装进 RPCS3 的游戏更新和数字版游戏
+  gameFiles:
+    default: ["{install}/dev_hdd0/game/<id>/**"]
+  gameConfig:
+    default: ["{install}/config/custom_configs/config_<id>.yml"]
+  programExclude: ["{install}/dev_hdd0/**", "{install}/dev_hdd1/**", "{install}/dev_flash/**", "{install}/dev_usb000/**", "{install}/cache/**", "{install}/games/**", "{install}/config/custom_configs/**"]
+  firmware: ["{install}/dev_flash/**"]
 
 - key: pcsx2
   name: PCSX2

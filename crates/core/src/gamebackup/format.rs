@@ -1,21 +1,30 @@
-//! Manifests and summaries of game backup versions.
+//! Manifests and summaries of game backup versions (format 2).
 //!
 //! A version is two files: `<id>.manifest` (zstd-compressed JSON listing
-//! every file and chunk) and `<id>.json` (a small summary, written last as
-//! the commit marker, holding the manifest's BLAKE3 hash).
+//! every component with its files and chunks) and `<id>.json` (a small
+//! summary, written last as the commit marker, holding the manifest's
+//! BLAKE3 hash).
+//!
+//! A component is one part of a game that is versioned and placed on its
+//! own: the program (emulator, recompilation), the game's files (ROM, disc
+//! image, updates), its settings and mods, firmware, or a whole folder.
+//! File paths start with a base, e.g. `{program}/Cemu.exe`,
+//! `{content}/Game.wua`, `{appdata}/Cemu/mlc01/…`; restoring maps the bases
+//! to folders on this PC (see [`super::components::Bases`]).
 
 use super::chunker::Params;
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-pub const FORMAT: u32 = 1;
+pub const FORMAT: u32 = 2;
 
 /// One file, in stream order. Short field names keep manifests of games with
 /// tens of thousands of files small.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
-    /// Path relative to the backed-up folder, `/`-separated.
+    /// `{base}/relative/path`, `/`-separated.
     pub p: String,
     /// Size in bytes.
     pub s: u64,
@@ -32,7 +41,7 @@ fn is_zero(n: &u32) -> bool {
     *n == 0
 }
 
-/// One chunk of the stream, in order.
+/// One chunk of a component's stream, in order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChunkRef {
     /// BLAKE3 of the raw content = object name.
@@ -41,6 +50,74 @@ pub struct ChunkRef {
     pub s: u64,
     /// Stored (object) size.
     pub z: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "camelCase")]
+pub enum Kind {
+    /// Emulator, recompilation, port.
+    Program,
+    /// ROM, disc image, game folder, updates, DLC.
+    Content,
+    /// The game's settings and mods.
+    Config,
+    /// Keys, firmware, BIOS.
+    Firmware,
+    /// A whole folder (PC games, and games whose parts aren't known).
+    Folder,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Component {
+    pub kind: Kind,
+    /// "Cemu", "Zelda 64: Recompiled", or the game's name.
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Folders the `{program}`, `{content}` and `{extraN}` bases stood for
+    /// when backing up.
+    #[serde(default)]
+    pub bases: BTreeMap<String, String>,
+    /// Program: its exe (`{program}/…`).
+    #[serde(default)]
+    pub exe: Option<String>,
+    /// Content: the file or folder the launch options name.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Program: the launcher that builds the game from its files on each PC
+    /// (what it builds is not backed up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
+    pub files: Vec<FileEntry>,
+    /// Folders no file creates (empty, or only excluded content).
+    #[serde(default)]
+    pub dirs: Vec<String>,
+    pub chunks: Vec<ChunkRef>,
+    pub total_size: u64,
+}
+
+impl Component {
+    /// Offset of every file in the stream (same order as `files`).
+    pub fn file_offsets(&self) -> Vec<u64> {
+        let mut out = Vec::with_capacity(self.files.len());
+        let mut at = 0;
+        for f in &self.files {
+            out.push(at);
+            at += f.s;
+        }
+        out
+    }
+
+    pub fn summary(&self) -> ComponentSummary {
+        ComponentSummary {
+            kind: self.kind,
+            name: self.name.clone(),
+            version: self.version.clone(),
+            total_size: self.total_size,
+            file_count: self.files.len(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,27 +131,18 @@ pub struct Manifest {
     pub device_id: String,
     pub device_name: String,
     pub app_version: String,
-    /// The folder that was backed up (for information and as the default
-    /// place to restore to).
-    pub root: String,
-    /// The game's program relative to `root`, when it is inside it.
+    /// The game's rule (`adapters/*.yaml`) when backing up.
     #[serde(default)]
-    pub exe: Option<String>,
-    /// Working directory relative to `root`, when set and inside it.
+    pub adapter: Option<String>,
+    /// The game's launch options when backing up (rewritten after a restore
+    /// when the game's files moved).
     #[serde(default)]
-    pub work_dir: Option<String>,
+    pub args: String,
     pub chunking: Params,
-    /// Exclude patterns in effect (defaults, saves, the user's own).
-    #[serde(default)]
-    pub exclude: Vec<String>,
     /// The user's own exclude patterns, reused by the next backup.
     #[serde(default)]
     pub user_exclude: Vec<String>,
-    pub files: Vec<FileEntry>,
-    /// Folders not created by any file (empty, or only excluded content).
-    #[serde(default)]
-    pub dirs: Vec<String>,
-    pub chunks: Vec<ChunkRef>,
+    pub components: Vec<Component>,
     pub total_size: u64,
     /// Sum of the stored chunk sizes (shared chunks counted once).
     pub stored_size: u64,
@@ -82,6 +150,17 @@ pub struct Manifest {
     pub new_bytes: u64,
     #[serde(default)]
     pub comment: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentSummary {
+    pub kind: Kind,
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    pub total_size: u64,
+    pub file_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -95,12 +174,11 @@ pub struct Summary {
     pub device_id: String,
     pub device_name: String,
     pub app_version: String,
-    pub root: String,
+    pub components: Vec<ComponentSummary>,
     pub total_size: u64,
     pub stored_size: u64,
     pub new_bytes: u64,
     pub file_count: usize,
-    pub chunk_count: usize,
     /// BLAKE3 of the `.manifest` file as stored.
     pub manifest_hash: String,
     pub manifest_size: u64,
@@ -109,6 +187,10 @@ pub struct Summary {
 }
 
 impl Manifest {
+    pub fn component(&self, kind: Kind) -> Option<&Component> {
+        self.components.iter().find(|c| c.kind == kind)
+    }
+
     /// The stored `.manifest` bytes and the summary that commits them.
     pub fn encode(&self) -> Result<(Vec<u8>, Summary)> {
         let json = serde_json::to_vec(self)?;
@@ -122,12 +204,11 @@ impl Manifest {
             device_id: self.device_id.clone(),
             device_name: self.device_name.clone(),
             app_version: self.app_version.clone(),
-            root: self.root.clone(),
+            components: self.components.iter().map(Component::summary).collect(),
             total_size: self.total_size,
             stored_size: self.stored_size,
             new_bytes: self.new_bytes,
-            file_count: self.files.len(),
-            chunk_count: self.chunks.len(),
+            file_count: self.components.iter().map(|c| c.files.len()).sum(),
             manifest_hash: blake3::hash(&bytes).to_hex().to_string(),
             manifest_size: bytes.len() as u64,
             comment: self.comment.clone(),
@@ -145,27 +226,23 @@ impl Manifest {
             ));
         }
         let json = zstd::stream::decode_all(bytes).map_err(|e| anyhow!(e))?;
-        let m: Manifest = serde_json::from_slice(&json)?;
-        if m.format > FORMAT {
+        let v: serde_json::Value = serde_json::from_slice(&json)?;
+        let format = v["format"].as_u64().unwrap_or(0) as u32;
+        if format > FORMAT {
             bail!(crate::tr!(
-                "版本 {} 是更新的 Ludonimbus 做的（格式 {}），请先更新 Ludonimbus",
-                "Version {} was made by a newer Ludonimbus (format {}). Update Ludonimbus first",
-                m.id,
-                m.format
+                "版本 {} 是更新的 Ludonimbus 做的（格式 {format}），请先更新 Ludonimbus",
+                "Version {} was made by a newer Ludonimbus (format {format}). Update Ludonimbus first",
+                summary.id
             ));
         }
-        Ok(m)
-    }
-
-    /// Offset of every file in the stream (same order as `files`).
-    pub fn file_offsets(&self) -> Vec<u64> {
-        let mut out = Vec::with_capacity(self.files.len());
-        let mut at = 0;
-        for f in &self.files {
-            out.push(at);
-            at += f.s;
+        if format < FORMAT {
+            bail!(crate::tr!(
+                "版本 {} 是测试版做的旧格式，请删掉它重新备份",
+                "Version {} uses an old test format. Delete it and back up again",
+                summary.id
+            ));
         }
-        out
+        Ok(serde_json::from_value(v)?)
     }
 }
 
@@ -183,18 +260,26 @@ mod tests {
             device_id: "d-1".into(),
             device_name: "PC".into(),
             app_version: "test".into(),
-            root: "D:\\Games\\G".into(),
-            exe: Some("g.exe".into()),
-            work_dir: None,
+            adapter: Some("cemu".into()),
+            args: "-g \"D:\\ROMs\\g.wua\"".into(),
             chunking: Params::default(),
-            exclude: vec!["**/*.log".into()],
             user_exclude: Vec::new(),
-            files: vec![
-                FileEntry { p: "a".into(), s: 3, h: "x".into(), m: 1, n: 0 },
-                FileEntry { p: "b/c".into(), s: 5, h: "y".into(), m: 2, n: 7 },
-            ],
-            dirs: vec!["empty".into()],
-            chunks: vec![ChunkRef { h: "z".into(), s: 8, z: 14 }],
+            components: vec![Component {
+                kind: Kind::Content,
+                name: "Game".into(),
+                version: Some("v1".into()),
+                bases: BTreeMap::from([("content".into(), "D:\\ROMs".into())]),
+                exe: None,
+                source: Some("{content}/g.wua".into()),
+                build: None,
+                files: vec![
+                    FileEntry { p: "{content}/a".into(), s: 3, h: "x".into(), m: 1, n: 0 },
+                    FileEntry { p: "{content}/b/c".into(), s: 5, h: "y".into(), m: 2, n: 7 },
+                ],
+                dirs: vec!["{content}/empty".into()],
+                chunks: vec![ChunkRef { h: "z".into(), s: 8, z: 14 }],
+                total_size: 8,
+            }],
             total_size: 8,
             stored_size: 14,
             new_bytes: 14,
@@ -207,10 +292,10 @@ mod tests {
         let m = sample();
         let (bytes, summary) = m.encode().unwrap();
         assert_eq!(summary.file_count, 2);
-        assert_eq!(summary.chunk_count, 1);
+        assert_eq!(summary.components[0].kind, Kind::Content);
         let back = Manifest::decode(&bytes, &summary).unwrap();
-        assert_eq!(back.files, m.files);
-        assert_eq!(back.file_offsets(), vec![0, 3]);
+        assert_eq!(back.components[0].files, m.components[0].files);
+        assert_eq!(back.components[0].file_offsets(), vec![0, 3]);
         let mut bad = bytes.clone();
         bad[0] ^= 1;
         assert!(Manifest::decode(&bad, &summary).is_err());

@@ -1,15 +1,50 @@
-// Game page → "Game files": back up the game folder to the cloud, restore it
-// to a folder of choice, see and delete versions (docs/plan-game-backup.md).
+// Game page → "Game files": back up the game's parts (program, game files,
+// settings, firmware, or the whole folder) to the cloud, restore them to
+// folders of choice, see and delete versions (docs/plan-game-backup.md).
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, GameView, inTauri } from "../api";
 import { bytes, dateTime } from "../format";
 import "../gameBackup.css";
-import { BackupFinished, BackupInfo, BackupJob, etaSecs, gameBackupApi, ScanSummary, SLOW_RATES, VersionSummary } from "../gameBackupApi";
+import {
+  BAIDU_FREE_DOWN,
+  BackupFinished,
+  BackupInfo,
+  BackupJob,
+  etaSecs,
+  gameBackupApi,
+  PartKind,
+  PartSummary,
+  PreviewPart,
+  SettingsPatch,
+  Targets,
+  VersionSummary,
+} from "../gameBackupApi";
 import { msg, useT } from "../i18n";
 import { duration } from "./SpeedTest";
 import { withSteamClosed } from "./steamAction";
 import { Badge, Button, Icon, Modal, Spinner, useUi } from "./ui";
+
+const startJob = (kind: BackupJob["kind"], target: string | null = null): BackupJob => ({
+  kind,
+  phase: "starting",
+  done: 0,
+  total: 0,
+  uploaded: 0,
+  elapsedSecs: 0,
+  target,
+});
+
+/** "Program Cemu 2.6 · Game files v208 · Settings and mods" */
+function partsText(parts: PartSummary[]): string {
+  const k = msg().gameBackup.card.kind;
+  return parts
+    .map((p) => {
+      const label = p.kind === "program" ? `${k.program} ${p.name}` : p.kind === "content" ? k.content : k[p.kind];
+      return [label, p.version, bytes(p.totalSize)].filter(Boolean).join(" ");
+    })
+    .join(" · ");
+}
 
 export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged: () => Promise<void> }) {
   const ui = useUi();
@@ -19,10 +54,10 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
   const [info, setInfo] = useState<BackupInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [job, setJob] = useState<BackupJob | null>(null);
-  const [preview, setPreview] = useState<ScanSummary | null>(null);
+  const [preview, setPreview] = useState<PreviewPart[] | null>(null);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
-  const [showExclude, setShowExclude] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [excludeText, setExcludeText] = useState("");
   const [needShortcut, setNeedShortcut] = useState(false);
 
@@ -83,6 +118,12 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
     }
   };
 
+  const save = async (patch: SettingsPatch) => {
+    await gameBackupApi.set(key, patch);
+    setPreview(null);
+    await load();
+  };
+
   if (!info) {
     return (
       <section className="panel">
@@ -96,56 +137,49 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
   }
 
   const latest: VersionSummary | undefined = info.versions[0];
-  const size = preview?.bytes ?? latest?.totalSize ?? 0;
-  const slowRate = SLOW_RATES[info.cloudKind];
-  const slowText =
-    info.slow && slowRate && size > 0
-      ? info.cloudKind === "baiduPan"
-        ? c.slowBaidu(bytes(size), duration(etaSecs(size, slowRate.down)))
-        : c.slowQuark(bytes(size), duration(etaSecs(size, slowRate.up)))
-      : null;
+  const previewBytes = preview?.reduce((n, p) => n + p.bytes, 0);
+  const size = previewBytes ?? latest?.totalSize ?? 0;
+  // Baidu Netdisk without membership: restoring takes long.
+  const slowText = info.slow && size > 0 ? c.slowBaidu(bytes(size), duration(etaSecs(size, BAIDU_FREE_DOWN))) : null;
   const busy = !!job;
 
   const startBackup = async () => {
-    // First backup on a slow cloud: say how long it takes, ask once.
+    // First backup on Baidu Netdisk: say how long restoring would take, ask once.
     if (info.slow && info.versions.length === 0) {
       const p = preview ?? (await gameBackupApi.preview(key));
       setPreview(p);
-      const rate = SLOW_RATES[info.cloudKind];
-      const text =
-        info.cloudKind === "baiduPan"
-          ? c.slowBaidu(bytes(p.bytes), duration(etaSecs(p.bytes, rate.down)))
-          : c.slowQuark(bytes(p.bytes), duration(etaSecs(p.bytes, rate.up)));
+      const total = p.reduce((n, x) => n + x.bytes, 0);
+      const text = c.slowBaidu(bytes(total), duration(etaSecs(total, BAIDU_FREE_DOWN)));
       const ok = await ui.confirm({ title: c.slowTitle, text, confirm: c.slowConfirm });
       if (!ok) return;
     }
     await gameBackupApi.start(key);
-    setJob({ kind: "backup", phase: "starting", done: 0, total: 0, uploaded: 0, elapsedSecs: 0, target: null });
+    setJob(startJob("backup"));
   };
 
   const pickRoot = async () => {
     const dir = await api.pickFolder(msg().gameBackup.card.pickTitle, info.root);
-    if (!dir) return;
-    await gameBackupApi.set(key, { root: dir });
-    setPreview(null);
-    await load();
+    if (dir) await save({ root: dir });
   };
 
   const remove = async (v: VersionSummary) => {
-    const when = dateTime(v.createdAt);
-    const ok = await ui.confirm({ title: c.deleteTitle, text: c.deleteText(when), confirm: c.delete, danger: true });
+    const ok = await ui.confirm({ title: c.deleteTitle, text: c.deleteText(dateTime(v.createdAt)), confirm: c.delete, danger: true });
     if (!ok) return;
     await gameBackupApi.remove(key, v.id);
-    setJob({ kind: "delete", phase: "starting", done: 0, total: 0, uploaded: 0, elapsedSecs: 0, target: null });
+    setJob(startJob("delete"));
   };
 
-  const badge = info.exeMissing && latest ? (
-    <Badge tone="warn">{c.missing}</Badge>
-  ) : latest ? (
-    <Badge tone="ok">{c.backedUp}</Badge>
-  ) : (
-    <Badge tone="muted">{c.notBackedUp}</Badge>
-  );
+  const toggleSkip = (k: PartKind, on: boolean) =>
+    run(() => save({ skip: on ? info.skip.filter((x) => x !== k) : [...info.skip, k] }));
+
+  const badge =
+    info.exeMissing && latest ? (
+      <Badge tone="warn">{c.missing}</Badge>
+    ) : latest ? (
+      <Badge tone="ok">{c.backedUp}</Badge>
+    ) : (
+      <Badge tone="muted">{c.notBackedUp}</Badge>
+    );
 
   return (
     <section className="panel" id="game-backup">
@@ -171,36 +205,28 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
           {info.error && <div className="health health-warn">{c.cloudError(info.error)}</div>}
 
           <div className="row">
-            <span className="muted small">{c.folder}</span>
+            <span className="muted small">{info.byParts ? c.programFolder : c.folder}</span>
             {info.root ? <code className="path grow">{info.root}</code> : <span className="muted small grow">{c.noFolder}</span>}
             <Button small onClick={() => run(pickRoot)} disabled={busy}>
               {c.change}
             </Button>
             {info.rootCustom && (
-              <Button
-                small
-                kind="ghost"
-                disabled={busy}
-                onClick={() =>
-                  run(async () => {
-                    await gameBackupApi.set(key, { root: "" });
-                    setPreview(null);
-                    await load();
-                  })
-                }
-              >
+              <Button small kind="ghost" disabled={busy} onClick={() => run(() => save({ root: "" }))}>
                 {c.useDefault}
               </Button>
             )}
           </div>
           {info.root && !info.rootExists && !info.exeMissing && <div className="health health-warn">{c.folderMissing}</div>}
-          {info.fileOutside && <div className="health health-warn">{c.fileOutside(info.fileOutside)}</div>}
+
           {info.rootExists && (
-            <div className="row">
+            <div className="gb-parts">
               {preview ? (
-                <span className="muted small">
-                  {c.sizeResult(preview.files, bytes(preview.bytes), preview.excludedFiles, bytes(preview.excludedBytes))}
-                </span>
+                preview.map((p) => (
+                  <div key={p.kind} className="small">
+                    <b>{c.kind[p.kind]}</b> {p.kind === "program" ? p.name : ""} {p.version ?? ""} · {c.previewLine(p.files, bytes(p.bytes))}
+                    {p.excludedFiles > 0 && <span className="muted">{c.previewExcluded(p.excludedFiles, bytes(p.excludedBytes))}</span>}
+                  </div>
+                ))
               ) : (
                 <Button small kind="ghost" disabled={busy} onClick={() => run(async () => setPreview(await gameBackupApi.preview(key)))}>
                   {c.size}
@@ -213,20 +239,21 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
             <div className="small">
               {c.latest(dateTime(latest.createdAt), latest.deviceName, bytes(latest.totalSize))}
               <span className="muted"> · {c.stored(bytes(info.storedBytes))}</span>
+              <div className="muted">{partsText(latest.components)}</div>
             </div>
           )}
           {slowText && <div className="health health-warn">{slowText}</div>}
           {info.pendingRestore && !busy && (
             <div className="gb-warn row">
-              <span className="grow">{c.pending(info.pendingRestore.target)}</span>
+              <span className="grow">{c.pending(info.pendingRestore.targets.content ?? info.pendingRestore.targets.program)}</span>
               <Button
                 small
                 kind="primary"
                 onClick={() =>
                   run(async () => {
                     const p = info.pendingRestore!;
-                    await gameBackupApi.restore(key, p.version, p.target, true);
-                    setJob({ kind: "restore", phase: "starting", done: 0, total: 0, uploaded: 0, elapsedSecs: 0, target: p.target });
+                    await gameBackupApi.restore(key, p.version, p.targets, true);
+                    setJob(startJob("restore", p.targets.content ?? p.targets.program));
                   })
                 }
               >
@@ -271,8 +298,8 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                   {c.versions(info.versions.length)}
                 </button>
               )}
-              <button className="link" onClick={() => setShowExclude((v) => !v)}>
-                {c.excludeTitle}
+              <button className="link" onClick={() => setShowOptions((v) => !v)}>
+                {c.options}
               </button>
             </div>
           )}
@@ -283,6 +310,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                 <div key={v.id} className="gb-version">
                   <span className="grow">
                     {dateTime(v.createdAt)} · {v.deviceName} · {bytes(v.totalSize)}
+                    <span className="muted small"> — {partsText(v.components)}</span>
                   </span>
                   <Button small kind="ghost" icon="trash" disabled={busy} title={c.delete} onClick={() => run(() => remove(v))} />
                 </div>
@@ -294,10 +322,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                   style={{ width: "auto" }}
                   value={info.keep}
                   disabled={busy}
-                  onChange={(e) => run(async () => {
-                    await gameBackupApi.set(key, { keep: Number(e.target.value) });
-                    await load();
-                  })}
+                  onChange={(e) => run(() => save({ keep: Number(e.target.value) }))}
                 >
                   {[1, 2, 3, 5].map((n) => (
                     <option key={n} value={n}>
@@ -312,10 +337,70 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
             </div>
           )}
 
-          {showExclude && (
+          {showOptions && (
             <div className="gb-versions">
+              {info.byParts ? (
+                <>
+                  <b className="small">{c.parts}</b>
+                  {(["program", "content", "config"] as PartKind[]).map((k) => (
+                    <label key={k} className="row gb-check-inline">
+                      <input type="checkbox" checked={!info.skip.includes(k)} disabled={busy} onChange={(e) => toggleSkip(k, e.target.checked)} />
+                      <span className="small">{c.kind[k]}</span>
+                    </label>
+                  ))}
+                  {info.firmwareAvailable && (
+                    <label className="row gb-check-inline">
+                      <input type="checkbox" checked={info.firmware} disabled={busy} onChange={(e) => run(() => save({ firmware: e.target.checked }))} />
+                      <span className="small">{c.firmware}</span>
+                    </label>
+                  )}
+                  {info.firmwareAvailable && <div className="muted small">{c.firmwareHint}</div>}
+                  <div className="muted small">{c.partsHint}</div>
+                </>
+              ) : (
+                <div className="muted small">{c.wholeFolder}</div>
+              )}
+
+              <b className="small">{c.extra}</b>
+              <div className="muted small">{c.extraHint}</div>
+              {info.extraContent.map((p) => (
+                <div key={p} className="row">
+                  <code className="path grow">{p}</code>
+                  <Button small kind="ghost" disabled={busy} onClick={() => run(() => save({ extraContent: info.extraContent.filter((x) => x !== p) }))}>
+                    {c.remove}
+                  </Button>
+                </div>
+              ))}
+              <div className="row">
+                <Button
+                  small
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const f = await gameBackupApi.pickFile(info.root);
+                      if (f) await save({ extraContent: [...info.extraContent, f] });
+                    })
+                  }
+                >
+                  {c.addFile}
+                </Button>
+                <Button
+                  small
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const d = await api.pickFolder(c.addFolder, info.root);
+                      if (d) await save({ extraContent: [...info.extraContent, d] });
+                    })
+                  }
+                >
+                  {c.addFolder}
+                </Button>
+              </div>
+
+              <b className="small">{c.excludeTitle}</b>
               <div className="muted small">{c.excludeHint}</div>
-              <textarea className="input" rows={4} value={excludeText} onChange={(e) => setExcludeText(e.target.value)} />
+              <textarea className="input" rows={3} value={excludeText} onChange={(e) => setExcludeText(e.target.value)} />
               <div className="muted small">{c.defaults(info.defaultExclude.join("  "))}</div>
               <div className="row">
                 <Button
@@ -324,9 +409,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                   disabled={busy}
                   onClick={() =>
                     run(async () => {
-                      await gameBackupApi.set(key, { exclude: excludeText.split("\n") });
-                      setPreview(null);
-                      await load();
+                      await save({ exclude: excludeText.split("\n") });
                       ui.toast(msg().settings.saved);
                     })
                   }
@@ -346,7 +429,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
           onClose={() => setRestoreOpen(false)}
           onStarted={(target) => {
             setRestoreOpen(false);
-            setJob({ kind: "restore", phase: "starting", done: 0, total: 0, uploaded: 0, elapsedSecs: 0, target });
+            setJob(startJob("restore", target));
           }}
         />
       )}
@@ -356,7 +439,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
 
 function JobProgress({ job, onStop }: { job: BackupJob; onStop: () => void }) {
   const c = useT().gameBackup.card;
-  const withBytes = job.phase === "uploading" || job.phase === "downloading" || job.phase === "verifying";
+  const withBytes = ["uploading", "downloading", "verifying", "checking"].includes(job.phase);
   const pct = job.total > 0 ? Math.min(100, Math.floor((job.done / job.total) * 100)) : 0;
   const rate = job.elapsedSecs > 2 && job.done > 0 ? job.done / job.elapsedSecs : 0;
   const left = rate > 0 && job.total > job.done ? (job.total - job.done) / rate : null;
@@ -372,7 +455,7 @@ function JobProgress({ job, onStop }: { job: BackupJob; onStop: () => void }) {
         </Button>
       </div>
       <div className="bar">
-        <span style={{ width: `${withBytes ? pct : job.total > 0 ? pct : 0}%` }} />
+        <span style={{ width: `${pct}%` }} />
       </div>
       {withBytes && job.total > 0 && (
         <div className="muted small">
@@ -399,36 +482,49 @@ function RestoreDialog({
   const ui = useUi();
   const t = useT();
   const r = t.gameBackup.restore;
+  const d = info.restore;
   const [versionId, setVersionId] = useState(info.versions[0].id);
-  const [chosen, setChosen] = useState(info.pendingRestore?.target ?? info.defaultTarget ?? "");
-  const [target, setTarget] = useState<string | null>(null);
+  const [useInstalled, setUseInstalled] = useState(!!d?.installedProgram);
+  const [programChosen, setProgramChosen] = useState(d?.installedProgram ? "" : d?.programDir ?? "");
+  const [programTarget, setProgramTarget] = useState<string | null>(null);
+  const [contentDir, setContentDir] = useState(d?.contentDir ?? "");
   const [fix, setFix] = useState(true);
   const version = info.versions.find((v) => v.id === versionId) ?? info.versions[0];
+  const hasProgram = version.components.some((p) => p.kind === "program" || p.kind === "folder");
+  const hasContent = version.components.some((p) => p.kind === "content");
+  const programPart = version.components.find((p) => p.kind === "program" || p.kind === "folder");
+  const original = d?.programDir ?? programChosen;
 
   useEffect(() => {
-    if (!chosen) {
-      setTarget(null);
+    if (!programChosen) {
+      setProgramTarget(null);
       return;
     }
-    gameBackupApi.resolveTarget(chosen, version.root, version.id).then(setTarget, () => setTarget(chosen));
-  }, [chosen, version]);
+    gameBackupApi.resolveTarget(programChosen, original ?? programChosen).then(setProgramTarget, () => setProgramTarget(programChosen));
+  }, [programChosen, original]);
 
-  const pick = async () => {
-    const dir = await api.pickFolder(msg().gameBackup.restore.pickTitle, chosen || null);
-    if (dir) setChosen(dir);
-  };
+  const program = useInstalled && d?.installedProgram ? d.installedProgram : programTarget;
+  const ready = (!hasProgram || !!program) && (!hasContent || !!contentDir);
 
   const start = async () => {
-    if (!target) return;
+    const targets: Targets = {
+      // Settings kept next to the program need its folder even when the program isn't restored.
+      program: program ?? d?.installedProgram ?? contentDir,
+      restoreProgram: hasProgram && !(useInstalled && d?.installedProgram),
+      content: hasContent ? contentDir : null,
+    };
     try {
-      await gameBackupApi.restore(gameKey, version.id, target, fix);
-      onStarted(target);
+      await gameBackupApi.restore(gameKey, version.id, targets, fix);
+      onStarted(targets.content ?? targets.program);
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
   };
 
-  const slow = info.cloudKind === "baiduPan" ? t.gameBackup.card.slowBaidu(bytes(version.totalSize), duration(etaSecs(version.totalSize, SLOW_RATES.baiduPan.down))) : null;
+  const slow =
+    info.cloudKind === "baiduPan"
+      ? t.gameBackup.card.slowBaidu(bytes(version.totalSize), duration(etaSecs(version.totalSize, BAIDU_FREE_DOWN)))
+      : null;
 
   return (
     <Modal
@@ -437,7 +533,7 @@ function RestoreDialog({
       footer={
         <>
           <Button onClick={onClose}>{t.common.cancel}</Button>
-          <Button kind="primary" icon="download" disabled={!target} onClick={start}>
+          <Button kind="primary" icon="download" disabled={!ready} onClick={start}>
             {r.start}
           </Button>
         </>
@@ -454,16 +550,63 @@ function RestoreDialog({
             ))}
           </select>
         </label>
-        <label>
-          <span>{r.target}</span>
-          <div className="row">
-            {chosen ? <code className="path grow">{chosen}</code> : <span className="muted small grow">{r.noTarget}</span>}
-            <Button small icon="folder" onClick={pick}>
-              {r.pick}
-            </Button>
+        <div className="muted small">{r.parts(partsText(version.components))}</div>
+
+        {hasProgram && (
+          <div className="field">
+            <span>{r.program}</span>
+            <div className="gb-versions">
+              {d?.installedProgram && (
+                <>
+                  <label className="row gb-check-inline">
+                    <input type="radio" checked={useInstalled} onChange={() => setUseInstalled(true)} />
+                    <span className="small">{r.useInstalled(programPart?.name ?? "", d.installedProgram)}</span>
+                  </label>
+                  <div className="muted small">{d.installedSame ? r.installedSame : r.installedDiff}</div>
+                  <label className="row gb-check-inline">
+                    <input type="radio" checked={!useInstalled} onChange={() => setUseInstalled(false)} />
+                    <span className="small">{r.restoreProgram(programPart?.name ?? "", programPart?.version ?? null)}</span>
+                  </label>
+                </>
+              )}
+              {(!useInstalled || !d?.installedProgram) && (
+                <div className="row">
+                  {programChosen ? <code className="path grow">{programChosen}</code> : <span className="muted small grow">{r.noProgramDir}</span>}
+                  <Button
+                    small
+                    icon="folder"
+                    onClick={async () => {
+                      const dir = await api.pickFolder(msg().gameBackup.restore.pickTitle, programChosen || null);
+                      if (dir) setProgramChosen(dir);
+                    }}
+                  >
+                    {r.pick}
+                  </Button>
+                </div>
+              )}
+              {!useInstalled && programTarget && <div className="small">{r.willGo(programTarget)}</div>}
+            </div>
           </div>
-        </label>
-        {target && <div className="small">{r.willGo(target)}</div>}
+        )}
+
+        {hasContent && (
+          <div className="field">
+            <span>{r.contentTo}</span>
+            <div className="row">
+              {contentDir ? <code className="path grow">{contentDir}</code> : <span className="muted small grow">{r.noContentDir}</span>}
+              <Button
+                small
+                icon="folder"
+                onClick={async () => {
+                  const dir = await api.pickFolder(msg().gameBackup.restore.pickTitle, contentDir || null);
+                  if (dir) setContentDir(dir);
+                }}
+              >
+                {r.pick}
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="muted small">{r.need(bytes(version.totalSize))}</div>
         {slow && <div className="health health-warn">{slow}</div>}
       </div>

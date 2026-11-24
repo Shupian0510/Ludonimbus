@@ -19,6 +19,7 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
     "**/shadercache/**",
     "**/shader_cache/**",
     "**/__pycache__/**",
+    "**/pipeline_cache.bin",
     "**/Thumbs.db",
     "**/desktop.ini",
     ".ludonimbus-restore.json",
@@ -164,6 +165,17 @@ pub fn excludes_for(game: &GameEntry, root: &Path, user: &[String]) -> Vec<Strin
 
 /// List the files of `root` without the excluded ones.
 pub fn scan(root: &Path, exclude: &[String]) -> Result<Scan> {
+    scan_skip(root, exclude, &HashSet::new())
+}
+
+/// Lower-case form of a path for [`scan_skip`]'s set.
+pub fn path_key(p: &Path) -> String {
+    util::norm_path(&spec::normalize(p).to_string_lossy())
+}
+
+/// Like [`scan`], also leaving out the files in `skip` ([`path_key`]s):
+/// files another component of the backup takes.
+pub fn scan_skip(root: &Path, exclude: &[String], skip: &HashSet<String>) -> Result<Scan> {
     if !root.is_dir() {
         bail!(crate::tr!("文件夹不存在：{}", "The folder doesn't exist: {}", root.display()));
     }
@@ -190,7 +202,7 @@ pub fn scan(root: &Path, exclude: &[String]) -> Result<Scan> {
             continue;
         }
         let meta = e.metadata().with_context(|| crate::tr!("无法读取 {}", "Can't read {}", e.path().display()))?;
-        if set.is_match(&rel) {
+        if set.is_match(&rel) || (!skip.is_empty() && skip.contains(&path_key(e.path()))) {
             s.excluded_files += 1;
             s.excluded_bytes += meta.len();
             continue;

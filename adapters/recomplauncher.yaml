@@ -3,7 +3,7 @@
 #
 # 来源：RecompLauncher 的游戏目录（pc-catalog.json，2026-11-23）
 #   - 开发者在 recomplauncher.json 里声明的存档位置：111 个
-#   - N64Recomp 游戏（存档在 <应用文件夹>/saves）：21 个
+#   - N64Recomp 游戏（存档在 <应用文件夹>/saves；游戏本体备份另外带上那里的 ROM、设置和 mods）：21 个
 # RecompLauncher：https://recomplauncher.com/  https://github.com/elripalda/RecompLauncher
 #
 # {install} 是发布包的根目录：exe 在子文件夹里时 match 写的是相对路径。
@@ -56,6 +56,9 @@
     - "{install}/saves"
   waitFor: ["Zelda64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Zelda64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Zelda64Recompiled/*.json", "{localappdata}/Zelda64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "banjorecomp"
   name: "Banjo-Kazooie"
@@ -67,6 +70,9 @@
     - "{install}/saves"
   waitFor: ["BanjoRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/BanjoRecompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/BanjoRecompiled/*.json", "{localappdata}/BanjoRecompiled/mods/**", "{install}/mods/**"]
 
 - key: "donkey-kong-64-recompiled"
   name: "Donkey Kong 64"
@@ -78,6 +84,9 @@
     - "{install}/saves"
   waitFor: ["DK64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/DK64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/DK64Recompiled/*.json", "{localappdata}/DK64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "astral-chain-pc-recomp"
   name: "Astral Chain"
@@ -156,6 +165,9 @@
     - "{install}/saves"
   waitFor: ["Starfox64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Starfox64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Starfox64Recompiled/*.json", "{localappdata}/Starfox64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "eidos"
   name: "Pokemon Black / Pokemon White"
@@ -296,6 +308,9 @@
     - "{install}/saves"
   waitFor: ["BM64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/BM64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/BM64Recompiled/*.json", "{localappdata}/BM64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "infamous2-recomp"
   name: "Infamous 2"
@@ -317,6 +332,9 @@
     - "{install}/saves"
   waitFor: ["LodRecomp.exe"]
   skipJunk: true
+  userFiles: ["{appdata}/LodRecomp/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{appdata}/LodRecomp/*.json", "{appdata}/LodRecomp/mods/**", "{install}/mods/**"]
 
 - key: "metrozero"
   name: "Metroid: Zero Mission"
@@ -372,6 +390,9 @@
     - "{install}/saves"
   waitFor: ["MegaMan64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/MegaMan64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/MegaMan64Recompiled/*.json", "{localappdata}/MegaMan64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "wwfnomercyrecomp"
   name: "WWF No Mercy"
@@ -383,6 +404,9 @@
     - "{install}/saves"
   waitFor: ["NoMercyRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/NoMercyRecompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/NoMercyRecompiled/*.json", "{localappdata}/NoMercyRecompiled/mods/**", "{install}/mods/**"]
 
 - key: "resistance3port"
   name: "Resistance 3"
@@ -452,6 +476,9 @@
     - "{install}/saves"
   waitFor: ["SnPRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/snprecomp/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/snprecomp/*.json", "{localappdata}/snprecomp/mods/**", "{install}/mods/**"]
 
 - key: "star-fox-assault-recomp"
   name: "Star Fox Assault"
@@ -473,6 +500,9 @@
     - "{install}/saves"
   waitFor: ["Rush2Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Rush2Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Rush2Recompiled/*.json", "{localappdata}/Rush2Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "botw-vr-recomp"
   name: "The Legend of Zelda: Breath of the Wild"
@@ -530,6 +560,9 @@
     - "{install}/saves"
   waitFor: ["HarvestMoon64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/HarvestMoon64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/HarvestMoon64Recompiled/*.json", "{localappdata}/HarvestMoon64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "hulk-ultimate-destruction-recomp-xbox-ver"
   name: "The Incredible Hulk: Ultimate Destruction"
@@ -573,6 +606,9 @@
     - "{install}/saves"
   waitFor: ["Goemon64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Goemon64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Goemon64Recompiled/*.json", "{localappdata}/Goemon64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "gow-betrayal-remastered"
   name: "God of War: Betrayal"
@@ -604,6 +640,9 @@
     - "{install}/saves"
   waitFor: ["Quest64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Quest64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Quest64Recompiled/*.json", "{localappdata}/Quest64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "circlemoon"
   name: "Castlevania: Circle of the Moon"
@@ -681,6 +720,9 @@
     - "{install}/saves"
   waitFor: ["SnowboardKids2Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/SnowboardKids2Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/SnowboardKids2Recompiled/*.json", "{localappdata}/SnowboardKids2Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "wcwnworevengerecomp"
   name: "WCW/nWo Revenge"
@@ -692,6 +734,9 @@
     - "{install}/saves"
   waitFor: ["RevengeRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/RevengeRecompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/RevengeRecompiled/*.json", "{localappdata}/RevengeRecompiled/mods/**", "{install}/mods/**"]
 
 - key: "tera-recomp"
   name: "Pokemon Scarlet and Violet"
@@ -724,6 +769,9 @@
     - "{install}/saves"
   waitFor: ["Pilotwings64Recomp.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Pilotwings64Recomp/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Pilotwings64Recomp/*.json", "{localappdata}/Pilotwings64Recomp/mods/**", "{install}/mods/**"]
 
 - key: "wwfwrestlemania2000recomp"
   name: "WWF WrestleMania 2000"
@@ -735,6 +783,9 @@
     - "{install}/saves"
   waitFor: ["Wm2kRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Wm2kRecompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Wm2kRecompiled/*.json", "{localappdata}/Wm2kRecompiled/mods/**", "{install}/mods/**"]
 
 - key: "fe-fates-se-recomp"
   name: "Fire Emblem Fates: Special Edition"
@@ -814,6 +865,9 @@
     - "{install}/saves"
   waitFor: ["WCWRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/WCWRecompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/WCWRecompiled/*.json", "{localappdata}/WCWRecompiled/mods/**", "{install}/mods/**"]
 
 - key: "aerogauge-recomp"
   name: "AeroGauge"
@@ -825,6 +879,9 @@
     - "{install}/saves"
   waitFor: ["aerogauge_modern.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/AeroGaugeRecomp/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/AeroGaugeRecomp/*.json", "{localappdata}/AeroGaugeRecomp/mods/**", "{install}/mods/**"]
 
 - key: "dead-nation-ps4-recomp"
   name: "Dead Nation: Apocalypse Edition"
@@ -1042,6 +1099,9 @@
     - "{install}/saves"
   waitFor: ["SSSVRecompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/SSSVRecompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/SSSVRecompiled/*.json", "{localappdata}/SSSVRecompiled/mods/**", "{install}/mods/**"]
 
 - key: "blackthorne-snes-recomp"
   name: "Blackthorne"
@@ -1229,6 +1289,9 @@
     - "{install}/saves"
   waitFor: ["Vpw64Recompiled.exe"]
   skipJunk: true
+  userFiles: ["{localappdata}/Vpw64Recompiled/*.z64", "{install}/*.z64"]
+  gameConfig:
+    default: ["{localappdata}/Vpw64Recompiled/*.json", "{localappdata}/Vpw64Recompiled/mods/**", "{install}/mods/**"]
 
 - key: "army-men-sarges-heroes-recomp"
   name: "Army Men: Sarge's Heroes"

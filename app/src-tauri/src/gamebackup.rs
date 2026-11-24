@@ -8,10 +8,10 @@ use crate::commands::{blocking, CmdResult};
 use crate::{show_main, watcher};
 use anyhow::{anyhow, bail, Result};
 use ludonimbus_core::config::{self, GameEntry};
-use ludonimbus_core::gamebackup::format::Summary;
-use ludonimbus_core::gamebackup::{self, backup, install, remote, restore, scan, speedtest};
+use ludonimbus_core::gamebackup::format::{Kind, Manifest, Summary};
+use ludonimbus_core::gamebackup::{self, backup, components, install, remote, restore, scan, speedtest};
 use ludonimbus_core::{logger, process, tr};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -200,6 +200,34 @@ pub async fn game_backup_job(key: String) -> CmdResult<Option<JobView>> {
 // ---------------------------------------------------------------------------
 // Info
 
+/// Where a restore goes by default and what is already on this PC.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreDefaults {
+    /// The version has a program (or whole folder) part.
+    has_program: bool,
+    /// The version has the game's own files.
+    has_content: bool,
+    program_name: Option<String>,
+    program_version: Option<String>,
+    /// A folder on this PC with this game's program in it.
+    installed_program: Option<String>,
+    /// That program is the backed-up one (same exe).
+    installed_same: bool,
+    /// Where the program goes by default (the backed-up folder when it is free).
+    program_dir: Option<String>,
+    /// Where the game's files go by default: where they were, else where this
+    /// emulator's games were last restored to.
+    content_dir: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingView {
+    version: String,
+    targets: restore::Targets,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Info {
@@ -207,27 +235,31 @@ pub struct Info {
     cloud_kind: String,
     /// Baidu Netdisk / Quark: works but slow (show the warning).
     slow: bool,
+    /// The program's folder (or the whole folder) on this PC.
     root: Option<String>,
     root_exists: bool,
     root_custom: bool,
     exe_missing: bool,
     /// Newest first.
     versions: Vec<Summary>,
-    /// About how much the backups take in the cloud.
+    /// About how much this game's backups take in the cloud.
     stored_bytes: u64,
     /// Versions kept after a backup; 0 = all.
     keep: usize,
     /// The user's own exclude patterns.
     exclude: Vec<String>,
     default_exclude: Vec<String>,
-    /// An emulator ROM outside the folder, which a backup won't include.
-    file_outside: Option<String>,
+    /// The game's rule lists keys / firmware / BIOS files.
+    firmware_available: bool,
+    firmware: bool,
+    skip: Vec<Kind>,
+    extra_content: Vec<String>,
+    /// The game's rule describes its parts (emulators, recompilations);
+    /// otherwise the whole folder is backed up.
+    by_parts: bool,
     job: Option<JobView>,
-    /// An unfinished restore on this PC.
-    pending_restore: Option<gamebackup::PendingRestore>,
-    /// Where restoring goes by default: the backed-up folder, when its
-    /// drive exists and the folder is missing or empty.
-    default_target: Option<String>,
+    pending_restore: Option<PendingView>,
+    restore: Option<RestoreDefaults>,
     /// Problem reaching the cloud (the local part is still filled in).
     error: Option<String>,
 }
@@ -236,11 +268,52 @@ fn game(key: &str) -> Result<GameEntry> {
     config::load()?.require_game(key).cloned()
 }
 
-fn default_target(root: &str) -> Option<String> {
-    let p = Path::new(root);
-    let parent_ok = p.parent().is_some_and(|d| d.exists());
-    let empty = std::fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(true);
-    (parent_ok && empty).then(|| root.to_string())
+/// A folder that is free for a restore: its parent exists and it is missing or empty.
+fn free_dir(p: &str) -> Option<String> {
+    let path = Path::new(p);
+    let parent_ok = path.parent().is_some_and(|d| d.exists());
+    let empty = std::fs::read_dir(path).map(|mut d| d.next().is_none()).unwrap_or(true);
+    (parent_ok && empty).then(|| p.to_string())
+}
+
+fn file_hash(p: &Path) -> Option<String> {
+    restore::hash_file(p).ok()
+}
+
+fn restore_defaults(cfg: &config::AppConfig, g: &GameEntry, m: &Manifest) -> RestoreDefaults {
+    let program = m.components.iter().find(|c| matches!(c.kind, Kind::Program | Kind::Folder));
+    let content = m.component(Kind::Content);
+    // This game's program folder, or another game's with the same emulator.
+    let installed: Option<PathBuf> = std::iter::once(g)
+        .chain(cfg.games.iter().filter(|o| o.key != g.key && o.adapter.is_some() && o.adapter == g.adapter))
+        .filter(|o| o.exe.as_ref().is_some_and(|e| e.is_file()))
+        .find_map(ludonimbus_core::spec::install_dir);
+    // The exe tells the versions apart; for a game its launcher builds, the launcher.
+    let installed_same = match (program, &installed) {
+        (Some(p), Some(dir)) => p.build.as_deref().or(p.exe.as_deref()).is_some_and(|exe| {
+            let backed = p.files.iter().find(|f| f.p == exe).map(|f| f.h.clone());
+            let local = components::split(exe).and_then(|(_, rest)| restore::safe_join(dir, rest).ok()).and_then(|f| file_hash(&f));
+            backed.is_some() && backed == local
+        }),
+        _ => false,
+    };
+    let program_dir = installed
+        .as_ref()
+        .map(|d| d.display().to_string())
+        .or_else(|| program.and_then(|p| p.bases.get("program")).and_then(|d| free_dir(d)));
+    let content_dir = content.and_then(|c| c.bases.get("content")).filter(|d| Path::new(d).is_dir()).cloned().or_else(|| {
+        g.adapter.as_deref().and_then(gamebackup::content_dir_for).map(|d| d.display().to_string())
+    });
+    RestoreDefaults {
+        has_program: program.is_some(),
+        has_content: content.is_some(),
+        program_name: program.map(|p| p.name.clone()),
+        program_version: program.and_then(|p| p.version.clone()),
+        installed_program: installed.map(|d| d.display().to_string()),
+        installed_same,
+        program_dir,
+        content_dir,
+    }
 }
 
 fn info(key: &str) -> Result<Info> {
@@ -248,6 +321,7 @@ fn info(key: &str) -> Result<Info> {
     let g = cfg.require_game(key)?.clone();
     let s = gamebackup::settings(key);
     let root = gamebackup::backup_root(&g, &s);
+    let adapter = g.adapter.as_deref().and_then(ludonimbus_core::adapters::find);
     let mut info = Info {
         has_cloud: cfg.cloud != config::CloudConfig::None,
         cloud_kind: ludonimbus_core::cloud::kind_id(&cfg.cloud).to_string(),
@@ -255,49 +329,48 @@ fn info(key: &str) -> Result<Info> {
         root_exists: root.as_ref().is_some_and(|r| r.is_dir()),
         root_custom: s.root.is_some(),
         exe_missing: !g.exe.as_ref().is_some_and(|e| e.exists()),
-        file_outside: root.as_deref().and_then(|r| scan::file_outside(&g, r)),
         root: root.map(|r| r.display().to_string()),
         versions: Vec::new(),
         stored_bytes: 0,
         keep: s.keep_count().unwrap_or(0),
-        exclude: Vec::new(),
+        exclude: s.exclude.clone().unwrap_or_default(),
         default_exclude: scan::DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect(),
+        firmware_available: adapter.is_some_and(|a| !a.firmware.is_empty()),
+        firmware: s.firmware,
+        skip: s.skip.clone(),
+        extra_content: s.extra_content.iter().map(|p| p.display().to_string()).collect(),
+        by_parts: adapter.is_some(),
         job: job(key),
-        pending_restore: s
-            .last_restore
-            .clone()
-            .filter(|p| restore::journal_version(&p.target).as_deref() == Some(p.version.as_str())),
-        default_target: None,
+        pending_restore: restore::pending(key).map(|(version, targets)| PendingView { version, targets }),
+        restore: None,
         error: None,
     };
     info.slow = gamebackup::is_slow_cloud(&info.cloud_kind);
     if !info.has_cloud {
-        info.exclude = s.exclude.clone().unwrap_or_default();
         return Ok(info);
     }
-    let cloud = (|| -> Result<(Vec<Summary>, Option<gamebackup::format::Manifest>)> {
+    let cloud = (|| -> Result<(Vec<Summary>, Option<Manifest>)> {
         let provider = gamebackup::open(&cfg)?;
         let store = provider.files();
         let versions = remote::list_versions(store, key)?;
         let latest = match versions.last() {
-            Some(v) if s.exclude.is_none() => remote::read_manifest(store, key, v).ok(),
-            _ => None,
+            Some(v) => Some(remote::read_manifest(store, key, v)?),
+            None => None,
         };
         Ok((versions, latest))
     })();
     match cloud {
         Ok((versions, latest)) => {
-            info.exclude = gamebackup::user_excludes(&s, latest.as_ref());
+            if let Some(m) = &latest {
+                info.exclude = gamebackup::user_excludes(&s, Some(m));
+                info.restore = Some(restore_defaults(&cfg, &g, m));
+            }
             if let Some(newest) = versions.last() {
                 info.stored_bytes = newest.stored_size + versions[..versions.len() - 1].iter().map(|v| v.new_bytes).sum::<u64>();
-                info.default_target = default_target(&newest.root);
             }
             info.versions = versions.into_iter().rev().collect();
         }
-        Err(e) => {
-            info.exclude = s.exclude.clone().unwrap_or_default();
-            info.error = Some(format!("{e:#}"));
-        }
+        Err(e) => info.error = Some(format!("{e:#}")),
     }
     Ok(info)
 }
@@ -307,36 +380,68 @@ pub async fn game_backup_info(key: String) -> CmdResult<Info> {
     blocking(move || info(&key)).await
 }
 
-/// What a backup would contain, from this PC only.
+/// What a backup would contain, by part, from this PC only.
 #[tauri::command]
-pub async fn game_backup_preview(key: String) -> CmdResult<scan::ScanSummary> {
+pub async fn game_backup_preview(key: String) -> CmdResult<Vec<backup::PreviewComponent>> {
     blocking(move || {
         let g = game(&key)?;
         let s = gamebackup::settings(&key);
-        let root = gamebackup::backup_root(&g, &s).ok_or_else(|| anyhow!(tr!("不知道游戏文件夹", "The game folder is unknown")))?;
-        backup::preview(&g, &root, s.exclude.as_deref().unwrap_or_default())
+        backup::preview(&g, &gamebackup::options(&s, None))
     })
     .await
 }
 
-/// Change the folder (`""` = back to the game's folder), exclude patterns or
-/// number of versions kept (0 = all).
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SettingsPatch {
+    /// `""` = back to the game's folder.
+    root: Option<String>,
+    exclude: Option<Vec<String>>,
+    /// 0 = keep all.
+    keep: Option<usize>,
+    firmware: Option<bool>,
+    skip: Option<Vec<Kind>>,
+    extra_content: Option<Vec<String>>,
+}
+
 #[tauri::command]
-pub async fn game_backup_set(key: String, root: Option<String>, exclude: Option<Vec<String>>, keep: Option<usize>) -> CmdResult<()> {
+pub async fn game_backup_set(key: String, patch: SettingsPatch) -> CmdResult<()> {
     blocking(move || {
         game(&key)?;
         gamebackup::update_settings(&key, |s| {
-            if let Some(r) = root {
+            if let Some(r) = patch.root {
                 s.root = (!r.trim().is_empty()).then(|| PathBuf::from(r.trim()));
             }
-            if let Some(e) = exclude {
+            if let Some(e) = patch.exclude {
                 s.exclude = Some(e.into_iter().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect());
             }
-            if let Some(k) = keep {
+            if let Some(k) = patch.keep {
                 s.keep = Some(k.min(20));
+            }
+            if let Some(f) = patch.firmware {
+                s.firmware = f;
+            }
+            if let Some(k) = patch.skip {
+                s.skip = k;
+            }
+            if let Some(x) = patch.extra_content {
+                s.extra_content = x.into_iter().filter(|p| !p.trim().is_empty()).map(PathBuf::from).collect();
             }
         })?;
         Ok(())
+    })
+    .await
+}
+
+/// Pick any file (a ROM the rules don't know).
+#[tauri::command]
+pub async fn game_backup_pick_file(start: Option<String>) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let mut d = rfd::FileDialog::new().set_title(tr!("选择属于这个游戏的文件", "Choose a file that belongs to this game"));
+        if let Some(s) = start.map(PathBuf::from).and_then(|p| p.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf)) {
+            d = d.set_directory(s);
+        }
+        Ok(d.pick_file().map(|p| p.display().to_string()))
     })
     .await
 }
@@ -357,15 +462,13 @@ pub async fn game_backup_start(app: AppHandle, key: String) -> CmdResult<()> {
             bail!(tr!("游戏正在运行，请先退出游戏再备份", "The game is running. Quit it before backing up"));
         }
         let s = gamebackup::settings(&key);
-        let root = gamebackup::backup_root(&g, &s).ok_or_else(|| anyhow!(tr!("不知道游戏文件夹", "The game folder is unknown")))?;
         let device = cfg.device.clone();
         start_job(&app, &key.clone(), "backup", None, move |progress, cancel| {
             let provider = gamebackup::open(&cfg)?;
             let store = provider.files();
             let latest = if s.exclude.is_none() { gamebackup::latest(store, &key).ok().flatten() } else { None };
             let opts = backup::BackupOptions {
-                root,
-                user_exclude: gamebackup::user_excludes(&s, latest.as_ref().map(|(_, m)| m)),
+                components: gamebackup::options(&s, latest.as_ref().map(|(_, m)| m)),
                 threads: gamebackup::default_threads(store.kind()),
                 params: Default::default(),
                 keep: s.keep_count(),
@@ -388,23 +491,19 @@ pub async fn game_backup_start(app: AppHandle, key: String) -> CmdResult<()> {
 
 /// The folder a restore into `chosen` would use (see `restore::resolve_target`).
 #[tauri::command]
-pub async fn game_backup_resolve_target(chosen: String, root: String, version: String) -> CmdResult<String> {
-    Ok(restore::resolve_target(Path::new(&chosen), &root, &version).display().to_string())
+pub async fn game_backup_resolve_target(chosen: String, original: String) -> CmdResult<String> {
+    Ok(restore::resolve_target(Path::new(&chosen), &original).display().to_string())
 }
 
 #[tauri::command]
-pub async fn game_backup_restore(app: AppHandle, key: String, version: String, target: String, fix: bool) -> CmdResult<()> {
+pub async fn game_backup_restore(app: AppHandle, key: String, version: String, targets: restore::Targets, fix: bool) -> CmdResult<()> {
     blocking(move || {
         let cfg = config::load()?;
         let g = cfg.require_game(&key)?.clone();
         if running(&g) {
             bail!(tr!("游戏正在运行，请先退出游戏再恢复", "The game is running. Quit it before restoring"));
         }
-        let target = PathBuf::from(target);
-        gamebackup::update_settings(&key, |s| {
-            s.last_restore = Some(gamebackup::PendingRestore { version: version.clone(), target: target.clone() });
-        })?;
-        let shown = target.display().to_string();
+        let shown = targets.content.as_ref().unwrap_or(&targets.program).display().to_string();
         start_job(&app, &key.clone(), "restore", Some(shown), move |progress, cancel| {
             let provider = gamebackup::open(&cfg)?;
             let store = provider.files();
@@ -413,15 +512,18 @@ pub async fn game_backup_restore(app: AppHandle, key: String, version: String, t
                 .find(|s| s.id == version)
                 .ok_or_else(|| anyhow!(tr!("云端已经没有这个版本了", "This version is no longer in the cloud")))?;
             let threads = gamebackup::default_threads(store.kind());
-            let (m, report) = restore::restore(store, &key, &summary, &target, threads, cancel, &|p| {
+            let (m, report) = restore::restore(store, &key, &summary, &targets, threads, cancel, &|p| {
                 progress(p.phase, p.done, p.total, 0, p.elapsed_secs)
             })?;
-            gamebackup::update_settings(&key, |s| s.last_restore = None)?;
-            let mut notes = vec![tr!("已恢复到 {}", "Restored to {}", target.display())];
+            let mut notes = vec![if report.kept > 0 {
+                tr!("恢复完成：写入 {} 个文件，{} 个已经在本机，没有改动", "Restored: {} files written, {} were already here and left as they are", report.files, report.kept)
+            } else {
+                tr!("恢复完成：写入 {} 个文件", "Restored: {} files written", report.files)
+            }];
             let mut fixed = None;
             if fix {
                 progress("fixing", 0, 0, 0, 0.0);
-                match install::fix_paths(&key, &m, &target) {
+                match install::fix_paths(&key, &m, &targets) {
                     Ok(f) => {
                         match f.shortcut {
                             install::ShortcutFix::NeedsSteamClosed => notes.push(tr!(
@@ -460,12 +562,14 @@ pub async fn game_backup_delete(app: AppHandle, key: String, version: String) ->
             let store = provider.files();
             let lock = remote::Lock::acquire(store, &key, &device.id, &device.name, "cleanup")?;
             remote::delete_version(store, &key, &version)?;
-            let gc = remote::collect_garbage(store, &key, &|d, t| progress("cleaning", d as u64, t as u64, 0, 0.0))?;
+            let gc = remote::collect_garbage(store, (&device.id, &device.name), Some(&key), &|d, t| progress("cleaning", d as u64, t as u64, 0, 0.0))?;
             lock.release()?;
-            Ok((
-                tr!("已删除这个版本，释放了 {} MB", "Version deleted; {} MB freed", gc.freed_bytes / 1_048_576),
-                serde_json::to_value(&gc).ok(),
-            ))
+            let message = if gc.postponed {
+                tr!("已删除这个版本；有设备正在备份，不再使用的数据以后再清理", "Version deleted; a device is backing up, so unused data is cleaned up later")
+            } else {
+                tr!("已删除这个版本，释放了 {} MB", "Version deleted; {} MB freed", gc.freed_bytes / 1_048_576)
+            };
+            Ok((message, serde_json::to_value(&gc).ok()))
         })
     })
     .await

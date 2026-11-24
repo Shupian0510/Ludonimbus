@@ -129,10 +129,10 @@ pub fn speed(a: SpeedArgs) -> Result<()> {
 
 #[derive(clap::Subcommand)]
 pub enum Cmd {
-    /// Back up a game's folder (saves, logs and caches are left out)
+    /// Back up a game: its program, game files, settings (and firmware with --firmware)
     Backup {
         key: String,
-        /// Folder to back up (default: the game's folder)
+        /// The program's folder, or the whole folder (default: the game's folder)
         #[arg(long)]
         root: Option<std::path::PathBuf>,
         #[arg(long)]
@@ -140,30 +140,42 @@ pub enum Cmd {
         /// Versions to keep afterwards (0 = all; default 2)
         #[arg(long)]
         keep: Option<usize>,
-        /// Extra exclude pattern, relative to the folder (repeatable)
+        /// Extra exclude pattern, relative to the program's folder (repeatable)
         #[arg(long = "exclude")]
         exclude: Vec<String>,
+        /// Also back up keys, firmware and BIOS
+        #[arg(long)]
+        firmware: bool,
+        /// Show the parts and sizes without backing up
+        #[arg(long)]
+        dry_run: bool,
     },
     /// List the backed-up versions of a game
     List { key: String },
-    /// Restore a version into a folder, then fix the game's paths and pull its saves
+    /// Restore a version, then fix the game's paths and pull its saves
     Restore {
         key: String,
-        /// Folder to restore into (a subfolder is used when it isn't empty)
+        /// Folder for the program (or the whole folder); a subfolder is used when it isn't empty
         #[arg(long)]
         to: std::path::PathBuf,
+        /// Folder for the game's files (disc image, ROM); default: the same as --to's parent
+        #[arg(long)]
+        content: Option<std::path::PathBuf>,
+        /// Keep the program already in --to (only restore the game's own parts)
+        #[arg(long)]
+        keep_program: bool,
         #[arg(long)]
         version: Option<String>,
         #[arg(long)]
         threads: Option<usize>,
-        /// Don't point the game and its Steam shortcut at the restored folder
+        /// Don't point the game and its Steam shortcut at the restored folders
         #[arg(long)]
         no_fix: bool,
         /// Don't pull the saves afterwards
         #[arg(long)]
         no_saves: bool,
     },
-    /// Delete a version and the chunks no other version uses
+    /// Delete a version and the chunks no version of any game uses
     Delete { key: String, version: String },
     /// Check that every chunk of a version is in the cloud
     Check {
@@ -197,28 +209,79 @@ fn line_progress() -> impl Fn(&str, u64, u64) + Sync {
     }
 }
 
+fn parts(list: &[gamebackup::format::ComponentSummary]) -> String {
+    list.iter()
+        .map(|c| match &c.version {
+            Some(v) => format!("{} {v} ({})", c.name, human(c.total_size)),
+            None => format!("{} ({})", c.name, human(c.total_size)),
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The parts a backup of `key` would have, from this PC only (no cloud).
+fn dry_run(cfg: &config::AppConfig, key: &str, root: Option<std::path::PathBuf>, exclude: Vec<String>, firmware: bool) -> Result<()> {
+    let g = cfg.require_game(key)?.clone();
+    let mut comp = gamebackup::options(&gamebackup::settings(key), None);
+    if root.is_some() {
+        comp.root = root;
+    }
+    if !exclude.is_empty() {
+        comp.user_exclude = exclude;
+    }
+    comp.firmware |= firmware;
+    for c in gamebackup::components::plan(&g, &comp)? {
+        println!(
+            "{:<9} {:<28} {:<12} {:>6} 个文件 {:>9}（排除 {} 个，{}）",
+            format!("{:?}", c.kind),
+            c.name,
+            c.version.clone().unwrap_or_default(),
+            c.files.len(),
+            human(c.total()),
+            c.excluded_files,
+            human(c.excluded_bytes)
+        );
+        if let Some(l) = &c.build {
+            println!("          {}", ludonimbus_core::tr!("由 {l} 现场编译，编译出来的文件不备份", "Built by {l} on each PC; what it builds isn't backed up"));
+        }
+        // How many files of each part to list (a number; any other value: 40).
+        if let Some(v) = std::env::var_os("LUDONIMBUS_DRY_RUN_FILES") {
+            let n = v.to_string_lossy().parse().unwrap_or(40);
+            for f in c.files.iter().take(n) {
+                println!("    {} {}", human(f.size), f.logical);
+            }
+            if c.files.len() > n {
+                println!("    … 共 {} 个", c.files.len());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn run(cmd: Cmd) -> Result<()> {
     use gamebackup::{backup, install, remote, restore};
     let cfg = config::load()?;
+    if let Cmd::Backup { key, root, exclude, firmware, dry_run: true, .. } = cmd {
+        return dry_run(&cfg, &key, root, exclude, firmware);
+    }
     let provider = gamebackup::open(&cfg)?;
     let store = provider.files();
     let cancel = AtomicBool::new(false);
     match cmd {
-        Cmd::Backup { key, root, threads, keep, exclude } => {
+        Cmd::Backup { key, root, threads, keep, exclude, firmware, .. } => {
             let g = cfg.require_game(&key)?.clone();
             let s = gamebackup::settings(&key);
-            let root = root
-                .or_else(|| gamebackup::backup_root(&g, &s))
-                .ok_or_else(|| anyhow::anyhow!("不知道游戏文件夹，请用 --root 指定"))?;
             let latest = gamebackup::latest(store, &key).ok().flatten();
-            let user_exclude =
-                if exclude.is_empty() { gamebackup::user_excludes(&s, latest.as_ref().map(|(_, m)| m)) } else { exclude };
-            if let Some(f) = gamebackup::scan::file_outside(&g, &root) {
-                eprintln!("注意：{f} 不在 {} 里，不会被备份", root.display());
+            let mut comp = gamebackup::options(&s, latest.as_ref().map(|(_, m)| m));
+            if root.is_some() {
+                comp.root = root;
             }
+            if !exclude.is_empty() {
+                comp.user_exclude = exclude;
+            }
+            comp.firmware |= firmware;
             let opts = backup::BackupOptions {
-                root,
-                user_exclude,
+                components: comp,
                 threads: threads.unwrap_or_else(|| gamebackup::default_threads(store.kind())),
                 params: gamebackup::chunker::Params::default(),
                 keep: match keep {
@@ -236,29 +299,34 @@ pub fn run(cmd: Cmd) -> Result<()> {
         Cmd::List { key } => {
             for s in remote::list_versions(store, &key)?.iter().rev() {
                 println!(
-                    "{} {} {:<14} {:>9} {} 个文件  新上传 {}",
+                    "{} {} {:<14} {:>9}  新上传 {:<9} {}",
                     s.id,
                     s.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M"),
                     s.device_name,
                     human(s.total_size),
-                    s.file_count,
-                    human(s.new_bytes)
+                    human(s.new_bytes),
+                    parts(&s.components)
                 );
             }
-            println!("云端占用 {}", human(remote::stored_bytes(store, &key)?));
+            let all: u64 = remote::list_chunks(store)?.values().sum();
+            println!("云端所有游戏本体备份共占用 {}", human(all));
         }
-        Cmd::Restore { key, to, version, threads, no_fix, no_saves } => {
+        Cmd::Restore { key, to, content, keep_program, version, threads, no_fix, no_saves } => {
             let s = pick(remote::list_versions(store, &key)?, version.as_deref())?;
-            let target = restore::resolve_target(&to, &s.root, &s.id);
-            eprintln!("恢复 {} 到 {}", s.id, target.display());
+            let m = remote::read_manifest(store, &key, &s)?;
+            let program_base = m.components.iter().find_map(|c| c.bases.get("program")).cloned().unwrap_or_default();
+            let program = if keep_program { to.clone() } else { restore::resolve_target(&to, &program_base) };
+            let content = m.component(gamebackup::format::Kind::Content).map(|_| content.unwrap_or_else(|| to.parent().unwrap_or(&to).to_path_buf()));
+            let targets = restore::Targets { program, restore_program: !keep_program, content };
+            eprintln!("恢复 {}：程序到 {}，游戏文件到 {}", s.id, targets.program.display(), targets.content.as_ref().map(|c| c.display().to_string()).unwrap_or("-".into()));
             let show = line_progress();
             let threads = threads.unwrap_or_else(|| gamebackup::default_threads(store.kind()));
-            let result = restore::restore(store, &key, &s, &target, threads, &cancel, &|p| show(p.phase, p.done, p.total));
+            let result = restore::restore(store, &key, &s, &targets, threads, &cancel, &|p| show(p.phase, p.done, p.total));
             eprintln!();
             let (m, report) = result?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !no_fix && cfg.game(&key).is_some() {
-                println!("{}", serde_json::to_string_pretty(&install::fix_paths(&key, &m, &target)?)?);
+                println!("{}", serde_json::to_string_pretty(&install::fix_paths(&key, &m, &targets)?)?);
                 if !no_saves {
                     match install::pull_saves(&key) {
                         Ok(o) => println!("存档：{}", serde_json::to_string(&o)?),
@@ -270,18 +338,22 @@ pub fn run(cmd: Cmd) -> Result<()> {
         Cmd::Delete { key, version } => {
             let lock = remote::Lock::acquire(store, &key, &cfg.device.id, &cfg.device.name, "cleanup")?;
             remote::delete_version(store, &key, &version)?;
-            let gc = remote::collect_garbage(store, &key, &|_, _| {})?;
+            let gc = remote::collect_garbage(store, (&cfg.device.id, &cfg.device.name), Some(&key), &|_, _| {})?;
             lock.release()?;
-            println!("已删除 {version}，清理了 {} 个数据块（{}）", gc.deleted_chunks, human(gc.freed_bytes));
+            if gc.postponed {
+                println!("已删除 {version}；有设备正在备份，不再使用的数据块下次再清理");
+            } else {
+                println!("已删除 {version}，清理了 {} 个数据块（{}）", gc.deleted_chunks, human(gc.freed_bytes));
+            }
         }
         Cmd::Check { key, version } => {
             let s = pick(remote::list_versions(store, &key)?, version.as_deref())?;
             let m = remote::read_manifest(store, &key, &s)?;
-            let present = remote::list_chunks(store, &key)?;
-            let missing: Vec<&str> =
-                m.chunks.iter().filter(|c| present.get(&c.h).is_none_or(|z| *z == 0)).map(|c| c.h.as_str()).collect();
+            let present = remote::list_chunks(store)?;
+            let all: Vec<&String> = m.components.iter().flat_map(|c| c.chunks.iter().map(|c| &c.h)).collect();
+            let missing: Vec<&&String> = all.iter().filter(|h| present.get(h.as_str()).is_none_or(|z| *z == 0)).collect();
             if missing.is_empty() {
-                println!("版本 {} 完整：{} 个数据块都在", s.id, m.chunks.len());
+                println!("版本 {} 完整：{} 个数据块都在（{}）", s.id, all.len(), parts(&s.components));
             } else {
                 anyhow::bail!("版本 {} 缺少 {} 个数据块，例如 {}", s.id, missing.len(), missing[0]);
             }

@@ -1,49 +1,57 @@
-//! Game backups in the cloud, on any path-based [`Store`]:
+//! Game backups in the cloud (format 2), on any path-based [`Store`]:
 //!
 //! ```text
-//! gamebackup/<key>/chunks/<blake3>            chunks, shared by all versions
-//! gamebackup/<key>/versions/<id>.manifest     manifest (zstd JSON)
-//! gamebackup/<key>/versions/<id>.json         summary, written last (commit marker)
-//! gamebackup/<key>/lock.json                  device backing up / cleaning up
+//! gamebackup/chunks/<blake3>                        chunks of all games (stored once)
+//! gamebackup/games/<key>/versions/<id>.manifest     manifest (zstd JSON)
+//! gamebackup/games/<key>/versions/<id>.json         summary, written last (commit marker)
+//! gamebackup/games/<key>/lock.json                  device backing up this game
+//! gamebackup/cleanup.json                           device deleting unused chunks
 //! ```
 //!
-//! Kept apart from the save snapshots (`games/<key>/…`): their listing,
-//! retention and copying to another cloud never see game backups.
+//! Kept apart from the save snapshots (`games/<key>/…` at the root): their
+//! listing, retention and copying to another cloud never see game backups.
+//! Chunks are shared by all games, so deleting unused ones looks at every
+//! game's versions and waits while any game is being backed up.
 
 use super::format::{Manifest, Summary};
 use crate::cloud::store::{join, Store};
+use crate::paths;
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 pub const PREFIX: &str = "gamebackup";
 /// A lock not refreshed for this long belongs to a device that stopped.
 const LOCK_MINUTES: i64 = 30;
 
-pub fn base(key: &str) -> String {
-    join(&[PREFIX, key])
+pub fn chunks_dir() -> String {
+    join(&[PREFIX, "chunks"])
 }
-pub fn chunks_dir(key: &str) -> String {
-    join(&[PREFIX, key, "chunks"])
+pub fn chunk_path(id: &str) -> String {
+    join(&[PREFIX, "chunks", id])
 }
-pub fn chunk_path(key: &str, id: &str) -> String {
-    join(&[PREFIX, key, "chunks", id])
+fn games_dir() -> String {
+    join(&[PREFIX, "games"])
 }
 fn versions_dir(key: &str) -> String {
-    join(&[PREFIX, key, "versions"])
+    join(&[PREFIX, "games", key, "versions"])
 }
 fn manifest_path(key: &str, id: &str) -> String {
-    join(&[PREFIX, key, "versions", &format!("{id}.manifest")])
+    join(&[PREFIX, "games", key, "versions", &format!("{id}.manifest")])
 }
 fn summary_path(key: &str, id: &str) -> String {
-    join(&[PREFIX, key, "versions", &format!("{id}.json")])
+    join(&[PREFIX, "games", key, "versions", &format!("{id}.json")])
 }
-fn lock_path(key: &str) -> String {
-    join(&[PREFIX, key, "lock.json"])
+fn game_lock_path(key: &str) -> String {
+    join(&[PREFIX, "games", key, "lock.json"])
+}
+fn cleanup_lock_path() -> String {
+    join(&[PREFIX, "cleanup.json"])
 }
 
-/// Committed versions, oldest first.
+/// Committed versions of a game, oldest first.
 pub fn list_versions(store: &dyn Store, key: &str) -> Result<Vec<Summary>> {
     let entries = store.list(&versions_dir(key))?;
     let names: HashSet<&str> = entries.iter().filter(|e| !e.is_dir).map(|e| e.name.as_str()).collect();
@@ -63,7 +71,23 @@ pub fn list_versions(store: &dyn Store, key: &str) -> Result<Vec<Summary>> {
     Ok(out)
 }
 
+/// Games that have game backups.
+pub fn list_games(store: &dyn Store) -> Result<Vec<String>> {
+    Ok(store.list(&games_dir())?.into_iter().filter(|e| e.is_dir).map(|e| e.name).collect())
+}
+
+/// Manifests never change once written, so they are kept on this PC by hash.
+fn cache_file(hash: &str) -> PathBuf {
+    paths::data_dir().join("gamebackup-cache").join("manifests").join(format!("{hash}.zst"))
+}
+
 pub fn read_manifest(store: &dyn Store, key: &str, summary: &Summary) -> Result<Manifest> {
+    let cached = cache_file(&summary.manifest_hash);
+    if let Ok(bytes) = std::fs::read(&cached) {
+        if let Ok(m) = Manifest::decode(&bytes, summary) {
+            return Ok(m);
+        }
+    }
     let bytes = store.read(&manifest_path(key, &summary.id))?.ok_or_else(|| {
         anyhow!(crate::tr!(
             "版本 {} 已不在云端（可能刚被删除）",
@@ -71,7 +95,9 @@ pub fn read_manifest(store: &dyn Store, key: &str, summary: &Summary) -> Result<
             summary.id
         ))
     })?;
-    Manifest::decode(&bytes, summary)
+    let m = Manifest::decode(&bytes, summary)?;
+    let _ = crate::util::atomic_write(&cached, &bytes);
+    Ok(m)
 }
 
 /// Write the manifest, then the summary that commits it.
@@ -79,6 +105,7 @@ pub fn commit_version(store: &dyn Store, manifest: &Manifest) -> Result<Summary>
     let (bytes, summary) = manifest.encode()?;
     store.write(&manifest_path(&manifest.game, &manifest.id), &bytes)?;
     store.write(&summary_path(&manifest.game, &manifest.id), &serde_json::to_vec_pretty(&summary)?)?;
+    let _ = crate::util::atomic_write(&cache_file(&summary.manifest_hash), &bytes);
     Ok(summary)
 }
 
@@ -90,9 +117,9 @@ pub fn delete_version(store: &dyn Store, key: &str, id: &str) -> Result<()> {
 }
 
 /// Chunks in the cloud: name → stored size.
-pub fn list_chunks(store: &dyn Store, key: &str) -> Result<HashMap<String, u64>> {
+pub fn list_chunks(store: &dyn Store) -> Result<HashMap<String, u64>> {
     Ok(store
-        .list(&chunks_dir(key))?
+        .list(&chunks_dir())?
         .into_iter()
         .filter(|e| !e.is_dir && e.name.len() == 64 && !e.name.contains('.'))
         .map(|e| (e.name, e.size))
@@ -105,32 +132,61 @@ pub struct GcReport {
     pub deleted_chunks: usize,
     pub freed_bytes: u64,
     pub kept_chunks: usize,
+    /// Not cleaned up because a device is backing up (it is done later).
+    pub postponed: bool,
 }
 
-/// Delete chunks no committed version uses. Call while holding the lock, so
-/// no backup is uploading chunks that are not committed yet.
-pub fn collect_garbage(store: &dyn Store, key: &str, progress: &dyn Fn(usize, usize)) -> Result<GcReport> {
-    let mut used = HashSet::new();
-    for s in list_versions(store, key)? {
-        for c in read_manifest(store, key, &s)?.chunks {
-            used.insert(c.h);
+/// Delete chunks no committed version of any game uses. Skipped (and
+/// reported as postponed) while another device backs up a game: its chunks
+/// are not committed yet. `own_game` is the game whose lock the caller holds.
+pub fn collect_garbage(store: &dyn Store, device: (&str, &str), own_game: Option<&str>, progress: &dyn Fn(usize, usize)) -> Result<GcReport> {
+    let lock = match Lock::acquire_path(store, &cleanup_lock_path(), device.0, device.1, "cleanup") {
+        Ok(l) => l,
+        Err(_) => return Ok(GcReport { postponed: true, ..Default::default() }),
+    };
+    let games = list_games(store)?;
+    for g in &games {
+        if Some(g.as_str()) == own_game {
+            continue;
+        }
+        if lock_holder_at(store, &game_lock_path(g))?.is_some() {
+            lock.release()?;
+            return Ok(GcReport { postponed: true, ..Default::default() });
         }
     }
-    let chunks = list_chunks(store, key)?;
+    let mut used = HashSet::new();
+    for g in &games {
+        for s in list_versions(store, g)? {
+            for c in read_manifest(store, g, &s)?.components {
+                used.extend(c.chunks.into_iter().map(|c| c.h));
+            }
+        }
+    }
+    let chunks = list_chunks(store)?;
     let unused: Vec<(&String, &u64)> = chunks.iter().filter(|(id, _)| !used.contains(*id)).collect();
     let mut report = GcReport { kept_chunks: chunks.len() - unused.len(), ..Default::default() };
     for (i, (id, size)) in unused.iter().enumerate() {
-        store.remove(&chunk_path(key, id))?;
+        store.remove(&chunk_path(id))?;
         report.deleted_chunks += 1;
         report.freed_bytes += **size;
         progress(i + 1, unused.len());
+        if i % 50 == 49 {
+            lock.refresh()?;
+        }
     }
+    lock.release()?;
     Ok(report)
 }
 
-/// Delete versions beyond the newest `keep`, then their unused chunks.
+/// Delete versions of `key` beyond the newest `keep`, then unused chunks.
 /// Returns the deleted version ids.
-pub fn prune(store: &dyn Store, key: &str, keep: usize, progress: &dyn Fn(usize, usize)) -> Result<(Vec<String>, GcReport)> {
+pub fn prune(
+    store: &dyn Store,
+    key: &str,
+    keep: usize,
+    device: (&str, &str),
+    progress: &dyn Fn(usize, usize),
+) -> Result<(Vec<String>, GcReport)> {
     let versions = list_versions(store, key)?;
     let keep = keep.max(1);
     let mut deleted = Vec::new();
@@ -140,17 +196,12 @@ pub fn prune(store: &dyn Store, key: &str, keep: usize, progress: &dyn Fn(usize,
             deleted.push(s.id.clone());
         }
     }
-    let gc = if deleted.is_empty() { GcReport::default() } else { collect_garbage(store, key, progress)? };
+    let gc = if deleted.is_empty() { GcReport::default() } else { collect_garbage(store, device, Some(key), progress)? };
     Ok((deleted, gc))
 }
 
-/// Space used by all chunks of a game in the cloud.
-pub fn stored_bytes(store: &dyn Store, key: &str) -> Result<u64> {
-    Ok(list_chunks(store, key)?.values().sum())
-}
-
 // ---------------------------------------------------------------------------
-// Lock
+// Locks
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,24 +218,44 @@ pub struct LockInfo {
 
 pub struct Lock<'a> {
     store: &'a dyn Store,
-    key: String,
+    path: String,
     info: std::sync::Mutex<LockInfo>,
     released: bool,
 }
 
-/// Who holds the lock of a game, when someone does and it has not expired.
-pub fn lock_holder(store: &dyn Store, key: &str) -> Result<Option<LockInfo>> {
+fn lock_holder_at(store: &dyn Store, path: &str) -> Result<Option<LockInfo>> {
     Ok(store
-        .read(&lock_path(key))?
+        .read(path)?
         .and_then(|b| serde_json::from_slice::<LockInfo>(&b).ok())
         .filter(|l| l.expires > Utc::now()))
 }
 
+/// Who is backing up a game, when someone is and the lock has not expired.
+pub fn lock_holder(store: &dyn Store, key: &str) -> Result<Option<LockInfo>> {
+    lock_holder_at(store, &game_lock_path(key))
+}
+
+/// Who is deleting unused chunks right now.
+pub fn cleanup_holder(store: &dyn Store) -> Result<Option<LockInfo>> {
+    lock_holder_at(store, &cleanup_lock_path())
+}
+
 impl<'a> Lock<'a> {
-    /// Take the lock of a game. Fails when another device (or another task
-    /// on this one) holds a lock that has not expired.
+    /// Take the backup lock of a game. Fails when another device (or task)
+    /// holds it, or while unused chunks are being deleted.
     pub fn acquire(store: &'a dyn Store, key: &str, device_id: &str, device_name: &str, kind: &str) -> Result<Lock<'a>> {
-        if let Some(l) = lock_holder(store, key)? {
+        if let Some(l) = cleanup_holder(store)? {
+            bail!(crate::tr!(
+                "「{}」正在清理云端不再使用的数据，请过几分钟再试",
+                "\"{}\" is cleaning up data no longer used in the cloud. Try again in a few minutes",
+                l.device_name
+            ));
+        }
+        Self::acquire_path(store, &game_lock_path(key), device_id, device_name, kind)
+    }
+
+    fn acquire_path(store: &'a dyn Store, path: &str, device_id: &str, device_name: &str, kind: &str) -> Result<Lock<'a>> {
+        if let Some(l) = lock_holder_at(store, path)? {
             let what = if l.kind == "cleanup" { crate::tr!("清理", "cleaning up") } else { crate::tr!("备份", "backing up") };
             bail!(crate::tr!(
                 "「{}」正在{what}这个游戏（从 {} 开始），请等它完成再试",
@@ -202,13 +273,13 @@ impl<'a> Lock<'a> {
             expires: now + Duration::minutes(LOCK_MINUTES),
             token: ulid::Ulid::new().to_string(),
         };
-        store.write(&lock_path(key), &serde_json::to_vec_pretty(&info)?)?;
+        store.write(path, &serde_json::to_vec_pretty(&info)?)?;
         // Two devices writing at once: the last write wins, the other backs off.
-        let back = lock_holder(store, key)?;
+        let back = lock_holder_at(store, path)?;
         if back.as_ref().map(|l| &l.token) != Some(&info.token) {
             bail!(crate::tr!("另一台设备刚开始处理这个游戏，请稍后再试", "Another device just started working on this game. Try again later"));
         }
-        Ok(Lock { store, key: key.to_string(), info: std::sync::Mutex::new(info), released: false })
+        Ok(Lock { store, path: path.to_string(), info: std::sync::Mutex::new(info), released: false })
     }
 
     /// Push the expiry time forward (long uploads).
@@ -218,7 +289,7 @@ impl<'a> Lock<'a> {
             info.expires = Utc::now() + Duration::minutes(LOCK_MINUTES);
             serde_json::to_vec_pretty(&*info)?
         };
-        self.store.write(&lock_path(&self.key), &bytes)
+        self.store.write(&self.path, &bytes)
     }
 
     pub fn release(mut self) -> Result<()> {
@@ -229,9 +300,9 @@ impl<'a> Lock<'a> {
     fn remove(&self) -> Result<()> {
         // Only our own lock: an expired one may have been taken over.
         let token = self.info.lock().unwrap().token.clone();
-        match lock_holder(self.store, &self.key)? {
+        match lock_holder_at(self.store, &self.path)? {
             Some(l) if l.token != token => Ok(()),
-            _ => self.store.remove(&lock_path(&self.key)),
+            _ => self.store.remove(&self.path),
         }
     }
 }

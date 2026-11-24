@@ -215,6 +215,7 @@ fn main() {
             achievements::ra_connect,
             achievements::ra_disconnect,
             achievements::ra_recent_games,
+            gamebackup::game_backup_pick_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Ludonimbus")

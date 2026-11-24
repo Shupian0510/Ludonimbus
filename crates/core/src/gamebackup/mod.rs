@@ -5,8 +5,11 @@
 //! Everything here works on a path-based [`Store`]; callers pass
 //! `provider.files()` of the current cloud, tests a local folder or WebDAV.
 //!
-//! - [`scan`]      which files of the folder go in (saves and caches don't)
-//! - [`chunker`]   content-defined chunking of the folder stream
+//! - [`components`] the parts of a game: program, game files, settings, firmware
+//! - [`scan`]      which files of a folder go in (saves and caches don't)
+//! - [`version`]   version labels of programs and game discs
+//! - [`chunker`]   content-defined chunking of the file streams
+//! - [`cache`]     what this PC knows about big files it backed up
 //! - [`chunk`]     stored chunk objects (zstd or raw), named by BLAKE3
 //! - [`format`]    manifests and summaries of versions
 //! - [`remote`]    the cloud layout, the lock, deleting and cleaning up
@@ -14,14 +17,17 @@
 //! - [`speedtest`] upload / download speed of a cloud
 
 pub mod backup;
+pub mod cache;
 pub mod chunk;
 pub mod chunker;
+pub mod components;
 pub mod format;
 pub mod install;
 pub mod remote;
 pub mod restore;
 pub mod scan;
 pub mod speedtest;
+pub mod version;
 
 use crate::cloud::store::Store;
 use crate::cloud::{self, CloudProvider, NotConfigured};
@@ -74,9 +80,11 @@ pub(crate) fn retry<T>(cancel: &AtomicBool, mut f: impl FnMut() -> Result<T>) ->
     }
 }
 
-/// Clouds where backups work but are slow (see the plan, section 1.4).
+/// Clouds where restoring is slow for reasons of their own: Baidu Netdisk
+/// throttles downloads without membership (see the plan, section 1.4).
+/// Otherwise speed is the user's own connection.
 pub fn is_slow_cloud(kind: &str) -> bool {
-    matches!(kind, "baiduPan" | "quark")
+    kind == "baiduPan"
 }
 
 /// Parallel uploads / downloads by default for a cloud kind.
@@ -94,21 +102,18 @@ pub fn default_threads(kind: &str) -> usize {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GameSettings {
-    /// Folder to back up; `None` = the game's folder.
+    /// The program's folder (or the whole folder); `None` = the game's folder.
     pub root: Option<PathBuf>,
     /// The user's own exclude patterns; `None` = those of the newest version.
     pub exclude: Option<Vec<String>>,
     /// Versions to keep: `None` = 2, `Some(0)` = all.
     pub keep: Option<usize>,
-    /// The last restore started on this PC, to offer continuing it.
-    pub last_restore: Option<PendingRestore>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct PendingRestore {
-    pub version: String,
-    pub target: PathBuf,
+    /// Back up keys, firmware and BIOS (off by default).
+    pub firmware: bool,
+    /// Parts the user doesn't want backed up.
+    pub skip: Vec<format::Kind>,
+    /// More files or folders that belong to the game (a ROM the rules don't know).
+    pub extra_content: Vec<PathBuf>,
 }
 
 pub const DEFAULT_KEEP: usize = 2;
@@ -145,7 +150,7 @@ pub fn update_settings(key: &str, f: impl FnOnce(&mut GameSettings)) -> Result<G
     Ok(out)
 }
 
-/// The folder a backup of `game` takes.
+/// The program's folder (or the whole folder) a backup of `game` takes.
 pub fn backup_root(game: &GameEntry, s: &GameSettings) -> Option<PathBuf> {
     s.root.clone().or_else(|| spec::install_dir(game))
 }
@@ -153,6 +158,37 @@ pub fn backup_root(game: &GameEntry, s: &GameSettings) -> Option<PathBuf> {
 /// The user's exclude patterns: this PC's, else those of the newest version.
 pub fn user_excludes(s: &GameSettings, latest: Option<&format::Manifest>) -> Vec<String> {
     s.exclude.clone().or_else(|| latest.map(|m| m.user_exclude.clone())).unwrap_or_default()
+}
+
+/// What to back up, from this PC's settings (and the newest version's
+/// exclude patterns when this PC has none).
+pub fn options(s: &GameSettings, latest: Option<&format::Manifest>) -> components::Options {
+    components::Options {
+        root: s.root.clone(),
+        user_exclude: user_excludes(s, latest),
+        firmware: s.firmware,
+        skip: s.skip.clone(),
+        extra_content: s.extra_content.clone(),
+    }
+}
+
+fn dirs_file() -> PathBuf {
+    paths::data_dir().join("gamebackup-dirs.json")
+}
+
+/// The folder an emulator's game files were last restored to on this PC.
+pub fn content_dir_for(adapter: &str) -> Option<PathBuf> {
+    let map: BTreeMap<String, PathBuf> = std::fs::read(dirs_file()).ok().and_then(|b| serde_json::from_slice(&b).ok())?;
+    map.get(adapter).cloned()
+}
+
+pub fn remember_content_dir(adapter: &str, dir: &std::path::Path) {
+    let mut map: BTreeMap<String, PathBuf> =
+        std::fs::read(dirs_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    map.insert(adapter.to_string(), dir.to_path_buf());
+    if let Ok(bytes) = serde_json::to_vec_pretty(&map) {
+        let _ = util::atomic_write(&dirs_file(), &bytes);
+    }
 }
 
 /// The newest version and its manifest, if any.

@@ -1,5 +1,5 @@
 // Browser preview data for game backups and the speed test.
-import type { BackupInfo, SpeedReport, VersionSummary } from "./gameBackupApi";
+import type { BackupInfo, PartKind, PartSummary, SpeedReport, VersionSummary } from "./gameBackupApi";
 import { currentLang } from "./i18n";
 
 const MB = 1024 * 1024;
@@ -35,8 +35,14 @@ const speed: SpeedReport = {
 };
 
 const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+const GB = 1024 ** 3;
 
-function version(id: string, hoursAgo: number, device: string, total: number, root: string): VersionSummary {
+function part(kind: PartKind, name: string, version: string | null, totalSize: number): PartSummary {
+  return { kind, name, version, totalSize, fileCount: 100 };
+}
+
+function version(id: string, hoursAgo: number, device: string, components: PartSummary[]): VersionSummary {
+  const total = components.reduce((n, c) => n + c.totalSize, 0);
   return {
     id,
     game: "",
@@ -45,15 +51,21 @@ function version(id: string, hoursAgo: number, device: string, total: number, ro
     deviceId: "d-1",
     deviceName: device,
     appVersion: "0.6.0",
-    root,
+    components,
     totalSize: total,
     storedSize: total * 0.8,
     newBytes: total * 0.05,
     fileCount: 1832,
-    chunkCount: 412,
     comment: "",
   };
 }
+
+const fefw = [part("program", "fefw recomp", "0.2.7", 0.18 * GB), part("config", L("设置和 mods", "Settings and mods"), null, 2_000_000)];
+const lantern = [
+  part("program", "Lantern Engine", "1.4", 0.3 * GB),
+  part("content", "Bloodborne", "v1.09", 21.4 * GB),
+  part("config", L("设置和 mods", "Settings and mods"), null, 40_000),
+];
 
 function info(key: string): BackupInfo {
   const roots: Record<string, string> = {
@@ -63,27 +75,43 @@ function info(key: string): BackupInfo {
   const root = roots[key] ?? "D:\\Games\\Example";
   const versions =
     key === "fe-fortunes-weave"
-      ? [version("01JF2", 20, "DESKTOP-MAIN", 3.4 * 1024 ** 3, root), version("01JF1", 300, "GPD-Win-Mini", 3.3 * 1024 ** 3, root)]
+      ? [version("01JF2", 20, "DESKTOP-MAIN", fefw), version("01JF1", 300, "GPD-Win-Mini", fefw)]
       : key === "bloodborne-lantern"
-        ? [version("01JB1", 50, "DESKTOP-MAIN", 21.7 * 1024 ** 3, root)]
+        ? [version("01JB1", 50, "DESKTOP-MAIN", lantern)]
         : [];
+  const missing = key === "bloodborne-lantern";
   return {
     hasCloud: true,
     cloudKind: "googleDrive",
     slow: false,
     root,
-    rootExists: key !== "bloodborne-lantern",
+    rootExists: !missing,
     rootCustom: false,
-    exeMissing: key === "bloodborne-lantern",
+    exeMissing: missing,
     versions,
     storedBytes: versions.reduce((n, v) => n + v.storedSize, 0),
     keep: 2,
     exclude: [],
     defaultExclude: ["**/*.log", "**/*.dmp", "**/*.tmp", "**/crashdumps/**", "**/shadercache/**", "**/shader_cache/**"],
-    fileOutside: null,
+    firmwareAvailable: missing,
+    firmware: false,
+    skip: [],
+    extraContent: [],
+    byParts: key !== "celeste",
     job: null,
     pendingRestore: null,
-    defaultTarget: key === "bloodborne-lantern" ? root : null,
+    restore: versions.length
+      ? {
+          hasProgram: true,
+          hasContent: missing,
+          programName: versions[0].components[0].name,
+          programVersion: versions[0].components[0].version,
+          installedProgram: missing ? null : root,
+          installedSame: true,
+          programDir: missing ? root : root,
+          contentDir: missing ? "D:\\PS4" : null,
+        }
+      : null,
     error: null,
   };
 }
@@ -96,12 +124,25 @@ export async function gameBackupMock(cmd: string, args: Record<string, unknown>)
     case "game_backup_info":
       return delay(info(key));
     case "game_backup_preview":
-      return delay({ root: info(key).root, files: 1832, bytes: 3.4 * 1024 ** 3, excludedFiles: 14, excludedBytes: 2_400_000, skippedLinks: 0 }, 600);
+      return delay(
+        (key === "bloodborne-lantern" ? lantern : fefw).map((p) => ({
+          kind: p.kind,
+          name: p.name,
+          version: p.version,
+          files: 120,
+          bytes: p.totalSize,
+          excludedFiles: p.kind === "program" ? 14 : 0,
+          excludedBytes: p.kind === "program" ? 2_400_000 : 0,
+        })),
+        600,
+      );
     case "game_backup_resolve_target":
       return delay(args.chosen as string);
     case "game_backup_take_install":
       return delay(false);
     case "game_backup_job":
+      return delay(null);
+    case "game_backup_pick_file":
       return delay(null);
     default:
       return delay(undefined);

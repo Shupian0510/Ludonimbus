@@ -71,6 +71,84 @@ pub struct Adapter {
     /// checked by hand.
     #[serde(default)]
     pub skip_junk: bool,
+    /// Game backups, emulators: a game's own files besides the disc image /
+    /// game folder the shortcut names (updates, DLC), by kind of game like
+    /// `game_saves`, with the same `<placeholders>`.
+    #[serde(default)]
+    pub game_files: BTreeMap<String, Vec<String>>,
+    /// Game backups: a game's own settings and mods (emulators: by kind of
+    /// game with `<placeholders>`; games: under `default`).
+    #[serde(default)]
+    pub game_config: BTreeMap<String, Vec<String>>,
+    /// Game backups: keys, firmware and BIOS files, backed up only when the
+    /// user ticks them.
+    #[serde(default)]
+    pub firmware: Vec<String>,
+    /// Game backups, emulators: left out of the program because it is data
+    /// of all games (installed titles, the console's storage, caches).
+    #[serde(default)]
+    pub program_exclude: Vec<String>,
+    /// Game backups, games: files the player provides (the original ROM or
+    /// disc image a recompilation reads).
+    #[serde(default)]
+    pub user_files: Vec<String>,
+    /// Game backups: game files and settings whose places a settings file
+    /// names (a game folder set in a launcher).
+    #[serde(default)]
+    pub user_files_from: Vec<PathsFrom>,
+    #[serde(default)]
+    pub config_from: Vec<PathsFrom>,
+    /// Game backups, recompilations: the launcher builds the game from the
+    /// player's game files on this PC, so what it builds is not backed up.
+    #[serde(default)]
+    pub build: Option<Build>,
+    /// Game backups, emulators: folders of add-ons (Cemu's graphic packs)
+    /// that belong to the game whose id their description file lists.
+    #[serde(default)]
+    pub game_packs: Option<Packs>,
+}
+
+/// Places read from a settings file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PathsFrom {
+    /// The settings file, `{root}/…`.
+    pub file: String,
+    /// INI keys (in any section) whose values are paths.
+    #[serde(default)]
+    pub ini: Vec<String>,
+    /// JSON keys, `/`-separated; `*` stands for every element.
+    #[serde(default)]
+    pub json: Vec<String>,
+    /// Places next to each one found (`../exefs` beside a `romfs` folder).
+    #[serde(default)]
+    pub also: Vec<String>,
+}
+
+/// A launcher that builds the game on this PC.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Build {
+    /// The program to open to build it, `{root}/…`.
+    #[serde(default)]
+    pub launcher: Option<String>,
+    /// What it builds, `{root}/…` patterns.
+    #[serde(default)]
+    pub output: Vec<String>,
+}
+
+/// Add-on folders, each with a description file listing the games it is for.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Packs {
+    /// `{root}/…` holding the add-ons.
+    pub dir: String,
+    /// The description file in each add-on folder.
+    pub file: String,
+    /// The key listing game ids, comma-separated.
+    pub key: String,
+    /// The game id with `<placeholders>`.
+    pub id: String,
 }
 
 impl Adapter {
