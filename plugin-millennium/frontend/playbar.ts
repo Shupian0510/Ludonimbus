@@ -6,7 +6,8 @@
 // often, so a MutationObserver puts the item back whenever it disappears.
 
 import { playSectionClasses } from 'millennium';
-import { BackupStatus, describe, describeInstall, isGame, parseBackup, parseReply, Reply, t, View } from './status';
+import { BackupStatus, describe, describeInstall, isGame, parseBackup, parseReply, playtimeView, Reply, t, View } from './status';
+import { showVersions } from './versions';
 
 const MARK = 'data-ludonimbus';
 const STYLE_ID = 'ludonimbus-style';
@@ -17,6 +18,8 @@ const STEAMID64_BASE = BigInt('76561197960265728');
 
 const CLOUD_SVG =
 	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>';
+const CLOCK_SVG =
+	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7z"/></svg>';
 const SYNC_SVG =
 	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0 0 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 0 0 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>';
 
@@ -42,6 +45,26 @@ const CSS = `
 .ludonimbus-plain .ludonimbus-label { font-size: 14px; text-transform: uppercase; color: rgba(255, 255, 255, 0.52); white-space: nowrap; }
 .ludonimbus-plain .ludonimbus-detail { font-size: 13px; color: rgba(255, 255, 255, 0.32); }
 .ludonimbus-bar { padding: 8px 16px; background: rgba(0,0,0,0.2); }
+.ludonimbus-playtime { cursor: default; }
+.ludonimbus-versions-modal { min-width: 560px; }
+.ludonimbus-versions { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+.ludonimbus-version { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 3px; background: rgba(255,255,255,0.04); }
+.ludonimbus-version[data-current="1"] { background: rgba(102,192,244,0.10); }
+.ludonimbus-version-main { flex: 1; min-width: 0; }
+.ludonimbus-version-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: #fff; font-size: 14px; }
+.ludonimbus-version-device { color: rgba(255,255,255,0.6); }
+.ludonimbus-version-sub { margin-top: 3px; font-size: 12px; color: rgba(255,255,255,0.45); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ludonimbus-version-restore { width: auto !important; min-width: 90px; flex: none; }
+.ludonimbus-version-confirm { margin-top: 8px; font-size: 13px; color: rgba(255,255,255,0.75); }
+.ludonimbus-version-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ludonimbus-version-actions > * { width: auto !important; min-width: 100px; }
+.ludonimbus-tag { font-size: 11px; padding: 1px 6px; border-radius: 2px; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); text-transform: uppercase; }
+.ludonimbus-tag-blue { background: rgba(102,192,244,0.2); color: #66c0f4; }
+.ludonimbus-versions-footer { display: flex; gap: 8px; justify-content: flex-end; }
+.ludonimbus-versions-footer > * { width: auto !important; min-width: 120px; }
+.ludonimbus-muted { color: rgba(255,255,255,0.5); font-size: 13px; margin: 6px 0; }
+.ludonimbus-error { color: #ff7b7b; font-size: 13px; margin: 6px 0; }
+.ludonimbus-message { margin-top: 10px; }
 @keyframes ludonimbus-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 `;
 
@@ -214,7 +237,7 @@ export class PlayBarStatus {
 		for (const { el, mode } of this.targets()) {
 			let item: HTMLElement | null =
 				mode === 'stat'
-					? el.querySelector(`:scope > [${MARK}]`)
+					? el.querySelector(`:scope > [${MARK}="stat"]`)
 					: el.nextElementSibling?.hasAttribute(MARK)
 						? (el.nextElementSibling as HTMLElement)
 						: null;
@@ -224,7 +247,44 @@ export class PlayBarStatus {
 				else el.insertAdjacentElement('afterend', item);
 			}
 			this.fill(item, view);
+			if (mode === 'stat') this.renderPlaytime(el, item);
 		}
+	}
+
+	/** "All devices" playtime next to Steam's own (this PC only) playtime. */
+	private renderPlaytime(stats: Element, status: HTMLElement): void {
+		const pt = playtimeView(this.reply);
+		let item = stats.querySelector<HTMLElement>(`:scope > [${MARK}="playtime"]`);
+		if (!pt) {
+			item?.remove();
+			return;
+		}
+		if (!item) {
+			const d = this.doc;
+			item = d.createElement('div');
+			item.setAttribute(MARK, 'playtime');
+			const native = !!(cls('GameStat') && cls('PlayBarLabel') && cls('PlayBarDetailLabel'));
+			item.className = ['ludonimbus-stat', 'ludonimbus-playtime', native ? '' : 'ludonimbus-plain', cls('GameStat')]
+				.filter(Boolean)
+				.join(' ');
+			const icon = d.createElement('div');
+			icon.className = ['ludonimbus-icon', cls('GameStatIcon')].filter(Boolean).join(' ');
+			icon.innerHTML = CLOCK_SVG;
+			const text = d.createElement('div');
+			text.className = ['ludonimbus-text', cls('GameStatRight')].filter(Boolean).join(' ');
+			const label = d.createElement('div');
+			label.className = ['ludonimbus-label', cls('PlayBarLabel')].filter(Boolean).join(' ');
+			const detail = d.createElement('div');
+			detail.className = ['ludonimbus-detail', cls('PlayBarDetailLabel')].filter(Boolean).join(' ');
+			text.append(label, detail);
+			item.append(icon, text);
+			stats.insertBefore(item, status);
+		}
+		const label = item.querySelector('.ludonimbus-label');
+		if (label && label.textContent !== t().allDevices) label.textContent = t().allDevices;
+		const detail = item.querySelector('.ludonimbus-detail');
+		if (detail && detail.textContent !== pt.text) detail.textContent = pt.text;
+		if (item.title !== pt.tip) item.title = pt.tip;
 	}
 
 	private create(mode: 'stat' | 'bar'): HTMLElement {
@@ -264,7 +324,7 @@ export class PlayBarStatus {
 		});
 
 		item.append(icon, text, sync);
-		item.addEventListener('click', () => this.openInApp());
+		item.addEventListener('click', () => this.click());
 		return wrap;
 	}
 
@@ -295,9 +355,24 @@ export class PlayBarStatus {
 		if (appId) await this.load(appId, false);
 	}
 
-	private openInApp(): void {
-		if (!isGame(this.reply)) return;
-		if (this.view?.install) backend.gamebackup_install(this.reply.key);
-		else backend.open_game(this.reply.key);
+	/** Show the version history, or open Ludonimbus for what only it can fix. */
+	private click(): void {
+		const reply = this.reply;
+		if (!isGame(reply) || !this.appId) return;
+		// The game's files are missing: Ludonimbus opens its restore dialog.
+		if (this.view?.action === 'install') {
+			backend.gamebackup_install(reply.key);
+			return;
+		}
+		const view = describe(reply, this.appId);
+		if (view?.action === 'versions') {
+			const appId = this.appId;
+			showVersions(this.doc.defaultView, reply.key, reply.name, () => {
+				// A sync or restore started: follow it closely.
+				this.load(appId, false).then(() => this.later(FAST_POLL_MS));
+			});
+		} else {
+			backend.open_game(reply.key);
+		}
 	}
 }

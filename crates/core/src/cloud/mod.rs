@@ -5,6 +5,8 @@
 //! <root>/devices/<device-id>.json
 //! <root>/games/<game-key>/game.json
 //! <root>/games/<game-key>/snapshots/<ULID>.zip   (+ <ULID>.json metadata)
+//! <root>/games/<game-key>/playtime/<device-id>.json
+//! <root>/games/<game-key>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
 //! ```
 //! Snapshots are immutable and append-only; there is no mutable "head"
 //! pointer, the newest mainline snapshot is the head.
@@ -12,7 +14,9 @@
 //! Google Drive implements [`CloudProvider`] directly (it is id-based and
 //! stores snapshot summaries in file properties). Every other backend only
 //! implements the small path-based [`store::Store`] trait and gets the layout
-//! from [`repo::Repo`].
+//! from [`repo::Repo`]. Data that is not a save snapshot (playtime,
+//! screenshots, ...) goes through [`CloudProvider::files`], the same folder
+//! seen as a path-based [`store::Store`], so it works on every backend.
 
 pub mod baidu;
 pub mod gdrive;
@@ -134,46 +138,10 @@ pub trait CloudProvider: Send + Sync {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>>;
     fn put_game(&self, game: &CloudGame) -> Result<()>;
     fn list_games(&self) -> Result<Vec<CloudGame>>;
-    /// Path-based access for data other than snapshots (game backups…).
-    // TEMPORARY placeholder for the version on `main` (where Google Drive
-    // implements `Store` itself); take `main`'s when merging.
-    fn files(&self) -> &dyn Store {
-        &NoFiles
-    }
-}
-
-// TEMPORARY, see `CloudProvider::files`: Google Drive has no path-based
-// store on this branch yet.
-struct NoFiles;
-
-impl Store for NoFiles {
-    fn kind(&self) -> &'static str {
-        "none"
-    }
-    fn label(&self) -> String {
-        String::new()
-    }
-    fn check(&self) -> Result<()> {
-        bail!(crate::tr!("这个云盘暂时不支持这个功能", "This cloud doesn't support this yet"))
-    }
-    fn list(&self, _: &str) -> Result<Vec<store::Entry>> {
-        self.check().map(|_| Vec::new())
-    }
-    fn read(&self, _: &str) -> Result<Option<Vec<u8>>> {
-        self.check().map(|_| None)
-    }
-    fn download(&self, _: &str, _: &Path) -> Result<()> {
-        self.check()
-    }
-    fn write(&self, _: &str, _: &[u8]) -> Result<()> {
-        self.check()
-    }
-    fn upload(&self, _: &str, _: &Path) -> Result<()> {
-        self.check()
-    }
-    fn remove(&self, _: &str) -> Result<()> {
-        self.check()
-    }
+    /// The same cloud folder as path-based storage, for data that is not a
+    /// save snapshot (playtime, screenshots, ...). Paths are relative to the
+    /// Ludonimbus folder, e.g. `games/<key>/playtime/<device>.json`.
+    fn files(&self) -> &dyn Store;
 }
 
 pub fn timeout(cfg: &AppConfig) -> Duration {

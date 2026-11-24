@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { GameView, Overview, StatusReport } from "../api";
-import { bytes, relTime, statusInfo } from "../format";
+import { bytes, duration, relTime, statusInfo } from "../format";
 import { currentLang, useT } from "../i18n";
 import { Badge, Button, Empty, Icon, Spinner } from "./ui";
 
@@ -150,6 +150,7 @@ export function Library({
                 <div className="card-name">{g.name}</div>
                 <div className="card-sub">
                   <StatusBadge game={g} check={checks[g.key]} checking={checking[g.key]} />
+                  {g.playtime.totalSecs > 0 && <span className="card-time muted">{duration(g.playtime.totalSecs)}</span>}
                 </div>
               </div>
             </button>
@@ -162,6 +163,7 @@ export function Library({
             <span>{t.library.col.status}</span>
             <span>{t.library.col.local}</span>
             <span>{t.library.col.lastSync}</span>
+            <span>{t.library.col.playtime}</span>
             <span>Steam</span>
           </div>
           {games.map((g) => {
@@ -183,6 +185,7 @@ export function Library({
                   {relTime(g.lastSyncAt)}
                   {g.lastSyncedDevice ? ` · ${g.lastSyncedDevice}` : ""}
                 </span>
+                <span className="muted">{g.playtime.totalSecs > 0 ? duration(g.playtime.totalSecs) : "—"}</span>
                 <span>
                   {needsAttention(g) ? (
                     <Badge tone="warn">{t.library.needsAttention}</Badge>

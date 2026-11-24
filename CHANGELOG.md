@@ -4,6 +4,20 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.6.0
+
+### 中文
+
+- 新增：游戏时间。每台电脑记录自己玩了多久（从 Steam 启动的和直接打开的都算），同步到云盘后所有设备相加；第一次使用时导入 Steam 已经记录的时间。游戏库和详情页显示总时间，鼠标悬停看各设备明细；Steam 游戏页多了一项「所有设备」。
+- 新增：Steam 截图同步（默认关闭，在「设置 → Steam → 截图同步」打开）。从 Steam 截的图会上传到云盘；选「上传并下载」时，其他电脑截的图会放进这台电脑同一个游戏的 Steam 截图文件夹。详情页新增「截图」标签，本机和云端的截图都能看。
+- 新增：在 Steam 游戏页点「Ludonimbus 云存档」，直接列出云存档的版本历史，可以恢复到任意版本，不用打开 Ludonimbus。
+
+### English
+
+- New: playtime. Each PC records how long you play (started from Steam or directly), and the cloud adds it up over all your devices; the minutes Steam already counted are imported the first time. The library and the game page show the total, with a per-device breakdown on hover; the game page in Steam gets an "All devices" item.
+- New: Steam screenshot sync (off by default; turn it on in Settings → Steam → Screenshot sync). Screenshots taken in Steam are uploaded to your cloud; with "upload and download", screenshots from your other PCs go into this PC's Steam screenshot folder of the same game. The game page has a new Screenshots tab showing screenshots on this PC and in the cloud.
+- New: click "Ludonimbus Cloud Saves" on a game's page in Steam to see the version history of its cloud saves and restore any version, without opening Ludonimbus.
+
 ## 0.5.0
 
 ### 中文

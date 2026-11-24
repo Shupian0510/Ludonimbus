@@ -16,7 +16,7 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 
 日志：`%APPDATA%\Ludonimbus\logs\gamebackup.log`（每次备份 / 恢复 / 删除的开始和结果）、`agent.log`（Steam 插件的请求）。云端的数据在云盘 `Ludonimbus` 文件夹下的 `gamebackup\<游戏>\`。
 
-**还不能测 Google Drive**：本分支只有 `CloudProvider::files()` 的临时占位，Google Drive 会提示「这个云盘暂时不支持这个功能」。等主会话的 `files()` 合并进 `main` 后再测 Google Drive（第 9 节）。
+这个分支已经合并了 `main`（0.6 的游戏时间、截图、Steam 里的版本列表），可以和 [testing-v0.6.md](testing-v0.6.md) 用同一个安装包测。
 
 ## 已经自动验证过的
 
@@ -106,7 +106,7 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 2. 夸克网盘：卡片和第一次备份的确认框里显示上传的预计时间。
 3. 实际速度和提示差太多的话告诉我（附第 1 节的测速报告）。
 
-### 9. Google Drive（主会话的 `files()` 合并之后）
+### 9. Google Drive
 
 1. 测速能跑通，测试文件删干净。
 2. 第 2、5 节在 Google Drive 上各做一遍。云端硬盘里能看到 `Ludonimbus\gamebackup\<游戏>\` 文件夹。

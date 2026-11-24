@@ -33,6 +33,48 @@ export interface GameStatus {
 	checkedAt: string | null;
 	/** Ludonimbus's interface language. */
 	lang?: string;
+	/** 0.6.0 and later. */
+	playtime?: Playtime;
+	apiVersion?: number;
+}
+
+export interface PlaytimeDevice {
+	device: string;
+	deviceName: string;
+	secs: number;
+	lastPlayed: string | null;
+	thisDevice: boolean;
+	steamMinutes: number | null;
+}
+
+export interface Playtime {
+	totalSecs: number;
+	lastPlayed: string | null;
+	devices: PlaytimeDevice[];
+}
+
+export interface Snapshot {
+	id: string;
+	deviceId: string;
+	deviceName: string;
+	createdAt: string;
+	trigger: string;
+	totalSize: number;
+	fileCount: number;
+	comment: string;
+	locked: boolean;
+}
+
+export interface SnapshotList {
+	key: string;
+	name: string;
+	snapshots: Snapshot[];
+	headId: string | null;
+	lastSyncedId: string | null;
+	deviceId: string;
+	pending: number;
+	/** Why restoring is not possible right now (game running, syncing). */
+	busy: string | null;
 }
 
 export type Reply = GameStatus | { managed: false } | { error: string; status?: number; detail?: string | null };
@@ -49,8 +91,8 @@ export interface View {
 	busy: boolean;
 	/** Clicking opens the game in Ludonimbus. */
 	key: string | null;
-	/** Clicking opens the restore dialog ("install from the cloud"). */
-	install?: boolean;
+	/** What a click does: show the version history, open Ludonimbus (conflicts, repairs), or open its restore dialog for the game files. */
+	action?: 'versions' | 'open' | 'install';
 }
 
 /** `GET /v1/games/{key}/gamebackup`. */
@@ -71,7 +113,7 @@ export function describeInstall(b: BackupStatus | null, key: string): View | nul
 	const m = t();
 	if (b.job?.kind === 'restore') {
 		const pct = b.job.total > 0 && b.job.phase === 'downloading' ? Math.floor((b.job.done / b.job.total) * 100) : null;
-		return { text: m.installing(pct), tone: 'info', tip: m.clickToOpen, canSync: false, busy: true, key };
+		return { text: m.installing(pct), tone: 'info', tip: m.clickToOpen, canSync: false, busy: true, key, action: 'open' };
 	}
 	if (b.exeMissing && b.latest) {
 		const gb = (b.latest.totalSize / 1024 ** 3).toFixed(1);
@@ -82,7 +124,7 @@ export function describeInstall(b: BackupStatus | null, key: string): View | nul
 			canSync: false,
 			busy: false,
 			key,
-			install: true,
+			action: 'install',
 		};
 	}
 	return null;
@@ -168,6 +210,42 @@ const TEXTS = {
 		empty: '还没有存档',
 		error: '读取存档出错',
 		checking: '正在检查…',
+		clickVersions: '点击查看版本历史',
+		allDevices: '所有设备',
+		hours: (h: string) => `${h} 小时`,
+		minutes: (n: number) => `${n} 分钟`,
+		playtimeTitle: '所有设备的游戏时间（Ludonimbus 记录）',
+		playtimeDevice: (name: string, time: string, mine: boolean) => `${name}${mine ? '（本机）' : ''}：${time}`,
+		playtimeSteam: (time: string) => `　其中 ${time}是开始使用 Ludonimbus 之前 Steam 记录的`,
+		versionsTitle: (name: string) => `${name} · 云存档版本`,
+		loadingVersions: '正在读取版本历史…',
+		noVersions: '云端还没有版本。玩一次游戏或点「立即同步」后就会出现。',
+		latest: '最新',
+		current: '本机当前',
+		locked: '已锁定',
+		thisPc: '（本机）',
+		files: (n: number, size: string) => `${n} 个文件 · ${size}`,
+		restore: '恢复',
+		restoreTitle: '恢复到这个版本？',
+		restoreText: (device: string, at: string) => `将把存档恢复为 ${device} 在 ${at} 保存的版本。`,
+		restoreSafe: '当前存档如果云端还没有，会先自动备份，不会丢。',
+		confirmRestore: '恢复',
+		cancel: '取消',
+		close: '关闭',
+		openApp: '在 Ludonimbus 中打开',
+		restoring: '正在恢复…',
+		cantRestore: (reason: string) => `现在不能恢复：${reason}`,
+		needUpdate: '需要更新 Ludonimbus 到 0.6 或更高版本才能在 Steam 里查看版本历史。',
+		trigger: {
+			'auto-exit': '退出游戏后自动',
+			'pre-launch': '启动前补传',
+			passive: '后台检测到退出',
+			'sync-now': '手动同步',
+			manual: '手动备份',
+			restore: '恢复旧版本',
+			'pre-restore': '恢复前保护',
+			'conflict-keep': '冲突时保留',
+		} as Record<string, string>,
 		installFromCloud: '本机没有游戏文件 · 点击从云端安装',
 		installing: (pct: number | null) => (pct === null ? '正在从云端安装…' : `正在从云端安装 ${pct}%`),
 		installTip: (at: string, device: string, gb: string) => `云端有游戏本体备份：${at}，来自 ${device}，${gb} GB
@@ -213,6 +291,42 @@ const TEXTS = {
 		empty: 'No saves yet',
 		error: 'Error reading saves',
 		checking: 'Checking…',
+		clickVersions: 'Click to see the version history',
+		allDevices: 'All devices',
+		hours: (h: string) => `${h} ${h === '1.0' ? 'hour' : 'hours'}`,
+		minutes: (n: number) => `${n} ${pl(n, 'minute', 'minutes')}`,
+		playtimeTitle: 'Playtime on all devices (kept by Ludonimbus)',
+		playtimeDevice: (name: string, time: string, mine: boolean) => `${name}${mine ? ' (this PC)' : ''}: ${time}`,
+		playtimeSteam: (time: string) => `  of which ${time} was counted by Steam before you used Ludonimbus`,
+		versionsTitle: (name: string) => `${name} · Cloud save versions`,
+		loadingVersions: 'Reading the version history…',
+		noVersions: 'No versions in the cloud yet. Play once or press "Sync now" to create the first one.',
+		latest: 'Latest',
+		current: 'On this PC',
+		locked: 'Locked',
+		thisPc: ' (this PC)',
+		files: (n: number, size: string) => `${n} ${pl(n, 'file', 'files')} · ${size}`,
+		restore: 'Restore',
+		restoreTitle: 'Restore this version?',
+		restoreText: (device: string, at: string) => `Your saves will be restored to the version ${device} saved at ${at}.`,
+		restoreSafe: "If the current saves aren't in the cloud yet, they're backed up first, so nothing is lost.",
+		confirmRestore: 'Restore',
+		cancel: 'Cancel',
+		close: 'Close',
+		openApp: 'Open in Ludonimbus',
+		restoring: 'Restoring…',
+		cantRestore: (reason: string) => `Can't restore right now: ${reason}`,
+		needUpdate: 'Update Ludonimbus to 0.6 or later to see the version history in Steam.',
+		trigger: {
+			'auto-exit': 'After the game exited',
+			'pre-launch': 'Uploaded before launch',
+			passive: 'Seen exiting in the background',
+			'sync-now': 'Sync now',
+			manual: 'Manual backup',
+			restore: 'Restored an older version',
+			'pre-restore': 'Kept before restoring',
+			'conflict-keep': 'Kept in a conflict',
+		} as Record<string, string>,
 		installFromCloud: 'Game files missing · Click to install from the cloud',
 		installing: (pct: number | null) => (pct === null ? 'Installing from the cloud…' : `Installing from the cloud ${pct}%`),
 		installTip: (at: string, device: string, gb: string) =>
@@ -236,7 +350,7 @@ export function relTime(iso: string | null | undefined): string {
 	return dateTime(iso);
 }
 
-function dateTime(iso: string): string {
+export function dateTime(iso: string): string {
 	const d = new Date(iso);
 	const p = (n: number) => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -283,9 +397,13 @@ export function describe(reply: Reply | null, appId: string): View | null {
 	if (g.pending > 0) tips.push(m.pending(g.pending));
 	if (g.lastError) tips.push(m.lastError(g.lastError));
 	if (!g.steamEnabled) tips.push(m.notEnabled);
-	tips.push(m.clickToOpen);
+	// Conflicts and broken shortcuts are sorted out in Ludonimbus; otherwise
+	// a click shows the version history (app 0.6 and later).
+	const needsApp = g.status === 'conflict' || BROKEN_SHORTCUT.includes(g.health);
+	const action: 'versions' | 'open' = !needsApp && (g.apiVersion ?? 1) >= 2 ? 'versions' : 'open';
+	tips.push(action === 'versions' ? m.clickVersions : m.clickToOpen);
 	const tip = tips.join('\n');
-	const base = { tip, key: g.key, canSync: false, busy: false };
+	const base = { tip, key: g.key, canSync: false, busy: false, action };
 
 	switch (g.phase) {
 		case 'preLaunch':
@@ -331,4 +449,35 @@ export function describe(reply: Reply | null, appId: string): View | null {
 		default:
 			return { ...base, text: m.checking, tone: 'muted', busy: true };
 	}
+}
+
+export function bytes(n: number): string {
+	if (n < 1024) return `${n} B`;
+	const units = ['KB', 'MB', 'GB', 'TB'];
+	let v = n / 1024;
+	let i = 0;
+	while (v >= 1024 && i < units.length - 1) {
+		v /= 1024;
+		i++;
+	}
+	return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
+}
+
+export function duration(secs: number): string {
+	const m = t();
+	if (secs < 3600) return m.minutes(Math.max(1, Math.round(secs / 60)));
+	const h = secs / 3600;
+	return m.hours(h >= 100 ? String(Math.round(h)) : h.toFixed(1));
+}
+
+/** The "All devices" playtime item, when Ludonimbus has recorded any. */
+export function playtimeView(reply: Reply | null): { text: string; tip: string } | null {
+	if (!isGame(reply) || !reply.playtime || reply.playtime.totalSecs <= 0) return null;
+	const m = t();
+	const lines = [m.playtimeTitle];
+	for (const d of reply.playtime.devices) {
+		lines.push(m.playtimeDevice(d.deviceName, duration(d.secs), d.thisDevice));
+		if (d.steamMinutes) lines.push(m.playtimeSteam(duration(d.steamMinutes * 60)));
+	}
+	return { text: duration(reply.playtime.totalSecs), tip: lines.join('\n') };
 }

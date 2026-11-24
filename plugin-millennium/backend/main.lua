@@ -135,6 +135,32 @@ function open_game(key)
 end
 
 ---@ffi
+--- Version history of a game in the cloud, as JSON text.
+---@param key string
+---@return string
+function list_snapshots(key)
+    local k = key_part(key)
+    if not k then
+        return failure("bad_request")
+    end
+    return request("GET", "/v1/games/" .. k .. "/snapshots")
+end
+
+---@ffi
+--- Restore a version of a game's saves in the background.
+---@param key string
+---@param id string
+---@return string
+function restore(key, id)
+    local k = key_part(key)
+    local v = tostring(id or "")
+    if not k or not v:match("^%w+$") then
+        return failure("bad_request")
+    end
+    return request("POST", "/v1/games/" .. k .. "/restore/" .. v)
+end
+
+---@ffi
 --- Game backup state of a game: files missing, newest backup, running restore.
 ---@param key string
 ---@return string

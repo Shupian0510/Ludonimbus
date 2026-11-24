@@ -199,6 +199,10 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEnt
     if due && cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
         let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
     }
+    // Upload this device's playtime, fetch the other devices'.
+    if let Err(e) = crate::playtime::sync(cloud.files(), &ctx.cfg, &game.key) {
+        logger::log("sync", format!("{}: playtime sync failed: {e:#}", game.key));
+    }
 }
 
 fn upload_local(

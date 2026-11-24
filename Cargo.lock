@@ -2674,6 +2674,7 @@ dependencies = [
  "chrono",
  "ludonimbus-core",
  "opener",
+ "percent-encoding",
  "rand 0.8.8",
  "rfd",
  "serde",
