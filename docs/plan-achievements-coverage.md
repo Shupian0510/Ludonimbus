@@ -44,6 +44,14 @@
 
 **决定：c 优先，其次 b，不做 a**（一度选了 a，合并前改掉了，分支历史里也不留密钥）。没有密钥时 PS4 奖杯显示编号和图标（图标在 `trophy00.trp` 里不加密）。设置里的提示只说密钥来自用户自己的主机或模拟器配置，不给出密钥、也不链接到发布密钥的页面。解出来的名单只缓存在本机，换了密钥或清除密钥后自动重新解出。
 
+### 0.3 火焰纹章 万缕千丝 recomp 的存档（2026-11-24 调查）
+
+- **文件**：`save/account/<用户>/000/` 下的 `Auto`、`Chapter_<篇>_<部>_<章>`（例如 `Chapter_Ism_0_2`）和 64 字节的 `Global`。
+- **格式**：文件头 0x124 字节（魔数 `DD BC EF CD`），之后是一整段 zstd，不加密。解开后 `Auto` 约 140 KB。
+- **内容**：按名字组织的块，块表是「FNV-1 32 位哈希（名字的 UTF-8）→ 偏移」。能对上的块名有「実績」「環境設定」「限定」「中継」「共有」「イベント」「状況」「日時」和九个「…篇」。块里是变量表：每条是「哈希 + 值」，值是 1 个字节，或者 `FF` 加 4 个字节（整数或浮点）。
+- **卡在哪里**：变量名在游戏能读到的数据表（`GameData/*.bin`）、脚本（`Script/**`）、对话脚本（`Msg/TalkMsg.elf`）和程序的字符串里都找不到，用 FNV-1 / FNV-1a / CRC32 / Murmur3 和 UTF-8 / UTF-16 / Shift-JIS 都试过。名字多半在编译时就只剩哈希了。
+- **还能怎么做**：对比同一个存档在不同进度的版本，认出「每过一章就变」的变量。你现在的两个存档都在 0 部 2 章，不够。等 Ludonimbus 的版本历史里有了后面几章的存档再做；或者请 recomp 作者在日志里写出章节完成（它已经有 `fefw.log`）。
+
 ### 0.2 修订后的顺序
 
 | 步骤 | 内容 | 覆盖 |
@@ -51,7 +59,7 @@
 | 1 | ✅ **已完成（2026-11-24）** PS4 奖杯解密（`achievements/trp.rs`）：有密钥时（shadPS4 的 `TrophyKey` 或设置里填的）名称、说明、等级、隐藏都来自游戏文件，按界面语言选 `TROP_XX`；没有密钥时只取图标。在你的 Bloodborne 上验证：40 个奖杯，官方简体中文名称和图标 | Bloodborne；所有能找到游戏文件夹的 shadPS4 / Lantern 游戏（PS4 重编译游戏的识别在第 2 步） |
 | 2 | ✅ **已完成（2026-11-24）** 新来源 `ps4port`（`trophy.rs`）：在移植版文件夹里找原版游戏的 `npbind.dat` 和 `trophy00.trp` 解出名单；解锁读 `trophies.log`、`unlocked.txt`、`progress_user*.txt`、`trophies.dat` / `CUSA…-userN.bin`（128 位位图）、shadPS4 式 `<NPWR>.xml`、运行日志。Ludonimbus 规则里平台是「（PS4）」的游戏（Diablo III、Dead Nation、Resogun …）自动关联。格式用构造的文件测过，还没有真实移植版的样本 | Bloodborne 以外的 PS4 移植 |
 | 3 | ✅ **已完成大部分（2026-11-24）** 新来源 `rules`（`rules.rs`）：TrophyNX 格式，运行时从它的仓库下载并缓存（不放进仓库），本机 `achievements\rules\<标题 ID>.json` 优先。读取器：`json`（含 XOR）、`byml`、`gamedata_hash`（自动判断字节序，Switch 小端、Wii U 大端）、`totk_progress`、`binary_le`；规则 `flag` / `count` / `sum` / `launches` / `playtime_hours`。按标题 ID 关联：Ryujinx 等模拟器的每个游戏、Switch 重编译（Super Mario Odyssey、BotW、Kirby、Pokémon Legends），**以及 Cemu 上的 BotW（Wii U 存档结构相同）**。在你电脑上的 BotW（Cemu）实测：下载规则、找到 5 个存档槽、判断出大端，解锁 4 个。还没做的读取器：`gvas`、`nrbf`、`sgb`、`deltarune`、`theatrhythm`；名单只有英文 | TrophyNX 的 17 个有存档规则的游戏 + 28 个只有游玩统计的游戏 |
-| 4 | ✅ **开始了（2026-11-24）** 自己的规则库：`adapters/achievements/<适配器>.json`，格式兼容 TrophyNX，加了中文字段，随应用发布，按适配器自动关联（写法见 [achievement-rules.md](achievement-rules.md)）。第一份是 **Longshot 的时之笛**（45 个成就：精灵石、勋章、乐曲、主要道具、黄金骷髅蜘蛛 10 / 50 / 100、生命上限、加侬城结界、小游戏），名字从游戏自己的数据列表核对过，你的 6 个存档槽解锁 13 个。**火焰纹章 万缕千丝 recomp** 的存档开头之后是压缩或加密的数据，暂时读不了。Ship of Harkinian、2 Ship 2 Harkinian、Zelda 64 Recompiled、sm64 移植等要先有存档样本（你这台电脑上没有装）。「记录存档变化」工具还没做 | 没有成就的重编译游戏 |
+| 4 | ✅ **开始了（2026-11-24）** 自己的规则库：`adapters/achievements/<适配器>.json`，格式兼容 TrophyNX，加了中文字段，随应用发布，按适配器自动关联（写法见 [achievement-rules.md](achievement-rules.md)）。第一份是 **Longshot 的时之笛**（45 个成就：精灵石、勋章、乐曲、主要道具、黄金骷髅蜘蛛 10 / 50 / 100、生命上限、加侬城结界、小游戏），名字从游戏自己的数据列表核对过，你的 6 个存档槽解锁 13 个。**火焰纹章 万缕千丝 recomp** 暂时做不了，见 0.3。Ship of Harkinian、2 Ship 2 Harkinian、Zelda 64 Recompiled、sm64 移植等要先有存档样本（你这台电脑上没有装）。「记录存档变化」工具还没做 | 没有成就的重编译游戏 |
 | 5 | Xenia；其他商店 PC 游戏 | Xbox 360、GOG / Epic |
 
 第 2 节的「社区名单」对 PS4 不再需要，只留给以后「模拟器只给编号、又解不开游戏文件」的情况。
