@@ -135,6 +135,8 @@ export interface GameSource {
   detail: string | null;
   /** The group the user chose instead; null = detected. */
   label: string | null;
+  /** Emulators: the device icon named in the rule (`cube`, `hybrid`…). */
+  icon: string | null;
 }
 
 export interface PlaytimeDevice {

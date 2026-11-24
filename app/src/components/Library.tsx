@@ -52,14 +52,34 @@ function Cover({ game }: { game: GameView }) {
 
 const srcClass = (g: SourceGroup) => `src-${g.named ? "named" : g.kind}`;
 
-/** A game's source badge: the emulator's name, "Recomp / port", the user's group… */
+/**
+ * A game's source badge: only the icon on covers (the name in its tooltip),
+ * icon and name in the list.
+ */
 function SourceTag({ group, game, inline }: { group: SourceGroup; game: GameView; inline?: boolean }) {
   const text = tagText(group);
   if (!text) return null;
-  const tip = game.source.detail ?? group.detail ?? undefined;
+  const detail = game.source.detail ?? group.detail;
+  if (inline) {
+    return (
+      <span className={`src-tag ${srcClass(group)}`} title={detail ?? undefined}>
+        <Icon name={group.icon} size={12} />
+        {text}
+      </span>
+    );
+  }
+  const tip = detail && detail !== text ? `${text} · ${detail}` : text;
   return (
-    <span className={`src-tag ${srcClass(group)}${inline ? " src-inline" : ""}`} title={tip}>
-      {text}
+    <span className={`src-badge ${srcClass(group)}`} title={tip} aria-label={tip} role="img">
+      <Icon name={group.icon} size={15} />
+    </span>
+  );
+}
+
+function SourceIcon({ group, size = 14 }: { group: SourceGroup; size?: number }) {
+  return (
+    <span className={`src-ico ${srcClass(group)}`}>
+      <Icon name={group.icon} size={size} />
     </span>
   );
 }
@@ -139,7 +159,9 @@ function GroupHead({
   );
   return (
     <div className="lib-group-head">
-      <span className={`src-dot ${srcClass(group)}`} />
+      <span className={`src-tile ${srcClass(group)}`}>
+        <Icon name={group.icon} size={17} />
+      </span>
       <h2>{group.label}</h2>
       <span className="muted lib-group-meta">
         {group.detail && <>{group.detail} · </>}
@@ -405,7 +427,7 @@ export function Library({
               onClick={() => setFilterSaved(active === group.id ? null : group.id)}
               title={group.detail ?? undefined}
             >
-              <span className={`src-dot ${srcClass(group)}`} />
+              <SourceIcon group={group} />
               {group.label}
               <span className="chip-count">{list.length}</span>
             </button>

@@ -406,11 +406,14 @@ pub struct Source {
     pub detail: Option<String>,
     /// The group the user chose instead (see [`GameEntry::source`]).
     pub label: Option<String>,
+    /// Emulators: the icon named in the rule (see [`Adapter::icon`]).
+    pub icon: Option<String>,
 }
 
 /// Where a game comes from, worked out from its save rule and program.
 pub fn source(g: &GameEntry) -> Source {
-    let (kind, name, detail) = match g.adapter.as_deref().and_then(adapters::find) {
+    let adapter = g.adapter.as_deref().and_then(adapters::find);
+    let (kind, name, detail) = match adapter {
         Some(a) if a.is_emulator() => (SourceKind::Emulator, Some(a.name.clone()), a.platform_label()),
         Some(a) => (SourceKind::Recomp, None, a.platform_label()),
         None if g.exe.as_deref().is_some_and(|e| crate::xbox::is_launch_helper(e) || crate::xbox::content_dir(e).is_some()) => {
@@ -420,7 +423,8 @@ pub fn source(g: &GameEntry) -> Source {
         None => (SourceKind::Custom, None, None),
     };
     let label = g.source.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    Source { kind, name, detail, label }
+    let icon = adapter.filter(|a| a.is_emulator()).and_then(|a| a.icon.clone());
+    Source { kind, name, detail, label, icon }
 }
 
 pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> Result<GameEntry> {
@@ -758,6 +762,7 @@ mod tests {
         assert_eq!(s.kind, SourceKind::Emulator);
         assert_eq!(s.name.as_deref(), Some("Dolphin"));
         assert!(s.detail.is_some());
+        assert_eq!(s.icon.as_deref(), Some("cube"));
 
         let s = source(&game(Some("zelda-oot-longshot"), None, None));
         assert_eq!(s.kind, SourceKind::Recomp);

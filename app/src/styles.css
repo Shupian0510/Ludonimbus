@@ -632,51 +632,58 @@ textarea.input {
 .src-xbox { --src: #5ec26a; }
 .src-custom { --src: #7d8fa3; }
 .src-named { --src: #f0b04a; }
-.src-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--src);
+.src-ico {
+  display: inline-grid;
+  place-items: center;
+  color: var(--src);
   flex: none;
 }
-.src-tag {
+/* On covers: the icon only, in a round glass chip (mirrors .attention). */
+.src-badge {
   position: absolute;
   top: 8px;
   left: 8px;
-  max-width: calc(100% - 50px);
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--src);
+  background: rgba(10, 14, 20, 0.62);
+  backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+/* In the list: icon and name. */
+.src-tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 20px;
-  padding: 0 8px 0 7px;
-  border-radius: 10px;
-  background: rgba(10, 14, 20, 0.74);
-  backdrop-filter: blur(4px);
-  color: #e8eff6;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 20px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.src-tag::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--src);
-  flex: none;
-}
-.src-tag.src-inline {
-  position: static;
-  max-width: none;
+  gap: 4px;
   height: 18px;
-  line-height: 18px;
+  padding: 0 7px 0 5px;
   margin-right: 6px;
+  border-radius: 9px;
   vertical-align: 1px;
   background: rgba(125, 143, 163, 0.14);
   color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.src-tag svg {
+  color: var(--src);
+  flex: none;
+}
+/* Group headers: the icon on a tinted tile. */
+.src-tile {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--src);
+  background: color-mix(in srgb, var(--src) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--src) 28%, transparent);
 }
 .source-chips {
   margin: -4px 0 20px;
