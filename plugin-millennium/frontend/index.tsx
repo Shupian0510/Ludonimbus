@@ -6,11 +6,13 @@ import { useEffect, useState } from 'react';
 import { AchievementsBar } from './achievements';
 import { PlayBarStatus } from './playbar';
 import { parseReply, setLang, t } from './status';
+import { SteamPlaytime } from './steamplaytime';
 import { AchievementToasts } from './toast';
 
 const bars = new Map<Document, PlayBarStatus>();
 const achievementBars = new Map<Document, AchievementsBar>();
 const toasts = new AchievementToasts();
+const steamPlaytime = new SteamPlaytime();
 
 function attach(name: string | undefined, doc: Document | undefined): void {
 	// Only the desktop library window ("SP Desktop_uid0"), not Big Picture.
@@ -61,6 +63,7 @@ export default definePlugin(() => {
 	attachExisting();
 	// New achievement unlocks: shown with Steam's own popup (toast.ts).
 	toasts.start();
+	steamPlaytime.start();
 
 	return {
 		title: t().label,

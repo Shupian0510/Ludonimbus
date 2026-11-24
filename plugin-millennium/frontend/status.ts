@@ -211,12 +211,6 @@ const TEXTS = {
 		error: '读取存档出错',
 		checking: '正在检查…',
 		clickVersions: '点击查看版本历史',
-		allDevices: '所有设备',
-		hours: (h: string) => `${h} 小时`,
-		minutes: (n: number) => `${n} 分钟`,
-		playtimeTitle: '所有设备的游戏时间（Ludonimbus 记录）',
-		playtimeDevice: (name: string, time: string, mine: boolean) => `${name}${mine ? '（本机）' : ''}：${time}`,
-		playtimeSteam: (time: string) => `　其中 ${time}是开始使用 Ludonimbus 之前 Steam 记录的`,
 		versionsTitle: (name: string) => `${name} · 云存档版本`,
 		loadingVersions: '正在读取版本历史…',
 		noVersions: '云端还没有版本。玩一次游戏或点「立即同步」后就会出现。',
@@ -292,12 +286,6 @@ const TEXTS = {
 		error: 'Error reading saves',
 		checking: 'Checking…',
 		clickVersions: 'Click to see the version history',
-		allDevices: 'All devices',
-		hours: (h: string) => `${h} ${h === '1.0' ? 'hour' : 'hours'}`,
-		minutes: (n: number) => `${n} ${pl(n, 'minute', 'minutes')}`,
-		playtimeTitle: 'Playtime on all devices (kept by Ludonimbus)',
-		playtimeDevice: (name: string, time: string, mine: boolean) => `${name}${mine ? ' (this PC)' : ''}: ${time}`,
-		playtimeSteam: (time: string) => `  of which ${time} was counted by Steam before you used Ludonimbus`,
 		versionsTitle: (name: string) => `${name} · Cloud save versions`,
 		loadingVersions: 'Reading the version history…',
 		noVersions: 'No versions in the cloud yet. Play once or press "Sync now" to create the first one.',
@@ -461,23 +449,4 @@ export function bytes(n: number): string {
 		i++;
 	}
 	return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
-}
-
-export function duration(secs: number): string {
-	const m = t();
-	if (secs < 3600) return m.minutes(Math.max(1, Math.round(secs / 60)));
-	const h = secs / 3600;
-	return m.hours(h >= 100 ? String(Math.round(h)) : h.toFixed(1));
-}
-
-/** The "All devices" playtime item, when Ludonimbus has recorded any. */
-export function playtimeView(reply: Reply | null): { text: string; tip: string } | null {
-	if (!isGame(reply) || !reply.playtime || reply.playtime.totalSecs <= 0) return null;
-	const m = t();
-	const lines = [m.playtimeTitle];
-	for (const d of reply.playtime.devices) {
-		lines.push(m.playtimeDevice(d.deviceName, duration(d.secs), d.thisDevice));
-		if (d.steamMinutes) lines.push(m.playtimeSteam(duration(d.steamMinutes * 60)));
-	}
-	return { text: duration(reply.playtime.totalSecs), tip: lines.join('\n') };
 }

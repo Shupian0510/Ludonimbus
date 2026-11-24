@@ -41,6 +41,7 @@ Steam 客户端
 | POST | `/v1/games/{key}/open` | 显示 Ludonimbus 窗口并打开这个游戏 |
 | GET | `/v1/games/{key}/snapshots` | （API 2，0.6）云端版本列表，新的在前，外加 `headId`、`lastSyncedId`、`deviceId`、`pending`，以及现在不能恢复的原因 `busy`（游戏运行中、正在同步） |
 | POST | `/v1/games/{key}/restore/{id}` | （API 2）在后台恢复这个版本，立即返回 `{ started: true }`，进行中状态是 `syncing`。游戏运行中或已在同步时 409。和应用里的「恢复到这个版本」走同一个 `sync::restore` |
+| GET | `/v1/steam/playtime?account={id}` | （API 2）每个关联了快捷方式的游戏在所有设备上的总时间（分钟）：`{ apps: [{ appid, key, minutes }] }`，插件用它替换 Steam 显示的游戏时间 |
 | GET | `/v1/games/{key}/playtime` | （API 2）所有设备的游戏时间：`totalSecs`、`lastPlayed`、各设备明细 |
 | GET | `/v1/games/{key}/gamebackup` | （API 2）游戏本体备份的状态：`{ exeMissing, checked, latest: { versionId, createdAt, totalSize, deviceName } \| null, job: { kind, phase, done, total, … } \| null, lang }`。不等云端：本体缺失时在后台查一次最新备份（缓存 5 分钟），还没查到时 `checked` 为 `false`。见 [plan-game-backup.md](plan-game-backup.md) |
 | POST | `/v1/games/{key}/gamebackup/install` | （API 2）显示 Ludonimbus 窗口，打开这个游戏的「从云端恢复」对话框（安装位置在应用里选） |
@@ -91,7 +92,8 @@ Steam 客户端
 - 只在 `SP Desktop` 窗口里工作（不处理大屏幕模式）。普通 Steam 游戏、没有加进 Ludonimbus 的快捷方式不显示任何东西。
 - 每 5 秒读一次缓存状态（很便宜），有同步在进行时改为 1.5 秒；每 2 分钟、切换游戏、同步结束时请求一次 `refresh`。
 - 点击状态项（0.6）：用 Millennium SDK 的 `showModal` + `ModalRoot` / `DialogButton` 弹出版本列表（`frontend/versions.tsx`），可以恢复、立即同步、打开 Ludonimbus。存档冲突和快捷方式失效时仍然直接打开 Ludonimbus，因为只有应用里能处理。
-- 「所有设备」游戏时间（0.6）：Ludonimbus 记录过游戏时间时，在状态项前面再插入一项，显示所有设备的总时间，悬停显示明细。Steam 自己的「游戏时间」只算这台电脑，插件不改它。
+- 游戏时间（0.6，`frontend/steamplaytime.ts`）：Steam 显示的游戏时间来自 `window.appStore.GetAppOverviewByAppID(appid).minutes_playtime_forever`（MobX 可观察字段）。插件每 30 秒取一次 `/v1/steam/playtime`，把这个字段改成所有设备的总时间，游戏页的「游戏时间」、游戏库悬停和按游戏时间排序都显示总数。只改显示：Steam 照常自己计时，不写它的文件；Steam 自己更新这个字段时（它计过时的一局之后）取两者中较大的，所以 Ludonimbus 没看到的时间不会被盖掉；游戏不再由 Ludonimbus 管理或插件停止时，放回 Steam 自己的值。
+- 「开始游戏」栏里 Ludonimbus 的项目排在 Steam 自己的项目后面，顺序是云存档、成就。这一行放不下时会换行，而第二行不显示，所以最重要的云存档排在最前，窗口窄时先藏起来的是后面的项。成就区块只插在右栏最外层的容器里：Steam 把「录像及截图」等区块包在右栏里的另一个容器中，那个容器不算单独的一栏。
 
 ## 一键安装做了什么
 

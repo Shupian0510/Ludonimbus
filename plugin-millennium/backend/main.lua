@@ -135,6 +135,15 @@ function open_game(key)
 end
 
 ---@ffi
+--- Playtime over all devices of every linked shortcut, as JSON text.
+---@param account string
+---@return string
+function get_playtimes(account)
+    local acc = digits(account)
+    return request("GET", "/v1/steam/playtime" .. (acc and ("?account=" .. acc) or ""))
+end
+
+---@ffi
 --- Version history of a game in the cloud, as JSON text.
 ---@param key string
 ---@return string

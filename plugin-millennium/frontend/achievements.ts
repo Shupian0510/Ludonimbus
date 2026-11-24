@@ -268,10 +268,12 @@ export class AchievementsBar {
 		for (const section of Array.from(this.doc.querySelectorAll(`.${stats}`))) {
 			let item = section.querySelector<HTMLElement>(`:scope > [${MARK}="stat"]`);
 			if (!item) item = this.createStat();
-			// Steam's order: last played, play time, achievements. The cloud item stays last.
+			// Ludonimbus's items follow Steam's, most important first: cloud saves, then
+			// achievements. The row wraps and the second line is not shown, so whatever
+			// doesn't fit disappears from the end.
 			const cloud = section.querySelector(':scope > [data-ludonimbus="stat"]');
 			if (cloud) {
-				if (item.nextElementSibling !== cloud) section.insertBefore(item, cloud);
+				if (cloud.nextElementSibling !== item) cloud.after(item);
 			} else if (item.parentElement !== section) {
 				section.appendChild(item);
 			}
@@ -329,18 +331,25 @@ export class AchievementsBar {
 			| undefined;
 		if (!sec) return;
 		const first = (c: string) => c.split(/\s+/)[0];
-		const columns = new Set<Element>();
+		const candidates: Element[] = [];
 		for (const el of Array.from(this.doc.querySelectorAll(`.${first(sec.RightColumnSection)}`))) {
 			if (el.closest(`[${MARK}]`)) continue;
 			const column = el.closest(`.${first(sec.AppDetailsSection)}`)?.parentElement;
-			if (column) columns.add(column);
+			if (column && !candidates.includes(column)) candidates.push(column);
 		}
-		for (const column of columns) {
-			let el = column.querySelector<HTMLElement>(`:scope > [${MARK}="section"]`);
-			if (!el) el = this.createSection(sec);
-			if (column.firstElementChild !== el) column.insertBefore(el, column.firstElementChild);
-			this.fillSection(el, r);
-		}
+		// Steam wraps some sections (recordings and screenshots, ...) in a container
+		// inside the right column; that container is not a column of its own. Use the
+		// outermost one (a visible one if Steam keeps a hidden copy): one section only.
+		const outer = candidates.filter((c) => !candidates.some((o) => o !== c && o.contains(c)));
+		const column = outer.find((c) => c.getClientRects().length > 0) ?? outer[0];
+		this.doc.querySelectorAll(`[${MARK}="section"]`).forEach((el) => {
+			if (el.parentElement !== column) el.remove();
+		});
+		if (!column) return;
+		let el = column.querySelector<HTMLElement>(`:scope > [${MARK}="section"]`);
+		if (!el) el = this.createSection(sec);
+		if (column.firstElementChild !== el) column.insertBefore(el, column.firstElementChild);
+		this.fillSection(el, r);
 	}
 
 	private createSection(sec: Record<string, string>): HTMLElement {
