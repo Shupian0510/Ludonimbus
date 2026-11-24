@@ -79,7 +79,7 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 1. 「计算大小」：「程序」带版本号（来自发布包文件夹名，如 0.2.7，或程序里的版本信息）。
 2. N64Recomp 游戏（Zelda 64、Banjo 等）：「游戏文件」里应该有你第一次启动时选的 ROM（.z64），「设置和 mods」里有它的 `*.json` 和 `mods`。如果没有，告诉我 ROM 实际放在哪里。
 3. Longshot、fefw recomp、Bloodborne（Lantern Engine）：数字应该和上面「已经自动验证过的」表格差不多。「游戏文件」是你导出的游戏（.nup、exefs + romfs、CUSA…），不在程序里；程序里没有启动器编译出来的东西（`fefw.exe`、Longshot 构建好的游戏、Lantern 的 `engine-assets`）。
-   - 恢复后照常启动：Longshot（启动器）和 Bloodborne（`Bloodborne.exe` 是发布包自带的）由启动器自己编译。fefw 的 Steam 快捷方式直接指向编译出来的 `fefw.exe`，编译之前它不存在，插件会显示「从云端安装」，这一点还没处理。
+   - 恢复后照常启动：Longshot（启动器）和 Bloodborne（`Bloodborne.exe` 是发布包自带的）由启动器自己编译。fefw 的 Steam 快捷方式直接指向编译出来的 `fefw.exe`，编译之前它不存在，插件会显示「从云端安装」：保持现状，恢复后自己用 `fefw-launcher.exe` 编译一次，之后照常启动。
 4. **注意**：Lantern Engine、Longshot、N64Recomp 的设置文件在 `%APPDATA%` / `%LOCALAPPDATA%` 里，恢复时会写回这些真实位置（内容和备份时一样的话不改）。测恢复前先把对应文件夹复制一份，或者只用第 5 节的模拟器游戏测恢复。
 
 ### 5. 恢复到临时文件夹（不动真实游戏）
