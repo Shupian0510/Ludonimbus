@@ -723,3 +723,5 @@ export const onboarding = {
     scan: "扫描本机游戏",
   },
 };
+
+export { gameBackup } from "./gameBackup.zh-CN";
