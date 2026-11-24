@@ -6,6 +6,7 @@
 
 ## 已经自动验证过的
 
+- **存档规则**：内置规则文件的格式检查；Longshot 的时之笛规则用构造的存档测过，也用你电脑上的 6 个真实存档槽只读核对过（解锁 13 / 45，和游戏进度一致）。
 - **解析**（`crates/core/src/achievements/`，用构造的样本文件）：PS4 `trophy00.trp` 的解密（用编造的测试密钥加密再解开；没有密钥时只取图标）、RPCS3 的 `TROPCONF.SFM` 和 `TROPUSR.DAT`（含时间换算）、shadPS4 的奖杯 XML 和每个用户的解锁文件、Lantern 的 `trophies.log`（几种可能的行格式）和引擎日志里的 `Runtime: trophy N unlocked`、从 `trophy00.trp` 取图标、RetroAchievements 接口文档里的返回样例（不保存触发逻辑 `MemAddr`）。
 - **合并和云端**（`tests/achievements_flow.rs`）：两台模拟设备共用一个本机文件夹云盘；只有游戏运行中新出现的解锁才弹窗，关联前已有的不弹；同一个成就取最早的解锁时间；本机奖杯被重置、本地数据库被删掉后，云端这台设备的记录也不会少。
 - **你这台电脑上的真实数据**（只读，`tests/achievements_live.rs`）：Bloodborne 自动认出 Lantern，奖杯组 `NPWR05818_00`（从游戏的 `npbind.dat` 读出），40 个奖杯都有图标，已解锁 0 个。仓库里没有奖杯密钥，所以这个测试在没有密钥时只检查编号和图标，有密钥（shadPS4 的 `TrophyKey` 或设置里填的）时才检查名称。
@@ -71,8 +72,9 @@
 1. **BotW（Cemu）**：打开 Ludonimbus 后过几秒，BotW 自动关联到「TrophyNX」，「成就」标签列出 33 个成就（英文），已解锁的有 Rise and Shine、Sheikah Slate、Out of the Cave、Marathon Runner（按你现在的存档）。Steam 里 BotW 的游戏页也显示「成就 4/33」。
 2. 在 BotW 里拿一个新的（例如再开一座神庙、拿到一个规则里的道具），存档后退出：几秒内成就数增加，游戏运行中存档时会弹出 Steam 的成就提醒。
 3. 断网后打开 Ludonimbus：BotW 的成就照常显示（用的是缓存的规则）。
-4. 有 Ryujinx 游戏或 Switch 重编译游戏（Super Mario Odyssey、Hollow Knight、Slay the Spire …）时：加进 Ludonimbus 后自动关联「TrophyNX」，成就数和存档进度对得上。
-5. 有 PS4 移植版（Diablo III、Dead Nation、Resogun、Uncharted …）时：自动关联「PS4 port」，有 PS4 奖杯密钥时名称是官方中文（没有时是编号）；解锁一个奖杯后几秒内出现。**这条没有真实样本，最需要确认**，把 `achievements.log` 和移植版文件夹里的奖杯记录文件位置发给我。
+4. **时之笛（Longshot）**：打开 Ludonimbus 后过几秒，时之笛自动关联，「成就」标签写着来自「Ludonimbus」，列出 45 个中文成就（例如「退魔之剑」「森之贤者」「蜘蛛猎人」），按你现在的存档已解锁 13 个；Steam 里时之笛的游戏页显示「成就 13/45」。已有的 13 个不弹窗。之后在游戏里拿到新的（例如下一枚勋章、学会一首新曲子、黄金骷髅蜘蛛到 50 个），**存档后**几秒内成就数增加，游戏运行中会弹出 Steam 的成就提醒。如果某个成就和游戏里的进度对不上，告诉我是哪个。
+5. 有 Ryujinx 游戏或 Switch 重编译游戏（Super Mario Odyssey、Hollow Knight、Slay the Spire …）时：加进 Ludonimbus 后自动关联「TrophyNX」，成就数和存档进度对得上。
+6. 有 PS4 移植版（Diablo III、Dead Nation、Resogun、Uncharted …）时：自动关联「PS4 port」，有 PS4 奖杯密钥时名称是官方中文（没有时是编号）；解锁一个奖杯后几秒内出现。**这条没有真实样本，最需要确认**，把 `achievements.log` 和移植版文件夹里的奖杯记录文件位置发给我。
 
 ### 4. 多台电脑（可选，有第二台电脑时）
 

@@ -46,6 +46,7 @@
 | RPCS3 | `dev_hdd0/home/00000001/trophy/<NPWR…>/` 下的 `TROPCONF.SFM`、`TROPUSR.DAT`、`TROPnnn.PNG` | ✓ | ✓ | 无 | 第一批 |
 | PS4 移植 / 重编译（2026-11-24） | 移植版文件夹里原版游戏的 `trophy00.trp`（解密）+ `trophies.log` / `unlocked.txt` / `progress_user*.txt` / `trophies.dat` / 运行日志 | ✓ | ✓ | 无 | 已实现，见 [plan-achievements-coverage.md](plan-achievements-coverage.md) |
 | 存档规则（TrophyNX 格式，2026-11-24） | Switch 游戏（模拟器、重编译）和 Cemu 上的 BotW 的存档 | ✓（英文） | ✓ | 无 | 已实现，同上 |
+| Ludonimbus 自己的存档规则（2026-11-24） | 按适配器内置的规则读重编译 / 重制游戏的存档，第一份是 Longshot 的时之笛 | ✓（中英文） | ✓ | 无 | 已实现，写法见 [achievement-rules.md](achievement-rules.md) |
 | Vita3K | `ux0/user/00/trophy/…`（PS3 系的 TROPUSR 格式，待核实） | | | 无 | 第二批 |
 | Xenia Canary | 档案里的 `<TitleID>.gpd`（XDBF 格式） | ✓ | ✓ | 无 | 第二批 |
 | 基于存档的规则成就 | 存档文件 | 规则文件里写 | 同步时判定 | 无 | 第二批 |
