@@ -13,7 +13,7 @@
 1. 打开「设置 → 云盘」，在「本地 / 同步文件夹」那一项点「选择文件夹…」。
 2. 选一个文件夹，例如 `D:\OneDrive\Ludonimbus`。
 
-<!-- screenshot: settings-cloud-folder -->
+![设置 → 云盘：本地 / 同步文件夹](/screenshots/zh-CN/settings-cloud-folder.png)
 
 ## 注意
 

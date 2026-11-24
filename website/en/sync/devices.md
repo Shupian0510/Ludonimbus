@@ -16,7 +16,7 @@ To continue your games across PCs (a desktop, a laptop, a handheld), install Lud
 
 "Add game → In the cloud" lists games another PC uploaded that this PC hasn't added yet. Click "Link to this PC…" and pick the matching Steam shortcut on this PC; for games not in Steam, choose the game program directly. Sync once after linking and the cloud saves come down.
 
-<!-- screenshot: add-game-cloud -->
+![Add game → From the cloud](/screenshots/en/add-game-cloud.png)
 
 **Option 2: just scan**
 

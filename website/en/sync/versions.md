@@ -2,7 +2,7 @@
 
 Every upload leaves a version in the cloud. Open the "Version history" tab on a game's page to see the versions from all your devices.
 
-<!-- screenshot: versions -->
+![Version history](/screenshots/en/versions.png)
 
 Each version shows:
 

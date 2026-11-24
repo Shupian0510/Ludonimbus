@@ -18,7 +18,7 @@ Ludonimbus shows "Save conflict" with both sides: which device saved the cloud v
 
 The game page says that both this PC and the cloud have new changes, with the same "Use cloud saves" and "Use local saves" buttons. "Sync now" is unavailable until the conflict is resolved.
 
-<!-- screenshot: game-detail-conflict -->
+![Game page: save conflict](/screenshots/en/game-detail-conflict.png)
 
 ## Another PC uploaded while you were playing
 

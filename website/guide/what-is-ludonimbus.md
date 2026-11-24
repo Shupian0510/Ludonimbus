@@ -4,7 +4,7 @@ Steam 云存档只对 Steam 商店里的游戏有效。你加进 Steam 的模拟
 
 Ludonimbus 让这些游戏也拥有和 Steam 云存档一样的体验：**从 Steam 启动前自动拉取最新存档，退出后自动上传，每个版本都留有记录。** 存档放在**你自己的** Google Drive、NAS、WebDAV / S3 存储或任意文件夹里，没有任何第三方服务器。
 
-<!-- screenshot: library-grid -->
+![游戏库](/screenshots/zh-CN/library-grid.png)
 
 ## 适合哪些游戏
 

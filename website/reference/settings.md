@@ -4,11 +4,17 @@
 
 左侧栏点「设置」。
 
-<!-- screenshot: settings -->
+![设置](/screenshots/zh-CN/settings.png)
 
 ### 云盘
 
 连接、切换或断开云盘，见[怎么选云盘](../clouds/index.md)。连接后显示云盘类型、账号或地址，以及已用空间（云盘支持时）。云盘出问题时会显示「需要处理」和原因。
+
+### 语言 / Language {#language}
+
+界面语言：「跟随系统」「简体中文」或「English」，改了立刻生效。默认跟随 Windows 的显示语言（中文系统用中文，其他用英文）。托盘菜单、从 Steam 启动时的弹窗和 [Steam 里的云存档状态](../steam/status-in-steam.md)也用这个语言。
+
+![设置 → 语言](/screenshots/zh-CN/settings-language.png)
 
 ### 本机与同步
 
@@ -45,12 +51,13 @@
 | 数据目录 | `%APPDATA%\Ludonimbus`：设置、同步记录、日志都在这里，点一下打开 |
 | Ludusavi | 附带的 Ludusavi 程序位置；「未找到」只影响从 Ludusavi 数据库添加 PC 游戏 |
 | 设备 id | 这台电脑在云端的唯一标识 |
+| 链接 | 文档、GitHub、反馈问题，以及「重新打开新手引导」（见[首次使用引导](../guide/first-run.md)） |
 
 ## 单个游戏的设置 {#per-game}
 
 在游戏详情页打开「设置」标签。
 
-<!-- screenshot: game-settings -->
+![游戏详情页：设置](/screenshots/zh-CN/game-settings.png)
 
 | 设置 | 说明 |
 |---|---|

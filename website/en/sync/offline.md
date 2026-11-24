@@ -14,7 +14,7 @@ After the game exits, the new saves are kept on this PC as versions, and the gam
 
 They're uploaded automatically when the cloud is back: before the next launch from Steam (trigger "Uploaded before launch") or when the tray app re-checks. You can also click "Sync now".
 
-<!-- screenshot: game-detail-pending -->
+![Game page: waiting to upload](/screenshots/en/game-detail-pending.png)
 
 ## What you'll see
 

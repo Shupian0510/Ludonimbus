@@ -12,7 +12,15 @@ Before the game starts, Ludonimbus asks whether to use the cloud's saves or this
 
 ### Can I use Baidu Netdisk, Aliyun Drive or Quark?
 
-One-click Baidu Netdisk sign-in is ready and waiting for Baidu's open-platform review; it will come in a new version once approved. Until then, and for Aliyun Drive and Quark (which have no official API for individual developers), connect through [OpenList](https://github.com/OpenListTeam/OpenList) / AList: mount your netdisk in OpenList, then connect Ludonimbus to OpenList over WebDAV with the folder inside the mounted netdisk. See [WebDAV → OpenList / AList](../clouds/webdav.md#openlist).
+Quark connects in one click with a QR code (experimental); see [Quark](../clouds/quark.md). One-click Baidu Netdisk sign-in is ready and waiting for Baidu's open-platform review; it will come in a new version once approved. Until then, and for Aliyun Drive (which has no official API for individual developers), connect through [OpenList](https://github.com/OpenListTeam/OpenList) / AList: mount your netdisk in OpenList, then connect Ludonimbus to OpenList over WebDAV with the folder inside the mounted netdisk. See [WebDAV → OpenList / AList](../clouds/webdav.md#openlist).
+
+### Can I switch the interface to English or Chinese?
+
+Yes. Pick it in Settings → "Language / 语言"; it applies right away. By default it follows the Windows display language. See [Settings](./settings.md#language).
+
+### Quark says the sign-in has expired. What do I do?
+
+Click "Scan to sign in again" in Settings → Cloud and scan with the Quark app once more. The component isn't downloaded again and your saves aren't affected. See [Quark](../clouds/quark.md#when-the-sign-in-expires).
 
 ### Do Xbox app (PC Game Pass) games work?
 

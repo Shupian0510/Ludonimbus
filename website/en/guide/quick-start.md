@@ -1,6 +1,6 @@
 # Quick start
 
-Once Ludonimbus is installed, four steps get you going.
+Once Ludonimbus is installed, four steps get you going. The [first-run guide](./first-run.md) that opens the first time covers step 1 and opens the scan of step 2.
 
 ## 1. Connect a cloud
 
@@ -9,13 +9,14 @@ Open Settings → Cloud and pick one:
 | Cloud | How to connect |
 |---|---|
 | **Google Drive** | Click "Connect Google Drive" and sign in in your browser. See [Google Drive](../clouds/google-drive.md) |
-| **WebDAV** | A NAS (Synology, QNAP…), Nextcloud, Jianguoyun, or Baidu / Aliyun / Quark through OpenList / AList. Enter the address, user name and password, then click "Test connection". See [WebDAV](../clouds/webdav.md) |
+| **Quark** | Scan a QR code with the Quark app (experimental). See [Quark](../clouds/quark.md) |
+| **WebDAV** | A NAS (Synology, QNAP…), Nextcloud, Jianguoyun, or Baidu / Aliyun through OpenList / AList. Enter the address, user name and password, then click "Test connection". See [WebDAV](../clouds/webdav.md) |
 | **S3-compatible storage** | MinIO on a NAS, Cloudflare R2, Aliyun OSS, Tencent COS. See [S3-compatible storage](../clouds/s3.md) |
 | **Folder** | A OneDrive / Google Drive desktop sync folder, a NAS share, a USB drive. See [Local / synced folder](../clouds/folder.md) |
 
 Not sure which? See [Choosing a cloud](../clouds/index.md).
 
-<!-- screenshot: settings-cloud -->
+![Settings → Cloud](/screenshots/en/settings-cloud.png)
 
 ## 2. Add games
 
@@ -27,7 +28,7 @@ Click "Add game" at the top right of the library. "Scan this PC" lists the games
 
 See [Scan this PC](../games/scan.md).
 
-<!-- screenshot: add-game-scan -->
+![Add game → Scan this PC](/screenshots/en/add-game-scan.png)
 
 ## 3. Turn on Steam auto-sync
 
@@ -36,7 +37,7 @@ See [Scan this PC](../games/scan.md).
 
 Changing Steam shortcuts requires closing Steam briefly; Ludonimbus closes and reopens it for you.
 
-<!-- screenshot: game-detail -->
+![Game page](/screenshots/en/game-detail.png)
 
 ## 4. Play as usual
 
@@ -48,9 +49,9 @@ When you close the window, Ludonimbus stays in the system tray. Games you start 
 
 In Settings → "Show cloud save status in Steam", click "Install". The play bar of a game's Steam library page then shows statuses like "up to date" or "uploading", with a sync button. See [Cloud status inside Steam](../steam/status-in-steam.md).
 
-## Chinese names of the main labels {#labels}
+## Interface language {#labels}
 
-Ludonimbus 0.4 shows its interface in Chinese. The labels used in this guide are in these places:
+Since 0.5, Ludonimbus shows its interface in English when Windows uses a language other than Chinese, and you can pick it in Settings → "Language / 语言" (see [Settings](../reference/settings.md#language)). Version 0.4 was Chinese only; if you're still on it, the labels used in this guide are in these places:
 
 | This guide | In the app |
 |---|---|

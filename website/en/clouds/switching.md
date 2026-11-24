@@ -10,7 +10,7 @@ You can switch to another cloud at any time. Saves in the old cloud are never de
    - "Copy saves" copies every version of every game from the old cloud to the new one, with progress, and tells you how many versions were copied.
    - "No thanks" leaves the old saves where they are; Ludonimbus only uses the new cloud from now on.
 
-<!-- screenshot: settings-cloud-migrate -->
+![Copying saves from the old cloud](/screenshots/en/settings-cloud-migrate.png)
 
 While copying:
 

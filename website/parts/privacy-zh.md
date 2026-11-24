@@ -33,6 +33,7 @@ Ludonimbus 对通过 Google API 获得的信息的使用和传输，遵守 [Goog
 - 删除 Google Drive 里的 `Ludonimbus` 文件夹，即可删除应用存储的全部数据。
 - 如果你使用本地或同步文件夹而不是 Google Drive，则不涉及任何 Google 数据。
 - 如果你连接百度网盘，Ludonimbus 使用百度网盘官方开放平台（权限 `basic,netdisk`），只能读写你网盘里的「我的应用数据/Ludonimbus」文件夹。登录凭据保存在 Windows 凭据管理器里，断开时删除。删除这个文件夹即可删除应用在百度网盘里存储的全部数据。
+- 如果你连接夸克网盘，Ludonimbus 会在你的电脑上运行开源工具 OpenList（只监听本机），通过它读写你网盘里的「Ludonimbus」文件夹。夸克的登录信息只保存在本机 OpenList 的数据文件夹里，存档只在你的电脑和夸克之间传输；断开时会删除这些登录信息。
 - 如果你使用 WebDAV 服务器或 S3 兼容存储，存档只会传到你填写的服务器。它的密码或密钥保存在你电脑的 Windows 凭据管理器里，断开时会删除。
 - 如果你填写了 SteamGridDB API Key 来挑选封面，Ludonimbus 会用你的 Key 把你搜索的游戏名发给 SteamGridDB，并下载你选中的图片。Key 保存在 Windows 凭据管理器里，可以在设置里删除。不会向 SteamGridDB 发送任何存档数据。
 

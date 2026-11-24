@@ -6,7 +6,7 @@ Games that weren't installed through Steam, Epic, GOG or Xbox (portable games, e
 2. Pick the folder with your games, for example `D:\Games`.
 3. Ludonimbus reports how many games it found in that folder. They join the list (source "Folder") and are grouped like the rest.
 
-<!-- screenshot: add-game-scan-folder -->
+![Add game → Scan folder](/screenshots/en/add-game-scan-folder.png)
 
 If the folder contains emulators, the games with saves inside them are listed one by one too.
 

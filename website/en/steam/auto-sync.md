@@ -8,7 +8,7 @@ For non-Steam games that are already in Steam, turn on "Steam auto-sync" and the
 2. If Steam is running, Ludonimbus explains that it needs to close Steam briefly: Steam overwrites shortcut changes made while it runs, so Ludonimbus closes it, makes the change and reopens it. Confirm.
 3. The section now says the game syncs automatically when started from Steam.
 
-<!-- screenshot: game-detail-steam -->
+![Game page: Steam auto-sync](/screenshots/en/game-detail-steam.png)
 
 Games that aren't in Steam yet have an "Add to Steam…" button instead; see [Add to Steam](./add-to-steam.md).
 

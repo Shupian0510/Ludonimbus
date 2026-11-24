@@ -13,7 +13,7 @@ WebDAV is a standard protocol supported by many clouds and NAS systems. Synology
 4. Click "Test connection" to check that Ludonimbus can connect and write.
 5. Click "Connect".
 
-<!-- screenshot: settings-cloud-webdav -->
+![Settings → Cloud: WebDAV (Jianguoyun)](/screenshots/en/settings-cloud-webdav.png)
 
 The password is kept in the Windows Credential Manager, never in the config file, and removed when you disconnect. To change the address or password later, edit it in the same place and click "Save changes"; leave the password empty to keep the saved one.
 
@@ -71,6 +71,10 @@ The folder must be inside a shared folder you can write to.
 Create app passwords in Nextcloud under Personal settings → Security → Devices & sessions.
 
 ## OpenList / AList {#openlist}
+
+::: tip Quark
+Since 0.5, Quark [connects in one click](./quark.md): Ludonimbus downloads and runs OpenList itself, with nothing to set up. The steps below are for when you already run OpenList or want another netdisk.
+:::
 
 [OpenList](https://github.com/OpenListTeam/OpenList) (a community fork of AList) can mount Baidu Netdisk, Aliyun Drive, Quark and many other netdisks and serve them over WebDAV. These netdisks have no official API for individual developers (Baidu's one-click sign-in is still in review), so OpenList is how to use them today.
 

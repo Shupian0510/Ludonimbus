@@ -6,7 +6,7 @@
 2. 选放游戏的文件夹，例如 `D:\Games`。
 3. Ludonimbus 会提示「在 D:\Games 里找到 N 个游戏」，它们会出现在列表里（来源「文件夹」），和其他游戏一样分组。
 
-<!-- screenshot: add-game-scan-folder -->
+![添加游戏 → 扫描文件夹](/screenshots/zh-CN/add-game-scan-folder.png)
 
 扫描到的文件夹里如果有模拟器，模拟器里有存档的游戏也会逐个列出来。
 

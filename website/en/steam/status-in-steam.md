@@ -2,7 +2,7 @@
 
 Once installed, the play bar of every Ludonimbus-managed game in your Steam library gets a "Ludonimbus cloud saves" item, next to "Last played" and "Play time".
 
-<!-- screenshot: steam-play-bar-status (real-environment screenshot needed) -->
+![Ludonimbus cloud save status on a Steam game page](/screenshots/zh-CN/steam-play-bar-status.png)
 
 - It updates live while launching, playing and uploading, for example "up to date · 5 minutes ago", "game running, uploads after exit", "uploading saves…" or "conflict, click to choose which to keep".
 - Click the button on the right to sync now; click the status itself to open the game in Ludonimbus.
@@ -18,7 +18,7 @@ Once installed, the play bar of every Ludonimbus-managed game in your Steam libr
    - puts the Ludonimbus plugin into Millennium and enables it;
    - closes Steam during the install and reopens it afterwards.
 
-<!-- screenshot: settings-steam-plugin -->
+![Settings → Show cloud save status in Steam](/screenshots/en/settings-steam-plugin.png)
 
 This is the same thing Millennium's official installer does. Millennium updates itself from then on; the plugin is updated together with Ludonimbus and takes effect the next time Steam starts.
 

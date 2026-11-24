@@ -12,7 +12,15 @@
 
 ### 能用百度网盘、阿里云盘或夸克吗？
 
-百度网盘一键登录已经开发完成，正在等待百度开放平台审核，通过后会在新版本中开放。在此之前，以及阿里云盘、夸克（没有面向个人开发者的官方接口），都可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面。见 [WebDAV → OpenList / AList](../clouds/webdav.md#openlist)。坚果云自带 WebDAV，可以直接连接。
+夸克网盘可以扫码一键连接（实验性），见[夸克网盘](../clouds/quark.md)。百度网盘一键登录已经开发完成，正在等待百度开放平台审核，通过后会在新版本中开放。在此之前，以及阿里云盘（没有面向个人开发者的官方接口），都可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面。见 [WebDAV → OpenList / AList](../clouds/webdav.md#openlist)。坚果云自带 WebDAV，可以直接连接。
+
+### 界面能换成英文吗？
+
+可以。「设置 → 语言 / Language」里选 English，立刻生效。默认跟随 Windows 的显示语言。见[设置项说明](./settings.md#language)。
+
+### 夸克网盘提示「登录已失效」怎么办？
+
+在「设置 → 云盘」点「重新扫码登录」，用夸克 App 再扫一次。不用重新下载组件，存档不受影响。见[夸克网盘](../clouds/quark.md#登录失效)。
 
 ### Xbox 应用（PC Game Pass）的游戏能用吗？
 

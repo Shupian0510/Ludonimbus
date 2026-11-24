@@ -8,7 +8,7 @@
 2. Steam 正在运行时，会提示「需要暂时关闭 Steam」：Steam 运行时会覆盖对快捷方式的修改，所以 Ludonimbus 会先关闭 Steam，改好后再自动重新打开。点「关闭 Steam 并继续」。
 3. 显示「从 Steam 启动时会自动同步」就好了。
 
-<!-- screenshot: game-detail-steam -->
+![游戏详情页：Steam 自动同步](/screenshots/zh-CN/game-detail-steam.png)
 
 还不在 Steam 里的游戏没有这个开关，而是「加入 Steam…」按钮，见[一键加入 Steam](./add-to-steam.md)。
 

@@ -10,7 +10,7 @@
    - 点「复制存档」：把原来云盘里每个游戏的全部版本复制到新云盘，显示进度。完成后会告诉你复制了多少个版本。
    - 点「不用了」：原来云盘里的存档留在原处，Ludonimbus 以后只使用新的云盘。
 
-<!-- screenshot: settings-cloud-migrate -->
+![复制原来云盘里的存档](/screenshots/zh-CN/settings-cloud-migrate.png)
 
 复制时：
 
