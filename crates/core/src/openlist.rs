@@ -428,6 +428,28 @@ impl Api {
         unwrap_reply(v, path)
     }
 
+    /// Any `/api/fs/…` call (`list`, `get`, `copy`, `remove`…) on the whole
+    /// mounted drive, for checks and game backups that use files already in
+    /// the drive (docs/plan-game-backup.md, section 10).
+    pub fn fs(&self, op: &str, body: Value) -> Result<Value> {
+        self.call("POST", &format!("/api/fs/{op}"), Some(body))
+    }
+
+    /// Upload a small file to `path` through OpenList's own API.
+    pub fn put_file(&self, path: &str, data: &[u8]) -> Result<()> {
+        let encoded = percent_encoding::utf8_percent_encode(path, percent_encoding::NON_ALPHANUMERIC).to_string();
+        let v: Value = self
+            .agent
+            .put(&format!("{}/api/fs/put", self.base))
+            .set("Authorization", &self.token)
+            .set("File-Path", &encoded)
+            .set("Content-Type", "application/octet-stream")
+            .send_bytes(data)
+            .map_err(|e| anyhow!(Unavailable(format!("OpenList /api/fs/put: {e}"))))?
+            .into_json()?;
+        unwrap_reply(v, "/api/fs/put").map(|_| ())
+    }
+
     /// The storage mounted at `mount`, if any.
     pub fn storage(&self, mount: &str) -> Result<Option<Value>> {
         let list = self.call("GET", "/api/admin/storage/list", None)?;

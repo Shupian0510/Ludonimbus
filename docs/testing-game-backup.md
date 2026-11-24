@@ -134,6 +134,20 @@ Copy-Item ..\..\..\secrets.local.env . -ErrorAction SilentlyContinue
 2. B 上同一个模拟器的第二个游戏：程序默认使用 B 上已经装好的模拟器。
 3. A 正在备份时，B 删除一个版本：提示稍后再清理（不会删掉 A 正在上传的数据）。
 
+### 13. 实测 E1：游戏文件已经在云盘里（v0.4 的准备）
+
+为第 10 节「游戏文件来自云盘里已有的文件」做的实测，不用装应用，但 Ludonimbus 里当前连接的云盘要是被测的那个（测完切回来）。只读你的文件；写的东西都在 `Ludonimbus-E1-…` / `e1-copy-…` 测试文件夹里，最后删除。
+
+```powershell
+./scripts/cloud-sources-e1.ps1 -Quark -QuarkFolder "/放游戏的文件夹" -QuarkFile "/放游戏的文件夹/某个 1 GB 以上的文件"
+./scripts/cloud-sources-e1.ps1 -Baidu -BaiduFolder "/放游戏的文件夹" -BaiduFile "/放游戏的文件夹/某个文件"
+```
+
+- 夸克：能否读你的文件夹、文件带不带哈希、网盘内部复制要多久（大文件几秒完成说明是服务器端复制）。
+- 百度：能否读应用目录（「我的应用数据/Ludonimbus」）以外的文件夹、带不带 md5 和下载链接、能否把你的文件复制进应用目录、在应用目录外写入是否被拒绝。
+
+报告在 `%LOCALAPPDATA%\Ludonimbus-e1\`，里面会列出你指定文件夹里最多 10 个文件名，发给我前可以删掉。
+
 ## 反馈
 
 每一节通过或不通过都告诉我；不通过的话附上：截图、`gamebackup.log` / `agent.log` 里对应时间的几行、用的是哪种云盘和模拟器。也可以用命令行看一个游戏会备份什么：`cargo run -p ludonimbus-cli -- game-backup backup <游戏 key> --dry-run`。

@@ -405,6 +405,25 @@ impl BaiduPan {
         self.token.lock().unwrap().clone()
     }
 
+    /// The app folder (`/apps/<app name>`), the root of this store.
+    pub fn app_root(&self) -> &str {
+        &self.root
+    }
+
+    /// Any xpan call with full paths (`GET` with `params`, or `POST` with
+    /// `form`), for checks and game backups that use files already in the
+    /// netdisk (docs/plan-game-backup.md, section 10). Error numbers in
+    /// `expected` come back as `Ok` for the caller to inspect.
+    pub fn xpan(&self, endpoint: &str, params: &[(&str, &str)], form: Option<&[(&str, &str)]>, expected: &[i64]) -> Result<Value> {
+        self.call(expected, |t| {
+            let url = self.api_url(endpoint, params, t);
+            match form {
+                Some(f) => self.agent.post(&url).send_form(f),
+                None => self.agent.get(&url).call(),
+            }
+        })
+    }
+
     fn full(&self, path: &str) -> String {
         let rel = join(&[path]);
         if rel.is_empty() { self.root.clone() } else { format!("{}/{rel}", self.root) }

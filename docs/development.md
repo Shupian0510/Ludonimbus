@@ -40,7 +40,7 @@ cargo run -p ludonimbus-cli -- game-backup list zelda64recomp           # 游戏
 cargo run -p ludonimbus-cli -- game-backup backup botw --dry-run        # 会备份哪些部分、多大
 ```
 
-`./scripts/cloud-speedtest.ps1 -Threads 2,4,8` 用你的真实设置测当前云盘，报告写到 `%LOCALAPPDATA%\Ludonimbus-speedtest\`。
+`./scripts/cloud-speedtest.ps1 -Threads 2,4,8` 用你的真实设置测当前云盘，报告写到 `%LOCALAPPDATA%\Ludonimbus-speedtest\`。`./scripts/cloud-sources-e1.ps1 -Quark|-Baidu …` 检查夸克 / 百度能否使用网盘里已有的游戏文件（plan-game-backup.md 10.9）。
 
 日志在 `%APPDATA%\Ludonimbus\logs\`：`runner.log`（从 Steam 启动时）、`sync.log`、`watcher.log`（托盘后台监视）、`agent.log`（本机接口）、`steam-plugin.log`（安装 / 更新插件）、`gamebackup.log`（游戏本体的备份、恢复、删除）。
 
