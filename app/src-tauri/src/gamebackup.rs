@@ -19,7 +19,7 @@ pub async fn speed_test(app: AppHandle, mb: Option<u64>, threads: Option<usize>)
     SPEED_CANCEL.store(false, Ordering::SeqCst);
     let result = blocking(move || {
         let cfg = config::load()?;
-        let store = gamebackup::open_store(&cfg)?;
+        let provider = gamebackup::open(&cfg)?;
         let mut opts = speedtest::SpeedOptions::default();
         if let Some(mb) = mb {
             opts.total_bytes = mb.clamp(16, 2048) * 1024 * 1024;
@@ -36,7 +36,7 @@ pub async fn speed_test(app: AppHandle, mb: Option<u64>, threads: Option<usize>)
                 let _ = app.emit("speed-test-progress", p);
             }
         };
-        speedtest::run(store.as_ref(), &opts, &SPEED_CANCEL, &progress)
+        speedtest::run(provider.files(), &opts, &SPEED_CANCEL, &progress)
     })
     .await;
     SPEED_RUNNING.store(false, Ordering::SeqCst);

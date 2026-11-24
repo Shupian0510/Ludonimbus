@@ -1,7 +1,7 @@
 # 游戏本体备份方案（草案 v0.1 · 2026-11-23）
 
 > **进度（2026-11-23）**
-> - **测速**：已完成。`crates/core/src/gamebackup/speedtest.rs`（单线程、并行各上传下载一轮，每轮有时间上限，测完删除），命令行 `ludonimbus speedtest`，脚本 `./scripts/cloud-speedtest.ps1`，设置页「云盘测速」。本机文件夹跑通；**真实云盘的数据要你用脚本跑**，见 1.3。
+> - **测速**：已完成。`crates/core/src/gamebackup/speedtest.rs`（单线程、并行各上传下载一轮，每轮有时间上限，测完删除），命令行 `ludonimbus speedtest`，脚本 `./scripts/cloud-speedtest.ps1`，设置页「云盘测速」。本机文件夹跑通；**真实云盘的数据要你用脚本跑**，见 1.3。Google Drive 要等主会话的 `CloudProvider::files()` 合并后才能测（见 2.6）。
 > - **方案**：本文。第 7 节有 5 个取舍需要你拍板，拍板前不往下实现。
 
 > **背景**：0.6 的进阶功能之一。现在 Ludonimbus 只同步存档；游戏本体（模拟器、重编译游戏、绿色版游戏）删掉或换电脑后，要自己找安装包重新装。这个功能把游戏文件夹备份到用户自己的云盘，需要时在 Ludonimbus 里恢复；在 Steam 里，本体缺失的快捷方式可以「从云端安装」。
@@ -159,7 +159,8 @@ zstd 等级 3（压缩约 300 MB/s 每线程）。压缩后省不到 3% 的（�
 <root>/gamebackup/<游戏 key>/lock.json                  正在备份 / 清理的设备和过期时间
 ```
 
-- 建在 `Store` 之上（`crates/core/src/cloud/store.rs`）。Google Drive 原来只实现了存档用的 `CloudProvider`，这次给它补了按路径访问的 `Store`（`cloud/gdrive.rs`），所以六种云盘都能用。
+- 建在 `Store` 之上（`crates/core/src/cloud/store.rs`）：本功能的函数都接收 `&dyn Store`，调用处传 `provider.files()`。`CloudProvider::files()` 是主会话在 `main` 上加的通用接口（存档以外的数据都走它），Google Drive 在那边直接实现 `Store`，合并后六种云盘都能用。合并前本分支只有一个临时占位（`cloud/mod.rs`、`cloud/repo.rs` 里标了 TEMPORARY），Google Drive 暂时报「不支持」。
+- 前缀 `gamebackup/` 放在根目录，不放在 `games/<key>/` 下面：主会话用 `games/<key>/playtime/`、`games/<key>/screenshots/`，而且以后按游戏复制或列出 `games/<key>/` 的代码不会碰到几十 GB 的备份。
 - 和存档完全分开：不在 `games/<key>/snapshots/` 里，存档的版本列表、保留策略清理、「从旧云盘复制存档」都看不到它。
 - 块放在一个文件夹里不分子目录：分 256 个子目录在夸克、百度上要多建 256 个文件夹（夸克每个约 2 到 5 秒），列出已有块也要 256 次请求；一个文件夹几千个文件对这几种云盘都没问题（Google Drive 单个文件夹上限 50 万）。
 - 换云盘时不复制游戏备份（太大）。以后可以加。
@@ -257,13 +258,13 @@ ludonimbus game-backup check <key> [--version ID]     # 清单引用的块是否
 | 位置 | 内容 |
 |---|---|
 | `crates/core/src/gamebackup/` | `speedtest.rs`（已完成）、`chunker.rs`（FastCDC）、`format.rs`（块对象、清单、摘要）、`scan.rs`（文件夹扫描和排除）、`backup.rs`、`restore.rs`、`remote.rs`（云端布局、锁、清理）、`mod.rs`（打开当前云盘的 `Store`） |
-| `crates/core/src/cloud/gdrive.rs` | Google Drive 的 `Store` 实现（已完成） |
+| `crates/core/src/cloud/mod.rs`、`repo.rs` | `CloudProvider::files()` 的临时占位，合并时以 `main` 为准 |
 | `crates/cli/src/gamebackup.rs` | `speedtest`（已完成）、`game-backup` 子命令 |
 | `app/src-tauri/src/gamebackup.rs` | 测速命令（已完成）、备份 / 恢复任务、进度事件、给本机接口用的函数 |
 | `app/src/components/SpeedTest.tsx`、`GameBackup.tsx`，`app/src/gameBackupApi.ts`、`gameBackupMock.ts`、`gameBackup.css`，`app/src/i18n/gameBackup.*.ts` | 界面 |
 | `plugin-millennium/` | 「从云端安装」状态和点击 |
 
-和其他会话共享的文件只做很小的改动：`lib.rs`、`cli/main.rs`、`src-tauri/main.rs` 各加几行注册；`Settings.tsx`、`GameDetail.tsx` 各加一个组件；`i18n/zh-CN.ts`、`en.ts` 各加一行导出；`agent.rs` 加两个路由（实现放在 `gamebackup.rs`）；插件前端和 Lua 后端加一个入口。
+和其他会话共享的文件只做很小的改动：`cloud/mod.rs`、`cloud/repo.rs` 的 `files()` 占位（合并时用 `main` 的）；`lib.rs`、`cli/main.rs`、`src-tauri/main.rs` 各加几行注册；`Settings.tsx`、`GameDetail.tsx` 各加一个组件；`i18n/zh-CN.ts`、`en.ts` 各加一行导出；`agent.rs` 加两个路由（实现放在 `gamebackup.rs`）；插件前端和 Lua 后端加一个入口。
 
 ## 6. 测试
 

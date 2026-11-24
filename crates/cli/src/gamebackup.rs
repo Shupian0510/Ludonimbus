@@ -51,7 +51,8 @@ fn phase_line(name: &str, p: &Option<speedtest::PhaseResult>) -> String {
 
 pub fn speed(a: SpeedArgs) -> Result<()> {
     let cfg = config::load()?;
-    let store = gamebackup::open_store(&cfg)?;
+    let provider = gamebackup::open(&cfg)?;
+    let store = provider.files();
     const MB: u64 = 1024 * 1024;
     let opts = speedtest::SpeedOptions {
         total_bytes: a.mb * MB,
@@ -91,7 +92,7 @@ pub fn speed(a: SpeedArgs) -> Result<()> {
         }
     };
     let cancel = AtomicBool::new(false);
-    let result = speedtest::run(store.as_ref(), &opts, &cancel, &progress);
+    let result = speedtest::run(store, &opts, &cancel, &progress);
     eprintln!();
     let r = result?;
     if a.json {

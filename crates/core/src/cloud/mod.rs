@@ -134,6 +134,46 @@ pub trait CloudProvider: Send + Sync {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>>;
     fn put_game(&self, game: &CloudGame) -> Result<()>;
     fn list_games(&self) -> Result<Vec<CloudGame>>;
+    /// Path-based access for data other than snapshots (game backups…).
+    // TEMPORARY placeholder for the version on `main` (where Google Drive
+    // implements `Store` itself); take `main`'s when merging.
+    fn files(&self) -> &dyn Store {
+        &NoFiles
+    }
+}
+
+// TEMPORARY, see `CloudProvider::files`: Google Drive has no path-based
+// store on this branch yet.
+struct NoFiles;
+
+impl Store for NoFiles {
+    fn kind(&self) -> &'static str {
+        "none"
+    }
+    fn label(&self) -> String {
+        String::new()
+    }
+    fn check(&self) -> Result<()> {
+        bail!(crate::tr!("这个云盘暂时不支持这个功能", "This cloud doesn't support this yet"))
+    }
+    fn list(&self, _: &str) -> Result<Vec<store::Entry>> {
+        self.check().map(|_| Vec::new())
+    }
+    fn read(&self, _: &str) -> Result<Option<Vec<u8>>> {
+        self.check().map(|_| None)
+    }
+    fn download(&self, _: &str, _: &Path) -> Result<()> {
+        self.check()
+    }
+    fn write(&self, _: &str, _: &[u8]) -> Result<()> {
+        self.check()
+    }
+    fn upload(&self, _: &str, _: &Path) -> Result<()> {
+        self.check()
+    }
+    fn remove(&self, _: &str) -> Result<()> {
+        self.check()
+    }
 }
 
 pub fn timeout(cfg: &AppConfig) -> Duration {

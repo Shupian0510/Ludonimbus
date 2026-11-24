@@ -9,7 +9,6 @@
 //! launch from Steam needs only a few requests.
 
 use super::oauth::{self, describe, GoogleClient};
-use super::store::{Entry, Store};
 use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary, Trigger};
 use crate::{paths, util};
@@ -33,8 +32,6 @@ pub struct GoogleDrive {
     agent: ureq::Agent,
     bulk: ureq::Agent,
     token: Mutex<Option<(String, Instant)>>,
-    /// Folders the path-based [`Store`] has checked are not in the trash.
-    alive: Mutex<std::collections::HashSet<String>>,
     /// Id of the app folder in My Drive, looked up once per process.
     root: Mutex<Option<String>>,
     /// Sub-folder path (e.g. `games/x/snapshots`) → id, below `root`.
@@ -58,9 +55,6 @@ struct DriveFile {
     app: HashMap<String, String>,
     description: String,
     size: u64,
-    is_folder: bool,
-    /// Changes with the content (md5, or the modification time for folders).
-    tag: String,
 }
 
 fn esc(s: &str) -> String {
@@ -183,7 +177,6 @@ impl GoogleDrive {
                 .timeout_write(Duration::from_secs(300))
                 .build(),
             token: Mutex::new(None),
-            alive: Mutex::new(std::collections::HashSet::new()),
             root: Mutex::new(None),
             folders: Mutex::new(HashMap::new()),
         }
@@ -252,10 +245,7 @@ impl GoogleDrive {
         loop {
             let mut params = vec![
                 ("q", q.to_string()),
-                (
-                    "fields",
-                    "nextPageToken,files(id,name,size,appProperties,description,mimeType,md5Checksum,modifiedTime)".to_string(),
-                ),
+                ("fields", "nextPageToken,files(id,name,size,appProperties,description)".to_string()),
                 ("pageSize", "1000".to_string()),
                 ("spaces", "drive".to_string()),
             ];
@@ -284,12 +274,6 @@ impl GoogleDrive {
                         .unwrap_or_default(),
                     description: f["description"].as_str().unwrap_or_default().to_string(),
                     size: f["size"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
-                    is_folder: f["mimeType"].as_str() == Some(FOLDER_MIME),
-                    tag: f["md5Checksum"]
-                        .as_str()
-                        .or(f["modifiedTime"].as_str())
-                        .unwrap_or_default()
-                        .to_string(),
                 });
             }
             match v["nextPageToken"].as_str() {
@@ -661,131 +645,6 @@ impl CloudProvider for GoogleDrive {
             }
         }
         Ok(out)
-    }
-}
-
-/// Split a store path into its folder segments and file name.
-fn split_path(path: &str) -> (Vec<&str>, &str) {
-    let mut parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let name = parts.pop().unwrap_or_default();
-    (parts, name)
-}
-
-impl GoogleDrive {
-    /// Folder for the path-based [`Store`]: created when missing, and checked
-    /// once per instance that it is not in the trash (instances are made per
-    /// operation, unlike the long-lived sync provider).
-    fn store_folder(&self, parts: &[&str]) -> Result<String> {
-        let id = self.folder_id(parts, true)?.expect("created");
-        if self.alive.lock().unwrap().contains(&id) {
-            return Ok(id);
-        }
-        let id = if self.folder_alive(&id)? {
-            id
-        } else {
-            self.forget_folders();
-            self.folder_id(parts, true)?.expect("created")
-        };
-        self.alive.lock().unwrap().insert(id.clone());
-        Ok(id)
-    }
-
-    fn file_at(&self, path: &str) -> Result<Option<DriveFile>> {
-        let (dir, name) = split_path(path);
-        match self.folder_id(&dir, false)? {
-            Some(folder) => self.find_file(&folder, name),
-            None => Ok(None),
-        }
-    }
-}
-
-/// Path-based access to the app folder, used by game backups and the speed
-/// test (saves keep using [`CloudProvider`] and its file properties).
-impl Store for GoogleDrive {
-    fn kind(&self) -> &'static str {
-        "googleDrive"
-    }
-
-    fn label(&self) -> String {
-        format!("Google Drive / {}", self.folder)
-    }
-
-    fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
-        let a = CloudProvider::account(self)?;
-        Ok((a.used, a.total))
-    }
-
-    fn check(&self) -> Result<()> {
-        self.root_id(true).map(|_| ())
-    }
-
-    fn list(&self, dir: &str) -> Result<Vec<Entry>> {
-        let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
-        let Some(folder) = self.folder_id(&parts, false)? else {
-            return Ok(Vec::new());
-        };
-        let q = format!("'{}' in parents and trashed=false", esc(&folder));
-        Ok(self
-            .list(&q)?
-            .into_iter()
-            .map(|f| Entry {
-                name: f.name,
-                is_dir: f.is_folder,
-                size: f.size,
-                tag: f.tag,
-            })
-            .collect())
-    }
-
-    fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        match self.file_at(path)? {
-            Some(f) => Ok(Some(self.download_bytes(&f.id)?)),
-            None => Ok(None),
-        }
-    }
-
-    fn download(&self, path: &str, dest: &Path) -> Result<()> {
-        let f = self
-            .file_at(path)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到 {path}", "{path} not found in the cloud")))?;
-        let resp = self
-            .bulk
-            .get(&format!("{API}/files/{}?alt=media", f.id))
-            .set("Authorization", &self.bearer()?)
-            .call()
-            .map_err(drive_error)?;
-        let mut out = std::fs::File::create(dest)?;
-        std::io::copy(&mut resp.into_reader(), &mut out)?;
-        Ok(())
-    }
-
-    fn write(&self, path: &str, data: &[u8]) -> Result<()> {
-        let (dir, name) = split_path(path);
-        let folder = self.store_folder(&dir)?;
-        // A resumable upload only creates the file once all of it arrived.
-        match self.find_file(&folder, name)? {
-            Some(f) => self.update_content(&f.id, "application/octet-stream", data),
-            None => self
-                .create_file(&folder, name, "application/octet-stream", json!({}), data.to_vec())
-                .map(|_| ()),
-        }
-    }
-
-    fn upload(&self, path: &str, src: &Path) -> Result<()> {
-        let data = std::fs::read(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
-        Store::write(self, path, &data)
-    }
-
-    fn remove(&self, path: &str) -> Result<()> {
-        match self.file_at(path)? {
-            Some(f) => match self.delete_file(&f.id) {
-                Ok(()) => Ok(()),
-                // Someone else deleted it in the meantime.
-                Err(_) if self.file_at(path)?.is_none() => Ok(()),
-                Err(e) => Err(e),
-            },
-            None => Ok(()),
-        }
     }
 }
 

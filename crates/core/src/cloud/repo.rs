@@ -92,6 +92,11 @@ impl<S: Store> CloudProvider for Repo<S> {
         self.store.kind()
     }
 
+    // TEMPORARY placeholder, see `CloudProvider::files`.
+    fn files(&self) -> &dyn Store {
+        &self.store
+    }
+
     fn account(&self) -> Result<AccountInfo> {
         self.store.check()?;
         let (used, total) = self.store.quota().unwrap_or((None, None));
