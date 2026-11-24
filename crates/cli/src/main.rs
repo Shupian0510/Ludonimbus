@@ -71,6 +71,9 @@ enum Cmd {
     Paths,
     /// Measure upload / download speed of the current cloud (test files are deleted)
     Speedtest(gamebackup::SpeedArgs),
+    /// Game backups: the game's own files in the cloud
+    #[command(subcommand)]
+    GameBackup(gamebackup::Cmd),
 }
 
 #[derive(Subcommand)]
@@ -221,6 +224,7 @@ fn account_or_default(account: Option<String>) -> Result<String> {
 fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::Speedtest(a) => gamebackup::speed(a)?,
+        Cmd::GameBackup(c) => gamebackup::run(c)?,
         Cmd::Status { key } => {
             let ctx = Ctx::load()?;
             for g in ctx.cfg.games.iter().filter(|g| key.as_ref().is_none_or(|k| k == &g.key)) {
