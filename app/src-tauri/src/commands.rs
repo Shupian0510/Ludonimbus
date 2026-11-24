@@ -7,7 +7,7 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, localart, ludusavi, paths, playtime, process, relocate, screenshots, spec, steam, util};
+use ludonimbus_core::{adapters, games, localart, logos, ludusavi, paths, playtime, process, relocate, screenshots, spec, steam, util};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -141,7 +141,10 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
         pending: st.pending.len(),
         last_check: st.last_check,
         playtime: playtime::summary(cfg, &g.key),
-        source: games::source(g),
+        source: games::Source {
+            logo: logos::for_game(g, adapter).and_then(|f| art::logo_url(&f)),
+            ..games::source(g)
+        },
     }
 }
 

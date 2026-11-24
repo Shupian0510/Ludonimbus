@@ -50,51 +50,40 @@ function Cover({ game }: { game: GameView }) {
   );
 }
 
-const srcClass = (g: SourceGroup) => `src-${g.named ? "named" : g.kind}`;
-
 /**
- * A game's source badge: only the icon on covers (the name in its tooltip),
- * icon and name in the list.
+ * The logo of an emulator, recomp or the Xbox app: the icon of the program
+ * itself (see crates/core/src/logos.rs). Nothing when there is none.
  */
-function SourceTag({ group, game, inline }: { group: SourceGroup; game: GameView; inline?: boolean }) {
+function Logo({ src, size }: { src: string | null; size: number }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return <img className="src-logo" src={src} alt="" width={size} height={size} onError={() => setFailed(true)} />;
+}
+
+/** A game's source in the list: its program's logo and the group's name. */
+function SourceTag({ group, game }: { group: SourceGroup; game: GameView }) {
   const text = tagText(group);
   if (!text) return null;
   const detail = game.source.detail ?? group.detail;
-  if (inline) {
-    return (
-      <span className={`src-tag ${srcClass(group)}`} title={detail ?? undefined}>
-        <Icon name={group.icon} size={12} />
-        {text}
-      </span>
-    );
-  }
-  const tip = detail && detail !== text ? `${text} · ${detail}` : text;
   return (
-    <span className={`src-badge ${srcClass(group)}`} title={tip} aria-label={tip} role="img">
-      <Icon name={group.icon} size={15} />
+    <span className="src-tag" title={detail ?? undefined}>
+      <Logo src={game.source.logo ?? group.logo} size={13} />
+      {text}
     </span>
   );
 }
 
-function SourceIcon({ group, size = 14 }: { group: SourceGroup; size?: number }) {
-  return (
-    <span className={`src-ico ${srcClass(group)}`}>
-      <Icon name={group.icon} size={size} />
-    </span>
-  );
-}
-
-/** Display options: group by source, show source badges. */
+/** Display options: group by source, show the source filter. */
 function ViewMenu({
   grouped,
   setGrouped,
-  showTags,
-  setShowTags,
+  showChips,
+  setShowChips,
 }: {
   grouped: boolean;
   setGrouped: (v: boolean) => void;
-  showTags: boolean;
-  setShowTags: (v: boolean) => void;
+  showChips: boolean;
+  setShowChips: (v: boolean) => void;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -126,8 +115,8 @@ function ViewMenu({
             <Toggle checked={grouped} onChange={setGrouped} />
           </label>
           <label className="popover-row">
-            <span>{t.source.showTags}</span>
-            <Toggle checked={showTags} onChange={setShowTags} />
+            <span>{t.source.showChips}</span>
+            <Toggle checked={showChips} onChange={setShowChips} />
           </label>
         </div>
       )}
@@ -159,9 +148,11 @@ function GroupHead({
   );
   return (
     <div className="lib-group-head">
-      <span className={`src-tile ${srcClass(group)}`}>
-        <Icon name={group.icon} size={17} />
-      </span>
+      {group.logo && (
+        <span className="src-tile">
+          <Logo src={group.logo} size={22} />
+        </span>
+      )}
       <h2>{group.label}</h2>
       <span className="muted lib-group-meta">
         {group.detail && <>{group.detail} · </>}
@@ -201,7 +192,7 @@ export function Library({
   const [view, setView] = useState<"grid" | "list">(() => (stored(local, "ln.view") === "list" ? "list" : "grid"));
   const [query, setQuery] = useState("");
   const [grouped, setGrouped] = useState(() => stored(local, "ln.group") === "1" || sceneIs("library-sources"));
-  const [showTags, setShowTags] = useState(() => stored(local, "ln.sourceTags") !== "0");
+  const [showChips, setShowChips] = useState(() => stored(local, "ln.sourceChips") !== "0");
   // Kept while moving between the library and a game, not across restarts.
   const [filter, setFilter] = useState<string | null>(() => stored(session, "ln.source"));
   const [busy, setBusy] = useState<GroupAction | null>(null);
@@ -214,9 +205,9 @@ export function Library({
     setGrouped(v);
     store(local, "ln.group", v ? "1" : "0");
   };
-  const setTagsSaved = (v: boolean) => {
-    setShowTags(v);
-    store(local, "ln.sourceTags", v ? "1" : "0");
+  const setChipsSaved = (v: boolean) => {
+    setShowChips(v);
+    store(local, "ln.sourceChips", v ? "1" : "0");
   };
   const setFilterSaved = (id: string | null) => {
     setFilter(id);
@@ -229,7 +220,8 @@ export function Library({
   );
   // Groups of the whole library (for the filter), and of the games shown.
   const all = useMemo(() => groupBySource(sorted), [sorted]);
-  const active = filter && all.groups.some((g) => g.group.id === filter) ? filter : null;
+  // A hidden filter bar shows the whole library.
+  const active = showChips && filter && all.groups.some((g) => g.group.id === filter) ? filter : null;
   const games = useMemo(() => {
     const q = query.trim().toLowerCase();
     return sorted.filter((g) => g.name.toLowerCase().includes(q) && (!active || all.of.get(g.key)?.id === active));
@@ -289,7 +281,6 @@ export function Library({
         <button key={g.key} className="card" onClick={() => onOpen(g.key)}>
           <div className="cover">
             <Cover game={g} />
-            {showTags && <SourceTag group={all.of.get(g.key)!} game={g} />}
             {needsAttention(g) && (
               <span className="attention" title={t.library.needsAttention}>
                 <Icon name="warn" size={15} />
@@ -332,7 +323,7 @@ export function Library({
               <span>
                 <b>{g.name}</b>
                 <small className="muted">
-                  {showTags && <SourceTag group={all.of.get(g.key)!} game={g} inline />}
+                  <SourceTag group={all.of.get(g.key)!} game={g} />
                   {g.platform ?? g.adapterName ?? (g.ludusaviTitle ? t.library.ludusavi : t.library.custom)}
                 </small>
               </span>
@@ -385,7 +376,7 @@ export function Library({
               <Icon name="list" />
             </button>
           </div>
-          <ViewMenu grouped={grouped} setGrouped={setGroupedSaved} showTags={showTags} setShowTags={setTagsSaved} />
+          <ViewMenu grouped={grouped} setGrouped={setGroupedSaved} showChips={showChips} setShowChips={setChipsSaved} />
           <Button icon="sync" onClick={onRefresh} title={t.library.refreshTitle}>
             {t.library.refresh}
           </Button>
@@ -414,7 +405,7 @@ export function Library({
         </div>
       )}
 
-      {all.groups.length > 1 && (
+      {showChips && all.groups.length > 1 && (
         <div className="chips source-chips">
           <button className={`chip${active ? "" : " on"}`} onClick={() => setFilterSaved(null)}>
             {t.source.all}
@@ -427,7 +418,7 @@ export function Library({
               onClick={() => setFilterSaved(active === group.id ? null : group.id)}
               title={group.detail ?? undefined}
             >
-              <SourceIcon group={group} />
+              <Logo src={group.logo} size={15} />
               {group.label}
               <span className="chip-count">{list.length}</span>
             </button>

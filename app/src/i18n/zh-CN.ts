@@ -127,7 +127,7 @@ export const source = {
   all: "全部",
   view: "显示选项",
   groupBy: "按来源分组",
-  showTags: "显示来源标识",
+  showChips: "显示分类",
   games: (n: number) => `${n} 个游戏`,
   syncAll: "全部同步",
   backupAll: "全部备份",

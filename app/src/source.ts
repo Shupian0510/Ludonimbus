@@ -1,5 +1,5 @@
 // Where games come from (an emulator, a recomp, a PC game…): the library's
-// source badges, filter and groups. The backend detects the source from the
+// source tags, filter and groups. The backend detects the source from the
 // game's save rule; the user can put a game in a group of their own.
 import type { GameView, SourceKind } from "./api";
 import { currentLang, msg } from "./i18n";
@@ -13,8 +13,12 @@ export interface SourceGroup {
   named: boolean;
   /** The emulator's platform (`GameCube / Wii emulator`). */
   detail: string | null;
-  /** An icon name from components/ui.tsx. */
-  icon: string;
+  /**
+   * The logo of what the group's games run on (the emulator's or the Xbox
+   * app's icon, read from the program on this PC); null for groups that are a
+   * kind of game (recomps, PC games) and when the program isn't here.
+   */
+  logo: string | null;
 }
 
 export interface Grouped {
@@ -24,25 +28,11 @@ export interface Grouped {
 
 const idOf = (label: string) => label.trim().toLocaleLowerCase();
 
-/**
- * Icons an emulator rule can name (`icon:` in adapters/emulators.yaml): the
- * shape of the device it emulates, never a logo. Keep in sync with the
- * `emulator_icons` test in crates/core/src/adapters.rs.
- */
-export const SOURCE_ICONS = ["cube", "tablet", "dual-screen", "hybrid", "disc", "handheld", "layers"];
-
-const KIND_ICON: Record<SourceKind, string> = { emulator: "gamepad", recomp: "chip", pc: "monitor", xbox: "bag", custom: "folder" };
-
-function iconOf(g: GameView): string {
-  const named = g.source.kind === "emulator" ? g.source.icon : null;
-  return named && SOURCE_ICONS.includes(named) ? named : KIND_ICON[g.source.kind];
-}
-
 /** The group worked out from the game's save rule, ignoring the user's choice. */
 export function detectedGroup(g: GameView): SourceGroup {
   const s = g.source;
   const label = s.name ?? msg().source.kinds[s.kind];
-  return { id: idOf(label), label, kind: s.kind, named: false, detail: s.kind === "emulator" ? s.detail : null, icon: iconOf(g) };
+  return { id: idOf(label), label, kind: s.kind, named: false, detail: s.kind === "emulator" ? s.detail : null, logo: null };
 }
 
 /** Emulators and the user's own groups first (by name), then recomps, PC, Xbox, other. */
@@ -64,18 +54,30 @@ export function groupBySource(games: GameView[]): { of: Map<string, SourceGroup>
   for (const g of games) {
     const label = g.source.label?.trim();
     const group = label
-      ? detected.get(idOf(label)) ?? { id: idOf(label), label, kind: g.source.kind, named: true, detail: null, icon: "tag" }
+      ? detected.get(idOf(label)) ?? { id: idOf(label), label, kind: g.source.kind, named: true, detail: null, logo: null }
       : detected.get(detectedGroup(g).id)!;
     of.set(g.key, group);
     const entry = byId.get(group.id);
     if (entry) entry.games.push(g);
     else byId.set(group.id, { group, games: [g] });
   }
+  for (const e of byId.values()) e.group.logo = logoOf(e);
   const lang = currentLang();
   const groups = [...byId.values()].sort(
     (a, b) => rank(a.group) - rank(b.group) || a.group.label.localeCompare(b.group.label, lang),
   );
   return { of, groups };
+}
+
+/**
+ * A group's logo: an emulator's or the Xbox app's (from any of its games), or
+ * the one logo all games of a group the user named share.
+ */
+function logoOf({ group, games }: Grouped): string | null {
+  const logos = games.map((g) => g.source.logo);
+  if (group.named) return logos[0] && logos.every((l) => l === logos[0]) ? logos[0] : null;
+  if (group.kind !== "emulator" && group.kind !== "xbox") return null;
+  return logos.find((l) => l) ?? null;
 }
 
 /** The name on a game's badge; null for an ungrouped hand-added game, which gets no badge. */

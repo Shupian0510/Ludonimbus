@@ -31,6 +31,7 @@ pub mod gamebackup;
 pub mod games;
 pub mod i18n;
 pub mod localart;
+pub mod logos;
 pub mod lockfile;
 pub mod logger;
 pub mod ludusavi;

@@ -7,8 +7,6 @@
 #   saves      认不出是哪个游戏时（例如只打开了模拟器）同步整个模拟器的存档
 #   gameId     怎么认出快捷方式启动的是哪个游戏，见 crates/core/src/emulators.rs
 #   gameSaves  一个游戏的存档，<占位符> 由游戏 ID 填入；按游戏类型分组（default，或 gc / wii）
-#   icon       游戏库里代表这个模拟器的图标（机型的样子，不用商标）：cube、tablet、dual-screen、hybrid、
-#              disc、handheld、layers；不写时用手柄图标。见 app/src/source.ts
 #
 # 游戏本体备份（docs/plan-game-backup.md 第 8 节）用的字段：
 #   gameFiles       除了快捷方式指向的光盘镜像 / 游戏文件夹以外，这个游戏自己的文件（更新、DLC），写法同 gameSaves
@@ -27,7 +25,6 @@
   name: Dolphin
   kind: emulator
   platform: GameCube / Wii 模拟器
-  icon: cube
   match: { exe: [Dolphin.exe, DolphinQt2.exe, DolphinWX.exe] }
   roots: { emu: "{install}/User|{documents}/Dolphin Emulator|{appdata}/Dolphin Emulator" }
   saves:
@@ -58,7 +55,6 @@
   name: Cemu
   kind: emulator
   platform: Wii U 模拟器
-  icon: tablet
   match: { exe: Cemu.exe }
   roots: { mlc: "{install}/portable/mlc01|{install}/mlc01|{appdata}/Cemu/mlc01" }
   saves: ["{mlc}/usr/save/**"]
@@ -78,7 +74,6 @@
   name: Azahar
   kind: emulator
   platform: 3DS 模拟器
-  icon: dual-screen
   match: { exe: [azahar.exe, azahar-qt.exe] }
   roots: { user: "{install}/user|{appdata}/Azahar" }
   saves: &n3ds-saves
@@ -92,7 +87,6 @@
   name: Citra
   kind: emulator
   platform: 3DS 模拟器
-  icon: dual-screen
   match: { exe: [citra-qt.exe, citra.exe] }
   roots: { user: "{install}/user|{appdata}/Citra" }
   saves: *n3ds-saves
@@ -103,7 +97,6 @@
   name: Lime3DS
   kind: emulator
   platform: 3DS 模拟器
-  icon: dual-screen
   match: { exe: [lime3ds-gui.exe, lime3ds.exe, lime-qt.exe] }
   roots: { user: "{install}/user|{appdata}/Lime3DS" }
   saves: *n3ds-saves
@@ -114,7 +107,6 @@
   name: Ryujinx
   kind: emulator
   platform: Switch 模拟器
-  icon: hybrid
   match: { exe: [Ryujinx.exe, Ryujinx.Ava.exe] }
   roots: { emu: "{install}/portable|{appdata}/Ryujinx" }
   # 整个模拟器：存档按本机分配的编号存放，编号表在 bis/system/save/8000000000000000
@@ -139,7 +131,6 @@
   name: Eden
   kind: emulator
   platform: Switch 模拟器
-  icon: hybrid
   match: { exe: eden.exe }
   roots: { user: "{install}/user|{appdata}/eden" }
   saves: &yuzu-saves
@@ -150,7 +141,6 @@
   name: Citron
   kind: emulator
   platform: Switch 模拟器
-  icon: hybrid
   match: { exe: citron.exe }
   roots: { user: "{install}/user|{appdata}/citron" }
   saves: *yuzu-saves
@@ -159,7 +149,6 @@
   name: Sudachi
   kind: emulator
   platform: Switch 模拟器
-  icon: hybrid
   match: { exe: sudachi.exe }
   roots: { user: "{install}/user|{appdata}/sudachi" }
   saves: *yuzu-saves
@@ -168,7 +157,6 @@
   name: Suyu
   kind: emulator
   platform: Switch 模拟器
-  icon: hybrid
   match: { exe: suyu.exe }
   roots: { user: "{install}/user|{appdata}/suyu" }
   saves: *yuzu-saves
@@ -177,7 +165,6 @@
   name: yuzu
   kind: emulator
   platform: Switch 模拟器（含 torzu 等分支）
-  icon: hybrid
   match: { exe: yuzu.exe }
   roots: { user: "{install}/user|{appdata}/yuzu" }
   saves: *yuzu-saves
@@ -188,7 +175,6 @@
   name: shadPS4
   kind: emulator
   platform: PS4 模拟器
-  icon: disc
   match: { exe: shadPS4.exe }
   roots: { user: "{install}/user|{appdata}/shadPS4" }
   saves: ["{user}/savedata/**"]
@@ -202,7 +188,6 @@
   name: RPCS3
   kind: emulator
   platform: PS3 模拟器
-  icon: disc
   match: { exe: rpcs3.exe }
   saves: ["{install}/dev_hdd0/home/00000001/savedata/**"]
   gameId: ps3
@@ -220,7 +205,6 @@
   name: PCSX2
   kind: emulator
   platform: PS2 模拟器
-  icon: disc
   match: { exe: "pcsx2*.exe" }
   # 记忆卡是所有游戏共用的，只能整体同步
   roots: { cards: "{install}/memcards|{documents}/PCSX2/memcards" }
@@ -230,7 +214,6 @@
   name: DuckStation
   kind: emulator
   platform: PS1 模拟器
-  icon: disc
   match: { exe: "duckstation*.exe" }
   roots: { cards: "{install}/memcards|{documents}/DuckStation/memcards|{localappdata}/DuckStation/memcards" }
   saves: ["{cards}/**"]
@@ -239,7 +222,6 @@
   name: PPSSPP
   kind: emulator
   platform: PSP 模拟器
-  icon: handheld
   match: { exe: "PPSSPPWindows*.exe" }
   roots: { emu: "{install}/memstick|{documents}/PPSSPP|{install}/memstick" }
   saves: ["{emu}/PSP/SAVEDATA/**"]
@@ -251,7 +233,6 @@
   name: Vita3K
   kind: emulator
   platform: PS Vita 模拟器
-  icon: handheld
   match: { exe: Vita3K.exe }
   roots: { ux0: "{install}/ux0|{appdata}/Vita3K/Vita3K/ux0" }
   saves: ["{ux0}/user/00/savedata/**"]
@@ -265,7 +246,6 @@
   name: Xenia
   kind: emulator
   platform: Xbox 360 模拟器
-  icon: disc
   match: { exe: [xenia_canary.exe, xenia.exe] }
   roots: { content: "{install}/content|{documents}/Xenia/content" }
   # 00000001 是存档；DLC（00000002）和更新（000B0000）不同步
@@ -281,7 +261,6 @@
   name: RetroArch
   kind: emulator
   platform: 多平台模拟器
-  icon: layers
   match: { exe: retroarch.exe }
   saves: ["{install}/saves/**"]
   gameId: rom

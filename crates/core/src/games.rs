@@ -406,8 +406,9 @@ pub struct Source {
     pub detail: Option<String>,
     /// The group the user chose instead (see [`GameEntry::source`]).
     pub label: Option<String>,
-    /// Emulators: the icon named in the rule (see [`Adapter::icon`]).
-    pub icon: Option<String>,
+    /// The logo of the program it runs on, as an image URL: filled in by the
+    /// app from [`crate::logos::for_game`].
+    pub logo: Option<String>,
 }
 
 /// Where a game comes from, worked out from its save rule and program.
@@ -423,8 +424,7 @@ pub fn source(g: &GameEntry) -> Source {
         None => (SourceKind::Custom, None, None),
     };
     let label = g.source.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let icon = adapter.filter(|a| a.is_emulator()).and_then(|a| a.icon.clone());
-    Source { kind, name, detail, label, icon }
+    Source { kind, name, detail, label, logo: None }
 }
 
 pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> Result<GameEntry> {
@@ -762,7 +762,7 @@ mod tests {
         assert_eq!(s.kind, SourceKind::Emulator);
         assert_eq!(s.name.as_deref(), Some("Dolphin"));
         assert!(s.detail.is_some());
-        assert_eq!(s.icon.as_deref(), Some("cube"));
+        assert_eq!(s.logo, None);
 
         let s = source(&game(Some("zelda-oot-longshot"), None, None));
         assert_eq!(s.kind, SourceKind::Recomp);

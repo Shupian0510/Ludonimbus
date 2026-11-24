@@ -625,41 +625,19 @@ textarea.input {
   font-weight: 700;
 }
 
-/* Library: game sources (badges, filter, groups) -------------------------- */
-.src-emulator { --src: #66c0f4; }
-.src-recomp { --src: #b48cf2; }
-.src-pc { --src: #a9b8c7; }
-.src-xbox { --src: #5ec26a; }
-.src-custom { --src: #7d8fa3; }
-.src-named { --src: #f0b04a; }
-.src-ico {
-  display: inline-grid;
-  place-items: center;
-  color: var(--src);
+/* Library: game sources (logos, filter, groups) --------------------------- */
+/* Logos are the programs' own icons (crates/core/src/logos.rs), never drawn. */
+.src-logo {
   flex: none;
+  object-fit: contain;
 }
-/* On covers: the icon only, in a round glass chip (mirrors .attention). */
-.src-badge {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: var(--src);
-  background: rgba(10, 14, 20, 0.62);
-  backdrop-filter: blur(6px);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 2px 6px rgba(0, 0, 0, 0.35);
-}
-/* In the list: icon and name. */
+/* In the list: logo and name. */
 .src-tag {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   height: 18px;
-  padding: 0 7px 0 5px;
+  padding: 0 7px;
   margin-right: 6px;
   border-radius: 9px;
   vertical-align: 1px;
@@ -669,11 +647,10 @@ textarea.input {
   font-weight: 600;
   white-space: nowrap;
 }
-.src-tag svg {
-  color: var(--src);
-  flex: none;
+.src-tag:has(.src-logo) {
+  padding-left: 3px;
 }
-/* Group headers: the icon on a tinted tile. */
+/* Group headers: the logo on a neutral tile. */
 .src-tile {
   width: 30px;
   height: 30px;
@@ -681,9 +658,8 @@ textarea.input {
   display: grid;
   place-items: center;
   flex: none;
-  color: var(--src);
-  background: color-mix(in srgb, var(--src) 15%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--src) 28%, transparent);
+  background: rgba(125, 143, 163, 0.12);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .source-chips {
   margin: -4px 0 20px;

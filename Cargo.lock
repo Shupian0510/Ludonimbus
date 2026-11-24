@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-app"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2701,7 +2701,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "aes",
  "anyhow",
@@ -2715,6 +2715,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "ico",
  "keyring",
  "md-5",
  "notify",
@@ -2740,7 +2741,7 @@ dependencies = [
 
 [[package]]
 name = "ludonimbus-runner"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "chrono",

@@ -4,12 +4,14 @@
 //! - `/local/<game>/<kind>`: artwork chosen in Ludonimbus for games that are
 //!   not in Steam;
 //! - `/shot/<game>/<device>/<t|f>/<name>`: a Steam screenshot (thumbnail or
-//!   full image) from this PC's Steam folder or the screenshot cache.
+//!   full image) from this PC's Steam folder or the screenshot cache;
+//! - `/logo/<hash>.png`: a program's icon, the logo of a library group (see
+//!   `ludonimbus_core::logos`).
 //!
 //! On Windows the webview reaches it as `http://ludoart.localhost/...`. URLs
 //! carry the file's modification time so a replaced image is not cached.
 
-use ludonimbus_core::{config, localart, screenshots, steam};
+use ludonimbus_core::{config, localart, logos, screenshots, steam};
 use std::path::Path;
 use tauri::http::{Request, Response};
 use tauri::{Runtime, UriSchemeContext};
@@ -29,6 +31,12 @@ pub fn url(account: &str, appid: u32, kind: &str, file: &Path) -> String {
 
 pub fn local_url(key: &str, kind: &str, file: &Path) -> String {
     format!("http://ludoart.localhost/local/{key}/{kind}?v={}", version(file))
+}
+
+/// Logo files are named by their content, so they never change.
+pub fn logo_url(file: &Path) -> Option<String> {
+    let name = file.file_name()?.to_str()?;
+    Some(format!("http://ludoart.localhost/logo/{name}"))
 }
 
 pub fn shot_url(key: &str, device: &str, name: &str, thumb: bool, file: &Path) -> String {
@@ -56,6 +64,7 @@ fn resolve(parts: &[&str]) -> Option<std::path::PathBuf> {
             let game = cfg.game(&key)?;
             screenshots::local_file(&cfg, game, &device, &name, *size == "t")
         }
+        ["logo", name] => logos::file(name),
         ["local", key, kind] => {
             let valid = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
             valid.then(|| localart::file(key, kind)).flatten()

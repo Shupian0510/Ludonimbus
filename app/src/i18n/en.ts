@@ -121,7 +121,7 @@ export const source: typeof Zh.source = {
   all: "All",
   view: "View options",
   groupBy: "Group by source",
-  showTags: "Show source badges",
+  showChips: "Show categories",
   games: (n) => `${n} ${plural(n, "game", "games")}`,
   syncAll: "Sync all",
   backupAll: "Back up all",

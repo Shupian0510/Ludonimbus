@@ -4,6 +4,20 @@
 
 Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
 
+## 0.6.1
+
+### 中文
+
+- 改进：游戏库的封面上不再叠加来源图标，封面完整可见；「显示选项」里的「显示来源标识」开关也随之去掉。列表视图仍在游戏名下方写着来源。
+- 改进：分类、分组标题和列表里的标志换成模拟器、重编译和 Xbox App 自己的图标，直接从这台电脑上装好的程序里读取，不再用 Ludonimbus 自己画的机型图标；程序不在这台电脑上时只显示名字。
+- 新增：「显示选项」里可以关掉「显示分类」，隐藏游戏库上方的分类。
+
+### English
+
+- Improved: library covers no longer have a source icon on top, so the art is fully visible; the "Show source badges" switch under View options is gone with it. The list view still shows each game's source under its name.
+- Improved: categories, group headings and the list now show the emulators', recomps' and the Xbox app's own icons, read from the programs installed on this PC, instead of device icons drawn by Ludonimbus; when a program isn't on this PC, only its name is shown.
+- New: turn off "Show categories" under View options to hide the categories at the top of the library.
+
 ## 0.6.0
 
 ### 中文

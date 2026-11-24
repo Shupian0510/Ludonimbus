@@ -32,10 +32,6 @@ pub struct Adapter {
     pub platform: Option<String>,
     #[serde(default)]
     pub kind: Kind,
-    /// Emulators: the library icon, a generic shape of the device it
-    /// emulates (`cube`, `hybrid`, `disc`…; see `app/src/source.ts`).
-    #[serde(default)]
-    pub icon: Option<String>,
     #[serde(rename = "match", default)]
     pub matcher: Option<Matcher>,
     /// RecompLauncher catalog ids: its Steam shortcuts start
@@ -367,18 +363,6 @@ pub fn label(adapter: &Adapter, game: Option<&crate::emulators::EmuGame>) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Every emulator has a library icon the interface draws
-    /// (`SOURCE_ICONS` in app/src/source.ts).
-    #[test]
-    fn emulator_icons() {
-        const KNOWN: &[&str] = &["cube", "tablet", "dual-screen", "hybrid", "disc", "handheld", "layers"];
-        for a in builtin().iter().filter(|a| a.is_emulator()) {
-            let icon = a.icon.as_deref().unwrap_or_else(|| panic!("{}: no icon", a.key));
-            assert!(KNOWN.contains(&icon), "{}: unknown icon {icon}", a.key);
-        }
-        assert!(builtin().iter().filter(|a| !a.is_emulator()).all(|a| a.icon.is_none()));
-    }
 
     #[test]
     fn rules_parse() {

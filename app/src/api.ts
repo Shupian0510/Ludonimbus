@@ -135,8 +135,11 @@ export interface GameSource {
   detail: string | null;
   /** The group the user chose instead; null = detected. */
   label: string | null;
-  /** Emulators: the device icon named in the rule (`cube`, `hybrid`…). */
-  icon: string | null;
+  /**
+   * The icon of the program the game runs on (its emulator or recomp, or the
+   * Xbox app), read from the program on this PC; null when there is none.
+   */
+  logo: string | null;
 }
 
 export interface PlaytimeDevice {
