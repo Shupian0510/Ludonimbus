@@ -646,6 +646,37 @@ impl CloudProvider for GoogleDrive {
         }
         Ok(out)
     }
+
+    fn list_files(&self, dir: &str) -> Result<Vec<String>> {
+        let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+        let Some(folder) = self.folder_id(&parts, false)? else {
+            return Ok(Vec::new());
+        };
+        let q = format!("'{}' in parents and mimeType!='{FOLDER_MIME}' and trashed=false", esc(&folder));
+        Ok(self.list(&q)?.into_iter().map(|f| f.name).collect())
+    }
+
+    fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+        let Some(folder) = self.folder_id(&parts, false)? else {
+            return Ok(None);
+        };
+        match self.find_file(&folder, name)? {
+            Some(f) => Ok(Some(self.download_bytes(&f.id)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn write_file(&self, path: &str, data: &[u8]) -> Result<()> {
+        let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+        let folder = self.writable_folder(&parts)?;
+        match self.find_file(&folder, name)? {
+            Some(f) => self.update_content(&f.id, "application/json", data),
+            None => self.create_file(&folder, name, "application/json", json!({}), data.to_vec()).map(|_| ()),
+        }
+    }
 }
 
 #[cfg(test)]

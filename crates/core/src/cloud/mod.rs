@@ -134,6 +134,14 @@ pub trait CloudProvider: Send + Sync {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>>;
     fn put_game(&self, game: &CloudGame) -> Result<()>;
     fn list_games(&self) -> Result<Vec<CloudGame>>;
+    /// Names of the files (not folders) directly in `dir`, for small extra
+    /// data such as `games/<key>/achievements/<device-id>.json`. A missing
+    /// folder is empty.
+    fn list_files(&self, dir: &str) -> Result<Vec<String>>;
+    /// Whole content of a small extra file; `None` when it does not exist.
+    fn read_file(&self, path: &str) -> Result<Option<Vec<u8>>>;
+    /// Create or replace a small extra file.
+    fn write_file(&self, path: &str, data: &[u8]) -> Result<()>;
 }
 
 pub fn timeout(cfg: &AppConfig) -> Duration {
