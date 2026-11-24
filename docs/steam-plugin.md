@@ -122,4 +122,4 @@ Steam 客户端
 插件里：
 
 - `frontend/toast.ts` 每 2 秒取一次新事件，用 Steam 前端的 `window.NotificationStore` 弹出 Steam 自己的成就通知：在 `GetNotificationTargets()` 里按 `strTest === "Achievement"` 找到通知类型和 protobuf 类，照 Steam 的 `TestAchievement` 构造数据；这个游戏的 Overlay 在运行时用 `AddAppOverlayNotification`（游戏内），否则用 `OnNotification`（桌面）。都是没有文档的内部接口，按名字查找，找不到时把原因报给应用。
-- `frontend/achievements.ts` 在「开始游戏」栏加「成就 x / y」项（借用 Steam 的类名），点开是插件自己画的列表，每 20 秒或收到解锁时刷新。
+- `frontend/achievements.ts` 放在 Steam 给自己游戏显示成就的位置：「开始游戏」栏的「成就 x/y」（Steam 的 `GameStat MiniAchievements` 等类名，每一行统计都放，排在云存档项之前）和右栏最上面的「成就」区块（`findClassModule` 找 `AppDetailsSection` / `RightColumnSection` / `SectionHeader`）。点开是插件自己画的列表，每 20 秒或收到解锁时刷新。
