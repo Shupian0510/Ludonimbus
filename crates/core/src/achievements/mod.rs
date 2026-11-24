@@ -513,6 +513,9 @@ pub struct GameView {
     pub popup: bool,
     pub checked_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
+    /// Some achievements have no icon of their own and the game has one
+    /// ([`game_icon_path`]): show it for them, fetched once per game.
+    pub game_icon: bool,
 }
 
 fn item(a: &Achievement, r: Option<&Record>) -> ItemView {
@@ -563,6 +566,7 @@ pub fn view(key: &str) -> GameView {
     let unlocked = items.iter().filter(|i| i.unlocked_at.is_some()).count();
     let points_total = items.iter().filter_map(|i| i.points).sum();
     let points = items.iter().filter(|i| i.unlocked_at.is_some()).filter_map(|i| i.points).sum();
+    let game_icon = items.iter().any(|i| i.icon_url.is_none() && !i.has_icon) && game_icon_path(key).is_some();
     GameView {
         key: key.to_string(),
         source: binding.map(|b| b.source),
@@ -577,6 +581,7 @@ pub fn view(key: &str) -> GameView {
         popup: st.popup_for(key),
         checked_at: db.checked_at,
         last_error: db.last_error,
+        game_icon,
     }
 }
 
@@ -589,14 +594,66 @@ pub fn icon_path(key: &str, id: &str) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-/// `data:` URL of a local icon (PNG / JPEG), for pages that can't read files.
+/// Largest icon file sent as a `data:` URL.
+const ICON_MAX: u64 = 2 * 1024 * 1024;
+
+fn usable_icon(p: PathBuf) -> Option<PathBuf> {
+    std::fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() <= ICON_MAX).then_some(p)
+}
+
+/// An image file as it is, or the icon inside an exe (as a cached PNG).
+fn icon_file(p: &Path) -> Option<PathBuf> {
+    if p.as_os_str().is_empty() || util::file_name_lower(p) == "ludonimbus-run.exe" {
+        return None;
+    }
+    match p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("png" | "jpg" | "jpeg" | "webp" | "ico") => usable_icon(p.to_path_buf()),
+        Some("exe") => crate::logos::of_exe(p).and_then(usable_icon),
+        _ => None,
+    }
+}
+
+/// The game's own icon, shown for achievements that have none (save rules
+/// have no icons, Lantern has no trophy data): the icon in Steam's grid
+/// folder, the one chosen in Ludonimbus, the Steam shortcut's icon, else
+/// the icon built into the game's program.
+pub fn game_icon(cfg: &AppConfig, g: &GameEntry) -> Option<PathBuf> {
+    let steam = crate::steam::root(cfg).zip(g.steam.as_ref().filter(|l| l.appid != 0));
+    let grid = steam.as_ref().and_then(|(r, l)| crate::steam::art_file(r, &l.account, l.appid, "icon"));
+    if let Some(f) = grid.and_then(usable_icon) {
+        return Some(f);
+    }
+    if let Some(f) = crate::localart::file(&g.key, "icon").and_then(usable_icon) {
+        return Some(f);
+    }
+    let shortcut = steam.as_ref().and_then(|(r, l)| crate::steam::find_shortcut(r, &l.account, l.appid).ok().flatten());
+    shortcut
+        .and_then(|sc| icon_file(Path::new(sc.icon.trim())))
+        .or_else(|| g.exe.as_deref().and_then(icon_file))
+}
+
+/// [`game_icon`] of the game `key`.
+pub fn game_icon_path(key: &str) -> Option<PathBuf> {
+    let cfg = crate::config::load().ok()?;
+    game_icon(&cfg, cfg.game(key)?)
+}
+
+/// `data:` URL of a local icon (PNG / JPEG / WebP / ICO), for pages that can't read files.
 pub fn icon_data_url(path: &Path) -> Result<String> {
     use base64::Engine;
     let bytes = std::fs::read(path)?;
-    if bytes.len() > 2 * 1024 * 1024 {
+    if bytes.len() as u64 > ICON_MAX {
         bail!("icon too large");
     }
-    let mime = if bytes.starts_with(&[0xFF, 0xD8]) { "image/jpeg" } else { "image/png" };
+    let mime = if bytes.starts_with(&[0xFF, 0xD8]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        "image/webp"
+    } else if bytes.starts_with(&[0, 0, 1, 0]) {
+        "image/x-icon"
+    } else {
+        "image/png"
+    };
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 

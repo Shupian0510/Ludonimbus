@@ -206,6 +206,7 @@ fn main() {
             achievements::achievements_unlink,
             achievements::achievements_refresh,
             achievements::achievements_icon,
+            achievements::achievements_game_icon,
             achievements::achievements_set_popup,
             achievements::achievements_settings,
             achievements::achievements_save_settings,

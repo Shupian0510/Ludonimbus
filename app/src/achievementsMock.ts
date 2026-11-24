@@ -53,6 +53,7 @@ const bloodborne: AchievementsView = {
   popup: true,
   checkedAt: ago(0.2),
   lastError: null,
+  gameIcon: false,
   items: [
     ...[12, 5, 3, 2, 1, 0, 9].map((n, i) => item(String(n), L(`奖杯 ${n}`, `Trophy ${n}`), "", null, [0.5, 30, 52, 120, 160, 200, 260][i])),
     ...Array.from({ length: 33 }, (_, i) => i + 13).map((n) => item(String(n), L(`奖杯 ${n}`, `Trophy ${n}`), "", null, null)),
@@ -72,6 +73,7 @@ const demoRa: AchievementsView = {
   popup: true,
   checkedAt: ago(1),
   lastError: null,
+  gameIcon: false,
   items: [
     item("2", L("第一个迷宫", "First dungeon"), L("通关第一个迷宫", "Clear the first dungeon"), null, 2, { points: 5, hardcore: true }),
     item("1", L("出发", "Departure"), L("离开森林", "Leave the forest"), null, 26, { points: 3 }),
@@ -82,8 +84,33 @@ const demoRa: AchievementsView = {
   ],
 };
 
+// Save rules have no icons: the game's icon stands in for them.
+const oot: AchievementsView = {
+  key: "zelda-oot-longshot",
+  source: "rules",
+  sourceLabel: "Ludonimbus",
+  sourceId: "zelda-oot-longshot",
+  title: L("塞尔达传说：时之笛（Longshot）", "The Legend of Zelda: Ocarina of Time (Longshot)"),
+  total: 6,
+  unlocked: 3,
+  points: 0,
+  pointsTotal: 0,
+  popup: true,
+  checkedAt: ago(0.1),
+  lastError: null,
+  gameIcon: true,
+  items: [
+    item("kokiri_emerald", L("森林的精灵石", "Spiritual Stone of the Forest"), L("得到科奇里翡翠。", "Obtain the Kokiri Emerald."), null, 1, { hasIcon: false }),
+    item("fairy_ocarina", L("临别的礼物", "A Parting Gift"), L("得到妖精之笛。", "Receive the Fairy Ocarina."), null, 2, { hasIcon: false }),
+    item("kokiri_sword", L("森林里的勇者", "Hero of the Forest"), L("找到科奇里之剑。", "Find the Kokiri Sword."), null, 3, { hasIcon: false }),
+    item("zeldas_lullaby", L("王家的旋律", "Royal Melody"), L("学会塞尔达摇篮曲。", "Learn Zelda's Lullaby."), null, null, { hasIcon: false }),
+    item("goron_ruby", L("火焰的精灵石", "Spiritual Stone of Fire"), L("得到鼓隆红宝石。", "Obtain the Goron Ruby."), null, null, { hasIcon: false }),
+    item("spiritual_stones", L("三颗精灵石", "Three Spiritual Stones"), L("集齐三颗精灵石。", "Hold all three Spiritual Stones."), null, null, { hasIcon: false }),
+  ],
+};
+
 const settings: AchievementSettings = { raUser: null, raConnected: false, steamPopup: true, fallbackPopup: true, ps4KeySource: null };
-const views: Record<string, AchievementsView> = { "bloodborne-lantern": bloodborne };
+const views: Record<string, AchievementsView> = { "bloodborne-lantern": bloodborne, "zelda-oot-longshot": oot };
 
 const none = (key: string): AchievementsView => ({
   key,
@@ -99,6 +126,7 @@ const none = (key: string): AchievementsView => ({
   popup: true,
   checkedAt: null,
   lastError: null,
+  gameIcon: false,
 });
 
 const hues: Record<string, number> = {};
@@ -114,6 +142,8 @@ export async function mockAchievements(cmd: string, args: Record<string, unknown
       hues[id] ??= (Number(id) * 47) % 360;
       return delay(icon(hues[id]), 50);
     }
+    case "achievements_game_icon":
+      return delay(key === "zelda-oot-longshot" ? "/mock-art/4079546474_icon.png" : null, 50);
     case "achievements_candidates": {
       const c: Candidate[] = [
         {

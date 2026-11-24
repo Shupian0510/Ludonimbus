@@ -185,6 +185,7 @@ games/<key>/achievements/<device-id>.json     这台设备的解锁记录，只�
 - 来源明确的游戏（例如 Lantern 上的 Bloodborne）在应用启动时自动关联；手动「取消关联」过的不再自动关联。
 - 点开是成就列表（插件自己画的弹出层，Steam 深色风格）：顶部是总进度；已解锁的在前（图标、名称、说明、解锁时间和设备），未解锁的变灰；未解锁的隐藏成就显示「隐藏成就」。RA 显示分数和硬核标记，奖杯显示等级。
 - 数据：插件后端调用本机接口 `GET /v1/steam/apps/{appid}/achievements`。本地奖杯的图标由后端转成 data URL（插件页面读不到本地文件）；RA 的图标直接用网址。
+- 没有自己图标的成就（存档规则没有图标，没有奖杯数据的 Lantern 也没有）显示**游戏的图标**，按顺序找：Steam grid 文件夹里的 `<appid>_icon`、在 Ludonimbus 里选的图标、Steam 快捷方式的图标（图片，或从 exe 里取）、游戏程序自带的图标；超过 2 MB 的跳过。接口返回的 `gameIcon: true` 表示需要它，每个游戏只取一次（`GET /v1/games/{key}/icon`）；解锁弹窗也用它。连游戏图标都没有时显示奖杯图案，不留空。
 - 没有关联成就来源的游戏两处都不显示。
 
 ### 3.2 能不能复用 Steam 自己的成就界面
@@ -310,6 +311,7 @@ RetroArch 等 rcheevos 模拟器、shadPS4、RPCS3、Lantern 都会在游戏里�
 |---|---|---|
 | GET | `/v1/steam/apps/{appid}/achievements?account=` | 游戏页用：`{ managed, key, total, unlocked, items: [...] }`；没有来源时 `{ managed: true, source: null }` |
 | GET | `/v1/games/{key}/achievements/{id}/icon` | 本地图标，返回 `{ dataUrl }` |
+| GET | `/v1/games/{key}/icon` | 游戏的图标（给没有自己图标的成就用），返回 `{ dataUrl }` |
 | GET | `/v1/achievements/events?after={seq}` | 新解锁事件（含 appid、名称、说明、图标） |
 | POST | `/v1/achievements/events/{seq}/ack?shown=steam\|failed&reason=` | 插件告诉应用弹窗结果；没弹出来时带上原因，写进 `achievements.log` |
 

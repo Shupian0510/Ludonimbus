@@ -54,6 +54,8 @@ const CSS = `
 .ludonimbus-ach-row:nth-child(odd) { background: rgba(0,0,0,0.15); }
 .ludonimbus-ach-row img, .ludonimbus-ach-row .ludonimbus-ach-noicon { width: 56px; height: 56px; flex: none; border-radius: 3px; object-fit: cover; background: rgba(255,255,255,0.06); }
 .ludonimbus-ach-row[data-locked="1"] img { filter: grayscale(1) brightness(0.55); }
+.ludonimbus-ach-noicon { display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.3); }
+.ludonimbus-ach-noicon svg { width: 55%; height: 55%; }
 .ludonimbus-ach-row[data-locked="1"] .ludonimbus-ach-name { color: #8f98a0; }
 .ludonimbus-ach-text { flex: 1; min-width: 0; }
 .ludonimbus-ach-name { color: #fff; font-size: 15px; }
@@ -134,6 +136,8 @@ export interface AchievementsReply {
 	points?: number;
 	pointsTotal?: number;
 	items?: AchievementItem[];
+	/** Some achievements have no icon: show the game's (get_game_icon). */
+	gameIcon?: boolean;
 	lang?: string;
 	error?: string;
 }
@@ -178,6 +182,27 @@ async function localIcon(key: string, id: string): Promise<string | null> {
 		/* no icon */
 	}
 	return null;
+}
+
+const gameIcons = new Map<string, Promise<string | null>>();
+
+/** The game's icon, for achievements without one (fetched once per game). */
+function gameIcon(key: string): Promise<string | null> {
+	let p = gameIcons.get(key);
+	if (!p) {
+		p = (async () => {
+			try {
+				const v = parse(await backend.get_game_icon(key)) as unknown as { dataUrl?: string };
+				return v.dataUrl ?? null;
+			} catch {
+				return null;
+			}
+		})();
+		gameIcons.set(key, p);
+		// Not remembered when missing: an icon set later shows on the next look.
+		p.then((u) => u || gameIcons.delete(key));
+	}
+	return p;
 }
 
 export class AchievementsBar {
@@ -381,7 +406,7 @@ export class AchievementsBar {
 		const unlocked = items.filter((i) => i.unlockedAt);
 		const locked = items.filter((i) => !i.unlockedAt);
 		// Rebuild only when something shown changed (the observer calls this often).
-		const sig = [lang, r.unlocked, r.total, unlocked.map((i) => i.id).join(',')].join('|');
+		const sig = [lang, r.unlocked, r.total, r.gameIcon ? 1 : 0, unlocked.map((i) => i.id).join(',')].join('|');
 		if (el.dataset.sig === sig) return;
 		el.dataset.sig = sig;
 		const title = el.querySelector('.ludonimbus-ach-sec-title');
@@ -407,17 +432,7 @@ export class AchievementsBar {
 		const tiles = order.length > MAX ? order.slice(0, MAX - 1) : order;
 		for (const a of tiles) {
 			const isLocked = !a.unlockedAt;
-			if (!a.iconUrl && !a.hasIcon) {
-				grid.appendChild(d.createElement('div'));
-				continue;
-			}
-			const img = d.createElement('img');
-			img.alt = '';
-			img.title = isLocked && a.hidden ? m.hidden : a.name;
-			img.dataset.locked = isLocked ? '1' : '0';
-			if (a.iconUrl) img.src = a.iconUrl;
-			else localIcon(r.key, a.id).then((u) => u && (img.src = u));
-			grid.appendChild(img);
+			grid.appendChild(this.icon(a, r, isLocked && a.hidden ? m.hidden : a.name));
 		}
 		if (order.length > tiles.length) {
 			const more = d.createElement('div');
@@ -484,13 +499,36 @@ export class AchievementsBar {
 
 		const list = d.createElement('div');
 		list.className = 'ludonimbus-ach-list';
-		for (const a of r.items ?? []) list.appendChild(this.row(a, r.key));
+		for (const a of r.items ?? []) list.appendChild(this.row(a, r));
 		panel.append(head, list);
 		backdrop.appendChild(panel);
 		d.body.appendChild(backdrop);
 	}
 
-	private row(a: AchievementItem, key: string): HTMLElement {
+	/** The achievement's icon, else the game's, else a trophy. */
+	private icon(a: AchievementItem, r: Shown, title: string): HTMLElement {
+		const d = this.doc;
+		if (!a.iconUrl && !a.hasIcon && !r.gameIcon) {
+			const el = d.createElement('div');
+			el.className = 'ludonimbus-ach-noicon';
+			el.innerHTML = TROPHY_SVG;
+			el.title = title;
+			return el;
+		}
+		const img = d.createElement('img');
+		img.alt = '';
+		img.title = title;
+		img.dataset.locked = a.unlockedAt ? '0' : '1';
+		const useGame = () => gameIcon(r.key).then((u) => u && img.src !== u && (img.src = u));
+		// A web icon that doesn't load (offline) falls back to the game's.
+		img.addEventListener('error', () => useGame(), { once: true });
+		if (a.iconUrl) img.src = a.iconUrl;
+		else if (a.hasIcon) localIcon(r.key, a.id).then((u) => (u ? (img.src = u) : useGame()));
+		else useGame();
+		return img;
+	}
+
+	private row(a: AchievementItem, r: Shown): HTMLElement {
 		const d = this.doc;
 		const m = tx();
 		const locked = !a.unlockedAt;
@@ -498,17 +536,7 @@ export class AchievementsBar {
 		const row = d.createElement('div');
 		row.className = 'ludonimbus-ach-row';
 		row.dataset.locked = locked ? '1' : '0';
-		let img: HTMLElement;
-		if (a.iconUrl || a.hasIcon) {
-			const el = d.createElement('img');
-			el.alt = '';
-			if (a.iconUrl) el.src = a.iconUrl;
-			else localIcon(key, a.id).then((u) => u && (el.src = u));
-			img = el;
-		} else {
-			img = d.createElement('div');
-			img.className = 'ludonimbus-ach-noicon';
-		}
+		const img = this.icon(a, r, '');
 		const text = d.createElement('div');
 		text.className = 'ludonimbus-ach-text';
 		const name = d.createElement('div');

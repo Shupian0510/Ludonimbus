@@ -235,6 +235,18 @@ function get_achievement_icon(key, id)
 end
 
 ---@ffi
+--- The game's icon as a data URL ({ dataUrl }), for achievements without one.
+---@param key string
+---@return string
+function get_game_icon(key)
+    local k = key_part(key)
+    if not k then
+        return failure("bad_request")
+    end
+    return request("GET", "/v1/games/" .. k .. "/icon")
+end
+
+---@ffi
 --- New achievement unlocks after the given sequence number.
 ---@param after string
 ---@return string

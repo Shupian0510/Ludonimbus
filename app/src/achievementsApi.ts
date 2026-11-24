@@ -47,6 +47,8 @@ export interface AchievementsView {
   popup: boolean;
   checkedAt: string | null;
   lastError: string | null;
+  /** Some achievements have no icon of their own: show the game's (gameIcon()). */
+  gameIcon: boolean;
 }
 
 export interface Candidate {
@@ -104,6 +106,7 @@ export const achievementsApi = {
   unlink: (key: string) => invoke<void>("achievements_unlink", { key }),
   refresh: (key: string) => invoke<AchievementsView>("achievements_refresh", { key }),
   icon: (key: string, id: string) => invoke<string | null>("achievements_icon", { key, id }),
+  gameIcon: (key: string) => invoke<string | null>("achievements_game_icon", { key }),
   setPopup: (key: string, popup: boolean | null) => invoke<void>("achievements_set_popup", { key, popup }),
   settings: () => invoke<AchievementSettings>("achievements_settings"),
   saveSettings: (steamPopup: boolean, fallbackPopup: boolean) =>

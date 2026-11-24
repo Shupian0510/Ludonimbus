@@ -43,6 +43,22 @@ export function GameAchievements({ gameKey }: { gameKey: string }) {
   useEffect(load, [load]);
   useAchievementsChanged(gameKey, load);
 
+  // The game's icon, for achievements without one: undefined while loading.
+  const [gameIcon, setGameIcon] = useState<string | null | undefined>(undefined);
+  const wantGameIcon = !!view?.gameIcon;
+  useEffect(() => {
+    if (!wantGameIcon) return;
+    let alive = true;
+    setGameIcon(undefined);
+    achievementsApi.gameIcon(gameKey).then(
+      (u) => alive && setGameIcon(u ?? null),
+      () => alive && setGameIcon(null),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [gameKey, wantGameIcon]);
+
   if (!view) return <Spinner />;
   if (!view.source) return <LinkSource gameKey={gameKey} onLinked={setView} />;
 
@@ -111,7 +127,7 @@ export function GameAchievements({ gameKey }: { gameKey: string }) {
       ) : (
         <div className="ach-list">
           {view.items.map((i) => (
-            <Row key={i.id} gameKey={gameKey} item={i} />
+            <Row key={i.id} gameKey={gameKey} item={i} fallback={view.gameIcon ? gameIcon : null} />
           ))}
         </div>
       )}
@@ -119,9 +135,11 @@ export function GameAchievements({ gameKey }: { gameKey: string }) {
   );
 }
 
-function Row({ gameKey, item }: { gameKey: string; item: AchievementItem }) {
+/** `fallback`: the game's icon, for achievements without one (undefined while loading). */
+function Row({ gameKey, item, fallback }: { gameKey: string; item: AchievementItem; fallback: string | null | undefined }) {
   const a = useT().achievements;
   const [src, setSrc] = useState<string | null>(item.iconUrl);
+  const [failed, setFailed] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   // Local icons are read when the row scrolls into view.
@@ -131,18 +149,28 @@ function Row({ gameKey, item }: { gameKey: string; item: AchievementItem }) {
     const io = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) {
         io.disconnect();
-        achievementsApi.icon(gameKey, item.id).then((u) => u && setSrc(u), () => {});
+        achievementsApi.icon(gameKey, item.id).then(
+          (u) => (u ? setSrc(u) : setFailed(true)),
+          () => setFailed(true),
+        );
       }
     });
     io.observe(el);
     return () => io.disconnect();
   }, [gameKey, item.id, item.iconUrl, item.hasIcon]);
 
+  // Its own icon, else the game's, else a star.
+  const own = !!(item.iconUrl || item.hasIcon) && !failed;
+  const shown = own ? src : fallback;
   const locked = !item.unlockedAt;
   const secret = locked && item.hidden;
   return (
     <div className={`ach-row${locked ? " locked" : ""}`} ref={ref}>
-      {src ? <img src={src} alt="" /> : <div className="ach-noicon" />}
+      {shown ? (
+        <img src={shown} alt="" onError={() => setFailed(true)} />
+      ) : (
+        <div className="ach-noicon">{!own && fallback === null && <Icon name="star" size={24} />}</div>
+      )}
       <div className="ach-text">
         <div className="ach-name">
           {secret ? a.hidden : item.name}
@@ -470,7 +498,13 @@ export function AchievementToast() {
   const title = en ? "Achievement unlocked" : "解锁成就";
   return (
     <div className={`ach-toast${leaving ? " leaving" : ""}`}>
-      {toast.icon ? <img src={toast.icon} alt="" /> : <div className="ach-noicon" />}
+      {toast.icon ? (
+        <img src={toast.icon} alt="" />
+      ) : (
+        <div className="ach-noicon">
+          <Icon name="star" size={30} />
+        </div>
+      )}
       <div className="ach-toast-text">
         <div className="ach-toast-title">
           {title}

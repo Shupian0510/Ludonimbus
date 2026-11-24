@@ -7,6 +7,7 @@
 //! ```text
 //! GET  /v1/steam/apps/{appid}/achievements[?account=]   game page: progress and list
 //! GET  /v1/games/{key}/achievements/{id}/icon            local icon as a data URL
+//! GET  /v1/games/{key}/icon                              the game's icon, for achievements without one
 //! GET  /v1/achievements/events?after={seq}               new unlocks to show
 //! POST /v1/achievements/events/{seq}/ack?shown=steam|failed
 //! ```
@@ -73,12 +74,18 @@ struct Queue {
 
 static QUEUE: Mutex<Queue> = Mutex::new(Queue { seq: 0, events: VecDeque::new(), plugin_seen: None });
 
-fn icon_for(a: &ach::Achievement) -> Option<String> {
-    match a.icon.as_deref() {
-        Some(i) if ach::is_web(i) => Some(i.to_string()),
+/// The achievement's icon, else the game's.
+fn icon_for(key: &str, a: &ach::Achievement) -> Option<String> {
+    let own = match a.icon.as_deref() {
+        Some(i) if ach::is_web(i) => return Some(i.to_string()),
         Some(p) => ach::icon_data_url(std::path::Path::new(p)).ok(),
         None => None,
-    }
+    };
+    own.or_else(|| game_icon_url(key))
+}
+
+fn game_icon_url(key: &str) -> Option<String> {
+    ach::game_icon_path(key).and_then(|p| ach::icon_data_url(&p).ok())
 }
 
 fn push_event(app: &AppHandle, g: &GameEntry, u: &NewUnlock, test: bool) {
@@ -123,7 +130,7 @@ fn enqueue(g: &GameEntry, u: &NewUnlock, test: bool) -> Event {
         id: u.achievement.id.clone(),
         name: u.achievement.name.clone(),
         description: u.achievement.description.clone(),
-        icon: icon_for(&u.achievement),
+        icon: icon_for(&g.key, &u.achievement),
         unlocked_at: u.unlocked_at,
         hardcore: u.hardcore,
         points: u.achievement.points,
@@ -395,6 +402,11 @@ pub fn api_icon(key: &str, id: &str) -> Result<Value> {
     Ok(json!({ "dataUrl": ach::icon_data_url(&path)? }))
 }
 
+pub fn api_game_icon(key: &str) -> Result<Value> {
+    let path = ach::game_icon_path(key).ok_or_else(|| anyhow!("no icon"))?;
+    Ok(json!({ "dataUrl": ach::icon_data_url(&path)? }))
+}
+
 // ---------------------------------------------------------------------------
 // Commands for the app UI
 
@@ -477,6 +489,12 @@ pub async fn achievements_refresh(app: AppHandle, key: String) -> CmdResult<Game
 #[tauri::command]
 pub async fn achievements_icon(key: String, id: String) -> CmdResult<Option<String>> {
     blocking(move || Ok(ach::icon_path(&key, &id).and_then(|p| ach::icon_data_url(&p).ok()))).await
+}
+
+/// The game's icon, shown for achievements that have none.
+#[tauri::command]
+pub async fn achievements_game_icon(key: String) -> CmdResult<Option<String>> {
+    blocking(move || Ok(game_icon_url(&key))).await
 }
 
 #[tauri::command]

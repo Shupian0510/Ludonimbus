@@ -2090,6 +2090,7 @@ details.scan-group[open] > summary {
 .ach-row:last-child { border-bottom: 0; }
 .ach-row img, .ach-row .ach-noicon { width: 52px; height: 52px; border-radius: 6px; flex: none; object-fit: cover; background: var(--panel-2); }
 .ach-row.locked img { filter: grayscale(1) brightness(0.5); }
+.ach-noicon { display: flex; align-items: center; justify-content: center; color: var(--muted); }
 .ach-row.locked .ach-name { color: var(--muted); }
 .ach-text { flex: 1; min-width: 0; }
 .ach-name { color: var(--text); font-weight: 500; }

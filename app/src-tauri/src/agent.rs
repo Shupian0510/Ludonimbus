@@ -216,6 +216,7 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             Ok(achievements::api_app(appid, query_param(query, "account").filter(|a| !a.is_empty()))?)
         }
         (Method::Get, ["v1", "games", key, "achievements", id, "icon"]) => Ok(achievements::api_icon(key, id)?),
+        (Method::Get, ["v1", "games", key, "icon"]) => Ok(achievements::api_game_icon(key)?),
         (Method::Get, ["v1", "achievements", "events"]) => Ok(achievements::api_events(query_param(query, "after"))?),
         (Method::Post, ["v1", "achievements", "events", seq, "ack"]) => Ok(achievements::api_ack(seq, query_param(query, "shown"), query_param(query, "reason"))?),
         _ => Err(ApiError::new(404, "not found")),
