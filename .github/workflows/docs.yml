@@ -28,6 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: each page's "last updated" date and the sitemap's
+          # <lastmod> come from the last commit that touched it.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -52,3 +56,19 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+
+  # Tell Bing and other IndexNow search engines which pages changed.
+  indexnow:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Submit changed pages
+        working-directory: website
+        # A manual run (no "before" commit) sends every page.
+        run: node scripts/indexnow.mjs ${{ github.event.before || '--all' }} ${{ github.sha }}

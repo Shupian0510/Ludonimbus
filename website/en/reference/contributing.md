@@ -42,7 +42,7 @@ This site's source is the [`website/`](https://github.com/Shupian0510/Ludonimbus
 - Write button and menu names in quotes, the same way the app shows them.
 - Mark where a screenshot should go with a comment; screenshots are generated together.
 
-The repository's README also comes in Chinese (`README.md`) and English (`README.en.md`). If you'd like to help translate the app itself, open an issue first.
+The repository's README comes in English (`README.md`) and Chinese (`README.zh-CN.md`). If you'd like to help translate the app itself, open an issue first.
 
 ## Reporting problems
 

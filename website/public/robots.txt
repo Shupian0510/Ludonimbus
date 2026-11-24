@@ -1,0 +1,8 @@
+# Crawlers only read robots.txt at the root of a host. While the site is served
+# from https://shupian0510.github.io/Ludonimbus/, this file is not the one they
+# read (the host root has none, which means everything may be crawled). It takes
+# effect if the site moves to its own domain.
+User-agent: *
+Allow: /
+
+Sitemap: https://shupian0510.github.io/Ludonimbus/sitemap.xml

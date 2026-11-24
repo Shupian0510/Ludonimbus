@@ -1,11 +1,100 @@
-import { defineConfig, type DefaultTheme } from 'vitepress'
+import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, type DefaultTheme, type HeadConfig } from 'vitepress'
 
 const base = '/Ludonimbus/'
+/** Public address of the site, used for canonical links, hreflang, the sitemap and Open Graph. */
+const site = `https://shupian0510.github.io${base}`
 const repo = 'https://github.com/Shupian0510/Ludonimbus'
 const releases = `${repo}/releases/latest`
 
+const descriptionZh =
+  '开源的 Steam 云存档替代方案：给非 Steam 游戏、模拟器和重编译游戏自动同步存档，带版本历史和 Steam 集成，存档放在你自己的云盘里。'
+const descriptionEn =
+  'Open-source Steam Cloud alternative for non-Steam games, emulators and recompiled games: automatic save sync, version history and Steam integration, using your own cloud storage.'
+
+// Site ownership tokens from Google Search Console and Bing Webmaster Tools
+// ("HTML tag" verification method: paste only the content="…" value).
+// Empty strings add no tag.
+const googleSiteVerification = ''
+const bingSiteVerification = ''
+
+/** The app's current version, shown in the structured data of the home pages. */
+function appVersion(): string | undefined {
+  const file = fileURLToPath(new URL('../../app/src-tauri/tauri.conf.json', import.meta.url))
+  if (!existsSync(file)) return undefined
+  return JSON.parse(readFileSync(file, 'utf8')).version
+}
+
+/** Public address of a page from its source path: 'en/guide/install.md' → …/en/guide/install.html, 'en/comparison/index.md' → …/en/comparison/. */
+function pageUrl(relativePath: string): string {
+  return site + relativePath.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '.html')
+}
+
+/** The same page in the other language (Chinese at the root, English under en/, same file names). */
+function otherLanguage(relativePath: string): string {
+  return relativePath.startsWith('en/') ? relativePath.slice(3) : `en/${relativePath}`
+}
+
+/** schema.org description of the app, for search engines. */
+function softwareApplication(en: boolean) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Ludonimbus',
+    description: en ? descriptionEn : descriptionZh,
+    url: en ? `${site}en/` : site,
+    inLanguage: en ? 'en' : 'zh-CN',
+    applicationCategory: 'UtilitiesApplication',
+    applicationSubCategory: en ? 'Game save sync' : '游戏存档同步',
+    operatingSystem: 'Windows 10, Windows 11',
+    softwareVersion: appVersion(),
+    downloadUrl: releases,
+    installUrl: releases,
+    screenshot: `${site}screenshots/${en ? 'en' : 'zh-CN'}/library-grid.png`,
+    image: `${site}app-icon.svg`,
+    license: 'https://opensource.org/licenses/MIT',
+    isAccessibleForFree: true,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    author: { '@type': 'Person', name: 'Shupian0510', url: 'https://github.com/Shupian0510' },
+    codeRepository: repo,
+    sameAs: [repo],
+  }
+}
+
+function useCasesZh(): DefaultTheme.SidebarItem {
+  return {
+    text: '使用场景',
+    items: [
+      { text: '非 Steam 游戏云存档', link: '/non-steam-cloud-saves/' },
+      { text: '模拟器存档同步', link: '/emulator-cloud-saves/' },
+      { text: '重编译游戏云存档', link: '/recompiled-game-saves/' },
+      { text: 'Steam 云存档插件', link: '/steam-integration/' },
+      { text: '用 Google Drive 同步存档', link: '/google-drive-save-sync/' },
+      { text: '支持的游戏和模拟器', link: '/supported-games/' },
+      { text: '和其他工具对比', link: '/comparison/' },
+    ],
+  }
+}
+
+function useCasesEn(): DefaultTheme.SidebarItem {
+  return {
+    text: 'Use cases',
+    items: [
+      { text: 'Cloud saves for non-Steam games', link: '/en/non-steam-cloud-saves/' },
+      { text: 'Emulator save sync', link: '/en/emulator-cloud-saves/' },
+      { text: 'Recompiled game saves', link: '/en/recompiled-game-saves/' },
+      { text: 'Steam integration', link: '/en/steam-integration/' },
+      { text: 'Google Drive save sync', link: '/en/google-drive-save-sync/' },
+      { text: 'Supported games and emulators', link: '/en/supported-games/' },
+      { text: 'Comparison with other tools', link: '/en/comparison/' },
+    ],
+  }
+}
+
 function sidebarZh(): DefaultTheme.SidebarItem[] {
   return [
+    useCasesZh(),
     {
       text: '入门',
       items: [
@@ -80,6 +169,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
 
 function sidebarEn(): DefaultTheme.SidebarItem[] {
   return [
+    useCasesEn(),
     {
       text: 'Getting started',
       items: [
@@ -162,22 +252,74 @@ export default defineConfig({
   head: [
     ['link', { rel: 'icon', href: `${base}app-icon.svg`, type: 'image/svg+xml' }],
     ['meta', { name: 'theme-color', content: '#1a9fff' }],
+    ...(googleSiteVerification
+      ? [['meta', { name: 'google-site-verification', content: googleSiteVerification }] as HeadConfig]
+      : []),
+    ...(bingSiteVerification ? [['meta', { name: 'msvalidate.01', content: bingSiteVerification }] as HeadConfig] : []),
   ],
+
+  // Git commit dates: shown at the bottom of each page and used as <lastmod> in the sitemap.
+  lastUpdated: true,
+  sitemap: { hostname: site },
+
+  // Per-page tags for search engines and link previews: canonical address,
+  // the other language's version (hreflang), Open Graph, and structured data
+  // on the home pages.
+  transformPageData(pageData, { siteConfig }) {
+    const path = pageData.relativePath
+    if (!path || pageData.isNotFound) return
+    const en = path.startsWith('en/')
+    const url = pageUrl(path)
+    const title = pageData.frontmatter.titleTemplate === false ? pageData.title : `${pageData.title} | Ludonimbus`
+    const description: string = pageData.frontmatter.description || (en ? descriptionEn : descriptionZh)
+
+    const head: HeadConfig[] = [['link', { rel: 'canonical', href: url }]]
+    const other = otherLanguage(path)
+    if (siteConfig.pages.includes(other)) {
+      const enUrl = pageUrl(en ? path : other)
+      head.push(
+        ['link', { rel: 'alternate', hreflang: 'zh-CN', href: pageUrl(en ? other : path) }],
+        ['link', { rel: 'alternate', hreflang: 'en-US', href: enUrl }],
+        ['link', { rel: 'alternate', hreflang: 'x-default', href: enUrl }],
+      )
+    }
+    head.push(
+      ['meta', { property: 'og:type', content: 'website' }],
+      ['meta', { property: 'og:site_name', content: 'Ludonimbus' }],
+      ['meta', { property: 'og:title', content: title }],
+      ['meta', { property: 'og:description', content: description }],
+      ['meta', { property: 'og:url', content: url }],
+      ['meta', { property: 'og:image', content: `${site}screenshots/${en ? 'en' : 'zh-CN'}/library-grid.png` }],
+      ['meta', { property: 'og:locale', content: en ? 'en_US' : 'zh_CN' }],
+      ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    )
+    if (path === 'index.md' || path === 'en/index.md') {
+      head.push(['script', { type: 'application/ld+json' }, JSON.stringify(softwareApplication(en))])
+    }
+    pageData.frontmatter.head = [...(pageData.frontmatter.head ?? []), ...head]
+  },
 
   locales: {
     root: {
       label: '简体中文',
       lang: 'zh-CN',
-      description: '给 Steam 里的非 Steam 游戏补上云存档：模拟器、重制版、第三方 PC 游戏，像 Steam 云存档一样自动同步。',
+      description: descriptionZh,
       themeConfig: {
         nav: [
           { text: '指南', link: '/guide/what-is-ludonimbus', activeMatch: '^/(guide|games|steam|sync)/' },
+          {
+            text: '使用场景',
+            activeMatch:
+              '^/(non-steam-cloud-saves|emulator-cloud-saves|recompiled-game-saves|steam-integration|google-drive-save-sync|comparison)/',
+            items: useCasesZh().items!.filter((item) => item.link !== '/supported-games/') as DefaultTheme.NavItemWithLink[],
+          },
           { text: '云盘', link: '/clouds/', activeMatch: '^/clouds/' },
-          { text: '支持的游戏', link: '/supported/emulators', activeMatch: '^/supported/' },
+          { text: '支持的游戏', link: '/supported-games/', activeMatch: '^/(supported|supported-games)/' },
           { text: '常见问题', link: '/reference/faq', activeMatch: '^/reference/' },
           { text: '下载', link: releases },
         ],
         sidebar: { '/': sidebarZh() },
+        lastUpdated: { text: '最后更新于' },
         editLink: { pattern: `${repo}/edit/main/website/:path`, text: '在 GitHub 上改进这一页' },
         footer: {
           message: `<a href="${base}privacy.html">隐私政策</a> · <a href="${repo}">GitHub</a> · <a href="${repo}/issues">反馈问题</a> · MIT 许可`,
@@ -203,16 +345,23 @@ export default defineConfig({
       label: 'English',
       lang: 'en-US',
       link: '/en/',
-      description: 'Steam-Cloud-like save sync for non-Steam games: emulators, recompilations and third-party PC games you added to Steam.',
+      description: descriptionEn,
       themeConfig: {
         nav: [
           { text: 'Guide', link: '/en/guide/what-is-ludonimbus', activeMatch: '^/en/(guide|games|steam|sync)/' },
+          {
+            text: 'Use cases',
+            activeMatch:
+              '^/en/(non-steam-cloud-saves|emulator-cloud-saves|recompiled-game-saves|steam-integration|google-drive-save-sync|comparison)/',
+            items: useCasesEn().items!.filter((item) => item.link !== '/en/supported-games/') as DefaultTheme.NavItemWithLink[],
+          },
           { text: 'Clouds', link: '/en/clouds/', activeMatch: '^/en/clouds/' },
-          { text: 'Supported games', link: '/en/supported/emulators', activeMatch: '^/en/supported/' },
+          { text: 'Supported games', link: '/en/supported-games/', activeMatch: '^/en/(supported|supported-games)/' },
           { text: 'FAQ', link: '/en/reference/faq', activeMatch: '^/en/reference/' },
           { text: 'Download', link: releases },
         ],
         sidebar: { '/en/': sidebarEn() },
+        lastUpdated: { text: 'Last updated' },
         editLink: { pattern: `${repo}/edit/main/website/:path`, text: 'Improve this page on GitHub' },
         footer: {
           message: `<a href="${base}en/privacy.html">Privacy policy</a> · <a href="${repo}">GitHub</a> · <a href="${repo}/issues">Report a problem</a> · MIT licensed`,

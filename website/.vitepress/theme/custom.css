@@ -22,3 +22,59 @@
 .vp-doc table {
   font-size: 14px;
 }
+
+/* Text sections below the features on the home pages, aligned with the features grid. */
+.home-content {
+  max-width: 1152px;
+  margin: 48px auto 0;
+  padding: 0 24px;
+}
+
+@media (min-width: 640px) {
+  .home-content {
+    padding: 0 48px;
+  }
+}
+
+@media (min-width: 960px) {
+  .home-content {
+    padding: 0 64px;
+  }
+}
+
+.home-content h2 {
+  margin-top: 56px;
+  border-top: none;
+  padding-top: 0;
+}
+
+.home-content h2:first-child {
+  margin-top: 0;
+}
+
+/* A markdown list rendered as a grid of cards. */
+.home-cards ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-cards li,
+.home-cards li + li {
+  margin: 0;
+  padding: 20px 24px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  background-color: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.home-cards li a {
+  font-size: 16px;
+  text-decoration: none;
+}

@@ -42,7 +42,7 @@ Ludonimbus 是开源项目（MIT 许可），欢迎提交 [Issue](https://github
 - 界面上的按钮和菜单名，中文用「」括起来，并和应用里的文字保持一致。
 - 截图的位置先用注释标出来，截图会统一生成。
 
-仓库首页的 README 也有中文（`README.md`）和英文（`README.en.md`）两份。想帮忙翻译应用界面，请先开一个 Issue 联系。
+仓库首页的 README 有英文（`README.md`）和中文（`README.zh-CN.md`）两份。想帮忙翻译应用界面，请先开一个 Issue 联系。
 
 ## 报告问题
 

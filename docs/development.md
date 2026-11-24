@@ -56,6 +56,22 @@ npm run preview   # 预览构建结果
 - 更新日志页由 `scripts/gen-changelog.mjs` 在构建时从根目录的 `CHANGELOG.md` 生成（`### 中文` / `### English` 两段分到两种语言），不要手改 `website/reference/changelog.md`。
 - `privacy.html` 必须保持原地址（Google OAuth 同意屏幕和百度开放平台审核都填了这个链接），内容在 `website/parts/`。
 - 计划要放截图的位置用 `<!-- screenshot: 场景名 -->` 标出，清单在 `website/SCREENSHOTS.md`。
+- 「使用场景」页（`non-steam-cloud-saves/`、`emulator-cloud-saves/`、`recompiled-game-saves/`、`steam-integration/`、`google-drive-save-sync/`、`supported-games/`、`comparison/`，中英各一份）是面向搜索的产品页，每页都写了 `title` 和 `description` frontmatter。改功能时记得一起更新，`comparison/` 里其他工具的信息要注明核对时间。
+
+### 搜索引擎
+
+构建时自动生成，不用手动维护：
+
+- `sitemap.xml`（带 `<lastmod>`，取自每页最后一次提交的时间，所以 `docs.yml` 用完整历史检出）。
+- 每页的 canonical、中英文 hreflang（`x-default` 指向英文）、Open Graph；两个首页带 `SoftwareApplication` 结构化数据，版本号读自 `app/src-tauri/tauri.conf.json`。逻辑在 `website/.vitepress/config.mts` 的 `transformPageData`。
+- IndexNow：部署后 `docs.yml` 的 `indexnow` 任务运行 `website/scripts/indexnow.mjs`，把这次推送改动的页面提交给 Bing 等搜索引擎（Google 不支持 IndexNow）。密钥文件是 `website/public/682015ff8ef9063735475f3d73379694.txt`，换密钥时脚本里的 `key` 一起改。
+
+需要手动做一次：
+
+1. [Google Search Console](https://search.google.com/search-console)：添加「网址前缀」资源 `https://shupian0510.github.io/Ludonimbus/`，验证方式选「HTML 标记」，把 `content="…"` 里的值填进 `config.mts` 的 `googleSiteVerification`，推送部署后点验证；然后在「站点地图」里提交 `sitemap.xml`。
+2. [Bing Webmaster Tools](https://www.bing.com/webmasters)：可以直接从 Google Search Console 导入；单独验证的话，把值填进 `bingSiteVerification`。
+
+`website/public/robots.txt` 在 `github.io/Ludonimbus/` 下不起作用：搜索引擎只读域名根目录的 robots.txt，而 `shupian0510.github.io` 根目录没有，等于全部允许抓取。站点换到独立域名后它才生效。
 
 提交 PR 前：
 
