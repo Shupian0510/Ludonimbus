@@ -4,9 +4,8 @@ description: Ludonimbus 服务条款。Ludonimbus terms of service.
 outline: false
 ---
 
-<!-- Linked from Baidu's open-platform review: keep this page at
-     /Ludonimbus/terms.html. The text lives in parts/ and is shared with
-     en/terms.md. -->
+<!-- Keep this page at /Ludonimbus/terms.html (the footer of every page
+     links to it). The text lives in parts/ and is shared with en/terms.md. -->
 
 [English version below ↓](#en)
 

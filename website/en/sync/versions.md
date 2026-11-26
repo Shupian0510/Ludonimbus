@@ -46,7 +46,7 @@ Lock a version to **keep it forever**; it's never cleaned up. Click again to unl
 
 ## Delete
 
-Delete a version from the cloud permanently; this can't be undone. Locked versions and the newest version can't be deleted.
+A deleted version moves to "Recently deleted" below the list, where you can **restore it for 30 days**; after that it is deleted for good. You can also delete it for good there yourself. A restored automatic version is locked at the same time, so the cleanup doesn't remove it right away. Locked versions and the newest version can't be deleted.
 
 ## Manual backup
 

@@ -45,7 +45,7 @@ Ludonimbus 是免费开源的 Steam 云存档替代方案，让这些游戏也�
 - **添加游戏不用自己找存档**：扫描 Steam 里的非 Steam 游戏、Epic / GOG / Xbox 安装的游戏、模拟器里有存档的游戏、你指定的游戏文件夹，以及本机已经有存档的上万款 PC 游戏，勾选后批量添加。Steam 云已经在同步的游戏会单独列出，不会重复管理。认不出的游戏可以「玩一下再找」：启动游戏存一次档，Ludonimbus 会列出刚才被写入的文件夹。
 - **自动找到游戏位置**：只找到存档的游戏，会去 Epic、GOG、Xbox、EA、Ubisoft 等平台的安装目录里找游戏程序；找不到时可以从各平台的安装目录直接选。
 - **一键加入 Steam**：不在 Steam 里的游戏（包括 Xbox 应用 / PC Game Pass 的游戏）点一下就能加进 Steam，可以批量加入，从第一次启动起就自动同步存档。封面、背景、Logo 和图标可以从 SteamGridDB 自动配好或自己挑，也可以用本地图片。
-- **云盘随你选**：Google Drive（一键登录）、夸克网盘（扫码登录，实验性）、群晖等 NAS、坚果云、Nextcloud、阿里云 OSS / 腾讯云 COS 等对象存储，以及你自己部署的 OpenList / AList 等 WebDAV 服务；百度网盘一键登录（官方开放平台）等待审核中。换云盘时一键把历史版本复制过去。
+- **云盘随你选**：Google Drive（一键登录）、夸克网盘（扫码登录，实验性）、群晖等 NAS、坚果云、Nextcloud、阿里云 OSS / 腾讯云 COS 等对象存储；百度网盘、阿里云盘等可以通过 OpenList / AList 接入。换云盘时一键把历史版本复制过去。
 - **Steam 风格的界面**：网格 / 列表游戏库，直接使用你在 Steam 里设置的封面、横幅和 Logo；不在 Steam 里的游戏也能配封面。
 - **中文 / English**：界面跟随 Windows 的显示语言，也可以在设置里切换。第一次打开时有引导，带你连接云盘、开始添加游戏。
 
@@ -67,7 +67,7 @@ Ludonimbus 是免费开源的 Steam 云存档替代方案，让这些游戏也�
 1. **连接云盘**：第一次打开时的引导会带你完成这一步，以后也可以在「设置 → 云盘」更换：
    - **Google Drive**：在浏览器里登录即可。
    - **夸克网盘**（实验性）：用夸克 App 扫码登录。第一次会下载开源工具 OpenList（约 57 MB），之后自动连接。
-   - **WebDAV**：群晖 / 威联通等 NAS、坚果云、Nextcloud，或者你自己部署的 [OpenList](https://github.com/OpenListTeam/OpenList) / AList（第三方工具，由你自主配置；Ludonimbus 不提供网盘聚合能力）。填地址、用户名和密码，先点「测试连接」。
+   - **WebDAV**：群晖 / 威联通等 NAS、坚果云、Nextcloud，或者 [OpenList](https://github.com/OpenListTeam/OpenList) / AList（可以挂载百度网盘、阿里云盘等）。填地址、用户名和密码，先点「测试连接」。
    - **S3 兼容存储**：NAS 上的 MinIO，或阿里云 OSS、腾讯云 COS、Cloudflare R2。
    - **文件夹**：OneDrive / Google Drive 电脑版同步的文件夹、NAS 共享目录、移动硬盘。
 2. **添加游戏**：「添加游戏 → 扫描本机」会列出找到的游戏，知道存档位置的直接勾选添加；不知道的点「指定存档」，按提示找到存档文件夹。放在别处的游戏点「扫描文件夹…」。
@@ -168,9 +168,9 @@ ludonimbus-run：从你的云盘拉取较新的存档
 </details>
 
 <details>
-<summary><b>能用百度网盘或夸克吗？</b></summary>
+<summary><b>能用百度网盘、阿里云盘或夸克吗？</b></summary>
 
-夸克网盘可以扫码一键连接（实验性），见[使用文档](https://shupian0510.github.io/Ludonimbus/clouds/quark.html)。百度网盘一键登录已经开发完成，通过百度网盘开放平台的官方接口接入，只访问网盘里的「我的应用数据/Ludonimbus」文件夹，正在等待百度审核，通过后会在新版本中开放，见[使用文档](https://shupian0510.github.io/Ludonimbus/clouds/baidu.html)。坚果云自带 WebDAV，可以直接连接。Ludonimbus 本身不提供网盘聚合能力；你自己部署的 OpenList / AList 等 WebDAV 服务可以按 WebDAV 连接，配置和合规由你自己负责。
+夸克网盘可以扫码一键连接（实验性），见[使用文档](https://shupian0510.github.io/Ludonimbus/clouds/quark.html)。坚果云自带 WebDAV，可以直接连接。百度网盘和阿里云盘没有一键登录，可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面，见[使用文档](https://shupian0510.github.io/Ludonimbus/clouds/baidu.html)。速度和稳定性取决于对应网盘和 OpenList 的驱动。
 </details>
 
 <details>
@@ -213,7 +213,6 @@ ludonimbus-run：从你的云盘拉取较新的存档
 **接下来**
 
 - [x] WebDAV（NAS、坚果云、Nextcloud、OpenList）、S3 兼容存储，换云盘时一键复制存档
-- [ ] 百度网盘一键登录（已开发完成，等待百度审核）
 - [x] 更方便地添加游戏：扫描本机已安装的游戏和已有的存档；认不出的游戏一步步引导你找到存档
 - [x] 不在 Steam 里的游戏一键加入 Steam，自动开启云存档，从 SteamGridDB 挑选封面
 - [x] 同步 Steam 截图和游戏时间，换电脑也能找回（0.6）

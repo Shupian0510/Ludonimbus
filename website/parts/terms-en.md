@@ -10,9 +10,9 @@ Ludonimbus runs entirely on your computer. The developer provides no online serv
 
 ## 2. Your cloud and third-party services
 
-- Your saves are stored in the cloud storage you choose (Baidu Netdisk, Google Drive, WebDAV, S3-compatible storage, a local folder…). When you use these services you are also bound by their own terms, for example Baidu Netdisk's user agreement and the rules of the Baidu Netdisk open platform.
-- Ludonimbus connects to Baidu Netdisk through the official API of the Baidu Netdisk open platform and only accesses the folder 我的应用数据/Ludonimbus (My App Data/Ludonimbus) in your netdisk. Ludonimbus is not affiliated with, endorsed by or acting for Baidu, Google or any other provider.
-- Ludonimbus provides no netdisk aggregation or mounting. Its WebDAV and S3 connections are standard protocol clients; which server you connect to (including your own NAS or third-party tools such as OpenList / AList) is entirely your own configuration, and you judge and bear its compliance and risks yourself. Ludonimbus never connects to Baidu Netdisk through such third-party tools.
+- Your saves are stored in the cloud storage you choose (Google Drive, Quark, WebDAV, S3-compatible storage, a local folder…). When you use these services you are also bound by their own terms.
+- Ludonimbus is not affiliated with, endorsed by or acting for Google, Quark, Baidu or any other provider.
+- Its WebDAV and S3 connections are standard protocol clients; which server you connect to (including your own NAS or third-party tools such as OpenList / AList) is your own configuration, and you judge and bear its compliance and risks yourself.
 
 ## 3. Your data and responsibilities
 
@@ -28,7 +28,7 @@ Ludonimbus runs entirely on your computer. The developer provides no online serv
 
 ## 5. Revoking access and stopping use
 
-You can disconnect a cloud in Ludonimbus, revoke Ludonimbus's authorization with your cloud provider (for Baidu Netdisk, see [Privacy Policy · Baidu Netdisk](./privacy.md#baidu-netdisk)), or uninstall Ludonimbus at any time. Stopping use does not delete the saves in your cloud.
+You can disconnect a cloud in Ludonimbus, revoke Ludonimbus's authorization with your cloud provider (see the [Privacy Policy](./privacy.md)), or uninstall Ludonimbus at any time. Stopping use does not delete the saves in your cloud.
 
 ## 6. Disclaimer
 

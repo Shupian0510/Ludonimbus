@@ -45,7 +45,7 @@ Use cases: [cloud saves for non-Steam games](https://shupian0510.github.io/Ludon
 - **Add games without hunting for saves**: "Add game → Scan this PC" lists non-Steam games in Steam, games installed by Epic / GOG / Xbox, games with saves inside emulators, folders you point it at, and any of the thousands of PC games that already have saves on this PC, ready to tick and add in bulk. Games Steam Cloud already syncs are listed apart, so nothing is managed twice. For games it doesn't recognise, "play and find": start the game, save once, and Ludonimbus lists the folders that were just written to.
 - **Finds where games are installed**: for games found only by their saves, Ludonimbus looks for the game program in the install folders of Epic, GOG, Xbox, EA, Ubisoft and other stores; if it can't, you can pick from those install folders directly.
 - **One-click Add to Steam**: games that aren't in Steam (including Xbox app / PC Game Pass games) can be added with one click, or in bulk, and sync from their first launch. Cover, background, logo and icon can be set automatically or picked from SteamGridDB, or come from local images.
-- **Your choice of cloud**: Google Drive (one-click sign-in), Quark (QR-code sign-in, experimental), a NAS such as Synology, Jianguoyun, Nextcloud, object storage such as Aliyun OSS / Tencent COS, and WebDAV services you run yourself such as OpenList / AList; one-click Baidu Netdisk sign-in (official open platform) is waiting for review. When you switch clouds, the history is copied over in one click.
+- **Your choice of cloud**: Google Drive (one-click sign-in), Quark (QR-code sign-in, experimental), a NAS such as Synology, Jianguoyun, Nextcloud, object storage such as Aliyun OSS / Tencent COS; Baidu Netdisk, Aliyun Drive and others through OpenList / AList. When you switch clouds, the history is copied over in one click.
 - **Steam-style interface**: a grid / list library that uses the covers, banners and logos you set in Steam; games that aren't in Steam can have artwork too.
 - **English and Chinese**: the interface follows the Windows display language and can be switched in Settings. A first-run guide helps you connect a cloud and start adding games.
 
@@ -67,7 +67,7 @@ Use cases: [cloud saves for non-Steam games](https://shupian0510.github.io/Ludon
 1. **Connect a cloud**: the first-run guide walks you through this; you can change it later in Settings → Cloud:
    - **Google Drive**: just sign in in your browser.
    - **Quark** (experimental): scan a QR code with the Quark app. The first time, the open-source OpenList (about 57 MB) is downloaded; the rest is automatic.
-   - **WebDAV**: a NAS (Synology, QNAP…), Jianguoyun, Nextcloud, or an [OpenList](https://github.com/OpenListTeam/OpenList) / AList you run yourself (a third-party tool you configure; Ludonimbus provides no netdisk aggregation). Enter the address, user name and password, and click "Test connection" first.
+   - **WebDAV**: a NAS (Synology, QNAP…), Jianguoyun, Nextcloud, or [OpenList](https://github.com/OpenListTeam/OpenList) / AList (which can mount Baidu Netdisk, Aliyun Drive and others). Enter the address, user name and password, and click "Test connection" first.
    - **S3-compatible storage**: MinIO on a NAS, or Aliyun OSS, Tencent COS, Cloudflare R2.
    - **Folder**: a folder synced by the OneDrive / Google Drive desktop app, a NAS share, a USB drive.
 2. **Add games**: "Add game → Scan this PC" lists the games it found. Tick the ones whose save location is known; for the others, click "Choose saves…" and follow the steps to find the save folder. For games kept elsewhere, click "Scan folder…".
@@ -168,9 +168,9 @@ Before the game starts, a dialog asks whether to use the cloud's saves or this P
 </details>
 
 <details>
-<summary><b>Can I use Baidu Netdisk or Quark?</b></summary>
+<summary><b>Can I use Baidu Netdisk, Aliyun Drive or Quark?</b></summary>
 
-Quark connects in one click with a QR code (experimental); see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/quark.html). One-click Baidu Netdisk sign-in uses the official API of the Baidu Netdisk open platform, only accesses the folder 我的应用数据/Ludonimbus in your netdisk, and is waiting for Baidu's review; it will be enabled in a new version once approved, see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/baidu.html). Jianguoyun has WebDAV built in and can be connected directly. Ludonimbus provides no netdisk aggregation of its own; a WebDAV service you run yourself, such as OpenList / AList, can be connected over WebDAV, with its configuration and compliance being your own responsibility.
+Quark connects in one click with a QR code (experimental); see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/quark.html). Jianguoyun has WebDAV built in and can be connected directly. Baidu Netdisk and Aliyun Drive have no one-click sign-in; connect them through [OpenList](https://github.com/OpenListTeam/OpenList) / AList: mount your netdisk in OpenList first, then connect Ludonimbus to OpenList over WebDAV, with the folder inside the mounted netdisk, see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/baidu.html). Speed and reliability depend on the netdisk and OpenList's driver.
 </details>
 
 <details>
@@ -213,7 +213,6 @@ More questions and troubleshooting: [FAQ and troubleshooting](https://shupian051
 **Next**
 
 - [x] WebDAV (NAS, Jianguoyun, Nextcloud, OpenList), S3-compatible storage, one-click copy of saves when switching clouds
-- [ ] One-click Baidu Netdisk sign-in (ready, waiting for Baidu's review)
 - [x] Easier game adding: scan installed games and existing saves; step-by-step help to find the saves of unknown games
 - [x] One-click Add to Steam for games that aren't in Steam, with cloud saves on and artwork from SteamGridDB
 - [x] Sync Steam screenshots and play time, so they survive switching PCs (0.6)

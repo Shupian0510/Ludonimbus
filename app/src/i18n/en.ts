@@ -652,7 +652,7 @@ export const cloud: typeof Zh.cloud = {
   baidu: {
     intro: (folder) =>
       `Sign in with your Baidu account. Saves go in "我的应用数据/${folder}" (My App Data) on your drive, and Ludonimbus can only access that folder. Baidu throttles downloads for non-members, so pulling large saves takes a while.`,
-    dev: "This is a development build without a built-in Baidu app. Create an app on the Baidu Netdisk open platform as described in docs/baidu-netdisk-setup.md and enter its AppKey, SecretKey and app name here (release builds include one; users don't need to do this).",
+    dev: "This build has no built-in Baidu app. Create your own app on the Baidu Netdisk open platform as described in docs/baidu-netdisk-setup.md and enter its AppKey, SecretKey and app name here.",
     appName: "App name",
     qrAlt: "Baidu Netdisk sign-in QR code",
     opened: "Baidu's sign-in page is open in your browser. If it asks for a code after you sign in, enter:",

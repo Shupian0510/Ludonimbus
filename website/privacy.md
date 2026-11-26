@@ -5,7 +5,7 @@ outline: false
 ---
 
 <!-- This page must stay at /Ludonimbus/privacy.html: the Google OAuth consent
-     screen and Baidu's open-platform review link to it. Keep the English half
+     screen links to it. Keep the English half
      first. The text lives in parts/ and is shared with en/privacy.md. -->
 
 [中文版在下方 ↓](#zh)
