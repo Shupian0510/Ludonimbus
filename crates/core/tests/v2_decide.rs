@@ -737,8 +737,9 @@ fn a_line_from_0_6_carries_on() {
     let view = cloud.view();
     // No vector in the cloud: the time it was made stands for it.
     let old = view.head().unwrap().vv.clone();
-    assert_eq!(old, line::legacy_vv(view.head().unwrap().created_at));
-    let old_count = old.get(ludonimbus_core::vv::LEGACY);
+    assert_eq!(old, line::legacy_vv(DIR, view.head().unwrap().created_at));
+    let old_device = ludonimbus_core::vv::legacy_device(DIR);
+    let old_count = old.get(&old_device);
 
     // Upgraded devices know the id and the hash of what they synced last,
     // and no vector.
@@ -759,13 +760,13 @@ fn a_line_from_0_6_carries_on() {
 
     // While the snapshot is still there, the view says where it stands,
     // whatever the device remembers.
-    let stale = Base { id: id(1), vv: Vv::legacy(u64::MAX), content_hash: "v1".into() };
+    let stale = Base { id: id(1), vv: Vv::legacy(DIR, u64::MAX), content_hash: "v1".into() };
     assert_eq!(Device::with(&cloud, "d-g", "v1", Some(stale)).decide(), pull(&newest));
 
     // What a device synced last was cleaned up by 0.6: the cloud moved on,
     // as 0.6 would say. An upgraded device remembers no vector; one that
     // has read the line since remembers the snapshot's own.
-    for remembered in [Vv::new(), line::legacy_vv(first.created_at)] {
+    for remembered in [Vv::new(), line::legacy_vv(DIR, first.created_at)] {
         let base = Base { id: id(90), vv: remembered, content_hash: "v0".into() };
         let mut gone = Device::with(&cloud, "d-e", "v0", Some(base));
         assert_eq!(gone.decide(), pull(&newest));
@@ -778,7 +779,7 @@ fn a_line_from_0_6_carries_on() {
     assert_eq!(a.decide(), Action::Push { bases: vec![old.clone()], parent: Some(newest.clone()) });
     a.sync();
     let head = cloud.view().head().unwrap().clone();
-    assert_eq!(head.vv, vv(&[("d-a", 1), ("legacy", old_count)]));
+    assert_eq!(head.vv, vv(&[("d-a", 1), (old_device.as_str(), old_count)]));
     assert_eq!(b.sync(), pull(&head.id));
     assert_eq!(b.saves(), "v4");
     assert_eq!((a.decide(), b.decide()), (Action::Nothing, Action::Nothing));
@@ -787,7 +788,7 @@ fn a_line_from_0_6_carries_on() {
     b.play("v5");
     assert_eq!(b.decide(), Action::Push { bases: vec![head.vv.clone()], parent: Some(head.id.clone()) });
     b.sync();
-    assert_eq!(cloud.view().head().unwrap().vv, vv(&[("d-a", 1), ("d-b", 1), ("legacy", old_count)]));
+    assert_eq!(cloud.view().head().unwrap().vv, vv(&[("d-a", 1), ("d-b", 1), (old_device.as_str(), old_count)]));
     assert_eq!(a.sync(), pull(&b.base_id()));
 
     // A device still on 0.6 uploads without seeing any of this: a fork, and

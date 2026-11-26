@@ -313,7 +313,7 @@ fn snapshots_of_the_old_layout_keep_their_order() {
     let (view, _) = read(&store, &mut cache);
     let head = view.head().unwrap().clone();
     assert_eq!(head.id, id(3));
-    assert_eq!(head.vv, line::legacy_vv(head.created_at));
+    assert_eq!(head.vv, line::legacy_vv(DIR, head.created_at));
 
     // The first snapshot of the new kind is made from it and becomes the
     // newest.
@@ -353,7 +353,7 @@ fn a_migrated_line_reads_the_old_folder_too() {
     assert_eq!(view.snapshots.len(), 3);
     assert_eq!(view.places, [1, 1, 1]);
     let head = view.head().unwrap().clone();
-    assert_eq!((head.id.as_str(), &head.vv), (id(3).as_str(), &line::legacy_vv(head.created_at)));
+    assert_eq!((head.id.as_str(), &head.vv), (id(3).as_str(), &line::legacy_vv(OLD, head.created_at)));
     assert!(view.needs_index);
 
     // The first snapshot of the new kind goes to the new folder, built on
@@ -448,4 +448,32 @@ fn a_merged_line_brings_its_own_index() {
     store.take();
     line::load_all(&store, &[DIR, OTHER], &mut cache).unwrap();
     assert_eq!(requests(store.take()), (2, 0));
+}
+
+/// Two games of 0.6 that turned out to be one: their folders were never one
+/// history, so neither side's newest version contains the other's.
+#[test]
+fn two_old_folders_in_one_line_are_a_fork() {
+    const OTHER: &str = "games/stardew-2/snapshots";
+    let store = Memory::new();
+    old_folder(&store);
+    let mut m = manifest(7, "d-b", Vv::new());
+    m.v = 1;
+    m.line = String::new();
+    store.put(&v2::manifest_path(OTHER, &id(7)), &serde_json::to_vec(&m).unwrap());
+
+    let dirs = [DIR, OLD, OTHER];
+    let view = line::load_all(&store, &dirs, &mut LineCache::default()).unwrap();
+    let heads: Vec<&str> = view.head_entries().map(|s| s.id.as_str()).collect();
+    assert_eq!(heads, [id(3), id(7)]);
+    assert_eq!(view.get(&id(7)).unwrap().vv, line::legacy_vv(OTHER, m.created_at));
+    // Each folder on its own still has one newest version.
+    assert_eq!(line::load(&store, OLD, &mut LineCache::default()).unwrap().head().unwrap().id, id(3));
+
+    // The snapshot that settles it is built on both, and is the newest.
+    let both: Vec<Vv> = view.head_entries().map(|s| s.vv.clone()).collect();
+    let settled = manifest(8, "d-a", Vv::next(&both, "d-a", 0));
+    line::write_manifest(&store, DIR, &settled).unwrap();
+    let view = line::load_all(&store, &dirs, &mut LineCache::default()).unwrap();
+    assert_eq!(view.head().unwrap().id, id(8));
 }

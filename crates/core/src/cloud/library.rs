@@ -567,8 +567,9 @@ fn free_line_id(lines: &[Line], line: &str, from: &str) -> String {
     id
 }
 
-/// Give `survivor` what `other`, a record of the same game, has.
-fn take_over(survivor: &mut GameRecord, other: &GameRecord) {
+/// Give `survivor` what `other`, a record of the same game, has. `join`
+/// says whether two shared lines of one format may become one history.
+fn take_over(survivor: &mut GameRecord, other: &GameRecord, join: &dyn Fn(&Line, &Line) -> bool) {
     add_ids(&mut survivor.ids, &other.ids);
     add_new(&mut survivor.folders, &other.folders);
     add_new(&mut survivor.tags, &other.tags);
@@ -587,10 +588,11 @@ fn take_over(survivor: &mut GameRecord, other: &GameRecord) {
             add_places(&mut lines[i], &line.also);
             continue;
         }
-        // Two shared lines of one format are one history. Where both have
-        // progress, reading the line shows a fork like any other.
+        // Two shared lines of one format are one history, when the caller
+        // agrees. Where both have progress, reading the line shows a fork
+        // like any other.
         if shared(line) {
-            if let Some(i) = lines.iter().position(|l| shared(l) && l.format == line.format) {
+            if let Some(i) = lines.iter().position(|l| shared(l) && l.format == line.format && join(l, line)) {
                 add_places(&mut lines[i], std::iter::once(&line.path).chain(&line.also));
                 continue;
             }
@@ -621,6 +623,23 @@ fn take_over(survivor: &mut GameRecord, other: &GameRecord) {
 /// Only records change: no file is moved or deleted. Doing it again on the
 /// result, or after only the survivor got written, changes nothing more.
 pub fn dedupe(records: &[GameRecord]) -> Vec<Duplicate> {
+    dedupe_with(records, &|_, _| true)
+}
+
+/// [`dedupe`], with the caller deciding which lines become one history.
+///
+/// `join(kept, other)` is asked for two shared lines of the same format,
+/// `kept` already on the surviving record: `true` makes `other`'s folders
+/// part of `kept`, `false` moves `other` over as a line of its own.
+///
+/// A format names a set of paths, but two versions of a game for PCs don't
+/// always save in the same place (a store's own folder, an Xbox container).
+/// One history for both would put one version's files where the other never
+/// looks, and take the other's away. So whoever joins lines has to know the
+/// saves are the same ones; "never" is always safe, and leaves one card with
+/// two lines. The answer must not depend on the device that asks: every
+/// device that merges the same records has to arrive at the same result.
+pub fn dedupe_with(records: &[GameRecord], join: &dyn Fn(&Line, &Line) -> bool) -> Vec<Duplicate> {
     let cards: Vec<&GameRecord> = live(records).collect();
     let mut parent: Vec<usize> = (0..cards.len()).collect();
     let mut first: HashMap<String, usize> = HashMap::new();
@@ -649,7 +668,7 @@ pub fn dedupe(records: &[GameRecord]) -> Vec<Duplicate> {
             let mut survivor = group[0].clone();
             let mut losers = Vec::new();
             for other in &group[1..] {
-                take_over(&mut survivor, other);
+                take_over(&mut survivor, other, join);
                 losers.push(GameRecord { merged_into: Some(survivor.id.clone()), ..(**other).clone() });
             }
             Duplicate { survivor, losers }
