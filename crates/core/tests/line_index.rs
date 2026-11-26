@@ -322,3 +322,130 @@ fn snapshots_of_the_old_layout_keep_their_order() {
     let (view, _) = read(&store, &mut cache);
     assert_eq!(view.head().unwrap().id, id(4));
 }
+
+const OLD: &str = "games/stardew/snapshots";
+
+fn read_both(store: &Memory, cache: &mut LineCache) -> (LineView, Counts) {
+    store.take();
+    let view = line::load_all(store, &[DIR, OLD], cache).unwrap();
+    (view, store.take())
+}
+
+/// Three snapshots as 0.6 left them in the folder from before the migration.
+fn old_folder(store: &Memory) {
+    for n in 1..=3 {
+        let mut m = manifest(n, "d-a", Vv::new());
+        m.v = 1;
+        m.line = String::new();
+        store.put(&v2::manifest_path(OLD, &id(n)), &serde_json::to_vec(&m).unwrap());
+    }
+}
+
+#[test]
+fn a_migrated_line_reads_the_old_folder_too() {
+    let store = Memory::new();
+    old_folder(&store);
+
+    // Right after the migration nothing has been written to the new folder.
+    let mut cache = LineCache::default();
+    let (view, c) = read_both(&store, &mut cache);
+    assert_eq!(requests(c), (2, 3));
+    assert_eq!(view.snapshots.len(), 3);
+    assert_eq!(view.places, [1, 1, 1]);
+    let head = view.head().unwrap().clone();
+    assert_eq!((head.id.as_str(), &head.vv), (id(3).as_str(), &Vv::legacy(3)));
+    assert!(view.needs_index);
+
+    // The first snapshot of the new kind goes to the new folder, built on
+    // the newest old one; the index there covers both folders.
+    let next = manifest(4, "d-b", Vv::next([&head.vv], "d-b", 0));
+    line::write_manifest(&store, DIR, &next).unwrap();
+    cache.insert(&next);
+    line::write_index(&store, DIR, &cache, "d-b").unwrap();
+    let (view, c) = read_both(&store, &mut cache);
+    assert_eq!(requests(c), (2, 0), "one listing per folder, nothing else");
+    assert_eq!(view.head().unwrap().id, id(4));
+    assert_eq!(view.place(&id(4)), Some(0));
+    assert_eq!(view.place(&id(2)), Some(1));
+    assert!(!view.needs_index);
+
+    // Another device: both listings and the one index.
+    let (view, c) = read_both(&store, &mut LineCache::default());
+    assert_eq!(requests(c), (2, 1));
+    assert_eq!(view.snapshots.len(), 4);
+    assert_eq!(view.head().unwrap().id, id(4));
+
+    // A device still on 0.6 keeps writing to the old folder: its snapshot
+    // doesn't contain the new one and the new one doesn't contain it.
+    let mut late = manifest(5, "d-a", Vv::new());
+    late.v = 1;
+    store.put(&v2::manifest_path(OLD, &id(5)), &serde_json::to_vec(&late).unwrap());
+    let (view, c) = read_both(&store, &mut cache);
+    // Its manifest, and the index once more: this device wrote the index
+    // itself and only learns its tag from a listing.
+    assert_eq!(requests(c), (2, 2));
+    assert!(view.is_forked());
+    let heads: Vec<&str> = view.head_entries().map(|s| s.id.as_str()).collect();
+    assert_eq!(heads, [id(4), id(5)]);
+    let (_, c) = read_both(&store, &mut cache);
+    assert_eq!(requests(c), (2, 0));
+}
+
+#[test]
+fn a_kept_save_in_the_old_folder_is_named_in_the_new_one() {
+    let store = Memory::new();
+    old_folder(&store);
+    // The migration writes pins beside the new manifests; the old folder is
+    // left as it was.
+    line::write_pin(&store, DIR, &id(2), &Pin { name: "Before the boss".into(), ..Default::default() }).unwrap();
+    let mut cache = LineCache::default();
+    let (view, _) = read_both(&store, &mut cache);
+    assert_eq!(view.get(&id(2)).unwrap().pin.as_ref().unwrap().name, "Before the boss");
+    assert!(view.get(&id(1)).unwrap().pin.is_none());
+
+    // A pin for a snapshot that exists nowhere is ignored.
+    line::write_pin(&store, DIR, &id(9), &Pin::default()).unwrap();
+    let (view, _) = read_both(&store, &mut cache);
+    assert_eq!(view.snapshots.len(), 3);
+}
+
+#[test]
+fn a_merged_line_brings_its_own_index() {
+    const OTHER: &str = "games/stardew-x2/saves/main";
+    let store = Memory::new();
+    let mut w = Writer::new(&store);
+    w.play(4, true);
+    // The line that was merged in: 30 snapshots and an index of its own.
+    let mut other = LineCache::default();
+    let mut last = Vv::new();
+    for n in 101..=130 {
+        let m = manifest(n, "d-c", Vv::next([&last], "d-c", 0));
+        line::write_manifest(&store, OTHER, &m).unwrap();
+        other.insert(&m);
+        last = m.vv.clone();
+    }
+    line::write_index(&store, OTHER, &other, "d-c").unwrap();
+
+    // The first read after the merge: two listings, two indexes, no
+    // manifest one by one.
+    let mut cache = LineCache::default();
+    store.take();
+    let view = line::load_all(&store, &[DIR, OTHER], &mut cache).unwrap();
+    assert_eq!(requests(store.take()), (2, 2));
+    assert_eq!(view.snapshots.len(), 34);
+    assert!(view.is_forked(), "both sides have progress: an ordinary fork");
+    assert!(view.needs_index, "the line's own index doesn't cover the merged folder yet");
+
+    // Once it does, a new device needs only that one.
+    line::write_index(&store, DIR, &cache, "d-a").unwrap();
+    store.take();
+    let view = line::load_all(&store, &[DIR, OTHER], &mut LineCache::default()).unwrap();
+    assert_eq!(requests(store.take()), (2, 1));
+    assert_eq!(view.snapshots.len(), 34);
+    assert!(!view.needs_index);
+
+    // And nothing new costs the two listings.
+    store.take();
+    line::load_all(&store, &[DIR, OTHER], &mut cache).unwrap();
+    assert_eq!(requests(store.take()), (2, 0));
+}
