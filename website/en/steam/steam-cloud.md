@@ -16,7 +16,7 @@ Games Steam Cloud doesn't handle at all (games without cloud saves) are synced b
 
 ## Adding them
 
-- **One at a time**: "Add game → Scan this PC" lists games Steam installed too.
+- **One at a time**: the results of "Add game → Scan this PC" have a group for games Steam Cloud already syncs; tick the ones you want and add them.
 - **All of them**: Settings → Steam → "Games Steam installed" → "Back up all". Steam Cloud keeps syncing, and Ludonimbus saves its own copies. Games whose save location isn't known are skipped; add those one at a time and point to their saves.
 
 "Backup only" carries no risk: Ludonimbus reads and never writes.

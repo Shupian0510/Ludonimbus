@@ -46,9 +46,9 @@
 
 在每个游戏的详情页关闭「Steam 自动同步」，Steam 快捷方式会恢复成原来的样子。云端的存档和版本都会保留。见[下载与安装 → 卸载](../guide/install.md#uninstall)。
 
-### 支持 macOS 或 Linux 吗？
+### 支持 macOS、Linux 或 Steam Deck 吗？
 
-目前只支持 Windows。
+Windows 10 / 11 是主要平台。从 1.0 开始有 Linux 和 Steam Deck 版（预览），见 [Linux 和 Steam Deck](../platforms/linux.md)。macOS 暂时不支持。
 
 ## 故障排查
 

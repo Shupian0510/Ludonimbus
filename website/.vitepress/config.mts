@@ -167,6 +167,14 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
       ],
     },
     {
+      text: '其他平台',
+      items: [
+        { text: '掌机和手柄界面', link: '/platforms/handheld' },
+        { text: 'Linux 和 Steam Deck（预览）', link: '/platforms/linux' },
+        { text: 'Switch 主机（预览）', link: '/platforms/switch' },
+      ],
+    },
+    {
       text: '参考',
       items: [
         { text: '设置项说明', link: '/reference/settings' },
@@ -252,6 +260,14 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Emulators', link: '/en/supported/emulators' },
         { text: 'Recomps and ports', link: '/en/supported/recomps' },
         { text: 'PC games (Ludusavi)', link: '/en/supported/pc-games' },
+      ],
+    },
+    {
+      text: 'Other platforms',
+      items: [
+        { text: 'Handhelds and the controller view', link: '/en/platforms/handheld' },
+        { text: 'Linux and Steam Deck (preview)', link: '/en/platforms/linux' },
+        { text: 'Switch console (preview)', link: '/en/platforms/switch' },
       ],
     },
     {
