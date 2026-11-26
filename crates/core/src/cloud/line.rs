@@ -12,6 +12,11 @@
 //! | new snapshots, index up to date | 1 list + 1 read |
 //! | a device that has never seen the line | 1 list + 1 read |
 //! | index missing, damaged or behind | 1 list + 1 read per snapshot the index lacks |
+//!
+//! A line can live in several folders ([`load_all`]): the one it is written
+//! to, plus folders that are only read (the 0.6 folder from before the
+//! migration, a line that was merged into this one). Each of those costs one
+//! more listing.
 
 use super::store::Store;
 use super::v2::{self, IndexEntry, LineIndex, Manifest, Pin, PinRef};
@@ -19,7 +24,7 @@ use crate::vv::{self, Vv};
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// What a device remembers about a line between reads.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -28,6 +33,9 @@ pub struct LineCache {
     /// Tag of the `index.json` read last.
     #[serde(default)]
     pub index_tag: String,
+    /// The same for the indexes of folders that are only read, by folder.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub also_index_tags: BTreeMap<String, String>,
     #[serde(default)]
     pub snapshots: BTreeMap<String, IndexEntry>,
 }
@@ -53,6 +61,9 @@ pub struct LineView {
     pub needs_index: bool,
     /// Manifests that exist but can't be understood.
     pub unreadable: Vec<String>,
+    /// For each of `snapshots`, which of the folders given to [`load_all`]
+    /// holds its manifest (always 0 for a line in one folder).
+    pub places: Vec<usize>,
 }
 
 impl LineView {
@@ -75,93 +86,137 @@ impl LineView {
     pub fn get(&self, id: &str) -> Option<&IndexEntry> {
         self.snapshots.iter().find(|s| s.id == id)
     }
+
+    /// Which folder (its position in the list given to [`load_all`]) holds
+    /// the manifest of `id`.
+    pub fn place(&self, id: &str) -> Option<usize> {
+        let i = self.snapshots.iter().position(|s| s.id == id)?;
+        self.places.get(i).copied()
+    }
 }
 
 /// Read the line in `dir`, using and updating `cache`.
 pub fn load(store: &dyn Store, dir: &str, cache: &mut LineCache) -> Result<LineView> {
-    // What exists: the listing, nothing else.
-    let mut ids: BTreeSet<String> = BTreeSet::new();
-    let mut pins: BTreeMap<String, String> = BTreeMap::new();
-    let mut index_tag: Option<String> = None;
-    for e in store.list(dir)? {
-        if e.is_dir {
+    load_all(store, &[dir], cache)
+}
+
+/// Take what an index knows about the snapshots that exist.
+fn merge_index(cache: &mut LineCache, index: LineIndex, ids: &BTreeMap<String, usize>, pins: &BTreeMap<String, (String, usize)>) {
+    for mut entry in index.snapshots {
+        if !ids.contains_key(&entry.id) {
             continue;
         }
-        if e.name == v2::INDEX_FILE {
-            index_tag = Some(e.tag);
-        } else if let Some(id) = e.name.strip_suffix(v2::PIN_SUFFIX) {
-            if v2::is_snapshot_id(id) {
-                pins.insert(id.to_string(), e.tag);
+        if entry.pin.as_ref().map(|p| &p.tag) != pins.get(&entry.id).map(|(tag, _)| tag) {
+            entry.pin = None;
+        }
+        match cache.snapshots.get_mut(&entry.id) {
+            Some(known) => {
+                if known.pin.is_none() {
+                    known.pin = entry.pin;
+                }
             }
-        } else if let Some(id) = e.name.strip_suffix(".json") {
-            if v2::is_snapshot_id(id) {
-                ids.insert(id.to_string());
+            None => {
+                cache.snapshots.insert(entry.id.clone(), entry);
             }
         }
     }
-    pins.retain(|id, _| ids.contains(id));
+}
+
+/// Read a line that lives in several folders. `dirs[0]` is the one the line
+/// is written to (new manifests, pins, the index that covers everything);
+/// the others are only read. A snapshot found in two folders counts where it
+/// comes first.
+pub fn load_all(store: &dyn Store, dirs: &[&str], cache: &mut LineCache) -> Result<LineView> {
+    // What exists: the listings, nothing else.
+    let mut ids: BTreeMap<String, usize> = BTreeMap::new();
+    let mut pins: BTreeMap<String, (String, usize)> = BTreeMap::new();
+    let mut index_tags: Vec<Option<String>> = Vec::with_capacity(dirs.len());
+    for (place, dir) in dirs.iter().enumerate() {
+        let mut index_tag = None;
+        for e in store.list(dir)? {
+            if e.is_dir {
+                continue;
+            }
+            if e.name == v2::INDEX_FILE {
+                index_tag = Some(e.tag);
+            } else if let Some(id) = e.name.strip_suffix(v2::PIN_SUFFIX) {
+                if v2::is_snapshot_id(id) {
+                    pins.entry(id.to_string()).or_insert((e.tag, place));
+                }
+            } else if let Some(id) = e.name.strip_suffix(".json") {
+                if v2::is_snapshot_id(id) {
+                    ids.entry(id.to_string()).or_insert(place);
+                }
+            }
+        }
+        index_tags.push(index_tag);
+    }
+    pins.retain(|id, _| ids.contains_key(id));
 
     // Forget what is gone or has changed.
-    cache.snapshots.retain(|id, _| ids.contains(id));
+    cache.snapshots.retain(|id, _| ids.contains_key(id));
     for (id, entry) in cache.snapshots.iter_mut() {
-        if entry.pin.as_ref().map(|p| &p.tag) != pins.get(id) {
+        if entry.pin.as_ref().map(|p| &p.tag) != pins.get(id).map(|(tag, _)| tag) {
             entry.pin = None;
         }
     }
+    cache.also_index_tags.retain(|dir, _| dirs.iter().skip(1).any(|d| d == dir));
 
-    // The index, when it has changed and something is missing here.
-    let incomplete = ids.iter().any(|id| !cache.snapshots.contains_key(id))
-        || pins.keys().any(|id| cache.snapshots.get(id).is_some_and(|e| e.pin.is_none()));
-    let mut needs_index = index_tag.is_none() && !ids.is_empty();
-    if let Some(tag) = &index_tag {
-        if incomplete && *tag != cache.index_tag {
-            match read_index(store, dir)? {
-                Some(index) => {
-                    for mut entry in index.snapshots {
-                        if !ids.contains(&entry.id) {
-                            continue;
-                        }
-                        if entry.pin.as_ref().map(|p| &p.tag) != pins.get(&entry.id) {
-                            entry.pin = None;
-                        }
-                        match cache.snapshots.get_mut(&entry.id) {
-                            Some(known) => {
-                                if known.pin.is_none() {
-                                    known.pin = entry.pin;
-                                }
-                            }
-                            None => {
-                                cache.snapshots.insert(entry.id.clone(), entry);
-                            }
-                        }
-                    }
+    // The indexes, when they have changed and something is missing here. The
+    // first folder's covers the whole line; the others' only help right after
+    // a merge, before the first folder's index has caught up.
+    let incomplete = |cache: &LineCache| {
+        ids.keys().any(|id| !cache.snapshots.contains_key(id))
+            || pins.keys().any(|id| cache.snapshots.get(id).is_some_and(|e| e.pin.is_none()))
+    };
+    let mut needs_index = index_tags.first().is_some_and(|t| t.is_none()) && !ids.is_empty();
+    for (place, dir) in dirs.iter().enumerate() {
+        let Some(tag) = &index_tags[place] else { continue };
+        let known = if place == 0 { Some(&cache.index_tag) } else { cache.also_index_tags.get(*dir) };
+        if known == Some(tag) || !incomplete(cache) {
+            continue;
+        }
+        match read_index(store, dir)? {
+            Some(index) => {
+                let before = cache.snapshots.len();
+                merge_index(cache, index, &ids, &pins);
+                if place == 0 {
                     cache.index_tag = tag.clone();
+                } else {
+                    cache.also_index_tags.insert(dir.to_string(), tag.clone());
+                    // The line's own index didn't have these.
+                    needs_index |= cache.snapshots.len() > before;
                 }
-                None => needs_index = true,
             }
+            None if place == 0 => needs_index = true,
+            None => {}
         }
     }
 
-    // Whatever the index didn't have: straight from the manifests and pins.
+    // Whatever the indexes didn't have: straight from the manifests and pins.
     let mut unreadable = Vec::new();
-    let missing: Vec<&String> = ids.iter().filter(|id| !cache.snapshots.contains_key(*id)).collect();
-    for id in missing {
+    let missing: Vec<(&String, usize)> = ids
+        .iter()
+        .filter(|(id, _)| !cache.snapshots.contains_key(*id))
+        .map(|(id, place)| (id, *place))
+        .collect();
+    for (id, place) in missing {
         needs_index = true;
         // `None`: deleted since the listing was made.
-        if let Some(bytes) = store.read(&v2::manifest_path(dir, id))? {
+        if let Some(bytes) = store.read(&v2::manifest_path(dirs[place], id))? {
             match serde_json::from_slice::<Manifest>(&bytes) {
                 Ok(m) if m.id == *id => cache.insert(&m),
                 _ => unreadable.push(id.clone()),
             }
         }
     }
-    for (id, tag) in &pins {
+    for (id, (tag, place)) in &pins {
         let Some(entry) = cache.snapshots.get_mut(id) else { continue };
         if entry.pin.is_some() {
             continue;
         }
         needs_index = true;
-        entry.pin = store.read(&v2::pin_path(dir, id))?.map(|bytes| {
+        entry.pin = store.read(&v2::pin_path(dirs[*place], id))?.map(|bytes| {
             // A pin that can't be understood still keeps its snapshot.
             let pin: Pin = serde_json::from_slice(&bytes).unwrap_or_default();
             PinRef { name: pin.name, tag: tag.clone() }
@@ -182,7 +237,8 @@ pub fn load(store: &dyn Store, dir: &str, cache: &mut LineCache) -> Result<LineV
         let main: Vec<(usize, &IndexEntry)> = snapshots.iter().enumerate().filter(|(_, s)| !s.is_side()).collect();
         vv::heads(&main, |(_, s)| &s.vv).into_iter().map(|k| main[k].0).collect()
     };
-    Ok(LineView { snapshots, heads, needs_index, unreadable })
+    let places = snapshots.iter().map(|s| ids.get(&s.id).copied().unwrap_or(0)).collect();
+    Ok(LineView { snapshots, heads, needs_index, unreadable, places })
 }
 
 /// `None` when there is no index or it can't be understood: both mean "read
