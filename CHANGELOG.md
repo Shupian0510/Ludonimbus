@@ -1,8 +1,34 @@
 # 更新日志 / Changelog
 
-每个版本的说明会原样显示在 GitHub Release 页面和应用内的更新提示里。每一节都必须同时包含 `### 中文` 和 `### English`，发版时会自动检查。发版流程见 [docs/release-process.md](docs/release-process.md)。
+每个版本的说明会原样显示在 GitHub Release 页面和应用内的更新提示里。每一节都必须同时包含 `### 中文` 和 `### English`，CI 每次都会检查。最上面一节是还没发布的下一个版本，随改动一点点写满。发版流程见 [docs/release-process.md](docs/release-process.md)。
 
-Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; this is checked when releasing. See [docs/release-process.md](docs/release-process.md).
+Each section is shown as-is on the GitHub Release page and in the in-app update prompt. Every section must contain both `### 中文` and `### English`; CI checks this every time. The top section is the next, unreleased version and fills up as changes land. See [docs/release-process.md](docs/release-process.md).
+
+## 1.0.0
+
+### 中文
+
+- 新增：游戏库把本机装着的游戏和只有存档的游戏分开显示；存档只在云端的游戏也会列出来，带封面。
+- 新增：同一个游戏的几个版本（Steam、Xbox 应用、GOG、模拟器）显示成一张卡，可以把一个版本的存档应用到另一个版本。支持读写 Xbox 应用（Game Pass）的存档。
+- 新增：Switch 游戏的存档可以在 Ryujinx 和 Eden 之间通用。
+- 新增：手柄界面，适合 Windows 掌机。
+- 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。
+- 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）。
+- 新增：删除的版本先进「最近删除」，30 天内可以恢复。
+- 改进：自己填写的百度网盘应用密钥改为保存在 Windows 凭据管理器；设置里说明了怎么解除云盘的授权。
+- 新增：服务条款页面；隐私政策补充了百度网盘相关的说明。
+
+### English
+
+- New: the library tells games installed on this PC from games that only have saves here; games whose saves are only in the cloud are listed too, with their covers.
+- New: several versions of one game (Steam, Xbox app, GOG, emulators) show as one card, and a save can be applied from one version to another. Xbox app (Game Pass) saves can be read and written.
+- New: saves of Switch games work in both Ryujinx and Eden.
+- New: a gamepad interface for Windows handhelds.
+- New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin.
+- New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview).
+- New: deleted versions go to "Recently deleted" first and can be restored for 30 days.
+- Improved: the secret of your own Baidu Netdisk app is now kept in the Windows Credential Manager; Settings explains how to revoke a cloud drive's access.
+- New: a terms of service page; the privacy policy says more about Baidu Netdisk.
 
 ## 0.6.2
 

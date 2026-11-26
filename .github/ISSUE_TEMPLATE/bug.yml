@@ -1,0 +1,52 @@
+name: 问题 / Bug
+description: 有东西不对 / Something doesn't work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        出了问题先别动存档文件夹。Ludonimbus 每次恢复前都会把当时的存档先保存一份，在游戏页的版本列表里（「恢复前保护」）。
+        When something goes wrong, leave the save folder as it is. Before every restore Ludonimbus saves what was there; you find it in the version list on the game's page ("Kept before restoring").
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 你做了什么，看到了什么，本来应该是什么 / What you did, what you saw, what you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Ludonimbus 版本 / Version
+      description: 设置页的「当前版本」 / "Current version" in Settings
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: 系统 / System
+      options:
+        - Windows
+        - Steam Deck / SteamOS
+        - Linux
+        - Switch
+    validations:
+      required: true
+  - type: input
+    id: cloud
+    attributes:
+      label: 云盘 / Cloud drive
+      placeholder: Google Drive, WebDAV, 百度网盘 …
+  - type: input
+    id: game
+    attributes:
+      label: 游戏和平台 / Game and where it runs
+      placeholder: "Stardew Valley (Steam), Zelda BotW (Cemu) …"
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: |
+        Windows：`%APPDATA%\Ludonimbus\logs\`；Linux：`~/.config/Ludonimbus/logs/`。把相关的文件拖进来，发之前看一眼里面有没有你不想公开的路径或账号名。
+        Windows: `%APPDATA%\Ludonimbus\logs\`; Linux: `~/.config/Ludonimbus/logs/`. Drag the relevant files here, and check them first for paths or account names you'd rather not share.

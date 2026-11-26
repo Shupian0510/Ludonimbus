@@ -38,6 +38,13 @@ $tomlPath = Join-Path $root "plugin-millennium/millennium.toml"
 $toml = Get-Content $tomlPath -Raw
 Set-Text $tomlPath ([regex]::new('(?m)^version = "[^"]+"').Replace($toml, "version = `"$Version`"", 1))
 
+# Decky plugin (Steam Deck Game Mode): package + lock file.
+Push-Location (Join-Path $root "plugin-decky")
+try {
+    npm version $Version --no-git-tag-version --allow-same-version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm version failed in plugin-decky" }
+} finally { Pop-Location }
+
 # Refresh Cargo.lock for the new workspace version.
 Push-Location $root
 try { cargo metadata --format-version 1 | Out-Null } finally { Pop-Location }

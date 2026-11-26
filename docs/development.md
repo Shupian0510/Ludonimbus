@@ -39,7 +39,7 @@ scripts/prepare-sidecars.sh            # 启动包装器 + Ludusavi 官方 Linux
 cargo build -p ludonimbus-app          # 前端用 Windows 这边 npm run build 生成的 app/dist
 ```
 
-CI 的 `linux` 任务（ubuntu-24.04）跑同样的测试，并检查桌面应用能编译。`linux-dev-build`（main 上每次提交）打出 Linux 下载包和 Decky 插件，做法和下面相同：
+CI 的 `linux` 任务（ubuntu-24.04）跑同样的测试，并检查桌面应用能编译。`linux-build`（每次合并进 dev）用 [`linux-package.yml`](../.github/workflows/linux-package.yml) 打出 Linux 下载包和 Decky 插件，做法和下面相同：
 
 ```bash
 scripts/prepare-sidecars.sh --release
@@ -120,19 +120,14 @@ npm run preview   # 预览构建结果
 
 `website/public/robots.txt` 在 `github.io/Ludonimbus/` 下不起作用：搜索引擎只读域名根目录的 robots.txt，而 `shupian0510.github.io` 根目录没有，等于全部允许抓取。站点换到独立域名后它才生效。
 
-提交 PR 前：
+用户能看到的改动（界面文字、新功能、行为变化），在同一个 PR 里更新文档站的中英文页面。文档站从 `main` 部署，所以这些页面会在发版时和功能一起上线。
 
-- [ ] 用户能看到的改动（界面文字、新功能、行为变化），在同一个 PR 里更新文档站的中英文页面。
+## 协作和发布
 
-## 发布新版本
+- 改动怎么进来（分支、PR、检查）：[CONTRIBUTING.md](../CONTRIBUTING.md)。
+- 从 PR 到用户手里的整条管线（开发版、候选版、正式版，发版步骤）：[release-process.md](release-process.md)。
 
-```powershell
-./scripts/bump-version.ps1 -Version 0.2.1   # 改版本号，并在 CHANGELOG.md 加双语模板
-# 写好 CHANGELOG.md 的中文和英文说明，提交
-./scripts/release.ps1                       # 检查后打标签推送，GitHub Actions 编译、签名并发布
-```
-
-每次推送到 main 还会自动打一个开发版安装包（Actions 构建产物，保留 14 天）。完整说明见 [release-process.md](release-process.md)。
+简单说：从 `dev` 拉分支，向 `dev` 提 PR，CI 的 `ok` 通过后合并；每次合并 CI 都会打一个开发版安装包（Actions 构建产物，保留 30 天）。`main` 只在发版时更新。
 
 ## 内置存档规则
 
@@ -188,6 +183,7 @@ scripts/             构建与发布脚本
 - [plan-phase2.md](plan-phase2.md)：下一阶段（更多云盘、添加游戏、截图与游戏时间、一键加入 Steam）
 - [steam-plugin.md](steam-plugin.md)：Steam 插件、本机接口和一键安装
 - [plan-game-backup.md](plan-game-backup.md)：游戏本体备份（切块、去重、云端布局、恢复）和云盘测速
+- [plan-v2.md](plan-v2.md)：存储 v2（游戏、存档线、快照；绑定和编解码；版本向量；接管 Steam 云存档）和到 1.0 的路线图
 - 同步判定规则：[`crates/core/src/sync.rs`](../crates/core/src/sync.rs) 顶部的表格
 
 云端目录结构：

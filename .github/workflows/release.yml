@@ -1,7 +1,15 @@
 name: Release
 
-# Push a tag like v0.1.1 to build the installer, sign it, create the GitHub
-# Release, and publish latest.json for in-app updates.
+# Push a tag like v1.0.0 (on main) to build the Windows installer and the
+# Linux download, sign them, create the GitHub Release, and publish
+# latest.json for in-app updates. docs/release-process.md has the steps.
+#
+# Rehearsal: run this workflow by hand (Actions → Release → Run workflow) on
+# any branch. It builds everything the same way, as version
+# "<version>-rc.<run number>", and stops before publishing: nothing appears
+# on the Releases page, no update is offered, and SignPath is not asked. The
+# files are kept as workflow artifacts for 14 days. This is the build to
+# test before a release.
 #
 # Windows code signing goes through SignPath (free for open source, certificate
 # by SignPath Foundation; setup in docs/code-signing.md). It turns on once the
@@ -12,22 +20,23 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
   actions: read # SignPath downloads the files to sign from this run's artifacts
 
 jobs:
-  release:
+  windows:
     runs-on: windows-latest
     env:
-      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      SIGN: ${{ github.event_name == 'push' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-      # Reuse the release-profile cache that ci.yml's dev-build keeps warm on
-      # main (caches saved on tags are not visible to later tags, so don't save).
+      # Reuse the release-profile cache that ci.yml's windows-build keeps warm
+      # (caches saved on tags are not visible to later tags, so don't save).
       - uses: Swatinem/rust-cache@v2
         with:
           # .cargo/config.toml holds the build profiles, which rust-cache does not hash itself.
@@ -41,12 +50,20 @@ jobs:
             app/package-lock.json
             plugin-millennium/package-lock.json
 
-      - name: Check version matches tag
+      # A release: the tag must be the version in the tree. A rehearsal: the
+      # build gets a release-candidate version of its own.
+      - name: Version
         id: version
         shell: pwsh
         run: |
-          $version = ./scripts/check-versions.ps1
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match version $version" }
+          $base = ./scripts/check-versions.ps1
+          if ("${{ github.event_name }}" -eq "push") {
+            if ("v$base" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match version $base" }
+            $version = $base
+          } else {
+            $version = ./scripts/set-build-version.ps1 -Suffix "rc.${{ github.run_number }}"
+          }
+          "base=$base" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "installer=Ludonimbus_${version}_x64-setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
@@ -55,7 +72,7 @@ jobs:
       - name: Release notes from CHANGELOG.md (must be bilingual)
         shell: pwsh
         run: |
-          $notes = (./scripts/changelog-section.ps1 -Version "${{ github.ref_name }}") -join "`n"
+          $notes = (./scripts/changelog-section.ps1 -Version "${{ steps.version.outputs.base }}") -join "`n"
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8NoBOM -NoNewline
           if ($env:SIGN -eq 'true') {
             $notes += "`n`n---`n`n[Code signing policy](https://github.com/${{ github.repository }}#code-signing-policy)"
@@ -199,32 +216,70 @@ jobs:
           Pop-Location
           if ($code -ne 0) { throw "updater signing failed" }
           ./scripts/updater-manifest.ps1 -Version $version `
-            -Url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.version.outputs.installer }}" `
+            -Url "https://github.com/${{ github.repository }}/releases/download/v$version/${{ steps.version.outputs.installer }}" `
             -SignatureFile "$installer.sig" -NotesFile release-notes.md `
             -Out target/release/bundle/nsis/latest.json
 
-      - name: Publish the GitHub Release
+      - name: Collect the release files
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          New-Item -ItemType Directory -Force release-files | Out-Null
           $dir = "target/release/bundle/nsis"
           $name = "${{ steps.version.outputs.installer }}"
+          Copy-Item "$dir/$name", "$dir/$name.sig", "$dir/latest.json", release-body.md release-files/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release-files/
+          retention-days: 14
+
+  linux:
+    uses: ./.github/workflows/linux-package.yml
+    with:
+      # Empty for a tag.
+      version-suffix: ${{ github.event_name != 'push' && format('rc.{0}', github.run_number) || '' }}
+      artifact: release-linux
+      retention-days: 14
+    secrets: inherit
+
+  # Only for a tag: a rehearsal stops before this.
+  publish:
+    if: github.event_name == 'push'
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+          path: linux
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ls -l windows linux
           # A draft left by an earlier failed run of this tag is replaced.
-          $existing = gh release view $tag --json isDraft --jq .isDraft 2>$null
-          if ($existing -eq "true") { gh release delete $tag --yes }
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || true)" = "true" ]; then
+            gh release delete "$TAG" --yes
+          fi
           # Upload as a draft first, so the updater never sees a release without latest.json.
-          gh release create $tag "$dir/$name" "$dir/$name.sig" "$dir/latest.json" `
-            --verify-tag --draft --title "Ludonimbus $tag" --notes-file release-body.md
-          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
-          gh release edit $tag --draft=false --latest
-          if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
+          gh release create "$TAG" \
+            windows/*.exe windows/*.sig windows/latest.json \
+            linux/Ludonimbus-linux-x86_64.tar.gz linux/Ludonimbus-decky.zip \
+            --verify-tag --draft --title "Ludonimbus $TAG" --notes-file windows/release-body.md
+          gh release edit "$TAG" --draft=false --latest
 
   # Open a PR on microsoft/winget-pkgs for the new version. Needs the
   # WINGET_TOKEN secret (classic PAT, public_repo scope); skipped without it.
   winget:
-    needs: release
+    needs: publish
     runs-on: ubuntu-latest
     env:
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

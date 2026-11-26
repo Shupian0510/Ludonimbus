@@ -1,20 +1,79 @@
 name: CI
 
+# Runs for every pull request, and for every push to dev (the next version)
+# and main (the released version). The whole pipeline is described in
+# docs/release-process.md.
+#
+# "ok" is the one check the branch rules require. It always reports, also
+# when a change only touches documentation and the builds are skipped.
 on:
   push:
-    branches: [main]
-    paths-ignore: ["docs/**", "website/**", "**/*.md", "LICENSE"]
+    branches: [main, dev]
   pull_request:
-    paths-ignore: ["docs/**", "website/**", "**/*.md", "LICENSE"]
   workflow_dispatch:
+    inputs:
+      build:
+        description: "Also build the installers from this branch (development build)"
+        type: boolean
+        default: false
 
-# A newer push to the same branch / PR cancels the run in progress.
+# A newer push to the same pull request cancels the run in progress. Runs on
+# dev and main always finish: each of them leaves a development build.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Changes to documentation alone skip the builds. When it is unclear what
+  # changed, the builds run.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          code=true
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            if ! git diff --name-only "$BASE" "$GITHUB_SHA" | grep -qvE '^(docs/|website/)|\.md$|^LICENSE$'; then
+              code=false
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code changed: $code"
+
+  # Cheap checks that every change gets, documentation included.
+  meta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull requests into main come from dev, hotfix/* or docs/*
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        env:
+          HEAD: ${{ github.head_ref }}
+        run: |
+          case "$HEAD" in
+            dev|hotfix/*|docs/*) ;;
+            *)
+              echo "::error::New work goes into dev. Change this pull request's base branch to dev (Edit, next to the title). main only takes releases (dev), fixes of the released version (hotfix/*) and corrections of its documentation (docs/*)."
+              exit 1
+              ;;
+          esac
+      - name: Versions match
+        shell: pwsh
+        run: ./scripts/check-versions.ps1
+      - name: Changelog has a bilingual entry for this version
+        shell: pwsh
+        run: ./scripts/changelog-section.ps1 -Version (./scripts/check-versions.ps1) | Out-Null
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +82,8 @@ jobs:
         with:
           # .cargo/config.toml holds the build profiles, which rust-cache does not hash itself.
           shared-key: debug-build-${{ hashFiles('.cargo/config.toml') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Pull requests read the cache of the branch they go into.
+          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -31,12 +91,6 @@ jobs:
           cache-dependency-path: |
             app/package-lock.json
             plugin-millennium/package-lock.json
-      - name: Versions match
-        shell: pwsh
-        run: ./scripts/check-versions.ps1
-      - name: Changelog has a bilingual entry for this version
-        shell: pwsh
-        run: ./scripts/changelog-section.ps1 -Version (./scripts/check-versions.ps1) | Out-Null
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
@@ -51,9 +105,11 @@ jobs:
           ./scripts/prepare-sidecars.ps1
           cargo build -p ludonimbus-app
 
-  # Linux (groundwork for Steam Deck / SteamOS, docs/plan-phase5.md): the
-  # same tests, and the desktop app must compile. Nothing is packaged yet.
+  # Linux (Steam Deck / SteamOS): the same tests, and the desktop app must
+  # compile.
   linux:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +117,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-debug-build-${{ hashFiles('.cargo/config.toml') }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -84,11 +140,30 @@ jobs:
           bash scripts/prepare-sidecars.sh --stand-ins
           cargo build --locked -p ludonimbus-app
 
-  # Installer for every commit on main, kept as a workflow artifact for 14
-  # days. Not a release: the auto-updater never offers it. It also keeps the
-  # release-profile cache warm for release.yml.
-  dev-build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+  ok:
+    if: always()
+    needs: [changes, meta, test, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every check passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done
+
+  # Development build: the Windows installer for every change that lands on
+  # dev or main, kept as a workflow artifact. Not a release: it is not on the
+  # Releases page and the auto-updater never offers it. Its version is the
+  # one in the tree plus "-dev.<run number>" (scripts/set-build-version.ps1).
+  windows-build:
+    needs: [changes, ok]
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'push' || inputs.build)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +172,7 @@ jobs:
         with:
           # .cargo/config.toml holds the build profiles, which rust-cache does not hash itself.
           shared-key: release-build-${{ hashFiles('.cargo/config.toml') }}
+          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -104,6 +180,12 @@ jobs:
           cache-dependency-path: |
             app/package-lock.json
             plugin-millennium/package-lock.json
+      - name: Version of this build
+        id: version
+        shell: pwsh
+        run: |
+          $version = ./scripts/set-build-version.ps1 -Suffix "dev.${{ github.run_number }}"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - name: Build installer
         shell: pwsh
         env:
@@ -118,77 +200,21 @@ jobs:
           npm ci
           npx tauri build
           if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
-      - name: Short commit id
-        id: sha
-        shell: pwsh
-        run: '"short=$("${{ github.sha }}".Substring(0, 7))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8'
       - uses: actions/upload-artifact@v4
         with:
-          name: Ludonimbus-dev-${{ steps.sha.outputs.short }}
+          name: Ludonimbus-dev.${{ github.run_number }}-windows
           path: target/release/bundle/nsis/*.exe
-          retention-days: 14
+          retention-days: 30
 
-  # Linux / Steam Deck preview build for every commit on main (workflow
-  # artifact, 14 days): the AppImage, the launch wrapper and the background
-  # service with the install script, and the Decky plugin.
-  linux-dev-build:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-release-build-${{ hashFiles('.cargo/config.toml') }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            app/package-lock.json
-            plugin-decky/package-lock.json
-      - name: System libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libsoup-3.0-dev libssl-dev libdbus-1-dev libfuse2 file
-      - name: Build
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-          NO_STRIP: "true"
-          LUDONIMBUS_GOOGLE_CLIENT_ID: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_ID }}
-          LUDONIMBUS_GOOGLE_CLIENT_SECRET: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_SECRET }}
-        run: |
-          bash scripts/prepare-sidecars.sh --release
-          cargo build --locked --release -p ludonimbus-agent
-          cd app
-          npm ci
-          npx tauri build --bundles appimage
-      - name: Pack the Linux download
-        run: |
-          out=Ludonimbus-linux-x86_64
-          mkdir -p "$out"
-          cp target/release/bundle/appimage/*.AppImage "$out/"
-          cp target/release/ludonimbus-run target/release/ludonimbus-agent "$out/"
-          cp scripts/install-linux.sh "$out/"
-          cp app/src-tauri/icons/128x128@2x.png "$out/ludonimbus.png"
-          chmod +x "$out"/*.AppImage "$out"/ludonimbus-run "$out"/ludonimbus-agent "$out"/install-linux.sh
-          tar czf "$out.tar.gz" "$out"
-      - name: Decky plugin
-        working-directory: plugin-decky
-        run: |
-          npm ci
-          npm run build
-          mkdir -p Ludonimbus
-          cp -r dist main.py plugin.json package.json Ludonimbus/
-          cp ../LICENSE Ludonimbus/
-          zip -r ../Ludonimbus-decky.zip Ludonimbus
-      - name: Short commit id
-        id: sha
-        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Ludonimbus-linux-dev-${{ steps.sha.outputs.short }}
-          path: |
-            Ludonimbus-linux-x86_64.tar.gz
-            Ludonimbus-decky.zip
-          retention-days: 14
+  # The same for Linux / Steam Deck: the AppImage, the launch wrapper and the
+  # background service with the install script, and the Decky plugin.
+  linux-build:
+    needs: [changes, ok]
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'push' || inputs.build)
+    uses: ./.github/workflows/linux-package.yml
+    with:
+      version-suffix: dev.${{ github.run_number }}
+      artifact: Ludonimbus-dev.${{ github.run_number }}-linux
+      retention-days: 30
+      save-cache: ${{ github.event_name == 'push' }}
+    secrets: inherit
