@@ -3,7 +3,7 @@
 //! `systemd --user` (see `scripts/install-linux.sh`).
 //!
 //! - The local API for the Decky plugin: the same protocol as the app's
-//!   (`app/src-tauri/src/agent.rs`), API 3: port and token in `agent.json`,
+//!   (`app/src-tauri/src/agent.rs`), API 4: port and token in `agent.json`,
 //!   `Authorization: Bearer <token>`, no browser requests.
 //! - The tray app's background work: finishing the sessions of launch
 //!   wrappers that were terminated, uploading screenshots.
@@ -13,7 +13,7 @@
 //!
 //! ```text
 //! GET  /v1/ping
-//! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut
+//! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut, or of a game Steam installed (API 4)
 //! GET  /v1/steam/playtime[?account={id}]                  playtime totals of every linked shortcut
 //! POST /v1/games/{key}/sync[?resolution=cloud|local]      sync now (in the background)
 //! GET  /v1/games/{key}/snapshots                          version history in the cloud
@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 use ludonimbus_core::config::{self, AppConfig, GameEntry};
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution, Status, StatusReport};
-use ludonimbus_core::{catchup, logger, paths, playtime, process, savelib, state, steam, transfer, util};
+use ludonimbus_core::{catchup, logger, paths, playtime, process, savelib, state, steam, steamcloud, transfer, util};
 use rand::RngCore;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -38,7 +38,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tiny_http::{Header, Method, Request, Response, Server};
 
-const API_VERSION: u32 = 3;
+const API_VERSION: u32 = 4;
 const FRESH_SECS: i64 = 60;
 
 fn log(msg: impl AsRef<str>) {
@@ -267,9 +267,7 @@ fn find_by_key(cfg: &AppConfig, key: &str) -> std::result::Result<GameEntry, Api
 }
 
 fn find_game(cfg: &AppConfig, appid: u32, account: Option<&str>) -> Option<GameEntry> {
-    let linked = |g: &&GameEntry| g.steam.as_ref().is_some_and(|l| l.appid == appid);
-    let same_account = |g: &&GameEntry| account.is_none_or(|a| g.steam.as_ref().is_some_and(|l| l.account == a));
-    cfg.games.iter().filter(linked).find(same_account).or_else(|| cfg.games.iter().find(linked)).cloned()
+    steam::game_of_app(cfg, appid, account).cloned()
 }
 
 fn phase(g: &GameEntry) -> &'static str {
@@ -306,6 +304,8 @@ struct GameStatus {
     auto_sync: bool,
     steam_enabled: bool,
     health: String,
+    store: Option<steamcloud::State>,
+    backlog: Option<sync::Backlog>,
     phase: &'static str,
     status: Option<Status>,
     message: Option<String>,
@@ -339,14 +339,19 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
         report = Some(r);
         st = state::game(&g.key);
     }
-    let health = serde_json::to_value(steam::health(&cfg, &g)).ok().and_then(|v| v["state"].as_str().map(str::to_string)).unwrap_or_default();
+    let health = match &g.store {
+        Some(_) => steamcloud::wrapper_word(&cfg, &g).to_string(),
+        None => serde_json::to_value(steam::health(&cfg, &g)).ok().and_then(|v| v["state"].as_str().map(str::to_string)).unwrap_or_default(),
+    };
     let body = GameStatus {
         managed: true,
         key: g.key.clone(),
         name: g.name.clone(),
         auto_sync: g.auto_sync,
-        steam_enabled: g.steam.as_ref().is_some_and(|l| l.enabled),
+        steam_enabled: g.steam.as_ref().is_some_and(|l| l.enabled) || g.store.as_ref().is_some_and(|l| l.wrapper),
         health,
+        store: g.store.as_ref().map(|_| steamcloud::state(&g)),
+        backlog: sync::backlog(&g.key),
         phase,
         status: report.as_ref().map(|r| r.status),
         message: report.as_ref().and_then(|r| r.message.clone()),

@@ -719,6 +719,25 @@ pub fn unwrap(root: &Path, account: &str, appid: u32, game: &GameEntry, original
     })
 }
 
+/// The game behind a Steam app id: the one linked to that shortcut, or the
+/// one Steam installed under that id. The one of `account` when it has one,
+/// else of any account.
+pub fn game_of_app<'a>(cfg: &'a AppConfig, appid: u32, account: Option<&str>) -> Option<&'a GameEntry> {
+    fn account_of(g: &GameEntry, appid: u32) -> Option<&str> {
+        let shortcut = g.steam.as_ref().filter(|l| l.appid == appid).map(|l| l.account.as_str());
+        shortcut.or_else(|| g.store.as_ref().filter(|l| l.appid == appid).map(|l| l.account.as_str()))
+    }
+    let mut any = None;
+    for g in &cfg.games {
+        match account_of(g, appid) {
+            Some(a) if account.is_none_or(|want| want == a) => return Some(g),
+            Some(_) if any.is_none() => any = Some(g),
+            _ => {}
+        }
+    }
+    any
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Health {
@@ -963,9 +982,33 @@ pub fn wrapper_health(options: Option<&str>, key: &str, runner: &Path) -> Wrappe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::SteamLink;
+    use crate::config::{SteamLink, StoreLink};
 
     const APPID: i32 = -1633758279;
+
+    #[test]
+    fn a_steam_app_id_finds_its_game() {
+        let shortcut = |key: &str, account: &str, appid: u32| GameEntry {
+            key: key.into(),
+            steam: Some(SteamLink { account: account.into(), appid, ..Default::default() }),
+            ..Default::default()
+        };
+        let installed = |key: &str, account: &str, appid: u32| GameEntry {
+            key: key.into(),
+            store: Some(StoreLink { account: account.into(), appid, ..Default::default() }),
+            ..Default::default()
+        };
+        let mut cfg = AppConfig::default();
+        cfg.games = vec![shortcut("a", "111", 0x8000_0001), shortcut("b", "222", 0x8000_0001), installed("c", "111", 646570), installed("d", "222", 646570)];
+        let key = |appid, account| game_of_app(&cfg, appid, account).map(|g| g.key.as_str());
+        // A shortcut's id, and the id of a game Steam installed.
+        assert_eq!(key(0x8000_0001, Some("222")), Some("b"));
+        assert_eq!(key(646570, Some("222")), Some("d"));
+        // No account given, or one that has none: the first.
+        assert_eq!(key(0x8000_0001, None), Some("a"));
+        assert_eq!(key(646570, Some("333")), Some("c"));
+        assert_eq!(key(413150, None), None);
+    }
     const EXE: &str = r"C:\Games\fefw\fefw.exe";
 
     #[test]

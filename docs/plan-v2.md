@@ -469,13 +469,13 @@ gamebackup/…                             游戏本体备份，不变
 - **退出后**：同步在单独的线程里，最多等 `exit_wait_secs`（默认 10 秒）；`wait_for_upload`（「退出后总是等上传完」）打开时一直等。没传完就交出去：写一个记号 `owed/<游戏>.json`（「这个游戏欠一次退出后的同步」），托盘程序在就交给它；不在就启动 `ludonimbus-run --finish <游戏>`：Windows 上用 `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`，不能脱离作业时去掉最后一项再试；Linux 上用 `systemd-run --user --collect`，没有的话不交出去，照旧等传完（不然 Steam 的 reaper 反正也会让游戏一直显示在运行）。然后包装器退出，传到一半被打断不要紧，版本还在队列里。
 - **谁来补**：`sync::finish_owed` 跑一次普通的退出后同步；结果是最终的（传完、已是最新、拉取、冲突已记下、没有存档）就删掉记号，连不上就留着。任何一次结果最终的同步都会删掉这个游戏的记号。这个游戏又在启动前或在玩时不补，留给这一局结束后的同步。`--finish` 不弹窗，大约 10 分钟内按越来越长的间隔重试，冲突只记下，下次启动时问。托盘程序：发现新的记号马上补；另外启动 10 秒后看一次，之后每分钟看一次 `pending/` 并上传（`sync::flush_pending`），连不上时间隔翻倍，最多 5 分钟；正在运行、正在同步的游戏跳过。补完发 `sync-finished`，界面刷新。
 - **一个游戏同一时间只有一个同步**，跨进程（包装器、`--finish`、托盘程序、命令行）：`locks/sync-<游戏>.lock`，读、判断、写一条存档线的操作都先拿它（`sync`、`backup_now`、`restore`、`apply_external`、`use_line`、`flush_pending`、`upload_pending`、`finish_owed`）。锁文件记着持有者的进程 id 和它的启动时间：持有者不在了马上接手，在的话一直等，不再 30 秒就强拆（`lockfile::FileLock::hold`）。启动前等锁的时间算在等待时间里，没等到就当作没连上云盘，直接启动。
-- 设置：`launch_wait_secs`、`exit_wait_secs`、`wait_for_upload`，界面里还没有开关（界面在 10.5 一起重做）。
+- 设置：`launch_wait_secs`、`exit_wait_secs`、`wait_for_upload`，设置页里各一行（启动前最多等几秒、退出后最多等几秒、「总是等上传完」的开关）。
 
 **和上面的计划不一样的地方**：
 
 - 启动前没连上时没有提示「没连上云盘，这一局结束后再同步」，只记在 `last_error`：规则是除了覆盖和删除不弹窗（10.1），开游戏前更不该多一个窗口。
 - 下载的窗口只显示总大小，不显示进度：提问窗口是另一个进程，只在打开时读一次问题。进度在 `Gate::phase` 里有，以后的界面可以用。
-- 退出后的通知（「已同步」「正在后台上传」「没连上，稍后再传」）还没做，Steam 插件里也还没有这几个状态。
+- 退出后的状态不弹系统通知，显示在用户退出游戏后看的地方：Steam 插件的游戏页和 Decky 面板（本机接口 4 的 `backlog`）。包装器还在等时是「正在上传存档」，交出去以后是「正在后台上传（3.2 MB）」，没人在传时是「没连上，稍后再传」或「等待上传（3.2 MB）」，传完回到「已是最新」。`sync::backlog` 给出这三样：有没有同步在跑（任何进程）、队列里几个版本、还要传多少字节（队列里内容包的大小）。系统通知留到界面重构时再定（10.5）：每次退出都弹一条和 10.1 的「看起来要轻」冲突，只在没传完时弹才有用，要在真实的桌面上看过再做。
 - 后台上传由托盘程序或 `--finish` 进程做，不经过 `crates/agent`。
 - 交出去之后，这一局的成就上传和截图（没有托盘程序时）也由接手的一方做：留在包装器里，它就还要多等几次请求。
 
@@ -859,7 +859,7 @@ achievements: { … }                      # 可选，按存档判定的成就
 | `crosssaves.rs` | 换成 `rules/games/` 的读取 |
 | `playtime.rs`、`screenshots.rs`、`achievements/cloud.rs`、`artsync.rs` | 按游戏的 `folders` 读写 |
 | `nxlan.rs` | 标题 id 找游戏和存档线（协议不变，Switch 客户端不用改） |
-| 本机接口（应用和 `crates/agent`） | 版本 4：安装 id、游戏 id；Steam 插件和 Decky 插件跟着改 |
+| 本机接口（应用和 `crates/agent`） | 版本 4（已做）：`backlog`（退出后还欠云端什么，5.5）；`store`（Steam 装的游戏，第 8 节：按 appid 也能找到，「Steam 管」时插件不显示，「只备份」显示「已备份」，启动选项被改了提示修复）；每个版本带 `platform`。安装仍然用 `key` 指，接口里没有另外的安装 id、游戏 id：插件只管「这个 appid 是哪个安装」。Steam 插件和 Decky 插件的用词跟应用一致：存档、当前、保留、设为当前 |
 | 应用界面 | 游戏页的版本条和「存档」页签（10.2）；整套界面按 10.1 重做（10.5） |
 | 不变 | 各云盘的 `Store`、`wgs.rs`、`xboxsaves.rs`、`switch.rs`、`emulators.rs`、`process.rs`、包装器的流程、`gamebackup/`、`steam.rs`、掌机模式 |
 

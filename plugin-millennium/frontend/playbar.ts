@@ -173,7 +173,7 @@ export class PlayBarStatus {
 	}
 
 	private busy(): boolean {
-		return (isGame(this.reply) && this.reply.phase !== 'idle') || !!this.backup?.job;
+		return (isGame(this.reply) && (this.reply.phase !== 'idle' || this.reply.backlog?.state === 'uploading')) || !!this.backup?.job;
 	}
 
 	private async load(appId: string, refresh: boolean): Promise<void> {
@@ -196,7 +196,9 @@ export class PlayBarStatus {
 			if (appId !== this.appId) return;
 		}
 		this.backup = backup;
-		const phase = isGame(reply) ? reply.phase : null;
+		// What is owed after playing counts as work in progress: when it is
+		// gone, the status is read again.
+		const phase = isGame(reply) ? (reply.phase === 'idle' && reply.backlog ? 'backlog' : reply.phase) : null;
 		const finished = this.lastPhase !== null && this.lastPhase !== 'idle' && phase === 'idle';
 		this.lastPhase = phase;
 		this.reply = reply;
@@ -329,7 +331,7 @@ export class PlayBarStatus {
 		const view = describe(reply, this.appId);
 		if (view?.action === 'versions') {
 			const appId = this.appId;
-			showVersions(this.doc.defaultView, reply.key, reply.name, () => {
+			showVersions(this.doc.defaultView, reply.key, reply.name, reply.store ?? null, () => {
 				// A sync or restore started: follow it closely.
 				this.load(appId, false).then(() => this.later(FAST_POLL_MS));
 			});
