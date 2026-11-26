@@ -15,8 +15,8 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。
 - 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）。
 - 新增：删除的版本先进「最近删除」，30 天内可以恢复。
-- 改进：自己填写的百度网盘应用密钥改为保存在 Windows 凭据管理器；设置里说明了怎么解除云盘的授权。
-- 新增：服务条款页面；隐私政策补充了百度网盘相关的说明。
+- 新增：服务条款页面；隐私政策写得更完整。
+- 说明：百度网盘一键登录不再计划（没有继续做百度开放平台的审核）。百度网盘可以通过 OpenList / AList 用 WebDAV 接入。
 
 ### English
 
@@ -27,8 +27,8 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin.
 - New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview).
 - New: deleted versions go to "Recently deleted" first and can be restored for 30 days.
-- Improved: the secret of your own Baidu Netdisk app is now kept in the Windows Credential Manager; Settings explains how to revoke a cloud drive's access.
-- New: a terms of service page; the privacy policy says more about Baidu Netdisk.
+- New: a terms of service page; the privacy policy is more complete.
+- Note: one-click Baidu Netdisk sign-in is no longer planned (Baidu's open-platform review is not being pursued). Baidu Netdisk can be connected over WebDAV through OpenList / AList.
 
 ## 0.6.2
 

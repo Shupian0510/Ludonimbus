@@ -101,7 +101,7 @@ npm run preview   # 预览构建结果
 ```
 
 - 更新日志页由 `scripts/gen-changelog.mjs` 在构建时从根目录的 `CHANGELOG.md` 生成（`### 中文` / `### English` 两段分到两种语言），不要手改 `website/reference/changelog.md`。
-- `privacy.html` 必须保持原地址（Google OAuth 同意屏幕和百度开放平台审核都填了这个链接），内容在 `website/parts/`。
+- `privacy.html` 必须保持原地址（Google OAuth 同意屏幕填了这个链接），内容在 `website/parts/`。
 - 计划要放截图的位置用 `<!-- screenshot: 场景名 -->` 标出，清单在 `website/SCREENSHOTS.md`。
 - 「使用场景」页（`non-steam-cloud-saves/`、`emulator-cloud-saves/`、`recompiled-game-saves/`、`steam-integration/`、`google-drive-save-sync/`、`supported-games/`、`comparison/`，中英各一份）是面向搜索的产品页，每页都写了 `title` 和 `description` frontmatter。改功能时记得一起更新，`comparison/` 里其他工具的信息要注明核对时间。
 
@@ -159,7 +159,9 @@ cargo test -p ludonimbus-core adapters                     # 检查规则能解�
 
 ## Google Drive / 百度网盘
 
-发布者需要在 Google Cloud 创建一次「桌面应用」类型的 OAuth 客户端，并在构建时注入 Client ID，见 [google-oauth-setup.md](google-oauth-setup.md)。普通用户只需要登录。百度网盘同理，发布者需要在百度网盘开放平台注册一次应用，见 [baidu-netdisk-setup.md](baidu-netdisk-setup.md)。
+发布者需要在 Google Cloud 创建一次「桌面应用」类型的 OAuth 客户端，并在构建时注入 Client ID，见 [google-oauth-setup.md](google-oauth-setup.md)。普通用户只需要登录。
+
+百度网盘没有内置的应用（没有做百度开放平台的上线审核），发布版的设置页不显示百度网盘这一项；代码还在，开发版里可以填自己在百度网盘开放平台创建的应用来连接，见 [baidu-netdisk-setup.md](baidu-netdisk-setup.md)。
 
 ## 项目结构
 

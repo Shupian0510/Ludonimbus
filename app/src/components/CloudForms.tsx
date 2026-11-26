@@ -664,8 +664,9 @@ export function CloudOptions({
   const { t, lang } = useI18n();
   const [more, setMore] = useState(false);
   const k = settings.cloud.kind;
-  // Baidu needs an app approved on the Baidu open platform: builds without
-  // one hide the option (except for development, or when already connected).
+  // There is no built-in Baidu app (it would need Baidu's review), so the
+  // option only shows in development or when already connected with one's
+  // own app.
   const baidu = settings.baiduBuiltin || k === "baiduPan" || (import.meta.env.DEV && !scene());
   const folderNote = guide?.multiDevice ? t.onboarding.cloud.folderMultiDevice : undefined;
   const all = {

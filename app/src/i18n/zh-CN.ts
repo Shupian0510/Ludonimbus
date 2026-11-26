@@ -657,7 +657,7 @@ export const cloud = {
   baidu: {
     intro: (folder: string) =>
       `用百度账号授权登录。存档放在你网盘的「我的应用数据/${folder}」文件夹里，Ludonimbus 只能访问这个文件夹。非会员下载会被百度限速，拉取较大的存档时要多等一会儿。`,
-    dev: "当前是开发版，还没有内置百度网盘应用。请按 docs/baidu-netdisk-setup.md 在百度网盘开放平台创建应用，把 AppKey、SecretKey 和应用名称填在这里（正式发布版会内置，用户不需要填）。",
+    dev: "这个版本没有内置百度网盘应用。按 docs/baidu-netdisk-setup.md 在百度网盘开放平台创建自己的应用，把 AppKey、SecretKey 和应用名称填在这里。",
     appName: "应用名称",
     qrAlt: "百度网盘授权二维码",
     opened: "已在浏览器中打开百度授权页面。登录后如果要求输入授权码，请输入：",

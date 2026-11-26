@@ -149,7 +149,7 @@ Linux 下载包只有一份构建定义（[`linux-package.yml`](../.github/workf
 | 名称 | 用途 |
 |---|---|
 | `LUDONIMBUS_GOOGLE_CLIENT_ID` / `LUDONIMBUS_GOOGLE_CLIENT_SECRET` | 内置的 Google OAuth 客户端（见 [google-oauth-setup.md](google-oauth-setup.md)） |
-| `LUDONIMBUS_BAIDU_APP_KEY` / `LUDONIMBUS_BAIDU_SECRET_KEY` / `LUDONIMBUS_BAIDU_APP_NAME` | 内置的百度网盘应用（见 [baidu-netdisk-setup.md](baidu-netdisk-setup.md)） |
+| `LUDONIMBUS_BAIDU_APP_KEY` / `LUDONIMBUS_BAIDU_SECRET_KEY` / `LUDONIMBUS_BAIDU_APP_NAME` | 内置的百度网盘应用。没有设置：官方构建不内置（见 [baidu-netdisk-setup.md](baidu-netdisk-setup.md)） |
 | `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 更新签名私钥。**私钥丢失后无法再给已安装的用户推送更新**，本地备份在 `%USERPROFILE%\.tauri\ludonimbus.key` |
 | `WINGET_TOKEN` | 给 winget-pkgs 提 PR 用的 GitHub token：classic token，只勾 `public_repo`（Komac 不支持 fine-grained token）。它能写你所有的公开仓库，建议设过期时间，到期后换新的 |
 | `SIGNPATH_API_TOKEN` | SignPath 代码签名的 API token，和 Variables 里的 `SIGNPATH_ORGANIZATION_ID`（以及可选的 `SIGNPATH_PROJECT_SLUG`、`SIGNPATH_SIGNING_POLICY_SLUG`）一起配置，见 [code-signing.md](code-signing.md#2-通过后配置)；没配置时安装包不签名 |

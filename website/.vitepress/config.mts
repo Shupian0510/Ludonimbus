@@ -110,7 +110,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '怎么选', link: '/clouds/' },
         { text: 'Google Drive', link: '/clouds/google-drive' },
         { text: '夸克网盘（实验性）', link: '/clouds/quark' },
-        { text: '百度网盘（审核中）', link: '/clouds/baidu' },
+        { text: '百度网盘', link: '/clouds/baidu' },
         { text: 'WebDAV：坚果云、NAS、OpenList', link: '/clouds/webdav' },
         { text: 'S3 兼容存储', link: '/clouds/s3' },
         { text: '本地 / 同步文件夹', link: '/clouds/folder' },
@@ -196,7 +196,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Choosing a cloud', link: '/en/clouds/' },
         { text: 'Google Drive', link: '/en/clouds/google-drive' },
         { text: 'Quark (experimental)', link: '/en/clouds/quark' },
-        { text: 'Baidu Netdisk (in review)', link: '/en/clouds/baidu' },
+        { text: 'Baidu Netdisk', link: '/en/clouds/baidu' },
         { text: 'WebDAV: NAS, Nextcloud, OpenList', link: '/en/clouds/webdav' },
         { text: 'S3-compatible storage', link: '/en/clouds/s3' },
         { text: 'Local / synced folder', link: '/en/clouds/folder' },
@@ -267,8 +267,8 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
 export default defineConfig({
   base,
   title: 'Ludonimbus',
-  // Pages are served as .html (privacy.html must keep its address: Google
-  // OAuth and Baidu's review link to it).
+  // Pages are served as .html (privacy.html must keep its address: the
+  // Google OAuth consent screen links to it).
   cleanUrls: false,
   srcExclude: ['README.md', 'SCREENSHOTS.md', 'parts/**'],
   head: [

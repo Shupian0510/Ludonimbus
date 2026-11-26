@@ -1,6 +1,6 @@
 # WebDAV: NAS, Nextcloud, OpenList
 
-WebDAV is a standard protocol supported by many clouds and NAS systems. Synology, QNAP, Nextcloud and Jianguoyun have it built in, and self-hosted services such as OpenList / AList provide it too. Ludonimbus is a standard WebDAV client; which server it connects to is entirely your own configuration.
+WebDAV is a standard protocol supported by many clouds and NAS systems. Synology, QNAP, Nextcloud and Jianguoyun have it built in; Baidu Netdisk, Aliyun Drive and others can be mounted in OpenList / AList and reached through its WebDAV server.
 
 ## Steps
 
@@ -76,11 +76,7 @@ Create app passwords in Nextcloud under Personal settings → Security → Devic
 Since 0.5, Quark [connects in one click](./quark.md): Ludonimbus downloads and runs OpenList itself, with nothing to set up. The steps below are for when you already run OpenList or want another netdisk.
 :::
 
-[OpenList](https://github.com/OpenListTeam/OpenList) (a community fork of AList) is a third-party open-source tool that can serve storage you add to it over WebDAV, which Ludonimbus then connects to.
-
-::: warning About third-party tools
-Ludonimbus is a standard WebDAV client and provides no netdisk mounting or aggregation of its own. OpenList / AList are independent third-party open-source tools; whether you use them, which storage you mount and whether that complies with each netdisk's user agreement is your own decision and responsibility. Ludonimbus never connects to Baidu Netdisk through OpenList or similar tools; Baidu Netdisk is accessed only through the [official open-platform API](./baidu.md).
-:::
+[OpenList](https://github.com/OpenListTeam/OpenList) (a community fork of AList) can mount Baidu Netdisk, Aliyun Drive, Quark and many other netdisks and serve them over WebDAV. Ludonimbus has no direct connection to Baidu Netdisk or Aliyun Drive, so OpenList is how to use them today. OpenList is an independent third-party open-source tool; whether using it fits a netdisk's user agreement is for you to judge.
 
 1. Install and run OpenList (the Windows program or Docker), open its admin page and add your netdisk as a storage, following OpenList's documentation. Note the mount path, for example `/Quark`.
 2. The OpenList user you connect with needs WebDAV read and manage permissions (the admin account has them).

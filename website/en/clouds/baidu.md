@@ -1,47 +1,22 @@
-# Baidu Netdisk (in review)
+# Baidu Netdisk
 
 ::: info Status
-One-click Baidu Netdisk sign-in is ready and **waiting for Baidu's open-platform review**; it will be enabled in a new version once approved. Until then, release builds don't show Baidu Netdisk in Settings.
+Ludonimbus has no one-click Baidu Netdisk sign-in. An app on the Baidu Netdisk open platform has to pass a review before everyone can use it, and that review is not being pursued, so Settings has no Baidu Netdisk entry.
 :::
 
-## Connecting
+## Using Baidu Netdisk
 
-1. Open Settings → Cloud and click "Connect Baidu Netdisk".
-2. Ludonimbus opens Baidu's official authorization page in your browser and shows a code and a QR code.
-3. Sign in to your Baidu account on Baidu's page (or scan the QR code with the Baidu Netdisk app), review the permissions and confirm.
-4. Ludonimbus continues by itself; Settings then shows your netdisk nickname and storage use.
+Connect through [OpenList](https://github.com/OpenListTeam/OpenList) / AList:
 
-Your Baidu account and password are only entered on Baidu's page; Ludonimbus never sees them. The authorization is stored in the Windows Credential Manager on your PC.
+1. Mount your Baidu Netdisk in OpenList.
+2. In Ludonimbus, connect to OpenList over WebDAV, with the folder inside the mounted netdisk, for example `Baidu/Ludonimbus`.
 
-## What Ludonimbus can access
-
-- Ludonimbus uses the official API of the Baidu Netdisk open platform with the scope `basic` and `netdisk`.
-- **It only reads and writes the folder 我的应用数据/Ludonimbus (My App Data/Ludonimbus)** in your netdisk, which holds your saves, version metadata and device information and is visible on the website and in the app. No other file in your netdisk is listed, read, changed or deleted.
-- Baidu's open platform also restricts apps to their own folder on the server side.
-
-Details: [Privacy Policy · Baidu Netdisk](../privacy.md#baidu-netdisk).
-
-## Deleting and restoring
-
-- Deleting a version in a game's version history moves it to Recently deleted below the list, where you can **restore it for 30 days**; after that it is deleted for good. You can also delete it for good from there.
-- A restored automatic version is locked too, so automatic cleanup doesn't delete it again right away.
-- To remove everything, delete the folder 我的应用数据/Ludonimbus in Baidu Netdisk.
-
-## Revoking access {#revoke}
-
-1. **In Ludonimbus**: Settings → Cloud → Disconnect. This deletes the Baidu authorization stored on this PC.
-2. **On Baidu's side**: sign in to your Baidu account, open 账号设置 → 授权管理 (Account settings → Authorization management, [passport.baidu.com/v6/appAuthority](https://passport.baidu.com/v6/appAuthority)), find Ludonimbus and click 取消授权 (Revoke). The Ludonimbus authorization stops working on every PC.
-
-"How do I revoke access?" under Baidu Netdisk in Settings shows the same steps and opens Baidu's page directly. Revoking access doesn't delete the saves in your netdisk.
-
-## Using your own Baidu app (advanced)
-
-Click "Use my own Baidu app (advanced)" in Settings to enter the AppKey, SecretKey and app name of an app you created on the [Baidu Netdisk open platform](https://pan.baidu.com/union); saves then go in `我的应用数据/<your app name>`. The SecretKey is kept only in the Windows Credential Manager on your PC, never in the settings file, and is only sent to Baidu when signing in and renewing the authorization.
+Step by step: [WebDAV → OpenList / AList](./webdav.md#openlist). OpenList is an independent third-party open-source tool; speed and reliability depend on Baidu and on OpenList's driver.
 
 ## Speed
 
-Baidu throttles downloads for non-members, so pulling large saves (or [game backups](../features/game-backup.md)) takes a while.
+Baidu throttles downloads for non-members, so pulling large saves (or a [game backup](../features/game-backup.md)) takes a while.
 
-## About OpenList / AList
+## Other choices
 
-Ludonimbus never connects to Baidu Netdisk through OpenList, AList or any other third-party tool; Baidu Netdisk is accessed only through the official open-platform API. Ludonimbus provides no netdisk aggregation or mounting of its own; which server a [WebDAV](./webdav.md) connection goes to is entirely your own configuration.
+[Quark](./quark.md) connects with a QR code, and [Jianguoyun](./webdav.md#jianguoyun) only needs an account and an app password. If you change clouds later, your saves can be copied over in one click; see [Switching clouds](./switching.md).
