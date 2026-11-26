@@ -39,6 +39,15 @@ pub fn local_backups_dir() -> PathBuf {
 pub fn running_dir() -> PathBuf {
     ensure(data_dir().join("running"))
 }
+/// Games whose sync after playing is still owed: the launch wrapper stopped
+/// waiting for it (docs/plan-v2.md, section 5.5).
+pub fn owed_dir() -> PathBuf {
+    ensure(data_dir().join("owed"))
+}
+/// Locks that keep two processes from syncing one game at once.
+pub fn locks_dir() -> PathBuf {
+    ensure(data_dir().join("locks"))
+}
 pub fn logs_dir() -> PathBuf {
     ensure(data_dir().join("logs"))
 }

@@ -26,13 +26,25 @@
 //! **Which line.** A game syncs with the save line it follows on this
 //! device: the one its devices share, or one a device keeps to itself
 //! ([`lines`], [`use_line`]). Everything above is about that line.
+//!
+//! **Not waiting.** Playing doesn't wait for the cloud unless there really
+//! is newer progress to get (docs/plan-v2.md, section 5.5). Whoever waits
+//! for a sync can stop waiting ([`Gate`]); a sync given up never replaces
+//! the save files afterwards. That is safe because of the version vectors:
+//! what wasn't waited for is at worst a fork the user is asked about later,
+//! never saves silently overwritten. One sync of a game runs at a time on
+//! a device, across processes ([`lock_game`]), and a sync after playing the
+//! launch wrapper didn't wait for is finished by someone else
+//! ([`finish_owed`]).
 
 use crate::cloud::decide::{self, Action, Local};
 use crate::cloud::line::LineView;
 use crate::cloud::saves::{self, Draft, Place};
+use crate::cloud::store::{Entry, Store};
 use crate::cloud::v2::{self, FileRef, IndexEntry, Manifest, Origin, Pin};
 use crate::cloud::{self, library, line, packs, retention, Cloud, CloudGame, OpenLine};
 use crate::config::{self, AppConfig, GameEntry};
+use crate::lockfile::FileLock;
 use crate::snapshot::{self, LocalState, SnapshotMeta, SnapshotSummary, Trigger};
 use crate::state::{self, ConflictInfo, GameState};
 use crate::vv::{self, Vv};
@@ -40,8 +52,10 @@ use crate::{logger, paths, util};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// Old versions and unused packs of a game are cleaned up this often.
 const CLEAN_EVERY_HOURS: i64 = 24;
@@ -174,6 +188,15 @@ pub enum Outcome {
     NothingToSave,
     NoCloud,
     Offline { message: String },
+}
+
+impl Outcome {
+    /// Nothing is left for a later sync to do: the cloud has the saves, or
+    /// the user is asked (a conflict). Not so for a version that waits in
+    /// the queue, or a cloud that wasn't reached.
+    pub fn is_final(&self) -> bool {
+        !matches!(self, Outcome::Queued { .. } | Outcome::Offline { .. })
+    }
 }
 
 /// The newest version in a list of a game's versions: the one its save line
@@ -530,6 +553,7 @@ fn flush(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>) -> Result
 pub fn upload_pending(cloud: &Cloud, m: &SnapshotMeta) -> Result<()> {
     let key = m.game.as_str();
     let Some((mut manifest, old)) = queued(key).into_iter().find(|(q, _)| q.id == m.id) else { return Ok(()) };
+    let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
     ready_to_write(cloud, &mut line, None)?;
     let done = publish_queued(cloud, &mut line, &mut manifest, old);
@@ -552,6 +576,7 @@ pub fn flush_pending(cloud: &Cloud, key: &str) -> Result<usize> {
     if queued(key).is_empty() {
         return Ok(0);
     }
+    let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
     flush(cloud, &mut line, None)
 }
@@ -816,6 +841,332 @@ fn clean_if_due(ctx: &Ctx, cloud: &Cloud, key: &str) {
     let _ = state::update_game(key, |g| g.cleaned_at = Some(Utc::now()));
 }
 
+// -------------------------------------------------------------- not waiting
+
+/// What a sync is doing, for whoever waits for it ([`Gate::phase`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Phase {
+    /// Waiting for another sync of the game, reading its save line,
+    /// deciding.
+    #[default]
+    Checking,
+    /// Getting a newer version: `done` of `total` bytes of its files, as
+    /// each content pack comes in.
+    Downloading { done: u64, total: u64 },
+    /// Replacing the save files with it, until the next step. Quick, on
+    /// this device, and not to be given up.
+    Applying,
+    /// Uploading versions of this device, and what goes with them.
+    Uploading,
+    /// The sync has ended, or is about to.
+    Done,
+}
+
+/// Inside a sync: whoever waited for it stopped. It ends as
+/// [`Outcome::Offline`].
+#[derive(Debug)]
+struct GaveUp;
+
+impl std::fmt::Display for GaveUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", crate::tr!("没有等云盘，存档留到下次同步", "Didn't wait for the cloud; the saves are synced next time"))
+    }
+}
+
+impl std::error::Error for GaveUp {}
+
+fn is_gave_up(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<GaveUp>().is_some())
+}
+
+#[derive(Default)]
+struct GateState {
+    phase: Phase,
+    given_up: bool,
+}
+
+type Watcher = Arc<dyn Fn(Phase) + Send + Sync>;
+
+#[derive(Default)]
+struct GateInner {
+    state: Mutex<GateState>,
+    watcher: Mutex<Option<Watcher>>,
+}
+
+/// Shared by a sync and whoever waits for it: what the sync is doing, and
+/// a way to stop waiting ([`Gate::give_up`]).
+///
+/// A sync that was given up doesn't replace the save files any more: the
+/// check and the start of replacing them are one step
+/// ([`Gate::start_applying`]). It also starts no further request and ends
+/// as [`Outcome::Offline`]. A version it put in the queue stays there, and
+/// an upload already under way may finish: packs go up first and the
+/// manifest last, so an upload cut off is never half a version.
+///
+/// `Gate::default()` is one nobody gives up.
+#[derive(Clone, Default)]
+pub struct Gate(Arc<GateInner>);
+
+impl Gate {
+    pub fn new() -> Gate {
+        Gate::default()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, GateState> {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn tell(&self, phase: Phase) {
+        let watcher = self.0.watcher.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(w) = watcher {
+            w(phase);
+        }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.state().phase
+    }
+
+    pub fn given_up(&self) -> bool {
+        self.state().given_up
+    }
+
+    /// Stop waiting. From here on the sync changes no save files. `false`
+    /// when it is replacing them right now: then wait for it to end (that
+    /// is quick, and on this device).
+    pub fn give_up(&self) -> bool {
+        let mut s = self.state();
+        if s.phase == Phase::Applying {
+            return false;
+        }
+        s.given_up = true;
+        true
+    }
+
+    /// Be told of every change of phase, on the thread of the sync.
+    pub fn watch(&self, f: impl Fn(Phase) + Send + Sync + 'static) {
+        *self.0.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(f));
+    }
+
+    /// What the work the gate is about does now. The sync calls this; so may
+    /// something that stands in for a sync.
+    pub fn set_phase(&self, phase: Phase) {
+        self.state().phase = phase;
+        self.tell(phase);
+    }
+
+    /// Move on to replacing the save files, unless the waiting was given
+    /// up: `false` then, and nothing may be replaced. One step with
+    /// [`Gate::give_up`], so the two can't cross.
+    pub fn start_applying(&self) -> bool {
+        {
+            let mut s = self.state();
+            if s.given_up {
+                return false;
+            }
+            s.phase = Phase::Applying;
+        }
+        self.tell(Phase::Applying);
+        true
+    }
+
+    fn add_done(&self, bytes: u64) {
+        let phase = {
+            let mut s = self.state();
+            match &mut s.phase {
+                Phase::Downloading { done, total } => *done = (*done + bytes).min(*total),
+                _ => return,
+            }
+            s.phase
+        };
+        self.tell(phase);
+    }
+
+    /// An error once the waiting was given up: the next step isn't taken.
+    fn check(&self) -> Result<()> {
+        if self.given_up() {
+            return Err(GaveUp.into());
+        }
+        Ok(())
+    }
+}
+
+/// The store as [`Session::pull`] downloads from it: no new request once
+/// the waiting was given up, and each content pack counted when it is in.
+struct Watched<'a> {
+    inner: &'a dyn Store,
+    gate: &'a Gate,
+    /// Bytes of the wanted files in each pack, by pack id.
+    packs: BTreeMap<String, u64>,
+}
+
+impl Store for Watched<'_> {
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+    fn label(&self) -> String {
+        self.inner.label()
+    }
+    fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
+        self.inner.quota()
+    }
+    fn check(&self) -> Result<()> {
+        self.gate.check()?;
+        self.inner.check()
+    }
+    fn list(&self, dir: &str) -> Result<Vec<Entry>> {
+        self.gate.check()?;
+        self.inner.list(dir)
+    }
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.gate.check()?;
+        self.inner.read(path)
+    }
+    fn download(&self, path: &str, dest: &Path) -> Result<()> {
+        self.gate.check()?;
+        self.inner.download(path, dest)?;
+        let name = path.rsplit('/').next().unwrap_or(path);
+        if let Some(bytes) = self.packs.get(name.strip_suffix(".zip").unwrap_or(name)) {
+            self.gate.add_done(*bytes);
+        }
+        Ok(())
+    }
+    fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+        self.gate.check()?;
+        self.inner.write(path, data)
+    }
+    fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        self.gate.check()?;
+        self.inner.upload(path, src)
+    }
+    fn remove(&self, path: &str) -> Result<()> {
+        self.gate.check()?;
+        self.inner.remove(path)
+    }
+    fn cache_scope(&self) -> Option<String> {
+        self.inner.cache_scope()
+    }
+}
+
+// ------------------------------------------------------ one sync at a time
+
+thread_local! {
+    /// Games whose lock this thread holds: an operation that holds it may
+    /// run another one (choosing a line runs a sync).
+    static HELD: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+fn lock_file(key: &str) -> PathBuf {
+    paths::locks_dir().join(format!("sync-{key}.lock"))
+}
+
+/// The right to read, decide about and write a game's save line on this
+/// device, until dropped ([`lock_game`]).
+pub struct GameLock {
+    key: Option<String>,
+    _file: Option<FileLock>,
+}
+
+impl Drop for GameLock {
+    fn drop(&mut self) {
+        if let Some(key) = &self.key {
+            let _ = HELD.try_with(|h| h.borrow_mut().remove(key));
+        }
+    }
+}
+
+/// One sync of a game at a time on this device: the launch wrapper, the
+/// process that finishes its upload, the tray app and the command line all
+/// take this lock first. Waits for whoever has it, however long that takes,
+/// unless `gate` is given up meanwhile (an error that ends a sync as
+/// [`Outcome::Offline`]). A holder that is gone doesn't keep it
+/// ([`FileLock::hold`]).
+pub fn lock_game(key: &str, gate: &Gate) -> Result<GameLock> {
+    if HELD.with(|h| h.borrow().contains(key)) {
+        return Ok(GameLock { key: None, _file: None });
+    }
+    let mut told = false;
+    let file = FileLock::hold(&lock_file(key), &mut || {
+        if !told {
+            log(format!("{key}: waiting for another sync of this game to finish"));
+            told = true;
+        }
+        !gate.given_up()
+    })?;
+    let Some(file) = file else { return Err(GaveUp.into()) };
+    HELD.with(|h| h.borrow_mut().insert(key.to_string()));
+    Ok(GameLock { key: Some(key.to_string()), _file: Some(file) })
+}
+
+/// Whether a sync of `key` runs on this device right now, in any process.
+pub fn sync_running(key: &str) -> bool {
+    FileLock::is_held(&lock_file(key))
+}
+
+// ---------------------------------------------------- owed after playing
+
+fn owed_file(key: &str) -> PathBuf {
+    paths::owed_dir().join(format!("{key}.json"))
+}
+
+/// Note that the sync of `key` after playing is still owed: the launch
+/// wrapper stopped waiting for it and exits. Whoever syncs the game next
+/// with a final outcome settles it; [`finish_owed`] is there for just that.
+pub fn owe(key: &str) -> Result<()> {
+    let note = serde_json::json!({ "since": Utc::now(), "pid": std::process::id() });
+    util::atomic_write(&owed_file(key), note.to_string().as_bytes())
+}
+
+pub fn is_owed(key: &str) -> bool {
+    owed_file(key).is_file()
+}
+
+/// The games whose sync after playing is still owed.
+pub fn owed_keys() -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(paths::owed_dir()) else { return Vec::new() };
+    let mut keys: Vec<String> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+        .collect();
+    keys.sort();
+    keys
+}
+
+fn settle_owed(key: &str) {
+    if std::fs::remove_file(owed_file(key)).is_ok() {
+        log(format!("{key}: the sync after playing is done"));
+    }
+}
+
+/// Do the sync of `key` after playing that is still owed ([`owe`]): the
+/// usual sync, as right after the game. `None` when nothing is owed (any
+/// more). The note goes once the outcome is final ([`Outcome::is_final`]),
+/// and stays while the cloud can't be reached. A conflict is only noted:
+/// the next launch of the game asks.
+pub fn finish_owed(ctx: &Ctx, key: &str) -> Result<Option<Outcome>> {
+    let gate = Gate::default();
+    let _lock = lock_game(key, &gate)?;
+    // Whoever had the lock may have done it meanwhile.
+    if !is_owed(key) {
+        return Ok(None);
+    }
+    // Being played again: no sync may change its saves now, and the one
+    // after this session settles it.
+    if matches!(crate::catchup::runner_phase(key).as_deref(), Some("preLaunch" | "playing")) {
+        log(format!("{key}: being played again; the sync after this session does what was owed"));
+        return Ok(None);
+    }
+    let Some(game) = ctx.cfg.game(key).filter(|g| g.auto_sync).cloned() else {
+        // The game is gone from this device, or doesn't sync by itself now.
+        settle_owed(key);
+        return Ok(None);
+    };
+    sync_with(ctx, &game, Resolution::Auto, Trigger::AutoExit, &gate).map(Some)
+}
+
 // ---------------------------------------------------------------- one sync
 
 /// One game's save line, opened for a sync.
@@ -824,11 +1175,13 @@ struct Session<'a> {
     cloud: &'a Cloud,
     game: &'a GameEntry,
     line: OpenLine,
+    /// Whoever waits for this sync, and whether they still do.
+    gate: Gate,
 }
 
 impl<'a> Session<'a> {
     fn open(ctx: &'a Ctx, cloud: &'a Cloud, game: &'a GameEntry) -> Result<Session<'a>> {
-        Ok(Session { ctx, cloud, game, line: cloud.open(&game.key)? })
+        Ok(Session { ctx, cloud, game, line: cloud.open(&game.key)?, gate: Gate::default() })
     }
 
     fn key(&self) -> &str {
@@ -855,6 +1208,12 @@ impl<'a> Session<'a> {
             log(format!("{}: queued {id} (the cloud is upgraded after playing)", self.key()));
             return Ok(Outcome::Queued { id, reason });
         }
+        // Nobody waits any more: it waits in the queue, as one made offline.
+        if self.gate.given_up() {
+            log(format!("{}: queued {id} (not waited for)", self.key()));
+            return Ok(Outcome::Queued { id, reason: GaveUp.to_string() });
+        }
+        self.gate.set_phase(Phase::Uploading);
         match flush(self.cloud, &mut self.line, Some(self.game)) {
             Ok(_) => Ok(Outcome::Uploaded { id }),
             Err(e) if must_wait(&e) => {
@@ -875,6 +1234,11 @@ impl<'a> Session<'a> {
         let shot = Shot { parent: state::game(self.key()).last_synced_id, trigger: Some(trigger), side: true, ..Shot::default() };
         let manifest = stage_local(self.ctx, self.game, &self.line.place, &self.line.view, local, &shot)?;
         keep_local_copy(self.key(), &manifest)?;
+        // Nobody waits any more: it waits in the queue.
+        if self.gate.given_up() {
+            return Ok(());
+        }
+        self.gate.set_phase(Phase::Uploading);
         match flush(self.cloud, &mut self.line, Some(self.game)) {
             Ok(_) => {
                 log(format!("{}: protected local saves as {} ({})", self.key(), manifest.id, manifest.trigger));
@@ -886,7 +1250,9 @@ impl<'a> Session<'a> {
         }
     }
 
-    /// Replace the saves here with version `id`.
+    /// Replace the saves here with version `id`. Once the waiting is given
+    /// up ([`Gate`]) the saves stay as they are, however far the download
+    /// got.
     fn pull(&mut self, local: &LocalState, id: &str) -> Result<Outcome> {
         let target = self
             .line
@@ -901,11 +1267,21 @@ impl<'a> Session<'a> {
             ));
         }
         self.protect(local, Trigger::PreRestore)?;
+        self.gate.check()?;
         let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
+        self.gate.check()?;
+        let mut packs: BTreeMap<String, u64> = BTreeMap::new();
+        for f in &manifest.files {
+            *packs.entry(f.pack.clone().unwrap_or_else(|| manifest.id.clone())).or_default() += f.size;
+        }
+        self.gate.set_phase(Phase::Downloading { done: 0, total: packs.values().sum() });
+        let store = Watched { inner: self.cloud.files(), gate: &self.gate, packs };
         let work = paths::staging_dir().join(format!("pull-{id}"));
         let _ = std::fs::remove_dir_all(&work);
         let files = work.join("files");
-        let result = saves::fetch(self.cloud.files(), &self.line.place, &self.line.view, &manifest, None, &files, &work.join("packs"))
+        let result = saves::fetch(&store, &self.line.place, &self.line.view, &manifest, None, &files, &work.join("packs"))
+            // Whoever waited may have stopped while it downloaded.
+            .and_then(|_| if self.gate.start_applying() { Ok(()) } else { Err(GaveUp.into()) })
             .and_then(|_| snapshot::apply_dir(&files, &SnapshotMeta::of(&manifest, self.key(), None).files, self.game));
         let _ = std::fs::remove_dir_all(&work);
         result?;
@@ -921,8 +1297,10 @@ impl<'a> Session<'a> {
 
     /// After [`Session::pull`] of a version that is not the one newest
     /// version: upload the saves as they are now on top of every head, so
-    /// the line has one newest version again and it is this one.
-    fn make_current(&mut self, from: &str, trigger: Trigger) -> Result<Option<Outcome>> {
+    /// the line has one newest version again and it is this one. Before
+    /// playing (`launching`) a cloud that needs upgrading first gets the
+    /// version after the game, as with any upload then.
+    fn make_current(&mut self, from: &str, trigger: Trigger, launching: bool) -> Result<Option<Outcome>> {
         if self.line.view.head().is_some_and(|h| h.id == from) {
             return Ok(None);
         }
@@ -937,7 +1315,7 @@ impl<'a> Session<'a> {
             extra: v2::Extra::new(),
         };
         let shot = Shot { bases, parent: Some(from.to_string()), trigger: Some(trigger), origin: Some(origin), ..Shot::default() };
-        self.push(&local, shot, false).map(Some)
+        self.push(&local, shot, launching).map(Some)
     }
 
     fn conflict(&mut self, local: &LocalState, candidates: &[String], local_is_candidate: bool, trigger: Trigger) -> Result<Outcome> {
@@ -1031,6 +1409,34 @@ fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) ->
 
 /// Sync one game. `trigger` labels a snapshot uploaded by this call.
 pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger) -> Result<Outcome> {
+    sync_with(ctx, game, resolution, trigger, &Gate::default())
+}
+
+/// [`sync`], for a caller that may stop waiting for it ([`Gate`]). Another
+/// sync of the game on this device is waited for first ([`lock_game`]),
+/// and that wait can be given up too.
+pub fn sync_with(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
+    gate.set_phase(Phase::Checking);
+    let result = gate.check().and_then(|_| {
+        let _lock = lock_game(&game.key, gate)?;
+        let outcome = sync_locked(ctx, game, resolution, trigger, gate)?;
+        // A sync after playing that was owed is done by any sync that ends.
+        if outcome.is_final() {
+            settle_owed(&game.key);
+        }
+        Ok(outcome)
+    });
+    gate.set_phase(Phase::Done);
+    match result {
+        Err(e) if is_gave_up(&e) => {
+            log(format!("{}: not waited for, stopped", game.key));
+            Ok(Outcome::Offline { message: GaveUp.to_string() })
+        }
+        other => other,
+    }
+}
+
+fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
     let cloud = match ctx.cloud() {
         Ok(c) => c,
         Err(e) if cloud::is_not_configured(&e) => return Ok(Outcome::NoCloud),
@@ -1042,15 +1448,23 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
         Err(e) if cloud::is_unavailable(&e) => return offline(ctx, game, trigger, e),
         Err(e) => return Err(e),
     };
+    s.gate = gate.clone();
+    // Given up while the line was read: nothing more happens.
+    gate.check()?;
     // What waits from earlier comes first: the decision below has to see it.
     // Before playing it waits on when the cloud needs upgrading first.
     if !(launching && cloud.is_legacy().unwrap_or(false)) {
+        if !queued(&game.key).is_empty() {
+            gate.set_phase(Phase::Uploading);
+        }
         if let Err(e) = flush(cloud, &mut s.line, Some(game)) {
             if must_wait(&e) {
                 return offline(ctx, game, trigger, e);
             }
             return Err(e);
         }
+        gate.check()?;
+        gate.set_phase(Phase::Checking);
     }
     let local = snapshot::local_state(game)?;
     let st = state::game(&game.key);
@@ -1084,7 +1498,7 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
                 bail!(crate::tr!("云端还没有这个游戏的存档", "The cloud has no saves of this game yet"));
             };
             let pulled = s.pull(&local, &target)?;
-            s.make_current(&target, Trigger::Restore)?;
+            s.make_current(&target, Trigger::Restore, launching)?;
             pulled
         }
         (_, Resolution::UseLocal) => {
@@ -1104,6 +1518,7 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
     // (which version it is at) is then true, and a cloud nobody has used
     // yet gets its layout before anything else is written to it.
     if !launching {
+        gate.set_phase(Phase::Uploading);
         best_effort_housekeeping(ctx, cloud, game);
         // An index that didn't cover the line is written again for the next
         // device (an upload has done that already).
@@ -1183,6 +1598,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
 /// history when not (the cloud has something newer, or there is a conflict
 /// to settle), so that keeping a save never decides anything for the user.
 pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
     let local = snapshot::local_state(game)?;
     if local.is_empty() {
         bail!(crate::tr!("没有找到「{}」的存档文件", "No save files of \"{}\" found", game.name));
@@ -1230,19 +1646,21 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
 
 /// Restore a specific snapshot and make it the newest version.
 pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
     let local = snapshot::local_state(game)?;
     let pulled = s.pull(&local, id)?;
     // Make the restored content the head so the next sync keeps it.
-    Ok(s.make_current(id, Trigger::Restore)?.unwrap_or(pulled))
+    Ok(s.make_current(id, Trigger::Restore, false)?.unwrap_or(pulled))
 }
 
 /// Change a game's saves from outside a sync (the save library's "apply
 /// to…"): keep the current saves in the cloud first (a pre-restore version),
 /// run `change`, then upload the result as the newest version.
 pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
@@ -1431,6 +1849,7 @@ fn set_line(key: &str, line: &str) -> Result<()> {
 /// (`Independent` with one), and settles the choice: the device's default
 /// no longer applies to this game.
 pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
     let cloud = ctx.cloud()?;
     let key = game.key.as_str();
     let from = cloud.following(key);
