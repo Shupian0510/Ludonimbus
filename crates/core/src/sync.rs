@@ -239,6 +239,13 @@ fn mark_synced(key: &str, id: &str, vv: &Vv, hash: &str, device_name: &str, own_
     })
 }
 
+/// Remember what the saves here were (`back`) before the version `now`
+/// replaced them, for [`undo`]. Nothing to remember when there were none.
+fn note_replaced(key: &str, back: Option<String>, now: &str, device: &str) {
+    let replaced = back.filter(|b| b != now).map(|back| state::Replaced { back, now: now.to_string(), device: device.to_string(), at: Utc::now() });
+    let _ = state::update_game(key, |g| g.replaced = replaced);
+}
+
 fn base_file(key: &str) -> PathBuf {
     paths::data_dir().join("lines").join(format!("{key}.base.json"))
 }
@@ -1239,26 +1246,30 @@ impl<'a> Session<'a> {
 
     /// Save the saves here beside the history, unless the cloud already has
     /// the same content. Always a complete copy, and one stays on this
-    /// device too.
-    fn protect(&mut self, local: &LocalState, trigger: Trigger) -> Result<()> {
-        if local.is_empty() || self.line.view.snapshots.iter().any(|s| s.content_hash == local.hash) {
-            return Ok(());
+    /// device too. Returns the version that holds them (none when there are
+    /// no saves here).
+    fn protect(&mut self, local: &LocalState, trigger: Trigger) -> Result<Option<String>> {
+        if local.is_empty() {
+            return Ok(None);
+        }
+        if let Some(same) = self.line.view.snapshots.iter().find(|s| s.content_hash == local.hash) {
+            return Ok(Some(same.id.clone()));
         }
         let shot = Shot { parent: state::game(self.key()).last_synced_id, trigger: Some(trigger), side: true, ..Shot::default() };
         let manifest = stage_local(self.ctx, self.game, &self.line.place, &self.line.view, local, &shot)?;
         keep_local_copy(self.key(), &manifest)?;
         // Nobody waits any more: it waits in the queue.
         if self.gate.given_up() {
-            return Ok(());
+            return Ok(Some(manifest.id));
         }
         self.gate.set_phase(Phase::Uploading);
         match flush(self.cloud, &mut self.line, Some(self.game)) {
             Ok(_) => {
                 log(format!("{}: protected local saves as {} ({})", self.key(), manifest.id, manifest.trigger));
-                Ok(())
+                Ok(Some(manifest.id))
             }
             // It waits in the queue.
-            Err(e) if must_wait(&e) => Ok(()),
+            Err(e) if must_wait(&e) => Ok(Some(manifest.id)),
             Err(e) => Err(e),
         }
     }
@@ -1279,7 +1290,7 @@ impl<'a> Session<'a> {
                 "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
             ));
         }
-        self.protect(local, Trigger::PreRestore)?;
+        let back = self.protect(local, Trigger::PreRestore)?;
         self.gate.check()?;
         let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
         self.gate.check()?;
@@ -1303,6 +1314,7 @@ impl<'a> Session<'a> {
         result?;
         mark_synced(self.key(), id, &target.vv, &target.content_hash, &target.device_name, self.ctx.device().0)?;
         remember_base(self.key(), Some(&manifest));
+        note_replaced(self.key(), back, id, &target.device_name);
         log(format!("{}: pulled {id} from {}", self.key(), target.device_name));
         Ok(Outcome::Pulled {
             id: id.to_string(),
@@ -1331,7 +1343,15 @@ impl<'a> Session<'a> {
             extra: v2::Extra::new(),
         };
         let shot = Shot { bases, parent: Some(from.to_string()), trigger: Some(trigger), origin: Some(origin), ..Shot::default() };
-        self.push(&local, shot, launching).map(Some)
+        let outcome = self.push(&local, shot, launching)?;
+        if let Outcome::Uploaded { id } | Outcome::Queued { id, .. } = &outcome {
+            let _ = state::update_game(self.key(), |g| {
+                if let Some(r) = g.replaced.as_mut().filter(|r| r.now == from) {
+                    r.now = id.clone();
+                }
+            });
+        }
+        Ok(Some(outcome))
     }
 
     fn conflict(&mut self, local: &LocalState, candidates: &[String], local_is_candidate: bool, trigger: Trigger) -> Result<Outcome> {
@@ -1697,6 +1717,25 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     Ok(s.make_current(id, Trigger::Restore, false)?.unwrap_or(pulled))
 }
 
+/// What [`undo`] would take back: the last time saves of the cloud replaced
+/// the ones here, while the device is still at what they were replaced with.
+pub fn undoable(key: &str) -> Option<state::Replaced> {
+    let st = state::game(key);
+    st.replaced.filter(|r| st.last_synced_id.as_deref() == Some(r.now.as_str()))
+}
+
+/// Take back the last time saves of the cloud replaced the ones here (a
+/// sync that brought another device's progress, "make current"): the saves
+/// that were here are current again, as with [`restore`] of the version
+/// that holds them. What is here now is kept the same way, so undoing can
+/// itself be undone.
+pub fn undo(ctx: &Ctx, game: &GameEntry) -> Result<Outcome> {
+    let Some(r) = undoable(&game.key) else {
+        bail!(crate::tr!("没有可以撤销的更改", "There is nothing to undo"));
+    };
+    restore(ctx, game, &r.back)
+}
+
 /// Change a game's saves from outside a sync (the save library's "apply
 /// to…"): keep the current saves in the cloud first (a pre-restore version),
 /// run `change`, then upload the result as the newest version.
@@ -1819,6 +1858,7 @@ pub(crate) fn start_over(key: &str) -> Result<()> {
         g.line = None;
         g.conflict = None;
         g.last_error = None;
+        g.replaced = None;
     })?;
     remember_base(key, None);
     Ok(())
@@ -1976,7 +2016,7 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
         ));
     }
     let local = snapshot::local_state(game)?;
-    s.protect(&local, Trigger::PreRestore)?;
+    let back = s.protect(&local, Trigger::PreRestore)?;
     let manifest = saves::manifest(cloud.files(), &place, &view, id)?;
     let files = SnapshotMeta::of(&manifest, &game.key, None).files;
     crate::join::no_place(game, &files)?;
@@ -1992,6 +2032,9 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
     let origin = Origin { game: place.game.clone(), line: place.line.clone(), snapshot: id.to_string(), how: "copy".to_string(), extra: v2::Extra::new() };
     let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), origin: Some(origin), ..Shot::default() }, false)?;
+    if let Outcome::Uploaded { id: made } | Outcome::Queued { id: made, .. } = &outcome {
+        note_replaced(&game.key, back, made, &target.device_name);
+    }
     best_effort_housekeeping(ctx, cloud, game);
     Ok(outcome)
 }

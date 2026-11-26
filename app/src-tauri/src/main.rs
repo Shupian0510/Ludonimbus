@@ -145,6 +145,7 @@ fn main() {
             commands::game_line_members,
             commands::other_saves,
             commands::take_save,
+            commands::undo_replace,
             commands::join_suggestion,
             commands::join_answer,
             commands::backup_game,

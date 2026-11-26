@@ -391,7 +391,7 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
                 roots.entry(root_name).or_insert(p);
             }
             if let Ok(meta) = std::fs::metadata(&abs) {
-                if meta.is_file() {
+                if meta.is_file() && !is_leftover(&abs) {
                     out.insert(
                         logical.to_lowercase(),
                         LocalFile {
@@ -445,7 +445,7 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            if !entry.file_type().is_file() {
+            if !entry.file_type().is_file() || is_leftover(entry.path()) {
                 continue;
             }
             let Some(rel) = rel_slash(&base, entry.path()) else {
@@ -474,6 +474,20 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
         }
     }
     Ok((out.into_values().collect(), roots))
+}
+
+/// What [`apply`] names a file while it writes it, and the content it
+/// replaces until every file is in place.
+const WRITING: &str = ".lntmp";
+const REPLACED: &str = ".lnold";
+
+/// A file a write of ours left behind when it was cut short: never a save.
+fn is_leftover(p: &Path) -> bool {
+    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(WRITING) || n.ends_with(REPLACED))
+}
+
+fn beside(dest: &Path, suffix: &str) -> PathBuf {
+    dest.with_file_name(format!("{}{suffix}", dest.file_name().unwrap_or_default().to_string_lossy()))
 }
 
 fn hash_file(p: &Path) -> Result<String> {
@@ -699,6 +713,13 @@ pub fn resolve_logical(roots: &BTreeMap<String, PathBuf>, logical: &str) -> Resu
 /// Make the local saves exactly match a snapshot: write its files and remove
 /// local save files that are not part of it. Callers must protect the
 /// current saves first (pre-restore snapshot).
+///
+/// All or nothing (docs/plan-v2.md, section 6, "安全网"): every file is
+/// written beside its place and read back first, and one that is not what
+/// the version says stops it with the saves untouched. Then the files are
+/// put in place, each one's old content kept beside it until all are; a
+/// file that can't be replaced (the game has it open) puts the ones before
+/// it back.
 pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<()> {
     let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
     apply_with(&meta.files, game, &mut |path, out| {
@@ -758,22 +779,102 @@ fn apply_with(files: &[FileEntry], game: &GameEntry, content: &mut dyn FnMut(&st
         plan.push((fe, resolve_logical(&roots, path)?));
     }
     let keep: HashSet<String> = files.iter().map(|f| f.path.to_lowercase()).collect();
+    // One file per place. A scan never gives two names that differ in case
+    // only, but a version something else wrote might, and on Windows they
+    // are one file: the later one wins, as it always did.
+    let mut places: HashSet<String> = HashSet::new();
+    let mut plan: Vec<(&FileEntry, PathBuf)> =
+        plan.into_iter().rev().filter(|(_, dest)| places.insert(dest.to_string_lossy().to_lowercase())).collect();
+    plan.reverse();
+    // 1. Written beside its place and read back: nothing is replaced yet.
+    let mut written: Vec<PathBuf> = Vec::with_capacity(plan.len());
+    let staged = (|| -> Result<()> {
+        for (fe, dest) in &plan {
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
+            }
+            let tmp = beside(dest, WRITING);
+            written.push(tmp.clone());
+            {
+                let mut out = File::create(&tmp)
+                    .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
+                content(&fe.path, &mut out)?;
+                out.flush()?;
+            }
+            // A version of 0.6 may not say what a file's content is.
+            if !fe.hash.is_empty() && hash_file(&tmp)? != fe.hash {
+                bail!(crate::tr!(
+                    "{} 写到这台设备上以后读回来的内容不对",
+                    "{} read back differently after it was written to this device",
+                    fe.path
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let unchanged = || crate::tr!("存档没有改动", "The saves were left as they were");
+    if let Err(e) = staged {
+        for tmp in &written {
+            let _ = std::fs::remove_file(tmp);
+        }
+        return Err(e.context(unchanged()));
+    }
+    // 2. Put in place. What a file replaces stays beside it until all are.
+    let mut placed: Vec<(&PathBuf, Option<PathBuf>)> = Vec::with_capacity(plan.len());
+    let committed = (|| -> Result<()> {
+        for ((_, dest), tmp) in plan.iter().zip(&written) {
+            let old = beside(dest, REPLACED);
+            let had = dest.is_file();
+            if had {
+                let _ = std::fs::remove_file(&old);
+                std::fs::rename(dest, &old).with_context(|| crate::tr!("无法替换 {}", "Can't replace {}", dest.display()))?;
+            }
+            placed.push((dest, had.then_some(old)));
+            std::fs::rename(tmp, dest).with_context(|| crate::tr!("无法替换 {}", "Can't replace {}", dest.display()))?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = committed {
+        // Back in the opposite order. A file that can't be put back keeps
+        // its content beside its place, and the error says where.
+        let mut stuck: Vec<String> = Vec::new();
+        for (dest, old) in placed.iter().rev() {
+            let _ = std::fs::remove_file(dest);
+            if let Some(old) = old {
+                if std::fs::rename(old, dest).is_err() {
+                    stuck.push(old.display().to_string());
+                }
+            }
+        }
+        for tmp in &written {
+            let _ = std::fs::remove_file(tmp);
+        }
+        return Err(match stuck.is_empty() {
+            true => e.context(unchanged()),
+            false => e.context(crate::tr!(
+                "没能把原来的存档放回去，它们的内容在：{}",
+                "The saves that were there couldn't be put back. Their content is in: {}",
+                stuck.join(", ")
+            )),
+        });
+    }
+    for (_, old) in &placed {
+        if let Some(old) = old {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+    // What a write that was cut short left in these folders.
+    let folders: HashSet<&Path> = plan.iter().filter_map(|(_, dest)| dest.parent()).collect();
+    for folder in folders {
+        for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if is_leftover(&path) && path.is_file() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
     for (fe, dest) in &plan {
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
-        }
-        let tmp = dest.with_file_name(format!(
-            "{}.lntmp",
-            dest.file_name().unwrap_or_default().to_string_lossy()
-        ));
-        {
-            let mut out = File::create(&tmp)
-                .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
-            content(&fe.path, &mut out)?;
-            out.flush()?;
-        }
-        std::fs::rename(&tmp, dest).with_context(|| crate::tr!("无法替换 {}", "Can't replace {}", dest.display()))?;
         if fe.mtime > 0 {
             if let Ok(f) = std::fs::OpenOptions::new().write(true).open(dest) {
                 let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(fe.mtime as u64);

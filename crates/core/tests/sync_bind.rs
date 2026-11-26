@@ -378,6 +378,23 @@ fn asked_once(root: &Path) {
     let own = uploaded(f.sync());
     assert_eq!(f.files_of(&own), strings(&["install/data/slot1.sav"]));
     assert!(f.entry().bind.is_empty());
+
+    // D's save location is about to be changed by hand: the folders matched
+    // for it no longer say where its files are. It keeps its saves apart
+    // again, nothing on this device changes, and nothing was declined: with
+    // the new location the line can be offered again.
+    let ctx = d.ctx();
+    assert!(join::forget(&ctx, &ctx.game("tale-gog-laptop").unwrap()).unwrap());
+    let entry = d.entry();
+    assert!(entry.bind.is_empty() && entry.record.is_none() && entry.declined.is_empty(), "{entry:#?}");
+    assert_eq!(d.read("profile/slot1.sav").as_deref(), Some("d1"));
+    assert!(!join::forget(&d.ctx(), &d.entry()).unwrap());
+    let s = d.suggestion().unwrap();
+    assert_eq!((s.fit, s.binds.clone()), (Fit::Ready, vec![bind("install/save", "install/profile")]));
+    // What it syncs from here on is its own files under its own paths.
+    let outcome = d.sync_with(Resolution::UseLocal);
+    let own = uploaded(outcome);
+    assert_eq!(d.files_of(&own), strings(&["install/profile/slot1.sav"]));
 }
 
 /// The line gets a file the bound version has no folder for: nothing is

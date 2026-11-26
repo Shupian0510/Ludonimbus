@@ -97,6 +97,7 @@ for (const [k, list] of Object.entries(snapshots)) for (const s of list) s.platf
 const syncedId: Record<string, string> = { "bloodborne-lantern": "01BB1" };
 const lineOf: Record<string, string> = {};
 const joinAnswered = new Set<string>();
+const undoTo: Record<string, string> = {};
 let made = 0;
 const headOf = (key: string) => (snapshots[key] ?? []).find((s) => s.trigger !== "pre-restore" && s.trigger !== "conflict-keep")?.id ?? null;
 const kidLine = () => ({ id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC") });
@@ -185,6 +186,7 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     family: key,
     link: null,
     joined: false,
+    replaced: null,
     ...extra,
   };
 }
@@ -465,10 +467,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay({ saves, platforms: platformMarks }, 250);
     }
     case "restore_snapshot":
-    case "take_save": {
-      // The chosen save becomes a new, newest one made here.
+    case "take_save":
+    case "undo_replace": {
+      // The chosen save becomes a new, newest one made here; what was here can be taken back.
       const list = snapshots[key] ?? [];
-      const from = list.find((x) => x.id === args.id) ?? kidSave();
+      const g = overview.games.find((x) => x.key === key);
+      const from = cmd === "undo_replace" ? list.find((x) => x.id === undoTo[key])! : (list.find((x) => x.id === args.id) ?? kidSave());
+      undoTo[key] = syncedId[key] ?? headOf(key) ?? "";
+      if (g) g.replaced = { device: from.deviceName, at: new Date().toISOString() };
       const id = `01NEW${++made}`;
       snapshots[key] = [
         { ...from, id, createdAt: new Date().toISOString(), deviceId: "d-mock", deviceName: "DESKTOP-MAIN", trigger: "restore", comment: "", locked: false, head: undefined, side: undefined },

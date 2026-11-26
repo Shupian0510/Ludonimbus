@@ -265,6 +265,38 @@ pub fn leave(ctx: &Ctx, game: &GameEntry) -> Result<Outcome> {
     sync::sync(ctx, &entry, Resolution::Auto, Trigger::SyncNow)
 }
 
+/// The user is about to change by hand where a game that shares a line
+/// through bindings keeps its saves: the folders matched for it no longer
+/// say where its files are. As with [`leave`] it goes back to the line of
+/// its own version, but nothing is declined (with the new location it may
+/// be offered the shared line again) and nothing is synced here: the next
+/// sync is a first sync with the line it goes to. What waits for the cloud
+/// is uploaded to the line it leaves first; when that can't be done now,
+/// nothing changes. Returns whether there was anything to forget.
+pub fn forget(ctx: &Ctx, game: &GameEntry) -> Result<bool> {
+    if game.bind.is_empty() {
+        return Ok(false);
+    }
+    let key = game.key.as_str();
+    let _lock = sync::lock_game(key, &Gate::default())?;
+    if !state::game(key).pending.is_empty() || !sync::pending_metas(key).is_empty() {
+        sync::flush_queue(ctx.cloud()?, game).map_err(|e| {
+            e.context(crate::tr!(
+                "还有存档没传到云端，连上云盘以后再改存档位置",
+                "Some saves haven't reached the cloud yet. Change the save location once the cloud can be reached"
+            ))
+        })?;
+    }
+    change(key, |g| {
+        g.record = None;
+        g.bind.clear();
+        g.line = Some(library::MAIN_LINE.to_string());
+    })?;
+    sync::start_over(key)?;
+    log(format!("{key}: its save location was changed; it keeps its saves apart again"));
+    Ok(true)
+}
+
 /// For a game that has not synced on this device yet: when a user confirmed
 /// on another device how versions like this one share a line of the game,
 /// share it too. Returns the game's entry as it is from then on.

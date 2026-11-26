@@ -184,6 +184,8 @@ export interface GameView {
   link: string | null;
   /** It shares the save line of another version through matched folders. */
   joined: boolean;
+  /** The last time saves of the cloud replaced the ones here, while that can still be undone. */
+  replaced: { device: string; at: string } | null;
 }
 
 /** A game the cloud has but this PC doesn't: grey in the library. */
@@ -664,6 +666,8 @@ export const api = {
   lines: (key: string) => invoke<SaveLine[]>("game_lines", { key }),
   lineMembers: (key: string) => invoke<{ lines: SaveLine[]; platforms: PlatformMarks }>("game_line_members", { key }),
   otherSaves: (key: string) => invoke<{ saves: OtherSave[]; platforms: PlatformMarks }>("other_saves", { key }),
+  /** Take back the last time saves of the cloud replaced the ones here. */
+  undoReplace: (key: string) => invoke<Outcome>("undo_replace", { key }),
   /** Make a version of another save line the progress here. */
   takeSave: (key: string, line: string, id: string) => invoke<Outcome>("take_save", { key, line, id }),
   /** The line this version could share with one that keeps the same saves elsewhere; null when there is none. */
