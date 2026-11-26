@@ -1,67 +1,87 @@
-# Version history
+# Saves
 
-Every upload leaves a version in the cloud. Open the "Version history" tab on a game's page to see the versions from all your devices.
+Every upload leaves a save in the cloud. Open the "Saves" tab on a game's page to see the progress saved on all your devices and in every version of the game.
 
-![Version history](/screenshots/en/versions.png)
+![The Saves tab](/screenshots/en/versions.png)
 
-Each version shows:
+The app uses three words for saves: **current**, **kept** and **automatic saves**.
 
-- which device saved it and when (versions from this PC are marked "this PC");
-- how many files and how big;
-- its trigger, see the table below;
-- tags: "Latest" is the newest version in the cloud, "Current here" is the version this PC's saves match, "Locked" versions are never cleaned up.
+## What the list shows
 
-| Trigger | When it's created |
+The top part is only a few rows:
+
+- **Current**: the save this device is using now.
+- The newest save of each platform (the Steam version, the Xbox version, an emulator…), shown on its own row when it isn't the current one.
+- **Kept** saves: the ones you starred or named.
+- The newest of another device's own saves, see [Multiple devices](./devices.md#independent).
+
+Below that, folded away, are the "Automatic saves N": the ones made each time you finish playing.
+
+A row shows the platform's logo, the time, the device and the size. The newest save in the cloud is marked "Newest"; the one put aside before this device's saves were replaced is marked "Replaced". Hover over a row for the exact time and where the save came from (the table below). Click a row to see its files.
+
+| Source | When it's made |
 |---|---|
-| Auto after exit | A game started from Steam exited |
-| Detected exit | The tray app noticed a game started outside Steam exiting |
-| Uploaded before launch | Saves that weren't uploaded earlier, uploaded before the next launch |
-| Sync now | You clicked "Sync now" |
+| After the game exited | A game started from Steam exited and its saves were uploaded |
+| Exit seen in the background | A game started outside Steam exited and the tray app uploaded its saves |
+| Uploaded before launch | Saves that couldn't be uploaded earlier, sent before the next launch |
+| Synced by hand | You clicked "Sync now" |
 | Manual backup | You clicked "Back up current saves" |
-| Restored | After restoring an older version |
-| Before restore | Saves that weren't uploaded yet, backed up just before a restore |
-| Kept from conflict | The side you didn't choose in a conflict |
+| Made current | After a save was made current |
+| Kept before replacing | Saves on this PC that weren't uploaded yet, put aside before they were replaced |
+| Kept in a conflict | The side you didn't choose in a conflict |
+| Shared by someone | An imported `.lnsave` file |
 
-## Restore
+## Make current {#make-current}
 
-Click "Restore" next to a version and confirm to put the game's saves back to that version.
+"Make current" on a row replaces the saves on this device with that one. The confirmation says whose save it is and when it was made; the saves you have now are kept first, so nothing is lost.
 
-If the current saves aren't in the cloud yet, they are backed up first as a "Before restore" version, so nothing is lost. Restored the wrong one? Restore again. You can't restore while the game is running.
+The message afterwards has "Undo". The game page also keeps a line "Replaced by the saves of …" for 24 hours, with the same Undo, as long as you haven't saved new progress since.
 
-## Restore from Steam
+- It isn't available while the game is running.
+- Saves of another platform, or another device's own saves, are made current the same way when the format is the same. For a different format use "More → Send to…", see [Several versions of one game](./game-versions.md#send).
+- Other devices that follow the same progress pick it up at their next sync.
 
-With the [Steam plugin](../steam/status-in-steam.md), click "Ludonimbus Cloud Saves" on the game's Steam page for the same version list (time, device, file count and size, note, and the Latest / On this PC / Locked tags). Pick a version, click Restore and confirm; the restore runs in Ludonimbus and Steam shows "Syncing…" until it's done. The dialog also has "Sync now" and "Open in Ludonimbus".
+## Keep
 
-## Export zip
+Click the star on a row and that save is **kept for good**: clean-up never removes it. Click again to stop keeping it.
 
-Save a version as a zip file, for example to keep a copy elsewhere or share it.
+"More → Rename…" gives it a name, such as "Before the boss" or "End of year one". A named save is kept as well.
 
-## Note
+"Back up current saves" on the game page makes a kept save, and you can add a note to it.
 
-Add a note to a version, like "before the boss" or "new game plus".
+## How many automatic saves stay
 
-## Lock
+Automatic saves are cleaned up by Settings → "This PC and sync" → "Automatic saves":
 
-Lock a version to **keep it forever**; it's never cleaned up. Click again to unlock.
+- the last **20** stay;
+- plus one a day for **30** days;
+- kept saves stay for good. The newest save, the newest of each platform and the save each device last synced are never cleaned up either.
 
-## Delete
+Both numbers can be changed, see [Settings reference](../reference/settings.md).
 
-A deleted version moves to "Recently deleted" below the list, where you can **restore it for 30 days**; after that it is deleted for good. You can also delete it for good there yourself. A restored automatic version is locked at the same time, so the cleanup doesn't remove it right away. Locked versions and the newest version can't be deleted.
+## Deleting and Recently deleted
 
-## Manual backup
+"More → Delete" moves a save to "Recently deleted" at the bottom of the list, where you can **put it back for 30 days**; after that it is removed. You can also "Delete for good" there yourself.
 
-Click "Back up current saves" on the game page and optionally add a note. Manual backups are **kept forever** and never cleaned up, which makes them good for key moments.
+A kept save has to stop being kept before it can be deleted. The newest save can't be deleted.
 
-## Automatic clean-up
+## Export and import {#share}
 
-When automatic versions pile up, they're cleaned up by Settings → "This PC and sync" → "Keep recent automatic versions":
+"More → Export…" writes a save to a `.lnsave` file you can copy elsewhere or give to a friend. The file doesn't hold your device's name or your folders.
 
-- the **20** most recent automatic versions are kept;
-- plus one per day for **30** days;
-- manual backups and locked versions are kept forever, and so are the newest version and the version each PC last synced.
+Your friend clicks "Import…" at the bottom of the Saves tab of the same game and picks the file. They get one more kept save; the saves on their PC and their sync state don't change until they click "Make current".
 
-Both numbers can be changed; see [Settings](../reference/settings.md).
+Ludonimbus first checks that the file belongs to the same game and isn't damaged. If it doesn't fit, nothing is imported and the reason is shown.
 
-## Looking at it in the cloud
+## From Steam {#restore-from-steam}
 
-Each version is a zip under `Ludonimbus/games/<game>/snapshots/` in your cloud, so you can download and open it without Ludonimbus.
+With the [Steam plugin](../steam/status-in-steam.md), clicking "Ludonimbus cloud saves" on a game's Steam page opens the same list: time, device, file count and size, with the "Latest", "Current" and "Kept" marks. Pick one, click "Make current" and confirm. The dialog also has "Sync now" and "Open in Ludonimbus" at the bottom.
+
+## What it looks like in your cloud
+
+Everything of a game is under `Ludonimbus/games/<game>/` in your cloud: `packs/` holds zips with the save files themselves, and `saves/` holds one small record per save, listing its files, the device and the time.
+
+- For saves up to 16 MB (nearly all games), each save is one complete zip in `packs/`, which you can download and unpack from your cloud's website without Ludonimbus.
+- Larger saves upload only the files that changed; unchanged files stay in the earlier zips, so the whole thing isn't sent every time. To get one complete save, export it from the Saves tab.
+
+For games that came from 0.6, the zips in the old `snapshots/` folder are left where they are and still appear under Saves.

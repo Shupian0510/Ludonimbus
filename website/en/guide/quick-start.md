@@ -63,10 +63,10 @@ Since 0.5, Ludonimbus shows its interface in English when Windows uses a languag
 | Steam auto-sync | Steam 自动同步 |
 | Add to Steam… | 加入 Steam… |
 | Sync now · Back up current saves | 立即同步 · 备份当前存档 |
-| Version history · Saves · Settings (game tabs) | 版本历史 · 存档文件 · 设置 |
+| Saves · Files on this PC · Settings (game tabs) | 存档 · 本机文件 · 设置 |
 
 ## What next
 
 - Several PCs? See [Multiple devices](../sync/devices.md).
-- Want saves from an earlier point in time? See [Version history](../sync/versions.md).
+- Want to go back to an earlier save? See [Saves](../sync/versions.md).
 - Something wrong? See [FAQ and troubleshooting](../reference/faq.md).

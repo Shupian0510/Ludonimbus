@@ -29,7 +29,7 @@ Facts about other projects come from their own documentation, checked in Novembe
 | **Newest saves before you play** | Pulled automatically when started from Steam | With `ludusavi wrap` set up as a launch option | Synced between devices while they are online | Yes | Only if the folder finished syncing |
 | **After you quit** | Uploads once the game and its launcher have exited | With `wrap`; otherwise when you run a backup | Snapshots and syncs when a tracked game closes | Yes | Whenever files change |
 | **Where saves are kept** | Your cloud: Google Drive, WebDAV / NAS, S3, Quark or any folder | A local backup folder, optionally uploaded with rclone | On your own devices; optional cloud mirror | Valve's servers | Your own devices or the sync service |
-| **Version history** | Every sync is a version: restore, lock, add a note, export as zip | Full and differential backups with configurable retention | Snapshots and branches | No history you can browse | Depends on the tool's file versioning |
+| **Version history** | Every sync leaves a save: make it current, keep it, name it, export it | Full and differential backups with configurable retention | Snapshots and branches | No history you can browse | Depends on the tool's file versioning |
 | **Conflicts** | Asks which side to keep; the other stays in the history | Not applicable (backups) | Keep yours, theirs, or both | Asks whether to keep local or cloud | Conflict copies of files |
 | **Emulators** | 19 built in, most per game | Custom entries | Presets for RetroArch, Dolphin, Ryujinx, yuzu, Citra, PCSX2, RPCS3, PPSSPP, Cemu, Xenia | — | Whole folders |
 | **Recompiled games** | 140+ recognised by their program | Database and custom entries | Database and custom folders | — | Manual |

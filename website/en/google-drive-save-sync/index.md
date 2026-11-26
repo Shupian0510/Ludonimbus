@@ -50,7 +50,7 @@ Ludonimbus/games/<game>/game.json           game info
 Ludonimbus/games/<game>/snapshots/*.zip     one zip per version
 ```
 
-Each version is an ordinary zip, so you can get your saves back even without Ludonimbus. Old automatic versions are cleaned up; manual backups and locked versions are kept.
+Saves are stored in ordinary zips (for saves up to 16 MB, each one is a complete zip), so you can get them back even without Ludonimbus. Old automatic saves are cleaned up; kept saves stay.
 
 ## Several PCs
 
