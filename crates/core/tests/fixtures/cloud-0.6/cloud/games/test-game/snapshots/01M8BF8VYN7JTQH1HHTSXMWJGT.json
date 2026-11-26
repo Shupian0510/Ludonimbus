@@ -1,0 +1,25 @@
+{
+  "id": "01M8BF8VYN7JTQH1HHTSXMWJGT",
+  "game": "test-game",
+  "parent": "01M8BF8VWR2QEHXFPVZM3DQKSB",
+  "deviceId": "d-01m8bf8vmhfjkhkxam55h2mkzf",
+  "deviceName": "PC-B",
+  "createdAt": "2026-11-26T08:24:07.893709Z",
+  "trigger": "auto-exit",
+  "roots": {
+    "install": "C:\\lnfix\\pc-b\\Games\\test-game"
+  },
+  "contentHash": "0552df833d2ad540089cff63478b05fc40a7a7b8f304478e97f4ea11f2888161",
+  "files": [
+    {
+      "path": "install/save/slot1.sav",
+      "size": 4,
+      "hash": "d7a60b6dee37ddea2333e94c87786a72f61758885414494d733bd3d92c94bc5e",
+      "mtime": 1795681447
+    }
+  ],
+  "totalSize": 4,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}

@@ -1,0 +1,12 @@
+{
+  "key": "abs-game",
+  "name": "Abs Game",
+  "adapter": null,
+  "saves": [
+    "{drive-c}/lnfix/abs-saves/**"
+  ],
+  "exclude": [],
+  "waitFor": [],
+  "roots": {},
+  "ludusaviTitle": null
+}

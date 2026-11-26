@@ -1,0 +1,29 @@
+{
+  "id": "01M8BF8W2G1Q54DM8BWM86XH1S",
+  "game": "abs-game",
+  "parent": "01M8BF8W1JHVY9HQNBQA3V3AME",
+  "deviceId": "d-01m8bf8vmmdmey8afh42vz71ba",
+  "deviceName": "PC-A",
+  "createdAt": "2026-11-26T08:24:08.016085700Z",
+  "trigger": "auto-exit",
+  "roots": {},
+  "contentHash": "01b97d40aa26ac413a1b6d872560b19a02aa6700508cd00abe9b7e1285cbca7c",
+  "files": [
+    {
+      "path": "drive-c/lnfix/abs-saves/profile.dat",
+      "size": 2,
+      "hash": "b5e98328130e6ce63ac8ee55ebf80e1aeb5b99b04906cb0d2be351225df04ac7",
+      "mtime": 1795681447
+    },
+    {
+      "path": "drive-c/lnfix/abs-saves/sub/extra.dat",
+      "size": 1,
+      "hash": "3ae7d805f6789a6402acb70ad4096a85a56bf6804eaf25c0493ac697548d30b5",
+      "mtime": 1795681447
+    }
+  ],
+  "totalSize": 3,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}

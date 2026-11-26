@@ -1,0 +1,25 @@
+{
+  "id": "01M8BF8W6VSQ8HWH4YGKF4R1YX",
+  "game": "fe-fortunes-weave-2",
+  "parent": null,
+  "deviceId": "d-01m8bf8vmhfjkhkxam55h2mkzf",
+  "deviceName": "PC-B",
+  "createdAt": "2026-11-26T08:24:08.155607700Z",
+  "trigger": "auto-exit",
+  "roots": {
+    "install": "C:\\lnfix\\pc-b\\fefw"
+  },
+  "contentHash": "9c85d384119380d42926e72d444874f2c40340b85799a77cd89e5bae98160478",
+  "files": [
+    {
+      "path": "install/save/slot0.sav",
+      "size": 2,
+      "hash": "c914958b53c44e19fcc693623b9cd3194df4d947bc9870d324988209bafae35b",
+      "mtime": 1795681448
+    }
+  ],
+  "totalSize": 2,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}

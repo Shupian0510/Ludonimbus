@@ -1,0 +1,25 @@
+{
+  "id": "01M8BF8W3TTE06F1RYDKGBAKDK",
+  "game": "fe-fortunes-weave",
+  "parent": null,
+  "deviceId": "d-01m8bf8vmmdmey8afh42vz71ba",
+  "deviceName": "PC-A",
+  "createdAt": "2026-11-26T08:24:08.058099100Z",
+  "trigger": "auto-exit",
+  "roots": {
+    "install": "C:\\lnfix\\pc-a\\fefw-recomp-0.2.6"
+  },
+  "contentHash": "ac9f6eb6c5bf4d833e837c1bbfe5a589631a8420293e5e8e79ad2ef3a325f699",
+  "files": [
+    {
+      "path": "install/save/slot0.sav",
+      "size": 2,
+      "hash": "91a4e4b9447fc2adc18bb04a120b68765a800d692d7063750050c4579ee8fe43",
+      "mtime": 1795681448
+    }
+  ],
+  "totalSize": 2,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}

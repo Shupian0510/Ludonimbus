@@ -1,0 +1,25 @@
+{
+  "id": "01M8BF8VVVZG4K02KAX6N9P95H",
+  "game": "test-game",
+  "parent": "01M8BF8VVM65TR5H8XYZ6ME0N7",
+  "deviceId": "d-01m8bf8vmmdmey8afh42vz71ba",
+  "deviceName": "PC-A",
+  "createdAt": "2026-11-26T08:24:07.803944400Z",
+  "trigger": "manual",
+  "roots": {
+    "install": "C:\\lnfix\\pc-a\\test-game"
+  },
+  "contentHash": "6fcccffce9ed3cc57bdc99dd6d4cf1f0a4c6eb4a7c91eb395d28acbdcd5fb06e",
+  "files": [
+    {
+      "path": "install/save/slot1.sav",
+      "size": 2,
+      "hash": "2a84887509a92ed4c5f4f4acb4aec1232da18970cef84558c77fe0f78336fb82",
+      "mtime": 1795681447
+    }
+  ],
+  "totalSize": 2,
+  "appVersion": "0.6.2",
+  "comment": "before boss",
+  "locked": false
+}
