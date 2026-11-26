@@ -8,27 +8,83 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 
 ### 中文
 
-- 新增：游戏库把本机装着的游戏和只有存档的游戏分开显示；存档只在云端的游戏也会列出来，带封面。
-- 新增：同一个游戏的几个版本（Steam、Xbox 应用、GOG、模拟器）显示成一张卡，可以把一个版本的存档应用到另一个版本。支持读写 Xbox 应用（Game Pass）的存档。
+存档和同步
+
+- 新增：同一个游戏的几个版本（Steam、Xbox 应用、GOG、模拟器）显示成一张卡。存档格式相同的版本自动共用同一个进度；存档放在不同位置的版本会问一次。
+- 新增：Steam 商店装的游戏也能加进来。「只备份」给 Steam 云存档再留一份带历史的备份；「接管」以后由 Ludonimbus 同步，可以和其他平台、其他设备共用进度。
+- 新增：独立存档。一台设备可以存自己的进度，不和其他设备共用；别的设备可以跟随它。
+- 新增：Xbox 应用（Game Pass）的版本可以和 Steam 版共用进度。写入 Xbox 版是实验性的，只在你自己选择时才写。
 - 新增：Switch 游戏的存档可以在 Ryujinx 和 Eden 之间通用。
+- 改进：同步更快，在慢的云盘上尤其明显：启动前检查通常只要一次请求。启动前最多等云端 10 秒；退出后上传超过 10 秒就转到后台继续，不用等着。
+- 改进：判断哪一份更新不再看电脑的时钟。两台设备各有进度时一定会问你，不会悄悄覆盖。
+- 改进：大存档只上传变化了的文件；上传中断后从断的地方接着传。
+- 改进：写入存档是整体完成的，中途出错或断电不会留下半份存档。
+
+「存档」页签
+
+- 改进：「版本历史」改成「存档」。上面是当前的、每个平台最新的和保留的，自动存档折叠在下面。
+- 改进：「恢复」改成「设为当前」，可以撤销。「锁定」和「备注」合成「保留」：点星标保留，可以起名字。
+- 新增：把一份存档导出成 `.lnsave` 文件发给朋友；朋友导入后多出一份保留的存档，不改他本机的存档。
+- 新增：删除的存档先进「最近删除」，30 天内可以放回。
+
+游戏库和界面
+
+- 新增：游戏库把本机装着的游戏和只有存档的游戏分开显示；存档只在云端的游戏也会列出来，带封面。
+- 改进：游戏卡的封面保持干净，下面一行显示平台的标志、同步状态和游戏时间。
+- 改进：界面上的文字少了，说明收在「?」里。
+- 新增：在几个平台上玩过的游戏，游戏时间按平台分别列出。
 - 新增：手柄界面，适合 Windows 掌机。
+
+其他平台
+
 - 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。
 - 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）。
-- 新增：删除的版本先进「最近删除」，30 天内可以恢复。
-- 新增：服务条款页面；隐私政策写得更完整。
-- 说明：百度网盘一键登录不再计划（没有继续做百度开放平台的审核）。百度网盘可以通过 OpenList / AList 用 WebDAV 接入。
+
+说明
+
+- 从 0.6 升级不需要做什么：云端原来的文件一个都不动，游戏、存档和游戏时间都会带过来。请把所有设备都更新到 1.0：还在 0.6 的设备看不到 1.0 存的存档。
+- 新增服务条款页面；隐私政策写得更完整。
+- 百度网盘一键登录不再计划（没有继续做百度开放平台的审核）。百度网盘可以通过 OpenList / AList 用 WebDAV 接入。
 
 ### English
 
-- New: the library tells games installed on this PC from games that only have saves here; games whose saves are only in the cloud are listed too, with their covers.
-- New: several versions of one game (Steam, Xbox app, GOG, emulators) show as one card, and a save can be applied from one version to another. Xbox app (Game Pass) saves can be read and written.
+Saves and sync
+
+- New: several versions of one game (Steam, Xbox app, GOG, emulators) show as one card. Versions whose saves have the same format share one progress automatically; a version that keeps its saves in a different place is asked about once.
+- New: games installed from the Steam store can be added too. "Backup only" keeps a second copy of what Steam Cloud syncs, with history; after "Take over", Ludonimbus syncs the game, so it can share progress with other platforms and other devices.
+- New: a device's own saves. A device can keep its own progress instead of sharing with the others, and another device can follow it.
+- New: the Xbox app (Game Pass) version can share progress with the Steam version. Writing into the Xbox version is experimental and happens only when you choose it.
 - New: saves of Switch games work in both Ryujinx and Eden.
+- Improved: sync is faster, most of all on slow clouds: the check before launch usually takes one request. A launch waits for the cloud for at most 10 seconds; an upload that takes longer than 10 seconds after exit carries on in the background.
+- Improved: which save is newer is no longer decided by the PC's clock. When two devices both have progress you are always asked; nothing is overwritten silently.
+- Improved: large saves upload only the files that changed, and an interrupted upload continues where it stopped.
+- Improved: saves are written as a whole; a failure or a power cut halfway never leaves half a save.
+
+The Saves tab
+
+- Improved: "Version history" is now "Saves". The current save, the newest of each platform and the kept ones are at the top; automatic saves are folded away below.
+- Improved: "Restore" is now "Make current" and can be undone. "Lock" and "Note" became "Keep": star a save to keep it, and give it a name.
+- New: export a save as a `.lnsave` file for a friend; importing it adds one kept save and changes nothing on their PC.
+- New: deleted saves go to "Recently deleted" first and can be put back for 30 days.
+
+Library and interface
+
+- New: the library tells games installed on this PC from games that only have saves here; games whose saves are only in the cloud are listed too, with their covers.
+- Improved: covers stay clean; the row under a cover shows the platforms' logos, the sync status and the play time.
+- Improved: less text on screen; explanations are behind the "?" marks.
+- New: for a game played on several platforms, play time is listed per platform.
 - New: a gamepad interface for Windows handhelds.
+
+Other platforms
+
 - New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin.
 - New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview).
-- New: deleted versions go to "Recently deleted" first and can be restored for 30 days.
-- New: a terms of service page; the privacy policy is more complete.
-- Note: one-click Baidu Netdisk sign-in is no longer planned (Baidu's open-platform review is not being pursued). Baidu Netdisk can be connected over WebDAV through OpenList / AList.
+
+Notes
+
+- Upgrading from 0.6 needs nothing from you: none of the old files in the cloud are touched, and games, saves and play time carry over. Update all your devices to 1.0: a device still on 0.6 can't see saves made by 1.0.
+- A terms of service page was added; the privacy policy is more complete.
+- One-click Baidu Netdisk sign-in is no longer planned (Baidu's open-platform review is not being pursued). Baidu Netdisk can be connected over WebDAV through OpenList / AList.
 
 ## 0.6.2
 
