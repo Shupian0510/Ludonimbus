@@ -394,6 +394,7 @@ export const saves: typeof Zh.saves = {
   madeCurrent: "Now the current save",
   undo: "Undo",
   undone: "Undone",
+  replacedBy: (when, device) => `Replaced by the saves of ${device} ${when}`,
   running: "The game is running",
   keep: "Keep",
   unkeep: "Stop keeping",

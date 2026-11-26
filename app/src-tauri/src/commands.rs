@@ -93,6 +93,17 @@ pub struct GameView {
     /// It shares the save line of another version through matched folders
     /// (`join`), which the user can take back.
     joined: bool,
+    /// The last time saves of the cloud replaced the ones here, while that
+    /// can still be undone (`sync::undo`).
+    replaced: Option<ReplacedView>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplacedView {
+    /// Whose saves they were replaced with.
+    device: String,
+    at: chrono::DateTime<chrono::Utc>,
 }
 
 fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMap<String, String>) -> GameView {
@@ -147,6 +158,11 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         health: steam::health(cfg, g),
         art,
         running: watcher::runner_active(&g.key) || names.iter().any(|n| procs.contains(n)),
+        replaced: st
+            .replaced
+            .as_ref()
+            .filter(|r| st.last_synced_id.as_deref() == Some(r.now.as_str()))
+            .map(|r| ReplacedView { device: r.device.clone(), at: r.at }),
         last_sync_at: st.last_sync_at,
         last_synced_device: st.last_synced_device,
         conflict: st.conflict,
@@ -486,6 +502,26 @@ pub async fn other_saves(key: String) -> CmdResult<OtherSaves> {
     .await
 }
 
+/// Take back the last time saves of the cloud replaced the ones here.
+#[tauri::command]
+pub async fn undo_replace(key: String) -> CmdResult<Outcome> {
+    blocking(move || {
+        if watcher::runner_active(&key) {
+            bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
+        }
+        let Some(_busy) = busy::begin(&key) else {
+            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
+        };
+        with_game(&key, |ctx, g| {
+            if process::is_running(&watcher::watch_names(g)) {
+                bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
+            }
+            sync::undo(ctx, g)
+        })
+    })
+    .await
+}
+
 /// Make a version of another save line of the game the progress here.
 #[tauri::command]
 pub async fn take_save(key: String, line: String, id: String) -> CmdResult<Outcome> {
@@ -811,6 +847,14 @@ pub async fn update_game(key: String, patch: GamePatch) -> CmdResult<()> {
         let exclude = patch.exclude.map(clean);
         for p in saves.iter().flatten().chain(exclude.iter().flatten()) {
             spec::split_pattern(p)?;
+        }
+        // Folders matched with another version's say where the files were:
+        // with another save location the game keeps its saves apart again.
+        if let Some(new) = &saves {
+            let ctx = Ctx::load()?;
+            if let Some(g) = ctx.cfg.game(&key).filter(|g| !g.bind.is_empty() && &g.saves != new) {
+                join::forget(&ctx, g)?;
+            }
         }
         games::update_game(&key, |g| {
             if let Some(n) = patch.name.filter(|n| !n.trim().is_empty()) {

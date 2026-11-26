@@ -14,7 +14,7 @@ import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Saves } from "./Saves";
-import { ApplyDialog, familyOf, JoinRow, VersionBar } from "./SaveLibrary";
+import { ApplyDialog, familyOf, JoinRow, UndoRow, VersionBar } from "./SaveLibrary";
 import { GameAchievements } from "./Achievements";
 
 type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
@@ -358,6 +358,7 @@ export function GameDetail({
             setTimeout(() => document.querySelector(".detail-body .tabs")?.scrollIntoView({ block: "start" }), 0);
           }}
         />
+        <UndoRow game={game} onChanged={() => after()} />
         {overview.cloud.kind !== "none" && !game.joined && <JoinRow key={game.key} gameKey={game.key} name={game.name} disabled={game.running} onChanged={() => after()} />}
 
         <div className="cards2">

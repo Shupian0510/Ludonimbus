@@ -3,7 +3,7 @@
 // hand, and applying a save version from one to another.
 import { useEffect, useMemo, useState } from "react";
 import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, Outcome, Overview, PlatformMarks, SaveLine, SnapshotSummary, TransferPlan } from "../api";
-import { bytes, dateTime, outcomeText } from "../format";
+import { bytes, dateTime, outcomeText, relTime } from "../format";
 import { currentLang, msg, useT } from "../i18n";
 import { Badge, Button, Hint, Icon, Menu, MenuItem, Modal, Spinner, useUi } from "./ui";
 
@@ -214,6 +214,41 @@ export function VersionBar({
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * One line under the strip for a day after saves of the cloud replaced the
+ * ones here (a sync that brought another device's progress, "make
+ * current"): what happened, and taking it back.
+ */
+export function UndoRow({ game, onChanged }: { game: GameView; onChanged: () => Promise<void> }) {
+  const t = useT();
+  const ui = useUi();
+  const [busy, setBusy] = useState(false);
+  const r = game.replaced;
+  if (!r || Date.now() - Date.parse(r.at) > 24 * 3600 * 1000) return null;
+  const undo = async () => {
+    setBusy(true);
+    try {
+      const o = await api.undoReplace(game.key);
+      const done = o.kind === "pulled" || o.kind === "uploaded" || o.kind === "queued";
+      ui.toast(done ? msg().saves.undone : outcomeText(o, game.name), done ? "ok" : "info");
+      await onChanged();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="banner banner-info join-row">
+      <Icon name="restore" />
+      <span title={dateTime(r.at)}>{t.saves.replacedBy(relTime(r.at), r.device)}</span>
+      <Button small kind="ghost" onClick={undo} disabled={busy || game.running} title={game.running ? t.savelib.running : undefined}>
+        {t.saves.undo}
+      </Button>
     </div>
   );
 }

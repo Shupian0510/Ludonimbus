@@ -73,6 +73,21 @@ impl LineRef {
     }
 }
 
+/// The last time saves of the cloud replaced the ones on this device, so
+/// it can be taken back ([`crate::sync::undo`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Replaced {
+    /// The version that holds what was here.
+    pub back: String,
+    /// The version the device is at since. Once it is at another one
+    /// (it saved on top), there is nothing to take back any more.
+    pub now: String,
+    /// Whose saves they were replaced with.
+    pub device: String,
+    pub at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GameState {
@@ -112,6 +127,8 @@ pub struct GameState {
     /// not to apply (see [`crate::savelib::newer_version`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub newer_dismissed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<Replaced>,
 }
 
 fn is_zero(n: &u64) -> bool {

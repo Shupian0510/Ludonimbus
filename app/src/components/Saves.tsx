@@ -150,9 +150,9 @@ export function Saves({
     }
   };
 
-  const undo = async (id: string) => {
+  const undo = async () => {
     try {
-      await api.restore(game.key, id);
+      await api.undoReplace(game.key);
       ui.toast(msg().saves.undone);
       await onChanged();
     } catch (e) {
@@ -168,21 +168,11 @@ export function Saves({
       confirm: v.makeCurrent,
     });
     if (!ok) return;
-    const before = data?.lastSyncedId ?? null;
-    const started = Date.now();
     try {
       const o = other ? await api.takeSave(game.key, other.line, s.id) : await api.restore(game.key, s.id);
-      const done = o.kind === "pulled" || o.kind === "uploaded" || o.kind === "upToDate";
-      // What was here is the copy kept just now, or the save this PC was at.
-      let back = before;
-      try {
-        const fresh = await api.snapshots(game.key);
-        back = fresh.snapshots.find((x) => isSide(x) && x.deviceId === overview.deviceId && Date.parse(x.createdAt) >= started - 2000)?.id ?? before;
-      } catch {
-        /* the list is read again below */
-      }
+      const done = o.kind === "pulled" || o.kind === "uploaded" || o.kind === "queued";
       const m = msg().saves;
-      ui.toast(done ? m.madeCurrent : outcomeText(o, game.name), done ? "ok" : "info", done && back && back !== s.id ? { label: m.undo, run: () => undo(back) } : undefined);
+      ui.toast(done ? m.madeCurrent : outcomeText(o, game.name), done ? "ok" : "info", done ? { label: m.undo, run: undo } : undefined);
       await onChanged();
     } catch (e) {
       ui.toast(errorText(e), "bad");

@@ -400,6 +400,7 @@ export const saves = {
   madeCurrent: "已设为当前",
   undo: "撤销",
   undone: "已撤销",
+  replacedBy: (when: string, device: string) => `${when}换成了 ${device} 的存档`,
   running: "游戏正在运行",
   keep: "保留",
   unkeep: "取消保留",

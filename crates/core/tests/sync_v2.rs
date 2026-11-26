@@ -254,6 +254,7 @@ fn sync_on_layout_2() {
     managing_versions(root);
     own_lines(root);
     from_another_line(root);
+    taking_back(root);
 }
 
 /// What a sync asks of the cloud: the number of requests is what a slow
@@ -926,4 +927,73 @@ fn from_another_line(root: &Path) {
     assert_eq!(ids(&versions()), vec![k1.clone(), k2.clone()]);
     assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
     assert_eq!(kid.read(), "k2");
+}
+
+/// The last time saves of the cloud replaced the ones on a device can be
+/// taken back, until the device saves on top of them (docs/plan-v2.md,
+/// section 6, "安全网").
+fn taking_back(root: &Path) {
+    let cloud = root.join("undo-cloud");
+    fs::create_dir_all(&cloud).unwrap();
+    let folder = || CloudConfig::LocalFolder { path: cloud.clone() };
+    let desk = Device::new(root, "UNDO-DESK", folder());
+    let deck = Device::new(root, "UNDO-DECK", folder());
+    let undo = || {
+        let ctx = Ctx::load().unwrap();
+        sync::undo(&ctx, &ctx.game(KEY).unwrap())
+    };
+
+    desk.activate();
+    desk.write("one");
+    let v1 = uploaded(run(Trigger::AutoExit));
+    assert!(sync::undoable(KEY).is_none() && undo().is_err());
+    deck.activate();
+    // A device that had no saves has nothing to go back to.
+    assert_eq!(pulled(run(Trigger::PreLaunch)), v1);
+    assert!(sync::undoable(KEY).is_none());
+    deck.write("two");
+    let v2 = uploaded(run(Trigger::AutoExit));
+
+    // The sync before playing brings the other device's progress: that can be taken back.
+    desk.activate();
+    assert_eq!(pulled(run(Trigger::PreLaunch)), v2);
+    assert_eq!(desk.read(), "two");
+    let r = sync::undoable(KEY).unwrap();
+    assert_eq!((r.back.as_str(), r.now.as_str(), r.device.as_str()), (v1.as_str(), v2.as_str(), "UNDO-DECK"));
+    let v3 = uploaded(undo().unwrap());
+    assert_eq!(desk.read(), "one");
+    assert_eq!(status(), Status::Synced);
+    assert_eq!(heads(), [v3.clone()]);
+    // Nothing was lost: the other device's progress is a version like any other,
+    // and taking it back can be taken back.
+    let r = sync::undoable(KEY).unwrap();
+    assert_eq!((r.back.as_str(), r.now.as_str()), (v2.as_str(), v3.as_str()));
+    let v4 = uploaded(undo().unwrap());
+    assert_eq!(desk.read(), "two");
+    assert_eq!(heads(), [v4.clone()]);
+
+    // Saves that were not in the cloud yet are kept first, and are what it goes back to.
+    desk.write("unsaved");
+    let ctx = Ctx::load().unwrap();
+    sync::restore(&ctx, &ctx.game(KEY).unwrap(), &v1).unwrap();
+    assert_eq!(desk.read(), "one");
+    let r = sync::undoable(KEY).unwrap();
+    let kept = versions().into_iter().find(|s| s.id == r.back).unwrap();
+    assert!(kept.side && kept.trigger == Trigger::PreRestore, "{kept:#?}");
+    undo().unwrap();
+    assert_eq!(desk.read(), "unsaved");
+
+    // Once the device saved on top, there is nothing to take back.
+    assert!(sync::undoable(KEY).is_some());
+    desk.write("three");
+    uploaded(run(Trigger::AutoExit));
+    assert!(sync::undoable(KEY).is_none());
+    let before = versions().len();
+    assert!(undo().is_err());
+    assert_eq!((desk.read().as_str(), versions().len()), ("three", before));
+
+    // The other device gets the newest progress as usual.
+    deck.activate();
+    run(Trigger::PreLaunch);
+    assert_eq!(deck.read(), "three");
 }
