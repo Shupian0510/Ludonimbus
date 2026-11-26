@@ -96,7 +96,7 @@ export const library: typeof Zh.library = {
   checking: "Checking…",
   notChecked: "Not checked",
   title: "Library",
-  subtitle: (n) => `${n} ${plural(n, "game", "games")} · saves sync when you start and quit from Steam`,
+  subtitle: (n) => `${n} ${plural(n, "game", "games")}`,
   search: "Search games",
   grid: "Grid",
   list: "List",
@@ -152,6 +152,7 @@ export const savelib: typeof Zh.savelib = {
   notInstalled: "Not installed here",
   link: "Link another version…",
   linkTitle: "This is the same game",
+  linkShort: (name) => `Choose an entry that is the same game as "${name}"`,
   linkText: (name) => `Choose an entry that is the same game as "${name}" (its Steam, Xbox or emulator version, for example). Linked entries show as one game in the library, and saves can be applied from one to another.`,
   linkSearch: "Search games",
   linked: "Linked",
@@ -186,11 +187,13 @@ export const savelib: typeof Zh.savelib = {
       ? `The files are read out of the Xbox version's save containers and named by the rule for "${rule}".`
       : "The files are read out of the Xbox version's save containers. This game isn't in the rule list, so the generic rule names them: check the file names below.",
   modeToXbox: "Written into the Xbox version's save containers (experimental): only save slots the Xbox version already has are replaced.",
+  xboxShort: "Close the game and the Xbox app before writing",
   xboxSteps: "Before writing, close the game and the Xbox app. Afterwards, go offline, start the game once and save, then go online; if Xbox asks which copy to keep, choose this PC's. Xbox's cloud sync may put its cloud copy back.",
   target: "Target folder",
   changeFolder: "Change target folder…",
   matched: (n, total) => `${total} ${plural(total, "file", "files")}, ${n} with the same name as a file the target has`,
   noneMatched: "No file name matches a file in the target. Check that the target folder is right.",
+  crossShort: "The two versions keep saves in different formats; the game may not read them",
   crossPlatform: "These versions are for different platforms (different save formats): the files usually can't be used as they are, and the game may not read them. The target's current saves are kept as a version first, so you can restore them any time.",
   modeRule: (rule) =>
     `"${rule}" keeps the same save files on every platform: the saves go into the target's save folder; files with the same name are replaced and new saves are added. The target's other saves stay, and settings aren't touched.`,
@@ -199,6 +202,7 @@ export const savelib: typeof Zh.savelib = {
     `These saves were written by game version ${source}, newer than the target's current saves (${target}). An older game can't load saves of a newer version: if the target's game isn't on ${source} yet, update it first.`,
   skipped: (n) => `${n} ${plural(n, "file that isn't a save (settings…) isn't", "files that aren't saves (settings…) aren't")} written`,
   cloudOnlyTarget: "only in the cloud",
+  cloudTargetShort: "Uploaded as a new version; the Switch downloads it at its next sync",
   cloudTarget:
     "The version on the Switch isn't on this PC: the saves go on top of its newest version in the cloud, uploaded as a new version. The Switch downloads it the next time you sync this game in the Switch client.",
   needsFolder: (name) => `"${name}" has no saves on this PC yet. Play this version once and save, then come back; or choose its save folder.`,
@@ -323,7 +327,7 @@ export const source: typeof Zh.source = {
 
 export const devices: typeof Zh.devices = {
   title: "Devices",
-  subtitle: "PCs connected to the same cloud. Every version records which device uploaded it.",
+  subtitle: "Devices connected to the same cloud",
   noCloud: "No cloud connected yet",
   thisDevice: "This PC",
   lastSeen: (rel, at) => `Last seen ${rel} (${at})`,
@@ -851,6 +855,7 @@ export const game: typeof Zh.game = {
   ok: "OK",
   missing: "Missing",
   noExe: "No program set",
+  xboxProtectedShort: "A game the Xbox app installed can't be started directly",
   xboxProtected: "This game was installed by the Xbox app. Its own program is protected and can't be started directly (starting it from Steam or Ludonimbus fails). Use gamelaunchhelper.exe in the same folder instead.",
   useHelper: "Use gamelaunchhelper.exe",
   xboxHelper: "The game opens through the Xbox app's launcher; Ludonimbus waits for the game itself to exit before uploading saves.",

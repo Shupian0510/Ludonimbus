@@ -8,7 +8,7 @@ import { msg, useT } from "../i18n";
 import { AccountPicker, useAccounts } from "./AddGame";
 import { VersionBar } from "./SaveLibrary";
 import { Saves } from "./Saves";
-import { Button, Icon, Modal, useUi } from "./ui";
+import { Button, Hint, Icon, Modal, useUi } from "./ui";
 
 export function CloudGameDetail({
   game,
@@ -86,8 +86,7 @@ export function CloudGameDetail({
         <div className="banner banner-info not-here">
           <Icon name="cloud" />
           <div>
-            <b>{s.cloudBannerTitle}</b>
-            <p>{s.cloudBannerText}</p>
+            <b>{s.cloudBannerTitle}</b> <Hint text={s.cloudBannerText} />
             {info && (
               <p className="muted small">
                 {info.gameBackup
