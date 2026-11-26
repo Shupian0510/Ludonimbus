@@ -6,7 +6,9 @@
 //! ludonimbus-run --finish <key>               # finish a sync after playing (no window)
 //! ```
 //! 1. sync before launch (pull newer cloud saves, ask on conflict), and offer
-//!    newer saves of another version of the game (save library)
+//!    newer saves of another version of the game (save library). Not for a
+//!    game Steam installed whose saves Steam Cloud keeps (backup only; also
+//!    a managed one found with Steam Cloud on again, see `core::steamcloud`)
 //! 2. start the game and wait for the whole process tree to exit
 //! 3. sync after exit (upload new saves); without the tray app, also finish
 //!    the sessions of terminated wrappers and upload screenshots
@@ -26,7 +28,7 @@ use ludonimbus_core::config::{self, GameEntry};
 use ludonimbus_core::prompt::Request;
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Gate, Outcome, Phase, Resolution};
-use ludonimbus_core::{catchup, games, handheld, logger, paths, playtime, process, prompt, relocate, savelib, spec, tr, transfer, util};
+use ludonimbus_core::{catchup, games, handheld, logger, paths, playtime, process, prompt, relocate, savelib, spec, steamcloud, tr, transfer, util};
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -766,10 +768,43 @@ impl Drop for RunningLock {
     }
 }
 
+/// A game Steam installed that Ludonimbus manages: is Steam Cloud still off
+/// for it? When it reads on again the game is backup only from now on, and
+/// the user is told (once: the next launch finds it backup only already).
+/// When that couldn't be written down, it is backup only for this launch.
+fn recheck_steam_cloud(ctx: &Ctx, game: &mut GameEntry) {
+    if game.store.is_none() {
+        return;
+    }
+    let demoted = match steamcloud::recheck(&ctx.cfg, game) {
+        Ok(None) => return,
+        Ok(Some(changed)) => changed,
+        Err(e) => {
+            log(format!("{}: Steam Cloud is on again, but that couldn't be noted: {e:#}", game.key));
+            let mut g = game.clone();
+            if let Some(s) = g.store.as_mut() {
+                s.mode = config::StoreMode::Backup;
+            }
+            g
+        }
+    };
+    *game = demoted;
+    tell(
+        &tr!("Ludonimbus · Steam 云存档又打开了", "Ludonimbus · Steam Cloud is on again"),
+        &tr!(
+            "「{}」的 Steam 云存档又打开了。在关掉它、在 Ludonimbus 里重新接管之前，Ludonimbus 只备份这个游戏的存档，不会写入。",
+            "Steam Cloud is on again for \"{}\". Until it is turned off and the game is taken over again in Ludonimbus, Ludonimbus only keeps backups of its saves and writes nothing into them.",
+            game.name
+        ),
+        "warn",
+    );
+}
+
 fn run(args: &[String]) -> Result<i32> {
     let (key, explicit) = parse_args(args)?;
     let ctx = Ctx::load()?;
     let mut game = ctx.game(&key)?;
+    recheck_steam_cloud(&ctx, &mut game);
     let lock = RunningLock::create(&key);
 
     let launch = match explicit {
@@ -812,7 +847,12 @@ fn run(args: &[String]) -> Result<i32> {
             }
         }
     };
-    if game.auto_sync {
+    // Steam Cloud brings the saves of a game it keeps: nothing to do before
+    // playing, and after it only a version is stored.
+    if game.backup_only() {
+        log(format!("{key}: Steam Cloud keeps this game's saves; no sync before launch"));
+    }
+    if game.auto_sync && !game.backup_only() {
         let budget = Duration::from_secs(ctx.cfg.launch_wait_secs);
         let mut notice = |phase| download_notice(&game, phase);
         let first = match wait_before_launch(start_sync(&ctx, &game, Resolution::Auto, Trigger::PreLaunch, true), budget, &mut notice) {

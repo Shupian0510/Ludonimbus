@@ -9,11 +9,14 @@
 //! - notices `shortcuts.vdf` changes so the UI can flag broken shortcuts
 //! - finishes the syncs after playing that a wrapper handed over, and
 //!   uploads what waits in the queue (see [`Backlog`])
+//! - keeps Steam games that Ludonimbus manages without the wrapper up to
+//!   date while they aren't running (see [`Unwrapped`])
 
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution};
 use chrono::{DateTime, Utc};
 use ludonimbus_core::playtime::{self, Via};
+use ludonimbus_core::steamcloud::{self, Polled};
 use ludonimbus_core::{config, logger, paths, process, spec, steam, util};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -327,6 +330,105 @@ fn backlog_pass(app: &AppHandle, cfg: &config::AppConfig, owed: &[String], pendi
     ok
 }
 
+/// How often Steam games managed without the wrapper are looked at.
+const UNWRAPPED_EVERY: Duration = Duration::from_secs(5 * 60);
+/// The longest pause while the cloud can't be reached.
+const UNWRAPPED_MAX: Duration = Duration::from_secs(30 * 60);
+/// With many such games a look takes one request each: never more than
+/// one a minute on average.
+const UNWRAPPED_EACH: Duration = Duration::from_secs(60);
+
+/// Steam games Ludonimbus manages that don't start through the wrapper
+/// (docs/plan-v2.md, section 8.3): nothing syncs before they are played, so
+/// every few minutes, while one isn't running or being synced, a newer
+/// version in the cloud is pulled ([`steamcloud::poll`], which checks that
+/// Steam Cloud is still off first). One listing per game when there is
+/// nothing to do; less often with many such games and while the cloud
+/// can't be reached, as in [`Backlog`]. After the game, the usual sync of a
+/// game that ran outside the wrapper.
+struct Unwrapped {
+    next: Instant,
+    pause: Duration,
+    /// The pause the number of games asks for at least.
+    floor: Duration,
+    running: Arc<AtomicBool>,
+    last: Arc<Mutex<Option<bool>>>,
+}
+
+impl Unwrapped {
+    fn new() -> Unwrapped {
+        Unwrapped {
+            next: Instant::now() + BACKLOG_FIRST,
+            pause: UNWRAPPED_EVERY,
+            floor: UNWRAPPED_EVERY,
+            running: Arc::new(AtomicBool::new(false)),
+            last: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Called every tick of the watcher.
+    fn tick(&mut self, app: &AppHandle, cfg: &config::AppConfig, procs: &[String]) {
+        if self.running.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some(ok) = self.last.lock().ok().and_then(|mut l| l.take()) {
+            self.pause = if ok { UNWRAPPED_EVERY } else { (self.pause * 2).clamp(UNWRAPPED_EVERY, UNWRAPPED_MAX) };
+            self.next = Instant::now() + self.pause.max(self.floor);
+        }
+        if Instant::now() < self.next {
+            return;
+        }
+        self.next = Instant::now() + self.pause;
+        let games: Vec<config::GameEntry> = cfg
+            .games
+            .iter()
+            .filter(|g| g.auto_sync && g.store.as_ref().is_some_and(|s| s.mode == config::StoreMode::Managed && !s.wrapper))
+            .filter(|g| {
+                let up = watch_names(g).iter().any(|n| procs.contains(n));
+                runner_state(&g.key) != Runner::Active && !up && !crate::busy::is_busy(&g.key) && !sync::sync_running(&g.key)
+            })
+            .cloned()
+            .collect();
+        if games.is_empty() {
+            return;
+        }
+        self.floor = UNWRAPPED_EVERY.max(UNWRAPPED_EACH * games.len() as u32);
+        self.next = Instant::now() + self.pause.max(self.floor);
+        self.running.store(true, Ordering::SeqCst);
+        let (app, cfg, running, last) = (app.clone(), cfg.clone(), self.running.clone(), self.last.clone());
+        std::thread::spawn(move || {
+            let ctx = Ctx::from_config(cfg);
+            let mut ok = true;
+            for g in &games {
+                let Some(_busy) = crate::busy::begin(&g.key) else { continue };
+                match steamcloud::poll(&ctx, g) {
+                    Ok(Polled::Nothing) => {}
+                    Ok(Polled::Offline) => ok = false,
+                    Ok(Polled::Demoted(_)) => {
+                        logger::log("watcher", format!("{}: Steam Cloud is on again; backup only from now on", g.key));
+                        let _ = app.emit("library-changed", ());
+                    }
+                    Ok(Polled::Synced(out)) => {
+                        logger::log("watcher", format!("{}: background sync (no wrapper) {out:?}", g.key));
+                        if !out.is_final() {
+                            ok = false;
+                        }
+                        let _ = app.emit("sync-finished", SyncEvent { key: g.key.clone(), name: g.name.clone(), outcome: Some(out), error: None });
+                    }
+                    Err(e) => {
+                        logger::log("watcher", format!("{}: background sync (no wrapper) failed: {e:#}", g.key));
+                        ok = false;
+                    }
+                }
+            }
+            if let Ok(mut l) = last.lock() {
+                *l = Some(ok);
+            }
+            running.store(false, Ordering::SeqCst);
+        });
+    }
+}
+
 pub fn spawn(app: AppHandle) {
     // Screenshots: catch up shortly after start, then every 30 minutes.
     let shots_app = app.clone();
@@ -346,6 +448,7 @@ pub fn spawn(app: AppHandle) {
         let mut game_procs: HashSet<String> = HashSet::new();
         let mut last_vdf: Option<SystemTime> = None;
         let mut backlog = Backlog::new();
+        let mut unwrapped = Unwrapped::new();
         let mut tick: u64 = 0;
         loop {
             std::thread::sleep(Duration::from_secs(3));
@@ -419,6 +522,7 @@ pub fn spawn(app: AppHandle) {
             }
 
             backlog.tick(&app, &cfg, &procs);
+            unwrapped.tick(&app, &cfg, &procs);
 
             if tick % 5 == 0 {
                 let stamp = vdf_stamp(&cfg);

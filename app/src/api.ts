@@ -399,6 +399,8 @@ export interface Found {
   saveSample: string[];
   steamCloud: boolean;
   storeGame: boolean;
+  /** Its app id in Steam when it is known which installed game it is: added as a game Steam installed (backup only). */
+  storeAppid?: number | null;
   addedKey: string | null;
   registryOnly: boolean;
   /** Where the install of a game found by its saves was found. */
@@ -617,6 +619,53 @@ export interface JoinSuggestion {
   outside: string[];
 }
 
+/**
+ * A game Steam installed, in one of three states: Steam Cloud keeps it and Ludonimbus does nothing,
+ * Ludonimbus stores versions of what Steam Cloud syncs (backup), or Steam Cloud is off for it and
+ * Ludonimbus syncs it (managed).
+ */
+export type SteamCloudState = "steam" | "backup" | "managed";
+
+/** A game Steam installed on this PC. */
+export interface SteamCloudApp {
+  appid: number;
+  name: string;
+  /** Its library entry, once added. */
+  key: string | null;
+  state: SteamCloudState;
+  /** How Steam's last cloud sync of it went ("synchronized", "changesincloud", …). */
+  syncState: string | null;
+  /** Its own Steam Cloud switch. */
+  cloudEnabled: boolean;
+  /** Steam Cloud syncs it on this device (false: the game has none). */
+  cloudUsed: boolean;
+}
+
+/** Whether a managed game's launch options still go through the wrapper. */
+export type SteamWrapperHealth = "ok" | "missing" | "changed" | "runnerMoved";
+
+export interface SteamCloudStatus {
+  mode: SteamCloudState;
+  syncState: string | null;
+  /** Steam's last cloud sync of the game left nothing behind (taking over needs it). */
+  synchronized: boolean;
+  cloudEnabled: boolean;
+  /** Steam Cloud syncs it on this device (false: the game has none). */
+  cloudUsed: boolean;
+  /** The account's Steam Cloud switch for every game. */
+  globalEnabled: boolean;
+  steamRunning: boolean;
+  /** null when the launch options aren't meant to go through the wrapper. */
+  wrapper: SteamWrapperHealth | null;
+}
+
+/** What a batch did for one game Steam installed. */
+export interface SteamCloudDone {
+  appid: number;
+  key: string | null;
+  error: string | null;
+}
+
 export interface DeviceInfo {
   id: string;
   name: string;
@@ -771,6 +820,24 @@ export const api = {
   steamSetEnabled: (key: string, enabled: boolean, closeSteam: boolean) =>
     invoke<void>("steam_set_enabled", { key, enabled, closeSteam }),
   steamRepair: (key: string, closeSteam: boolean) => invoke<void>("steam_repair", { key, closeSteam }),
+  /** Games Steam installed and their state. */
+  steamCloudApps: () => invoke<SteamCloudApp[]>("steam_cloud_apps"),
+  /** Add games Steam installed, backup only. */
+  steamCloudAdd: (appids: number[]) => invoke<SteamCloudDone[]>("steam_cloud_add", { appids }),
+  steamCloudStatus: (key: string) => invoke<SteamCloudStatus>("steam_cloud_status", { key }),
+  /**
+   * Let Ludonimbus keep the game's saves (Steam Cloud must be off for it). Errors start with
+   * STEAM_RUNNING (with the wrapper: close Steam, see withSteamClosed), STEAM_NOT_SYNCED or STEAM_CLOUD_ON.
+   */
+  steamCloudTakeOver: (key: string, wrapper: boolean, closeSteam: boolean) =>
+    invoke<SteamCloudStatus>("steam_cloud_take_over", { key, wrapper, closeSteam }),
+  /** Back to Steam Cloud: launch options as before, backup only. */
+  steamCloudHandBack: (key: string, closeSteam: boolean) => invoke<SteamCloudStatus>("steam_cloud_hand_back", { key, closeSteam }),
+  /** Every game Steam installed whose save location is known, backup only. */
+  steamCloudBackupAll: () => invoke<SteamCloudDone[]>("steam_cloud_backup_all"),
+  /** Take over every backed-up game; refused (STEAM_CLOUD_ON) unless Steam Cloud is off for all games. */
+  steamCloudTakeOverAll: (wrapper: boolean, closeSteam: boolean) =>
+    invoke<SteamCloudDone[]>("steam_cloud_take_over_all", { wrapper, closeSteam }),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (patch: {
     deviceName?: string;

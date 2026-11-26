@@ -15,6 +15,9 @@ import type {
   SaveLine,
   SnapshotSummary,
   StatusReport,
+  SteamCloudApp,
+  SteamCloudDone,
+  SteamCloudStatus,
   TrashedSnapshot,
 } from "./api";
 
@@ -394,6 +397,50 @@ const sgdbLogos = [art(4079546474, "_logo.png"), art(2661209017, "_logo.png"), a
 const sgdbIcons = [art(4079546474, "_icon.png"), art(2661209017, "_icon.png"), art(4000695018, "_icon.png")];
 
 const delay = <T,>(v: T, ms = 250) => new Promise<T>((r) => setTimeout(() => r(v), ms));
+
+/** Games Steam installed: one backed up, one taken over, one left to Steam (Steam Cloud not done syncing), one without Steam Cloud. */
+const steamCloudApps: SteamCloudApp[] = [
+  { appid: 367520, name: "Hollow Knight", key: "hollow-knight", state: "backup", syncState: "synchronized", cloudEnabled: true, cloudUsed: true },
+  { appid: 1145360, name: "Hades", key: "hades", state: "managed", syncState: "synchronized", cloudEnabled: false, cloudUsed: true },
+  { appid: 1716740, name: "Starfield", key: null, state: "steam", syncState: "changesincloud", cloudEnabled: true, cloudUsed: true },
+  { appid: 2527500, name: "MiSide", key: null, state: "steam", syncState: null, cloudEnabled: true, cloudUsed: false },
+];
+
+function mockSteamStatus(key: string): SteamCloudStatus {
+  const a = steamCloudApps.find((x) => x.key === key);
+  return {
+    mode: a?.state ?? "backup",
+    syncState: a ? a.syncState : "synchronized",
+    synchronized: (a ? a.syncState : "synchronized") === "synchronized",
+    cloudEnabled: a?.cloudEnabled ?? true,
+    cloudUsed: a?.cloudUsed ?? true,
+    globalEnabled: true,
+    steamRunning: true,
+    wrapper: a?.state === "managed" ? "ok" : null,
+  };
+}
+
+/** Adds games Steam installed to the mock library, backup only. */
+function mockSteamAdd(appids: number[]): SteamCloudDone[] {
+  return appids.map((appid) => {
+    const a = steamCloudApps.find((x) => x.appid === appid);
+    if (!a) return { appid, key: null, error: L("Steam 里没有装这个游戏", "This game isn't installed in Steam") };
+    a.key ??= a.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    if (a.state === "steam") a.state = a.cloudUsed ? "backup" : "managed";
+    return { appid, key: a.key, error: null };
+  });
+}
+
+/** Takes a game over as the backend would, or refuses with its error code. */
+function mockSteamTakeOver(key: string): SteamCloudStatus {
+  const a = steamCloudApps.find((x) => x.key === key);
+  if (a && a.cloudUsed && a.syncState !== "synchronized")
+    throw L("STEAM_NOT_SYNCED: Steam 上次没有和云端同步完。请打开 Steam 等它同步完成，然后再接管", "STEAM_NOT_SYNCED: Steam didn't finish syncing with Steam Cloud last time. Start Steam and let it finish, then take it over");
+  if (a?.cloudUsed && a.cloudEnabled)
+    throw L("STEAM_CLOUD_ON: Steam 云存档还开着。请在 Steam 里右键这个游戏 → 属性 → 通用，关掉它，然后再接管", "STEAM_CLOUD_ON: Steam Cloud is still on. In Steam, right-click the game → Properties → General and turn it off, then take it over");
+  if (a) a.state = "managed";
+  return mockSteamStatus(key);
+}
 
 let mockHandheldMode = "auto";
 const mockNx = {
@@ -859,6 +906,35 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined, 500);
     case "steam_add_games":
       return delay((args.keys as string[]).map((k) => ({ key: k, error: null })), 1200);
+    case "steam_cloud_apps":
+      return delay(steamCloudApps.map((a) => ({ ...a })), 300);
+    case "steam_cloud_add":
+      return delay(mockSteamAdd(args.appids as number[]), 600);
+    case "steam_cloud_backup_all":
+      return delay(mockSteamAdd(steamCloudApps.filter((a) => !a.key).map((a) => a.appid)), 900);
+    case "steam_cloud_status":
+      return delay(mockSteamStatus(key), 200);
+    case "steam_cloud_take_over":
+      return delay(mockSteamTakeOver(key), 1200);
+    case "steam_cloud_hand_back": {
+      const a = steamCloudApps.find((x) => x.key === key);
+      if (a) a.state = "backup";
+      return delay(mockSteamStatus(key), 800);
+    }
+    case "steam_cloud_take_over_all":
+      return delay<SteamCloudDone[]>(
+        steamCloudApps
+          .filter((a) => a.state === "backup")
+          .map((a) => {
+            try {
+              mockSteamTakeOver(a.key!);
+              return { appid: a.appid, key: a.key, error: null };
+            } catch (e) {
+              return { appid: a.appid, key: a.key, error: String(e) };
+            }
+          }),
+        1500,
+      );
     case "steam_add_game":
       return delay(3000000001, 800);
     case "steam_remove_game":

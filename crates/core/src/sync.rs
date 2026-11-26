@@ -1479,11 +1479,13 @@ pub fn sync_with(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: T
 /// before the first), or by another process. Scanning or writing saves with
 /// what was true before would put one version's files into the line of
 /// another, so everything that does either starts here. The configuration
-/// on this device is what counts.
+/// on this device is what counts. So it does for whether Steam Cloud keeps
+/// the saves of a game Steam installed ([`GameEntry::store`]): Steam Cloud
+/// may have been found on again since ([`crate::steamcloud::recheck`]).
 fn fresh(ctx: &Ctx, game: &GameEntry) -> GameEntry {
     let now = config::load().ok().and_then(|c| c.game(&game.key).cloned());
     let Some(now) = now else { return game.clone() };
-    let game = GameEntry { record: now.record, bind: now.bind, declined: now.declined, ..game.clone() };
+    let game = GameEntry { record: now.record, bind: now.bind, declined: now.declined, store: now.store, ..game.clone() };
     if let Ok(cloud) = ctx.cloud() {
         cloud.know(&game);
     }
@@ -1491,7 +1493,8 @@ fn fresh(ctx: &Ctx, game: &GameEntry) -> GameEntry {
 }
 
 fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
-    let game = &fresh(ctx, game);
+    // A game Steam installed is managed only while Steam Cloud stays off.
+    let game = &crate::steamcloud::rechecked(&ctx.cfg, fresh(ctx, game));
     let cloud = match ctx.cloud() {
         Ok(c) => c,
         Err(e) if cloud::is_not_configured(&e) => return Ok(Outcome::NoCloud),
@@ -1529,7 +1532,10 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
     let st = state::game(&game.key);
     let seen = with_queue(&s.line.view, &s.line.place, &game.key);
     let loc = local_of(&local, &st);
-    let action = decide::decide(&loc, &seen);
+    let mut action = decide::decide(&loc, &seen);
+    if game.backup_only() && resolution == Resolution::Auto {
+        action = backup_only(&game.key, action, &loc, &seen);
+    }
     let device = ctx.device();
 
     let outcome = match (action, resolution) {
@@ -1592,6 +1598,33 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
         }
     }
     Ok(outcome)
+}
+
+/// What a sync that nobody chose for does with a game whose saves Steam
+/// Cloud keeps ([`GameEntry::backup_only`], docs/plan-v2.md, section 8.2):
+/// Steam decides which saves are current, Ludonimbus keeps their history,
+/// and writes nothing into the game's saves by itself.
+///
+/// - A newer version in the cloud is left there: Steam Cloud brings that
+///   progress, and once the saves here are the same, [`Action::Adopt`]
+///   marks them synced.
+/// - Saves here that differ from what the cloud has are uploaded as the
+///   newest version, on top of every newest one, without a question.
+///
+/// What the user asks for (a version from the cloud, a restore) still is
+/// done: that is not decided here.
+fn backup_only(key: &str, action: Action, local: &Local, view: &LineView) -> Action {
+    match action {
+        Action::Pull { id } => {
+            log(format!("{key}: {id} in the cloud is newer; Steam Cloud keeps this game's saves, so nothing is written"));
+            Action::Nothing
+        }
+        Action::Conflict { .. } => {
+            log(format!("{key}: these saves differ from the cloud's; Steam Cloud decided they are current, so they are uploaded"));
+            decide::settle(local, view)
+        }
+        other => other,
+    }
 }
 
 /// Compare local and cloud without changing anything.
