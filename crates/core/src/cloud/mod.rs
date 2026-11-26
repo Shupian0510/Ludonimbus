@@ -20,15 +20,22 @@
 //! seen as a path-based [`store::Store`], so it works on every backend.
 
 pub mod baidu;
+pub mod decide;
 pub mod gdrive;
+pub mod library;
+pub mod line;
 pub mod local;
+pub mod memory;
 pub mod migrate;
 pub mod oauth;
+pub mod packs;
 pub mod quark;
 pub mod repo;
+pub mod retention;
 pub mod s3;
 pub mod secrets;
 pub mod store;
+pub mod v2;
 pub mod webdav;
 
 use crate::config::{self, AppConfig, CloudConfig, GameEntry};

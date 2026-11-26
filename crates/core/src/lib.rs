@@ -62,6 +62,7 @@ pub mod sync;
 pub mod transfer;
 pub mod util;
 pub mod vdf;
+pub mod vv;
 pub mod wgs;
 pub mod xbox;
 pub mod xboxsaves;
