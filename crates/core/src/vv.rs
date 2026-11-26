@@ -8,9 +8,19 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Pseudo device that orders the snapshots of the 0.6 layout, which have no
-/// vector of their own (docs/plan-v2.md, section 5.3).
+/// Start of the name of the pseudo devices that order the snapshots of the
+/// 0.6 layout, which have no vector of their own (docs/plan-v2.md, section
+/// 5.3). There is one per folder of that layout ([`legacy_device`]).
 pub const LEGACY: &str = "legacy";
+
+/// The pseudo device for the 0.6 snapshots of one folder, named by the game
+/// key the folder belongs to: `legacy:<key>`. One per folder, because only
+/// the snapshots of one folder were ever one history: when two games of 0.6
+/// turn out to be one and their lines are joined, neither side's newest
+/// version contains the other's, and the user is asked which one counts.
+pub fn legacy_device(folder: &str) -> String {
+    format!("{LEGACY}:{folder}")
+}
 
 /// `{device id: how many of that device's changes are included}`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,12 +43,13 @@ impl Vv {
         Vv::default()
     }
 
-    /// The vector of a snapshot of the 0.6 layout: `n` is when it was made
-    /// (`cloud::line::legacy_vv`), so a later one contains an earlier one.
-    pub fn legacy(n: u64) -> Self {
+    /// The vector of a snapshot of the 0.6 layout in `folder`: `n` is when
+    /// it was made (`cloud::line::legacy_vv`), so a later one of the same
+    /// folder contains an earlier one.
+    pub fn legacy(folder: &str, n: u64) -> Self {
         let mut v = Vv::default();
         if n > 0 {
-            v.0.insert(LEGACY.to_string(), n);
+            v.0.insert(legacy_device(folder), n);
         }
         v
     }
@@ -185,11 +196,17 @@ mod tests {
 
     #[test]
     fn legacy_snapshots_keep_their_order_and_v2_builds_on_them() {
-        let old: Vec<Vv> = (1..=3).map(Vv::legacy).collect();
+        let old: Vec<Vv> = (1..=3).map(|n| Vv::legacy("stardew", n)).collect();
         assert_eq!(heads(&old, |v| v), vec![2]);
         let first_v2 = Vv::next([&old[2]], "a", 0);
-        assert_eq!(first_v2, vv(&[("a", 1), (LEGACY, 3)]));
+        assert_eq!(first_v2, vv(&[("a", 1), ("legacy:stardew", 3)]));
         assert_eq!(first_v2.compare(&old[0]), Order::Newer);
+
+        // Another folder of 0.6 was never part of this history.
+        let other = Vv::legacy("stardew-2", 9);
+        assert_eq!(other.compare(&old[2]), Order::Forked);
+        assert_eq!(first_v2.compare(&other), Order::Forked);
+        assert_eq!(legacy_device("stardew"), format!("{LEGACY}:stardew"));
     }
 
     #[test]

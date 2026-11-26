@@ -138,6 +138,37 @@ pub fn index_path(line_dir: &str) -> String {
     join(&[line_dir, INDEX_FILE])
 }
 
+/// Where 0.6 keeps the snapshots of the game `key`: manifest and zip side by
+/// side. A migrated line reads it as one of its folders ([`Line::also`]);
+/// nothing in it is ever moved.
+pub fn legacy_dir(key: &str) -> String {
+    join(&["games", key, "snapshots"])
+}
+
+/// The game key when `line_dir` is a folder of the 0.6 layout
+/// (`games/<key>/snapshots`).
+pub fn legacy_key(line_dir: &str) -> Option<&str> {
+    let mut parts = line_dir.split('/');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("games"), Some(key), Some("snapshots"), None) if !key.is_empty() => Some(key),
+        _ => None,
+    }
+}
+
+/// Where the versions the user deleted from `line_dir` are recorded
+/// (`<id>.json` each). For a folder of the 0.6 layout that is where 0.6 has
+/// its own (`games/<key>/trash`), so a device still on 0.6 sees them too.
+pub fn trash_dir(line_dir: &str) -> String {
+    match legacy_key(line_dir) {
+        Some(key) => join(&["games", key, "trash"]),
+        None => join(&[line_dir, "trash"]),
+    }
+}
+
+pub fn trash_path(line_dir: &str, id: &str) -> String {
+    join(&[&trash_dir(line_dir), &format!("{id}.json")])
+}
+
 /// Snapshot ids are ULIDs. Anything else in a line's folder isn't a manifest
 /// (a file kind added by a later version) and is left alone.
 pub fn is_snapshot_id(s: &str) -> bool {
@@ -312,6 +343,10 @@ pub struct Origin {
     pub extra: Extra,
 }
 
+/// Fields of a 0.6 snapshot that v2 has no field for (they are in `extra`).
+const LOCKED: &str = "locked";
+const COMMENT: &str = "comment";
+
 fn side_trigger(trigger: &str) -> bool {
     matches!(trigger, "pre-restore" | "conflict-keep")
 }
@@ -335,12 +370,17 @@ impl Manifest {
 
     /// The manifest without its file list, as kept in a line's index.
     pub fn summary(&self) -> IndexEntry {
-        // The one field of a 0.6 snapshot that has to follow it into the
-        // index: a locked snapshot has no pin until the migration writes
-        // one, and retention must not take it for an automatic snapshot.
+        // What a 0.6 snapshot says in its own file and has to follow it
+        // into the index. The lock: a locked snapshot has no pin until the
+        // migration writes one, and retention must not take it for an
+        // automatic snapshot. The note: v2 has names for kept saves only, and
+        // a note on any other old version would no longer be shown.
         let mut extra = Extra::new();
-        if self.extra.get("locked").and_then(|v| v.as_bool()) == Some(true) {
-            extra.insert("locked".to_string(), true.into());
+        if self.extra.get(LOCKED).and_then(|v| v.as_bool()) == Some(true) {
+            extra.insert(LOCKED.to_string(), true.into());
+        }
+        if let Some(note) = self.extra.get(COMMENT).and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()) {
+            extra.insert(COMMENT.to_string(), note.into());
         }
         IndexEntry {
             id: self.id.clone(),
@@ -466,6 +506,17 @@ impl IndexEntry {
     pub fn unsupported(&self) -> Vec<String> {
         unknown(&self.requires)
     }
+
+    /// Locked on a device running 0.6. Once the migration has run, the pin
+    /// it wrote says "kept", not this.
+    pub fn was_locked(&self) -> bool {
+        self.extra.get(LOCKED).and_then(|v| v.as_bool()) == Some(true)
+    }
+
+    /// The note 0.6 kept in the snapshot's own file.
+    pub fn old_note(&self) -> Option<&str> {
+        self.extra.get(COMMENT).and_then(|v| v.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -507,6 +558,10 @@ mod tests {
         assert_eq!(m.extra["comment"], "before the festival");
         assert_eq!(m.extra["locked"], true);
         assert!(m.extra.contains_key("roots"));
+
+        let s = m.summary();
+        assert!(s.was_locked());
+        assert_eq!(s.old_note(), Some("before the festival"));
 
         let mut side = v1_meta();
         side["trigger"] = json!("pre-restore");
@@ -607,6 +662,13 @@ mod tests {
         assert_eq!(manifest_path(&dir, "01JF"), "games/stardew-7k3f/saves/main/01JF.json");
         assert_eq!(pin_path(&dir, "01JF"), "games/stardew-7k3f/saves/main/01JF.pin.json");
         assert_eq!(index_path(&dir), "games/stardew-7k3f/saves/main/index.json");
+        let old = legacy_dir("stardew");
+        assert_eq!(old, "games/stardew/snapshots");
+        assert_eq!(legacy_key(&old), Some("stardew"));
+        assert_eq!(legacy_key(&dir), None);
+        assert_eq!(legacy_key("games/stardew/saves/snapshots"), None);
+        assert_eq!(trash_path(&old, "01JF"), "games/stardew/trash/01JF.json");
+        assert_eq!(trash_path(&dir, "01JF"), "games/stardew-7k3f/saves/main/trash/01JF.json");
         assert!(is_snapshot_id("01JD8X3K2M0000000000000001"));
         assert!(!is_snapshot_id("index"));
         assert!(!is_snapshot_id("01JD8X3K2M0000000000000001.pin"));

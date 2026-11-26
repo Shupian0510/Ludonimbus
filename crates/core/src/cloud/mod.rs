@@ -20,6 +20,7 @@
 //! seen as a path-based [`store::Store`], so it works on every backend.
 
 pub mod baidu;
+pub mod cached;
 pub mod decide;
 pub mod gdrive;
 pub mod library;
@@ -33,8 +34,10 @@ pub mod quark;
 pub mod repo;
 pub mod retention;
 pub mod s3;
+pub mod saves;
 pub mod secrets;
 pub mod store;
+pub mod upgrade;
 pub mod v2;
 pub mod webdav;
 

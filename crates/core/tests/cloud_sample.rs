@@ -76,7 +76,7 @@ fn the_newest_version_is_the_one_0_6_showed() {
     assert_eq!(head.id, snapshots.last().unwrap()["id"].as_str().unwrap());
     let mainline = snapshots.iter().filter(|s| !matches!(s["trigger"].as_str().unwrap(), "conflict-keep" | "pre-restore")).count();
     assert_eq!(mainline, 9);
-    assert_eq!(head.vv, line::legacy_vv(head.created_at));
+    assert_eq!(head.vv, line::legacy_vv(&old_folder("test-game"), head.created_at));
     assert!(view.snapshots.iter().filter(|s| s.is_side()).all(|s| s.vv.is_empty()));
 }
 

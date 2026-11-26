@@ -95,16 +95,22 @@ impl LineView {
     }
 }
 
-/// The vector a snapshot of the 0.6 layout counts as having (it has none in
-/// the cloud): `{legacy: <when it was made, in milliseconds>}`.
+/// The vector a snapshot of the 0.6 layout in the folder `dir` counts as
+/// having (it has none in the cloud):
+/// `{legacy:<game key>: <when it was made, in milliseconds>}`.
 ///
-/// That is the order 0.6 itself goes by, so the newest stays the newest.
-/// And it is a number that never changes: a place in the list would move
-/// when 0.6 cleans up an older snapshot, and what a device still on 0.6
-/// uploads afterwards could then get a number a newer version already
-/// "contains" without ever having seen it.
-pub fn legacy_vv(created_at: DateTime<Utc>) -> Vv {
-    Vv::legacy(u64::try_from(created_at.timestamp_millis()).unwrap_or(0).max(1))
+/// That is the order 0.6 itself goes by, so the newest of a folder stays
+/// the newest. And it is a number that never changes: a place in the list
+/// would move when 0.6 cleans up an older snapshot, and what a device still
+/// on 0.6 uploads afterwards could then get a number a newer version
+/// already "contains" without ever having seen it.
+///
+/// Each folder counts for itself ([`vv::legacy_device`]): the snapshots of
+/// two folders of 0.6 were never one history, so in a line that reads both
+/// neither folder's newest contains the other's.
+pub fn legacy_vv(dir: &str, created_at: DateTime<Utc>) -> Vv {
+    let folder = v2::legacy_key(dir).unwrap_or(dir);
+    Vv::legacy(folder, u64::try_from(created_at.timestamp_millis()).unwrap_or(0).max(1))
 }
 
 /// Read the line in `dir`, using and updating `cache`.
@@ -239,7 +245,8 @@ pub fn load_all(store: &dyn Store, dirs: &[&str], cache: &mut LineCache) -> Resu
     snapshots.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
     for s in snapshots.iter_mut() {
         if s.vv.is_empty() && !s.is_side() {
-            s.vv = legacy_vv(s.created_at);
+            let place = ids.get(&s.id).copied().unwrap_or(0);
+            s.vv = legacy_vv(dirs[place], s.created_at);
         }
     }
     let heads = {

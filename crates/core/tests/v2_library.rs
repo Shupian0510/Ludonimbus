@@ -530,3 +530,46 @@ fn a_duplicate_found_while_the_other_record_changes_is_finished_later() {
     assert_eq!(cards[0].lines[0].also, [new.lines[0].path.clone()]);
     assert_eq!(library::resolve(&library.records, &new.id).unwrap().id, old.id);
 }
+
+/// One card, but the caller isn't sure the two versions save the same files:
+/// their histories stay apart.
+#[test]
+fn two_records_of_one_game_can_keep_their_lines_apart() {
+    let store = Memory::new();
+    let steam = create_as(&store, "hades", "Hades", &["ludusavi:hades"], "pc", "d-a", 0);
+    let xbox = create_as(&store, "hades-2", "Hades", &["ludusavi:hades", "xbox:supergiant.hades"], "pc", "d-b", 5);
+    let mut cache = LibraryCache::default();
+    let (library, _) = refresh(&store, &mut cache);
+
+    let never = |_: &Line, _: &Line| false;
+    let duplicate = library::dedupe_with(&library.records, &never).remove(0);
+    assert_eq!(duplicate.survivor.id, steam.id);
+    assert_eq!(duplicate.losers[0].merged_into.as_deref(), Some("hades"));
+    let lines = &duplicate.survivor.lines;
+    assert_eq!(lines.len(), 2);
+    assert_eq!((lines[0].id.as_str(), lines[0].path.as_str()), ("main", steam.lines[0].path.as_str()));
+    assert!(lines[0].also.is_empty());
+    // The other line keeps its folder and gets an id that says where it is
+    // from.
+    assert_eq!((lines[1].id.as_str(), lines[1].path.as_str()), ("main-hades-2", xbox.lines[0].path.as_str()));
+    assert_eq!(duplicate.survivor.folders, strings(&["hades", "hades-2"]));
+
+    // An install that was on the other record finds its line again.
+    save(&store, &duplicate.survivor, "d-a", 10);
+    save(&store, &duplicate.losers[0], "d-a", 11);
+    let (library, _) = refresh(&store, &mut cache);
+    let (record, line) = library::resolve_line(&library.records, "hades-2", "main").unwrap();
+    assert_eq!((record.id.as_str(), line.id.as_str()), ("hades", "main-hades-2"));
+    // Nothing left to do, whoever looks and whatever they would answer.
+    assert!(library::dedupe(&library.records).is_empty());
+
+    // Asked the other way, it is one history that reads both folders.
+    let store = Memory::new();
+    let steam = create_as(&store, "hades", "Hades", &["ludusavi:hades"], "pc", "d-a", 0);
+    let xbox = create_as(&store, "hades-2", "Hades", &["ludusavi:hades"], "pc", "d-b", 5);
+    let (library, _) = refresh(&store, &mut LibraryCache::default());
+    let joined = library::dedupe(&library.records).remove(0).survivor;
+    assert_eq!(joined.lines.len(), 1);
+    assert_eq!(joined.lines[0].path, steam.lines[0].path);
+    assert_eq!(joined.lines[0].also, [xbox.lines[0].path.clone()]);
+}
