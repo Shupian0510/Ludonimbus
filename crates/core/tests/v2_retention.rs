@@ -129,8 +129,8 @@ impl Line {
         });
         self.store.put(&v2::manifest_path(self.legacy_dir, &id(n)), &serde_json::to_vec(&meta).unwrap());
         if !on_the_side(trigger) {
-            // The vector `line::load` gives it.
-            self.legacy += 1;
+            // The vector `line::load` gives the newest of them.
+            self.legacy = self.legacy.max(line::legacy_vv(at).get(ludonimbus_core::vv::LEGACY));
             self.last = Vv::legacy(self.legacy);
         }
         id(n)
@@ -611,7 +611,7 @@ fn a_line_from_0_6_keeps_what_0_6_keeps() {
     // No vector in the cloud: the order they were made in stands for it.
     let head = view.head().unwrap().clone();
     assert_eq!(head.id, ids[0]);
-    assert_eq!(head.vv, Vv::legacy(87));
+    assert_eq!(head.vv, line::legacy_vv(head.created_at));
     // The lock is in the snapshot's own file and has to reach the plan.
     assert!(is_locked(view.get(&ids[80]).unwrap()));
     assert!(!is_locked(view.get(&ids[79]).unwrap()));

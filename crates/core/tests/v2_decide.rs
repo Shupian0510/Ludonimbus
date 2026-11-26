@@ -729,13 +729,16 @@ fn a_restored_older_version_reaches_the_other_device() {
 #[test]
 fn a_line_from_0_6_carries_on() {
     let cloud = Cloud::new();
-    cloud.upload_legacy("d-a", "v1", "auto-exit");
+    let first = cloud.upload_legacy("d-a", "v1", "auto-exit");
     // The losing side of a conflict, as 0.6 marks it.
     cloud.upload_legacy("d-b", "lost", "conflict-keep");
     cloud.upload_legacy("d-a", "v2", "auto-exit");
     let newest = cloud.upload_legacy("d-a", "v3", "auto-exit").id;
     let view = cloud.view();
-    assert_eq!(view.head().unwrap().vv, Vv::legacy(3));
+    // No vector in the cloud: the time it was made stands for it.
+    let old = view.head().unwrap().vv.clone();
+    assert_eq!(old, line::legacy_vv(view.head().unwrap().created_at));
+    let old_count = old.get(ludonimbus_core::vv::LEGACY);
 
     // Upgraded devices know the id and the hash of what they synced last,
     // and no vector.
@@ -754,15 +757,15 @@ fn a_line_from_0_6_carries_on() {
     // A new device that happens to have the newest saves.
     assert_eq!(Device::with(&cloud, "d-d", "v3", None).decide(), adopt(&newest));
 
-    // A number remembered from an earlier view, when the line had more
-    // snapshots, is not compared with the numbers of this one: the snapshot
-    // is still there and the view says where it stands.
-    let stale = Base { id: id(1), vv: Vv::legacy(9), content_hash: "v1".into() };
+    // While the snapshot is still there, the view says where it stands,
+    // whatever the device remembers.
+    let stale = Base { id: id(1), vv: Vv::legacy(u64::MAX), content_hash: "v1".into() };
     assert_eq!(Device::with(&cloud, "d-g", "v1", Some(stale)).decide(), pull(&newest));
 
     // What a device synced last was cleaned up by 0.6: the cloud moved on,
-    // as 0.6 would say, whatever number the device remembers.
-    for remembered in [Vv::new(), Vv::legacy(9)] {
+    // as 0.6 would say. An upgraded device remembers no vector; one that
+    // has read the line since remembers the snapshot's own.
+    for remembered in [Vv::new(), line::legacy_vv(first.created_at)] {
         let base = Base { id: id(90), vv: remembered, content_hash: "v0".into() };
         let mut gone = Device::with(&cloud, "d-e", "v0", Some(base));
         assert_eq!(gone.decide(), pull(&newest));
@@ -772,10 +775,10 @@ fn a_line_from_0_6_carries_on() {
 
     // The first snapshot of the new kind is built on the newest old one.
     a.play("v4");
-    assert_eq!(a.decide(), Action::Push { bases: vec![Vv::legacy(3)], parent: Some(newest.clone()) });
+    assert_eq!(a.decide(), Action::Push { bases: vec![old.clone()], parent: Some(newest.clone()) });
     a.sync();
     let head = cloud.view().head().unwrap().clone();
-    assert_eq!(head.vv, vv(&[("d-a", 1), ("legacy", 3)]));
+    assert_eq!(head.vv, vv(&[("d-a", 1), ("legacy", old_count)]));
     assert_eq!(b.sync(), pull(&head.id));
     assert_eq!(b.saves(), "v4");
     assert_eq!((a.decide(), b.decide()), (Action::Nothing, Action::Nothing));
@@ -784,13 +787,16 @@ fn a_line_from_0_6_carries_on() {
     b.play("v5");
     assert_eq!(b.decide(), Action::Push { bases: vec![head.vv.clone()], parent: Some(head.id.clone()) });
     b.sync();
-    assert_eq!(cloud.view().head().unwrap().vv, vv(&[("d-a", 1), ("d-b", 1), ("legacy", 3)]));
+    assert_eq!(cloud.view().head().unwrap().vv, vv(&[("d-a", 1), ("d-b", 1), ("legacy", old_count)]));
     assert_eq!(a.sync(), pull(&b.base_id()));
 
     // A device still on 0.6 uploads without seeing any of this: a fork, and
-    // the user is asked (section 12.3).
-    let old = cloud.upload_legacy("d-f", "f1", "auto-exit").id;
-    assert_eq!(a.decide(), conflict(&[&b.base_id(), &old], false));
+    // the user is asked (section 12.3). Also when it cleaned up an older
+    // snapshot first: what stands for an old snapshot's vector doesn't
+    // depend on how many others are left.
+    cloud.remove(&first.id);
+    let late = cloud.upload_legacy("d-f", "f1", "auto-exit").id;
+    assert_eq!(a.decide(), conflict(&[&b.base_id(), &late], false));
 }
 
 /// Two devices end up with the same saves and both upload them offline: the

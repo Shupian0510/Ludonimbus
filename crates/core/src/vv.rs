@@ -33,7 +33,8 @@ impl Vv {
         Vv::default()
     }
 
-    /// The vector given to the `n`th (1-based) snapshot of a 0.6 folder.
+    /// The vector of a snapshot of the 0.6 layout: `n` is when it was made
+    /// (`cloud::line::legacy_vv`), so a later one contains an earlier one.
     pub fn legacy(n: u64) -> Self {
         let mut v = Vv::default();
         if n > 0 {
