@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, HandheldInfo, HandheldMode } from "../api";
 import { msg, useT } from "../i18n";
 import { withSteamClosed } from "./steamAction";
-import { Badge, Button, Icon, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, useUi } from "./ui";
 
 export function HandheldPanel({ onHandheld }: { onHandheld?: () => void }) {
   const t = useT();
@@ -48,9 +48,9 @@ export function HandheldPanel({ onHandheld }: { onHandheld?: () => void }) {
       <div className="panel-head">
         <Icon name="devices" />
         <h3>{h.panelTitle}</h3>
+        <Hint text={info?.device ? h.detected(info.device) : h.panelText} />
         {info?.device && <Badge tone="info">{info.device}</Badge>}
       </div>
-      <p className="muted small">{info?.device ? h.detected(info.device) : h.panelText}</p>
       <label>
         <span>{h.promptsTitle}</span>
         <select className="input select" value={info?.mode ?? "auto"} onChange={(e) => setMode(e.target.value as HandheldMode)}>
@@ -62,7 +62,9 @@ export function HandheldPanel({ onHandheld }: { onHandheld?: () => void }) {
         </select>
       </label>
       <label>
-        <span>{h.steamTitle}</span>
+        <span>
+          {h.steamTitle} <Hint text={h.xboxHow} />
+        </span>
         <div className="row">
           {info?.inSteam ? <Badge tone="ok">{h.steamIn}</Badge> : <Badge tone="muted">{h.steamNot}</Badge>}
           <Button small icon="steam" onClick={addToSteam}>
@@ -70,7 +72,6 @@ export function HandheldPanel({ onHandheld }: { onHandheld?: () => void }) {
           </Button>
         </div>
       </label>
-      <p className="muted small">{h.xboxHow}</p>
       {onHandheld && (
         <div className="row">
           <Button small kind="primary" icon="play" onClick={onHandheld}>

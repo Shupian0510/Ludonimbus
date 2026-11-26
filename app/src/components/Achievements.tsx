@@ -7,7 +7,7 @@ import { api, errorText, inTauri } from "../api";
 import { AchievementItem, achievementsApi, AchievementSettings, AchievementsView, Candidate, RaGame, ToastPayload } from "../achievementsApi";
 import { relTime } from "../format";
 import { msg, useT } from "../i18n";
-import { Badge, Button, Icon, Spinner, Toggle, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Spinner, Toggle, useUi } from "./ui";
 
 const RA_KEYS_URL = "https://retroachievements.org/settings";
 
@@ -384,8 +384,8 @@ export function AchievementSettingsPanel() {
       <div className="panel-head">
         <Icon name="star" />
         <h3>{a.settingsTitle}</h3>
+        <Hint text={a.settingsHint} />
       </div>
-      <p className="muted small">{a.settingsHint}</p>
       <label className="ach-toggle">
         <Toggle checked={s.steamPopup} onChange={(v) => save({ steamPopup: v })} />
         <span>{a.steamPopupDefault}</span>
@@ -393,8 +393,7 @@ export function AchievementSettingsPanel() {
       <label className="ach-toggle">
         <Toggle checked={s.fallbackPopup} onChange={(v) => save({ fallbackPopup: v })} />
         <span>
-          {a.fallback}
-          <span className="muted small"> {a.fallbackHint}</span>
+          {a.fallback} <Hint text={a.fallbackHint} />
         </span>
       </label>
       <div className="row">
@@ -406,11 +405,12 @@ export function AchievementSettingsPanel() {
         </Button>
       </div>
 
-      <h4>{a.ps4Key}</h4>
+      <h4>
+        {a.ps4Key} <Hint text={a.ps4KeyHint} />
+      </h4>
       <p className="muted small">
         {s.ps4KeySource === "shadps4" ? a.ps4KeyFromShadps4 : s.ps4KeySource === "settings" ? a.ps4KeySet : a.ps4KeyNone}
       </p>
-      <p className="muted small">{a.ps4KeyHint}</p>
       {s.ps4KeySource !== "shadps4" && (
         <>
           <label>
@@ -430,7 +430,9 @@ export function AchievementSettingsPanel() {
         </>
       )}
 
-      <h4>{a.raAccount}</h4>
+      <h4>
+        {a.raAccount} {!(s.raConnected && s.raUser) && <Hint text={a.raKeyHelp} />}
+      </h4>
       {s.raConnected && s.raUser ? (
         <div className="row">
           <Badge tone="ok">{a.raConnected(s.raUser)}</Badge>
@@ -440,7 +442,6 @@ export function AchievementSettingsPanel() {
         </div>
       ) : (
         <>
-          <p className="muted small">{a.raKeyHelp}</p>
           <div className="row">
             <Button small kind="ghost" icon="locate" onClick={() => open(RA_KEYS_URL)}>
               {a.raOpenKeys}

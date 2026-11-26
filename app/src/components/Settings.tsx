@@ -156,26 +156,23 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
         <MigrateBanner settings={s} done={done} />
 
         {s.cloud.kind !== "none" && (
-          <div className="cloud-current">
-            <div>
+          <>
+            <div className="cloud-current">
               <b>{t.cloudNames[s.cloud.kind]}</b>
-              <div className="muted small">
+              <span className="muted small">
                 {account ? account.label : currentLabel(s)}
                 {account?.used != null && account.total != null && ` · ${st.used(bytes(account.used), bytes(account.total))}`}
-              </div>
-              {accountError && <div className="health health-warn">{accountError}</div>}
-              {s.cloud.kind === "googleDrive" && <div className="muted small">{st.googleWhere(s.cloud.folder)}</div>}
-              {s.cloud.kind === "baiduPan" && (
-                <>
-                  <div className="muted small">{st.baiduWhere(s.cloud.appName || s.baiduAppName)}</div>
-                  <BaiduRevokeHelp folder={s.cloud.appName || s.baiduAppName} />
-                </>
-              )}
+              </span>
+              {s.cloud.kind === "googleDrive" && <Hint text={st.googleWhere(s.cloud.folder)} />}
+              {s.cloud.kind === "baiduPan" && <Hint text={st.baiduWhere(s.cloud.appName || s.baiduAppName)} />}
+              <span className="grow" />
+              <Button small kind="danger" onClick={disconnect}>
+                {st.disconnect}
+              </Button>
             </div>
-            <Button kind="danger" onClick={disconnect}>
-              {st.disconnect}
-            </Button>
-          </div>
+            {accountError && <div className="health health-warn">{accountError}</div>}
+            {s.cloud.kind === "baiduPan" && <BaiduRevokeHelp folder={s.cloud.appName || s.baiduAppName} />}
+          </>
         )}
 
         <CloudOptions settings={s} done={done} />
@@ -195,7 +192,9 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
           <input className="input" value={deviceName} onChange={(e) => setDeviceName(e.target.value)} />
         </label>
         <label>
-          <span>{st.keepRecent}</span>
+          <span>
+            {st.keepRecent} <Hint text={st.keepHint} />
+          </span>
           <div className="row">
             <input className="input num" type="number" min={1} max={500} value={keepRecent} onChange={(e) => setKeepRecent(Number(e.target.value))} />
             <span className="muted small">{st.keepMid}</span>
@@ -204,10 +203,12 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
           </div>
         </label>
         <label>
-          <span>{st.timeout}</span>
+          <span>
+            {st.timeout} <Hint text={st.timeoutHint} />
+          </span>
           <div className="row">
             <input className="input num" type="number" min={3} max={120} value={timeout} onChange={(e) => setTimeoutSecs(Number(e.target.value))} />
-            <span className="muted small">{st.timeoutHint}</span>
+            <span className="muted small">{st.seconds}</span>
           </div>
         </label>
         <label>
@@ -273,24 +274,23 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
           </label>
         )}
         <label>
-          <span>{t.screenshots.mode}</span>
-          <div>
-            <select
-              className="input select"
-              value={s.screenshots}
-              onChange={async (e) => {
-                await api.saveSettings({ screenshots: e.target.value as ScreenshotMode });
-                await done(msg().settings.saved);
-              }}
-            >
-              {(["off", "upload", "sync"] as const).map((m) => (
-                <option key={m} value={m}>
-                  {t.screenshots.modes[m]}
-                </option>
-              ))}
-            </select>
-            <div className="muted small">{st.screenshotsHint}</div>
-          </div>
+          <span>
+            {t.screenshots.mode} <Hint text={st.screenshotsHint} />
+          </span>
+          <select
+            className="input select"
+            value={s.screenshots}
+            onChange={async (e) => {
+              await api.saveSettings({ screenshots: e.target.value as ScreenshotMode });
+              await done(msg().settings.saved);
+            }}
+          >
+            {(["off", "upload", "sync"] as const).map((m) => (
+              <option key={m} value={m}>
+                {t.screenshots.modes[m]}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           <span>{st.runner}</span>
@@ -451,11 +451,11 @@ function SgdbPanel() {
       <div className="panel-head">
         <Icon name="library" />
         <h3>{st.sgdbTitle}</h3>
+        <Hint text={st.sgdbOn} />
         {status.hasKey && <Badge tone="ok">{st.sgdbSet}</Badge>}
       </div>
       {status.hasKey ? (
-        <div className="row space">
-          <p className="muted small">{st.sgdbOn}</p>
+        <div className="row">
           <Button
             small
             kind="ghost"
