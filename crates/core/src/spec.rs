@@ -137,7 +137,7 @@ pub fn steam_user_dir(game: &GameEntry) -> Option<PathBuf> {
 /// Steam's folder on this device, as the configuration says. Roots are
 /// resolved for every scan, so it is read again only when the configuration
 /// file changed (or another one is used: tests switch data folders).
-fn steam_root() -> Option<PathBuf> {
+pub(crate) fn steam_root() -> Option<PathBuf> {
     type Seen = (PathBuf, Option<(std::time::SystemTime, u64)>, Option<PathBuf>);
     static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
     let file = crate::paths::config_file();

@@ -143,6 +143,9 @@ export const savelib = {
   autoSync: "自动同步",
   autoOn: "已开启自动同步",
   autoOff: "已改为手动同步",
+  backupOnly: "只备份",
+  backupOn: "已改为只备份",
+  manualSync: "手动",
   editSaves: "改存档位置…",
   leaveJoin: "和其他版本分开存",
   left: "已分开",
@@ -343,9 +346,47 @@ export const platformFolders = {
   xbox: "Xbox 游戏请选游戏文件夹 Content 里的 gamelaunchhelper.exe（游戏自己的程序受保护，选不了）。",
 };
 
+export const steamCloud = {
+  title: "Steam 云存档",
+  hint: "Steam 管：Ludonimbus 不动这个游戏。\n只备份：Steam 云照常同步，Ludonimbus 在游戏退出后保存一份版本，不会自己改游戏的存档。\nLudonimbus 管：这个游戏的 Steam 云关着，由 Ludonimbus 同步，可以和其他平台、其他设备共用存档。",
+  state: { steam: "Steam 管", backup: "只备份", managed: "Ludonimbus 管" },
+  textSteam: "Ludonimbus 不动这个游戏的存档。",
+  textBackup: "Steam 云照常同步，Ludonimbus 只保存版本。",
+  textManaged: "从 Steam 启动前拉取，退出后上传。",
+  textBackground: "在后台同步，没有改 Steam 的启动选项。",
+  textNoCloud: "Steam 云不管这个游戏，由 Ludonimbus 同步。",
+  wrapper: {
+    missing: "Steam 里的启动选项被清掉了，启动前不再同步。",
+    changed: "Steam 里的启动选项被改过，启动前不再同步。",
+    runnerMoved: "Ludonimbus 换了位置，Steam 里的启动选项还指着原来的地方。",
+  },
+  backup: "只备份",
+  backupOn: "已改为只备份",
+  takeOver: "接管…",
+  takeOverTitle: (name: string) => `由 Ludonimbus 同步「${name}」`,
+  takeOverDo: "接管",
+  taken: "已接管：从 Steam 启动时自动同步",
+  takenBackground: "已接管：在后台同步",
+  stepSynced: "Steam 已经和它的云同步完",
+  stepSyncedTodo: "等 Steam 和它的云同步完",
+  stepSyncedHint: "没同步完时，这台设备上可能还不是最新的存档。打开 Steam 等它同步完，必要时启动一次游戏再退出。",
+  stepOff: "这个游戏的 Steam 云存档已关掉",
+  stepOffTodo: "在 Steam 里关掉这个游戏的云存档",
+  stepOffHint: "在 Steam 里：属性 → 通用 → 关掉「在 Steam 云中保留游戏存档」。在 Steam 的设置 → 云里对所有游戏关掉也算。Ludonimbus 不会替你改这个开关。Steam 可能过一会儿、或者退出时才记下这个改动。",
+  openProperties: "打开属性",
+  noWrapper: "不改 Steam 的启动选项",
+  noWrapperHint: "带反作弊或自带启动器的游戏，通过 Ludonimbus 启动不了时勾上：改成在后台同步，启动前不保证已经是最新的。",
+  handBack: "交还给 Steam",
+  handedBack: "已交还。请在 Steam 里重新打开云存档；Steam 问保留哪一份时选本机的。",
+  repair: "修复",
+  repaired: "启动选项已修复",
+  beforeLaunch: "启动前同步",
+  restoreNote: "Steam 云也在同步这个游戏：它下次同步时可能问保留哪一份，选本机的。",
+};
+
 export const steamAction = {
   title: "需要暂时关闭 Steam",
-  text: "Steam 运行时会覆盖对快捷方式的修改。Ludonimbus 会先关闭 Steam，改好后再自动重新打开。",
+  text: "Steam 运行时会覆盖 Ludonimbus 对它的修改。Ludonimbus 会先关闭 Steam，改好后再自动重新打开。",
   confirm: "关闭 Steam 并继续",
 };
 

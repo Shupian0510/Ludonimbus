@@ -29,10 +29,14 @@ pub fn file(name: &str) -> Option<PathBuf> {
 }
 
 /// The logo of what `game` runs on: its emulator or recompilation (the
-/// program itself, not RecompLauncher when it can be found), or the Xbox app
-/// for Xbox games. `None` for PC games and games added by hand.
+/// program itself, not RecompLauncher when it can be found), the Xbox app
+/// for Xbox games, or Steam for the games it installed. `None` for other PC
+/// games and games added by hand.
 pub fn for_game(game: &GameEntry, adapter: Option<&Adapter>) -> Option<PathBuf> {
     let exe = game.exe.as_deref();
+    if adapter.is_none() && game.store.is_some() {
+        return spec::steam_root().and_then(|r| of_exe(&r.join("steam.exe")));
+    }
     if adapter.is_none() {
         let is_xbox = exe.is_some_and(|e| xbox::is_launch_helper(e) || xbox::content_dir(e).is_some());
         return if is_xbox { xbox_app().and_then(|e| of_exe(&e)) } else { None };

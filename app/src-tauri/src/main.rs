@@ -185,6 +185,7 @@ fn main() {
             commands::steam_cloud_status,
             commands::steam_cloud_take_over,
             commands::steam_cloud_hand_back,
+            commands::steam_cloud_open_properties,
             commands::steam_cloud_backup_all,
             commands::steam_cloud_take_over_all,
             commands::get_settings,
