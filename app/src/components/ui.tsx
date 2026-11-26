@@ -422,19 +422,21 @@ export function PathField({
           {badge}
         </div>
       )}
-      <div className="row">
-        {onScan && (
-          <Button small icon="search" onClick={onScan}>
-            {scanText ?? p.scan}
-          </Button>
-        )}
-        {onPick && (
-          <Button small icon="folder" onClick={onPick}>
-            {pickText ?? (path ? p.repick : p.pick)}
-          </Button>
-        )}
-        {children}
-      </div>
+      {(onScan || onPick || children) && (
+        <div className="row">
+          {onScan && (
+            <Button small icon="search" onClick={onScan}>
+              {scanText ?? p.scan}
+            </Button>
+          )}
+          {onPick && (
+            <Button small icon="folder" onClick={onPick}>
+              {pickText ?? (path ? p.repick : p.pick)}
+            </Button>
+          )}
+          {children}
+        </div>
+      )}
       {choices && choices.length > 0 && (
         <div className="path-choices">
           <span className="muted small">{choicesText ?? p.found}</span>

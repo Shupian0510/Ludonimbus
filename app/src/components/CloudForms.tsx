@@ -5,7 +5,7 @@ import { bytes } from "../format";
 import { Messages, msg, useI18n, useT } from "../i18n";
 import { BAIDU_AUTHORIZATIONS_URL, docsUrl } from "../links";
 import { scene, sceneIs } from "../scene";
-import { Button, PathChoice, PathField, Toggle, useUi } from "./ui";
+import { Button, Hint, Menu, PathChoice, PathField, Toggle, useUi } from "./ui";
 
 type Preset<T> = { label: string; apply: (c: T) => T; hint: string };
 
@@ -146,15 +146,15 @@ export function WebDavOption({
     <div className="cloud-option" id={preset ? undefined : "cloud-webdav"}>
       <div className="cloud-option-head">
         <b>{start ? `${start.label} (WebDAV)` : "WebDAV"}</b>
-        <span className="muted small">{start ? start.hint : c.webdavIntro}</span>
-      </div>
-      {!open ? (
-        <div className="row">
-          <Button icon="cloud" onClick={() => setOpen(true)}>
-            {c.webdavOpen}
+        <Hint text={start ? start.hint : c.webdavIntro} />
+        <span className="grow" />
+        {!open && (
+          <Button small icon="cloud" onClick={() => setOpen(true)}>
+            {c.fill}
           </Button>
-        </div>
-      ) : (
+        )}
+      </div>
+      {open && (
         <>
           <PresetRow
             presets={webdavPresets(t)}
@@ -174,7 +174,9 @@ export function WebDavOption({
               <input className="input" value={cfg.username} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} autoComplete="off" />
             </label>
             <label>
-              <span>{c.password}</span>
+              <span>
+                {c.password} <Hint text={c.webdavNote} />
+              </span>
               <input
                 className="input"
                 type="password"
@@ -189,7 +191,6 @@ export function WebDavOption({
               <input className="input mono" value={cfg.folder} onChange={(e) => setCfg({ ...cfg, folder: e.target.value })} placeholder="Ludonimbus" />
             </label>
           </div>
-          <p className="muted small">{c.webdavNote}</p>
           <Result result={result} />
           <div className="row">
             <Button kind="primary" icon="cloud" onClick={() => connect(cfg, password, "WebDAV")} disabled={!ready || busy !== null || (current != null && isSame(current, cfg) && password === "")}>
@@ -227,15 +228,15 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
     <div className="cloud-option">
       <div className="cloud-option-head">
         <b id="cloud-s3">{t.cloudNames.s3}</b>
-        <span className="muted small">{c.s3Intro}</span>
-      </div>
-      {!open ? (
-        <div className="row">
-          <Button icon="cloud" onClick={() => setOpen(true)}>
-            {c.s3Open}
+        <Hint text={c.s3Intro} />
+        <span className="grow" />
+        {!open && (
+          <Button small icon="cloud" onClick={() => setOpen(true)}>
+            {c.fill}
           </Button>
-        </div>
-      ) : (
+        )}
+      </div>
+      {open && (
         <>
           <PresetRow
             presets={s3Presets(t)}
@@ -267,7 +268,9 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
               <input className="input mono" value={cfg.accessKeyId} onChange={(e) => setCfg({ ...cfg, accessKeyId: e.target.value })} autoComplete="off" />
             </label>
             <label>
-              <span>Secret Key</span>
+              <span>
+                Secret Key <Hint text={c.s3Note} />
+              </span>
               <input
                 className="input mono"
                 type="password"
@@ -278,14 +281,14 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
               />
             </label>
             <label>
-              <span>{c.pathStyle}</span>
+              <span>
+                {c.pathStyle} <Hint text={c.pathStyleHint} />
+              </span>
               <div className="row">
                 <Toggle checked={cfg.pathStyle} onChange={(v) => setCfg({ ...cfg, pathStyle: v })} />
-                <span className="muted small">{c.pathStyleHint}</span>
               </div>
             </label>
           </div>
-          <p className="muted small">{c.s3Note}</p>
           <Result result={result} />
           <div className="row">
             <Button kind="primary" icon="cloud" onClick={() => connect(cfg, secret, t.app.cloud.s3)} disabled={!ready || busy !== null || (current != null && isSame(current, cfg) && secret === "")}>
@@ -330,7 +333,10 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
   const t = useT();
   const b = t.cloud.baidu;
   const current = settings.cloud.kind === "baiduPan" ? settings.cloud : null;
+  const c = t.cloud;
   const needApp = !settings.baiduBuiltin;
+  // Without a built-in app, its fields show once asked for.
+  const [open, setOpen] = useState(!!current?.appKey);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [appKey, setAppKey] = useState(current?.appKey ?? "");
   const [secretKey, setSecretKey] = useState(current?.secretKey ?? "");
@@ -373,28 +379,41 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
     <div className="cloud-option">
       <div className="cloud-option-head">
         <b>{t.cloudNames.baiduPan}</b>
-        <span className="muted small">{b.intro(folder)}</span>
-        {/* When connected, Settings shows it next to the current cloud. */}
-        {!current && <BaiduRevokeHelp folder={folder} />}
+        <Hint text={b.intro(folder)} />
+        <span className="grow" />
+        {/* Distinct keys: the connect button stays "busy" for the whole sign-in,
+            and the cancel button must not inherit that state. */}
+        {waiting ? (
+          <Button key="cancel" small onClick={() => void api.cloudCancelLogin()}>
+            {t.common.cancel}
+          </Button>
+        ) : needApp && !open ? (
+          <Button key="fill" small icon="cloud" onClick={() => setOpen(true)}>
+            {c.fill}
+          </Button>
+        ) : (
+          <Button key="connect" small icon="cloud" onClick={connect} disabled={needApp && (!appKey.trim() || !secretKey.trim())}>
+            {current ? c.reconnect : c.connect}
+          </Button>
+        )}
+        {!needApp && !waiting && <Menu title={t.saves.more} items={[{ label: b.own, checked: showAdvanced, onClick: () => setShowAdvanced((v) => !v) }]} />}
       </div>
-      {(needApp || showAdvanced) && !waiting && (
+      {(needApp ? open : showAdvanced) && !waiting && (
         <div className="form compact">
-          {needApp && (
-            <p className="muted small">{b.dev}</p>
-          )}
           <label>
-            <span>AppKey</span>
+            <span>AppKey {needApp && <Hint text={b.dev} />}</span>
             <input className="input mono" value={appKey} onChange={(e) => setAppKey(e.target.value)} autoComplete="off" />
           </label>
           <label>
-            <span>SecretKey</span>
+            <span>
+              SecretKey <Hint text={b.secretNote} />
+            </span>
             <input className="input mono" type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} autoComplete="new-password" />
           </label>
           <label>
             <span>{b.appName}</span>
             <input className="input" value={appName} onChange={(e) => setAppName(e.target.value)} placeholder={settings.baiduAppName} />
           </label>
-          <p className="muted small">{b.secretNote}</p>
         </div>
       )}
       {waiting && (
@@ -419,24 +438,6 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
         </div>
       )}
       {error && <div className="health health-warn">{error}</div>}
-      <div className="row">
-        {/* Distinct keys: the connect button stays "busy" for the whole sign-in,
-            and the cancel button must not inherit that state. */}
-        {waiting ? (
-          <Button key="cancel" onClick={() => void api.cloudCancelLogin()}>
-            {t.common.cancel}
-          </Button>
-        ) : (
-          <Button key="connect" kind="primary" icon="cloud" onClick={connect} disabled={needApp && (!appKey.trim() || !secretKey.trim())}>
-            {current ? b.reconnect : b.connect}
-          </Button>
-        )}
-        {!needApp && !waiting && (
-          <button className="link small" onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? t.settings.collapse : b.own}
-          </button>
-        )}
-      </div>
     </div>
   );
 }
@@ -489,8 +490,9 @@ export function MigrateBanner({ settings, done }: { settings: Settings; done: (m
   return (
     <div className="migrate-banner">
       <div>
-        <b>{mg.title}</b>
-        <div className="muted small">{mg.text(prev.name)}</div>
+        <span>
+          <b>{mg.title}</b> <Hint text={mg.text(prev.name)} />
+        </span>
         {running && (
           <div className="update-progress">
             <div className="bar">
@@ -503,10 +505,10 @@ export function MigrateBanner({ settings, done }: { settings: Settings; done: (m
         )}
       </div>
       <div className="row">
-        <Button kind="primary" icon="upload" onClick={copy} disabled={running}>
+        <Button small kind="primary" icon="upload" onClick={copy} disabled={running}>
           {running ? mg.copying : mg.copy}
         </Button>
-        <Button kind="ghost" onClick={skip} disabled={running}>
+        <Button small kind="ghost" onClick={skip} disabled={running}>
           {mg.no}
         </Button>
       </div>
@@ -518,6 +520,7 @@ export function GoogleOption({ settings, done }: { settings: Settings; done: (ms
   const ui = useUi();
   const t = useT();
   const st = t.settings;
+  const c = t.cloud;
   const current = settings.cloud.kind === "googleDrive" ? settings.cloud : null;
   const [clientId, setClientId] = useState(current?.clientId ?? "");
   const [clientSecret, setClientSecret] = useState(current?.clientSecret ?? "");
@@ -541,13 +544,17 @@ export function GoogleOption({ settings, done }: { settings: Settings; done: (ms
     <div className="cloud-option">
       <div className="cloud-option-head">
         <b>Google Drive</b>
-        <span className="muted small">{st.googleIntro}</span>
+        <Hint text={st.googleIntro} />
+        <span className="grow" />
+        <Button small icon="cloud" onClick={connect} disabled={connecting || (needClientId && !clientId.trim())}>
+          {connecting ? st.googleWaiting : current ? c.reconnect : c.connect}
+        </Button>
+        {!needClientId && <Menu title={t.saves.more} items={[{ label: st.googleOwn, checked: showAdvanced, onClick: () => setShowAdvanced((v) => !v) }]} />}
       </div>
       {(needClientId || showAdvanced) && (
         <div className="form compact">
-          {needClientId && <p className="muted small">{st.googleDev}</p>}
           <label>
-            <span>Client ID</span>
+            <span>Client ID {needClientId && <Hint text={st.googleDev} />}</span>
             <input className="input mono" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="xxxx.apps.googleusercontent.com" />
           </label>
           <label>
@@ -556,16 +563,6 @@ export function GoogleOption({ settings, done }: { settings: Settings; done: (ms
           </label>
         </div>
       )}
-      <div className="row">
-        <Button kind="primary" icon="cloud" onClick={connect} disabled={connecting || (needClientId && !clientId.trim())}>
-          {connecting ? st.googleWaiting : current ? st.googleReconnect : st.googleConnect}
-        </Button>
-        {!needClientId && (
-          <button className="link small" onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? st.collapse : st.googleOwn}
-          </button>
-        )}
-      </div>
     </div>
   );
 }
@@ -626,24 +623,21 @@ export function FolderOption({ settings, done, note }: { settings: Settings; don
     <div className="cloud-option">
       <div className="cloud-option-head">
         <b>{t.cloudNames.localFolder}</b>
-        <span className="muted small">{st.folderIntro}</span>
+        <Hint text={st.folderIntro} />
+        <span className="grow" />
+        <Button small icon="folder" onClick={pick}>
+          {current ? t.pathField.repick : t.saveFinder.pickFolder}
+        </Button>
+        <Menu
+          title={t.saves.more}
+          items={[
+            { label: t.pathField.scan, icon: "search", onClick: scan },
+            ...(current ? [{ label: st.open, icon: "folder", onClick: () => api.openPath(current).catch((e) => ui.toast(errorText(e), "bad")) }] : []),
+          ]}
+        />
       </div>
       {note && <p className="health health-warn small">{note}</p>}
-      <PathField
-        path={current}
-        onScan={scan}
-        onPick={pick}
-        pickText={current ? undefined : t.saveFinder.pickFolder}
-        choices={choices}
-        choicesText={st.folderFound}
-        onChoose={choose}
-      >
-        {current && (
-          <Button small kind="ghost" onClick={() => api.openPath(current).catch((e) => ui.toast(errorText(e), "bad"))}>
-            {st.open}
-          </Button>
-        )}
-      </PathField>
+      {(current || choices) && <PathField path={current} choices={choices} choicesText={st.folderFound} onChoose={choose} />}
     </div>
   );
 }
@@ -662,7 +656,7 @@ export function CloudOptions({
   guide?: { multiDevice: boolean };
 }) {
   const { t, lang } = useI18n();
-  const [more, setMore] = useState(false);
+  const [more, setMore] = useState(!guide && !!scene());
   const k = settings.cloud.kind;
   // There is no built-in Baidu app (it would need Baidu's review), so the
   // option only shows in development or when already connected with one's
@@ -679,6 +673,14 @@ export function CloudOptions({
     s3: <S3Option key={`s3-${k}`} settings={settings} done={done} />,
   };
   if (!guide) {
+    // With a cloud connected, the rest (and its own details) are one click away.
+    if (k !== "none" && !more) {
+      return (
+        <button className="link small cloud-change" onClick={() => setMore(true)}>
+          {t.cloud.change}
+        </button>
+      );
+    }
     return <div className="cloud-options">{[all.google, all.folder, all.baidu, all.quark, all.webdav, all.s3]}</div>;
   }
   const [first, rest] =
@@ -707,6 +709,7 @@ export function QuarkOption({ settings, done }: { settings: Settings; done: (msg
   const ui = useUi();
   const t = useT();
   const q = t.cloud.quark;
+  const c = t.cloud;
   const current = settings.cloud.kind === "quark";
   const [info, setInfo] = useState<OpenListInfo | null>(null);
   const [stage, setStage] = useState<"idle" | "download" | "login">("idle");
@@ -757,19 +760,30 @@ export function QuarkOption({ settings, done }: { settings: Settings; done: (msg
   return (
     <div className="cloud-option" id="cloud-quark">
       <div className="cloud-option-head">
-        <b>
-          {t.cloudNames.quark} <span className="badge badge-muted">{q.experimental}</span>
-        </b>
-        <span className="muted small">{q.intro}</span>
+        <b>{t.cloudNames.quark}</b>
+        <span className="badge badge-muted">{q.experimental}</span>
+        {/* What is downloaded, from where and under which licence, with the rest. */}
+        <Hint text={info && !info.installed ? `${q.intro}\n\n${q.needComponent(bytes(info.size), info.license)}` : q.intro} />
+        <span className="grow" />
+        {stage === "login" ? (
+          <Button key="cancel" small onClick={() => void api.cloudCancelLogin()}>
+            {t.common.cancel}
+          </Button>
+        ) : (
+          <Button key="connect" small icon="cloud" onClick={() => connect()} disabled={stage !== "idle" || !info}>
+            {current ? c.reconnect : info?.installed ? c.connect : q.downloadConnect}
+          </Button>
+        )}
+        {info && stage === "idle" && (
+          <Menu
+            title={t.saves.more}
+            items={[
+              ...(info.installed ? [] : [{ label: q.pickZip, icon: "folder", onClick: pickZip }]),
+              { label: q.project, onClick: () => api.openPath(info.project) },
+            ]}
+          />
+        )}
       </div>
-      {info && !info.installed && stage === "idle" && (
-        <p className="muted small">
-          {q.needComponent(bytes(info.size), info.license)}{" "}
-          <button className="link small" onClick={() => api.openPath(info.project)}>
-            {q.project}
-          </button>
-        </p>
-      )}
       {stage === "download" && (
         <div className="update-progress">
           <div className="bar">
@@ -781,28 +795,11 @@ export function QuarkOption({ settings, done }: { settings: Settings; done: (msg
         </div>
       )}
       {stage === "login" && (
-        <div className="banner banner-info">
-          <span className="spinner" />
-          <span>{q.waiting}</span>
+        <div className="row muted small">
+          <span className="spinner" /> {q.waiting}
         </div>
       )}
       {error && <div className="health health-warn small">{error}</div>}
-      <div className="row">
-        {stage === "login" ? (
-          <Button key="cancel" onClick={() => void api.cloudCancelLogin()}>
-            {t.common.cancel}
-          </Button>
-        ) : (
-          <Button key="connect" kind="primary" icon="cloud" onClick={() => connect()} disabled={stage !== "idle" || !info}>
-            {current ? q.relogin : info?.installed ? q.connect : q.downloadConnect}
-          </Button>
-        )}
-        {info && !info.installed && stage === "idle" && (
-          <button className="link small" onClick={pickZip}>
-            {q.pickZip}
-          </button>
-        )}
-      </div>
     </div>
   );
 }

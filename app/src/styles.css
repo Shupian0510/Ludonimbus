@@ -1507,32 +1507,46 @@ table.files td:not(:first-child) {
 }
 .cloud-current {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 9px 12px;
   background: rgba(94, 194, 106, 0.06);
   border: 1px solid rgba(94, 194, 106, 0.22);
   border-radius: 9px;
 }
+.cloud-current .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-current .grow,
+.cloud-option-head .grow {
+  flex: 1;
+}
+.cloud-change {
+  align-self: flex-start;
+}
+/* One cloud a row: its name, what it is behind the "?", one button. */
 .cloud-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .cloud-option {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
+  padding: 8px 12px;
   background: rgba(18, 24, 33, 0.55);
   border: 1px solid #263546;
   border-radius: 9px;
 }
 .cloud-option-head {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
 }
 .preset-row {
   display: flex;
@@ -1738,8 +1752,7 @@ table.files td:not(:first-child) {
 }
 
 @media (max-width: 1100px) {
-  .cards2,
-  .cloud-options {
+  .cards2 {
     grid-template-columns: 1fr;
   }
   .version-main {

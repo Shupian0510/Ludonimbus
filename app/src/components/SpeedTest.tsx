@@ -7,7 +7,7 @@ import { bytes } from "../format";
 import { etaSecs, gameBackupApi, SpeedPhase, SpeedProgress, SpeedReport } from "../gameBackupApi";
 import { msg, useT } from "../i18n";
 import "../gameBackup.css";
-import { Badge, Button, Icon } from "./ui";
+import { Badge, Button, Hint, Icon } from "./ui";
 
 const GB = 1024 ** 3;
 
@@ -79,9 +79,9 @@ export function SpeedTestPanel({ hasCloud }: { hasCloud: boolean }) {
       <div className="panel-head">
         <Icon name="cloud" />
         <h3>{sp.title}</h3>
+        <Hint text={sp.intro} />
         {report && <Badge tone={verdictTone[report.verdict]}>{sp.verdict[report.verdict]}</Badge>}
       </div>
-      <p className="muted small">{sp.intro}</p>
       {!hasCloud ? (
         <p className="muted small">{sp.noCloud}</p>
       ) : (
