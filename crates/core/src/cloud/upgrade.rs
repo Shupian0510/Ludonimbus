@@ -30,6 +30,8 @@
 //!      it is looked at, and a game nobody uploaded saves of has nothing
 //!      there. Should a device still on 0.6 upload there later, a device on
 //!      layout 2 adds the folder ([`super::Cloud::adopt_old_folder`]).
+//!      `def` says which files the saves are ([`line_def`]), so that a game
+//!      added later under another key can tell whether it continues them.
 //!    - `ids` from the game's definition ([`record_ids`]), `rule` when a
 //!      cross-platform rule covers it.
 //!
@@ -90,7 +92,7 @@ use super::line::{self, LineCache};
 use super::store::{join, Store};
 use super::v2::{self, Access, FormatFile, GameRecord, Line, Pin, PinRef, SCOPE_SHARED};
 use super::CloudGame;
-use crate::{adapters, savelib};
+use crate::{adapters, games, savelib};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -228,13 +230,52 @@ pub fn line_format(game: &CloudGame) -> String {
     }
 }
 
+/// Which files a game's saves are, for [`Line::def`]: games with the same
+/// answer (and the same [`line_format`]) read each other's saves as they
+/// are, so they can share one history without anything being converted.
+///
+/// - A Switch game: its title id (`nx:0100E65002BB8000`). The console and
+///   every emulator keep the same files for a title.
+/// - Anything else: a fingerprint of where the saves are looked for. That
+///   is the game's rule, its own save patterns (in any order, either kind of
+///   slash, any letter case), its title in Ludusavi's database, and whether
+///   it is the Xbox app's version (which keeps its saves in containers of
+///   its own).
+///
+/// Left out on purpose: what a named folder stands for on a device
+/// (`roots`: the name is in the patterns, the place is the device's own),
+/// the files a game leaves out, and everything about how it is started.
+///
+/// Two versions of a game that keep the same saves in different places get
+/// different answers and stay on lines of their own. That is the safe side:
+/// a shared history would put one version's files where the other never
+/// looks.
+pub fn line_def(game: &CloudGame) -> String {
+    if line_format(game) == "nx" {
+        if let Some(title) = games::switch_title(&game.saves) {
+            return format!("nx:{title:016X}");
+        }
+    }
+    let tidy = |s: &str| s.trim().replace('\\', "/").trim_end_matches('/').to_lowercase();
+    let mut saves: Vec<String> = game.saves.iter().map(|p| tidy(p)).filter(|p| !p.is_empty()).collect();
+    saves.sort();
+    saves.dedup();
+    let adapter = game.adapter.as_deref().map(tidy).unwrap_or_default();
+    let ludusavi = game.ludusavi_title.as_deref().map(tidy).unwrap_or_default();
+    let xbox = game.ids.iter().any(|id| id.to_lowercase().starts_with("xbox:"));
+    // A character no pattern or title contains keeps the parts apart.
+    let what = format!("{adapter}\0{}\0{ludusavi}\0{xbox}", saves.join("\n"));
+    blake3::hash(what.as_bytes()).to_hex()[..16].to_string()
+}
+
 /// The record the upgrade writes for one key (before [`library::save`] and
 /// before records are merged). `game` is `None` for a folder without a
 /// `game.json`; `oldest` is when the oldest snapshot in its old folder was
 /// made; `old` says that folder has snapshots, and the line reads it.
 ///
 /// A folder without a `game.json` gets no ids and a line of format `pc`,
-/// what 0.6 takes a game with no rule and no Switch saves for.
+/// what 0.6 takes a game with no rule and no Switch saves for; which files
+/// its saves are is then not known ([`Line::def`]).
 pub fn record_for(key: &str, game: Option<&CloudGame>, oldest: Option<DateTime<Utc>>, old: bool) -> GameRecord {
     GameRecord {
         id: key.to_string(),
@@ -248,6 +289,7 @@ pub fn record_for(key: &str, game: Option<&CloudGame>, oldest: Option<DateTime<U
             scope: SCOPE_SHARED.to_string(),
             path: v2::line_dir(key, MAIN_LINE),
             also: if old { vec![v2::legacy_dir(key)] } else { Vec::new() },
+            def: game.map(line_def),
             ..Default::default()
         }],
         created_at: oldest,
@@ -655,6 +697,44 @@ mod tests {
     }
 
     #[test]
+    fn games_that_look_in_the_same_place_keep_the_same_saves() {
+        let pc = |saves: &[&str]| CloudGame { saves: strings(saves), ..game("g", "Game") };
+        let def = line_def(&pc(&["{install}/save/**", "{appdata}/Game/*.sav"]));
+        assert_eq!(def.len(), 16);
+        // Order, slashes, letter case, spaces and a slash at the end are not
+        // part of where a game looks; neither are its key and its name.
+        assert_eq!(line_def(&pc(&[" {AppData}\\Game\\*.sav ", "{install}/save/**"])), def);
+        assert_eq!(line_def(&CloudGame { key: "other".into(), name: "Other".into(), ..pc(&["{install}/save/**", "{appdata}/Game/*.sav"]) }), def);
+        // What a named folder stands for is the device's own business, and
+        // so is what a game leaves out.
+        let mut roots = BTreeMap::new();
+        roots.insert("data".to_string(), "{drive-d}/Games/Data".to_string());
+        let named = CloudGame { saves: strings(&["{data}/save/**"]), ..game("g", "Game") };
+        assert_eq!(line_def(&CloudGame { roots, exclude: strings(&["*.log"]), ..named.clone() }), line_def(&named));
+
+        // Another place, another rule, another title, the Xbox app's version.
+        assert_ne!(line_def(&pc(&["{install}/save/**"])), def);
+        assert_ne!(line_def(&pc(&[])), def);
+        let ludusavi = |title: &str| CloudGame { ludusavi_title: Some(title.into()), ..game("g", "Game") };
+        assert_eq!(line_def(&ludusavi("Hades")), line_def(&ludusavi(" hades ")));
+        assert_ne!(line_def(&ludusavi("Hades")), line_def(&ludusavi("Hades II")));
+        assert_ne!(line_def(&ludusavi("Hades")), line_def(&pc(&[])));
+        let xbox = CloudGame { ids: strings(&["xbox:supergiantgames.hades"]), ..ludusavi("Hades") };
+        assert_ne!(line_def(&xbox), line_def(&ludusavi("Hades")));
+        let fe = with_adapter("fe", "FE", "fe-fortunes-weave", &[]);
+        assert_eq!(line_def(&fe), line_def(&with_adapter("fe-2", "Fire Emblem", "FE-Fortunes-Weave", &[])));
+        assert_ne!(line_def(&fe), line_def(&with_adapter("oot", "OoT", "zelda-oot-longshot", &[])));
+
+        // A Switch title is the same saves on the console and in every
+        // emulator, whatever else its rule says.
+        let console = CloudGame { saves: strings(&["{nxsave-0100b04011742000}/**"]), ..game("mh", "MH") };
+        let ryujinx = with_adapter("mh-emu", "Monster Hunter", "ryujinx", &["{nxsave-0100B04011742000}/**", "{nxdevice-0100B04011742000}/**"]);
+        assert_eq!(line_def(&console), "nx:0100B04011742000");
+        assert_eq!(line_def(&ryujinx), line_def(&console));
+        assert_ne!(line_def(&CloudGame { saves: strings(&["{nxsave-01007ef00011e000}/**"]), ..game("z", "Z") }), line_def(&console));
+    }
+
+    #[test]
     fn the_record_of_one_key() {
         let oldest = Utc.timestamp_opt(1_780_000_000, 0).unwrap();
         let fe = with_adapter("fe-fortunes-weave", " 火焰纹章：万缕千丝 ", "fe-fortunes-weave", &[]);
@@ -670,6 +750,7 @@ mod tests {
                 scope: "shared".into(),
                 path: "games/fe-fortunes-weave/saves/main".into(),
                 also: strings(&["games/fe-fortunes-weave/snapshots"]),
+                def: Some(line_def(&fe)),
                 ..Default::default()
             }],
             created_at: Some(oldest),
@@ -684,6 +765,7 @@ mod tests {
         assert_eq!(bare.name, "old-game");
         assert!(bare.ids.is_empty() && bare.rule.is_none() && bare.created_at.is_none());
         assert_eq!(bare.lines[0].format, "pc");
+        assert_eq!(bare.lines[0].def, None);
         assert_eq!(bare.lines[0].also, strings(&["games/old-game/snapshots"]));
         // A name that is only spaces is none.
         assert_eq!(record_for("k", Some(&game("k", "  ")), None, true).name, "k");

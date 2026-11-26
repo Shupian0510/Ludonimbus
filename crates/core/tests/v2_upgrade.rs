@@ -14,6 +14,7 @@ use ludonimbus_core::cloud::packs;
 use ludonimbus_core::cloud::store::{Entry, Store};
 use ludonimbus_core::cloud::upgrade::{self, Progress, Report};
 use ludonimbus_core::cloud::v2::{self, FileRef, GameRecord, Line, Manifest, Pin};
+use ludonimbus_core::cloud::CloudGame;
 use ludonimbus_core::vv::Vv;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -313,14 +314,21 @@ fn one_record_per_key_and_one_card_per_game() {
 
     let records = records(&store);
     assert_eq!(records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), keys());
+    // Which files a line's saves are comes from the game's definition.
+    let def = |key: &str| -> Option<String> {
+        let game: CloudGame = serde_json::from_slice(&store.peek(&format!("games/{key}/game.json"))?).ok()?;
+        Some(upgrade::line_def(&game))
+    };
     let line = |id: &str, format: &str, key: &str| Line {
         id: id.into(),
         format: format.into(),
         scope: "shared".into(),
         path: format!("games/{key}/saves/main"),
         also: vec![format!("games/{key}/snapshots")],
+        def: def(key),
         ..Default::default()
     };
+    assert!(def("test-game").is_some());
     // Saved once: what comes from this device and the clock is what
     // `library::save` stamps, nothing else.
     let saved = |record: GameRecord| GameRecord { rev: 1, updated_at: Some(now()), updated_by: DEVICE.into(), ..record };
@@ -369,6 +377,10 @@ fn one_record_per_key_and_one_card_per_game() {
     });
     assert!(first.created_at < second.created_at);
     assert_eq!(library::get(&records, "fe-fortunes-weave").unwrap(), &first);
+    // The two lines say they hold the same files. What 0.6 kept as two
+    // histories stays two all the same: the upgrade changes nothing about
+    // what is shared.
+    assert!(library::same_saves(&first.lines[0], &first.lines[1]));
     assert_eq!(
         library::get(&records, "fe-fortunes-weave-2").unwrap(),
         &GameRecord { merged_into: Some("fe-fortunes-weave".into()), ..second }

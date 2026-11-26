@@ -256,6 +256,12 @@ pub struct GameEntry {
     /// time the game syncs ([`AppConfig::independent_saves`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
+    /// The game record in the connected cloud whose saves this version
+    /// continues, once it turned out to be a version of a game the cloud
+    /// has under another key (docs/plan-v2.md, section 6). `None`: the
+    /// record named like its key. Forgotten when another cloud is connected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record: Option<String>,
 }
 
 fn yes() -> bool {

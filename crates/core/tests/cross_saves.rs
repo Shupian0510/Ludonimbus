@@ -158,6 +158,29 @@ fn stardew_valley_between_switch_and_pc() {
     assert_eq!(fs::read(appdata.join("StardewValley").join("default_options")).unwrap(), b"pc settings");
     assert_eq!(latest(&ctx, "stardew").game_version.as_deref(), Some("1.6.15"));
 
+    // PC → the Switch itself, which is only in the cloud: the farms go on top
+    // of its newest version (its settings file stays), uploaded as its new
+    // newest version for the Switch client to download.
+    let from_pc = latest(&ctx, "stardew").id;
+    let plan = transfer::plan(&ctx, "stardew", &from_pc, &switch_key, None).unwrap();
+    assert!(plan.cloud_target && !plan.cross_platform && !plan.needs_folder);
+    assert_eq!(plan.base.as_deref(), Some(format!("nxsave-{TITLE}").as_str()));
+    assert_eq!((plan.items.len(), plan.matched, plan.skipped.len()), (4, 2, 1));
+    assert!(plan.items.iter().any(|i| i.from == "Farm_222/Farm_222" && i.to == nx("Farm_222/Farm_222") && !i.replaces));
+    assert_eq!((plan.source_version.as_deref(), plan.target_version.as_deref(), plan.too_new), (Some("1.6.15"), Some("1.6.15"), false));
+    let Outcome::Uploaded { id } = transfer::apply(&ctx, "stardew", &from_pc, &switch_key, None).unwrap() else { panic!("uploaded") };
+    let to_switch = id.clone();
+    let newest = latest(&ctx, &switch_key);
+    assert_eq!((newest.id.as_str(), newest.trigger, newest.parent.as_deref()), (id.as_str(), Trigger::Restore, Some(from_switch.as_str())));
+    assert_eq!(newest.game_version.as_deref(), Some("1.6.15"));
+    let meta = ctx.cloud().unwrap().get_meta(&switch_key, &id).unwrap();
+    let mut paths: Vec<String> = meta.files.iter().map(|f| f.path.clone()).collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![nx("Farm_111/Farm_111"), nx("Farm_111/SaveGameInfo"), nx("Farm_222/Farm_222"), nx("Farm_222/SaveGameInfo"), nx("startup_preferences")]
+    );
+
     // PC → a Switch version on this device: both farms into its save data;
     // the PC's settings stay out. Its own save data has the same farm.
     let nx_dir = tmp.path().join("ryujinx").join("bis").join("user").join("save").join("0000000000000003").join("0");
@@ -172,7 +195,6 @@ fn stardew_valley_between_switch_and_pc() {
     });
     let fam = savelib::index(&config::load().unwrap(), &savelib::cached(&config::load().unwrap()).games);
     assert_eq!(fam["stardew-switch"], fam["stardew"]);
-    let from_pc = latest(&ctx, "stardew").id;
     let ctx = Ctx::load().unwrap();
     let plan = transfer::plan(&ctx, "stardew", &from_pc, &on_switch.key, None).unwrap();
     assert_eq!(PathBuf::from(plan.base.clone().unwrap()), nx_dir);
@@ -182,27 +204,11 @@ fn stardew_valley_between_switch_and_pc() {
     transfer::apply(&ctx, "stardew", &from_pc, &on_switch.key, None).unwrap();
     assert_eq!(fs::read(nx_dir.join("Farm_222").join("Farm_222")).unwrap(), b"<SaveGame>second farm</SaveGame>");
     assert!(!nx_dir.join("default_options").exists());
-
-    // PC → the Switch itself, which is only in the cloud: the farms go on top
-    // of its newest version (its settings file stays), uploaded as its new
-    // newest version for the Switch client to download.
-    let plan = transfer::plan(&ctx, "stardew", &from_pc, &switch_key, None).unwrap();
-    assert!(plan.cloud_target && !plan.cross_platform && !plan.needs_folder);
-    assert_eq!(plan.base.as_deref(), Some(format!("nxsave-{TITLE}").as_str()));
-    assert_eq!((plan.items.len(), plan.matched, plan.skipped.len()), (4, 2, 1));
-    assert!(plan.items.iter().any(|i| i.from == "Farm_222/Farm_222" && i.to == nx("Farm_222/Farm_222") && !i.replaces));
-    assert_eq!((plan.source_version.as_deref(), plan.target_version.as_deref(), plan.too_new), (Some("1.6.15"), Some("1.6.15"), false));
-    let Outcome::Uploaded { id } = transfer::apply(&ctx, "stardew", &from_pc, &switch_key, None).unwrap() else { panic!("uploaded") };
-    let newest = latest(&ctx, &switch_key);
-    assert_eq!((newest.id.as_str(), newest.trigger, newest.parent.as_deref()), (id.as_str(), Trigger::Restore, Some(from_switch.as_str())));
-    assert_eq!(newest.game_version.as_deref(), Some("1.6.15"));
-    let meta = ctx.cloud().unwrap().get_meta(&switch_key, &id).unwrap();
-    let mut paths: Vec<String> = meta.files.iter().map(|f| f.path.clone()).collect();
-    paths.sort();
-    assert_eq!(
-        paths,
-        vec![nx("Farm_111/Farm_111"), nx("Farm_111/SaveGameInfo"), nx("Farm_222/Farm_222"), nx("Farm_222/SaveGameInfo"), nx("startup_preferences")]
-    );
+    // An emulator's version of a Switch title keeps the files the Switch
+    // keeps: it continues the Switch's history instead of starting one.
+    assert_eq!(config::load().unwrap().game("stardew-switch").unwrap().record.as_deref(), Some(switch_key.as_str()));
+    assert_eq!(latest(&ctx, "stardew-switch").id, latest(&ctx, &switch_key).id);
+    assert_eq!(latest(&ctx, &switch_key).parent.as_deref(), Some(to_switch.as_str()));
 
     // A Switch game only in the cloud that no rule covers can't be a target:
     // its saves aren't the PC's.

@@ -27,6 +27,9 @@
 //! - **Duplicates** ([`dedupe`]): two devices created the same game. The
 //!   record made first stays and takes over the ids, folders, tags and lines
 //!   of the other, which gets `mergedInto`.
+//! - **Joining** ([`line_to_join`], [`same_saves`]): a game the library has
+//!   no record of under its own id continues the saves of the card it is a
+//!   version of, when those are the very files it keeps itself.
 //!
 //! | operation | requests |
 //! |---|---|
@@ -285,6 +288,41 @@ pub fn find<'a>(records: &'a [GameRecord], ids: &[String]) -> Match<'a> {
     }
 }
 
+// -------------------------------------------------------------------- joining
+
+/// Two lines hold the same files: one format, and the same answer to which
+/// files those are ([`Line::def`]). A line that doesn't say is the same as
+/// none. What [`dedupe_with`] is given to decide which shared lines become
+/// one history, on every device alike.
+pub fn same_saves(a: &Line, b: &Line) -> bool {
+    a.format == b.format && a.def.is_some() && a.def == b.def
+}
+
+/// The record whose shared line a game continues, when the library has no
+/// record of it under its own id.
+///
+/// `ids` say which game it is: only a strong id finds a card ([`find`]); a
+/// name never does. `format` and `def` say which files its saves are. Of the
+/// records that are that card now (the card itself, then the ones merged
+/// into it, oldest first), the answer is the first whose line `main` is
+/// shared and holds those files: the game follows `main` of that record,
+/// wherever [`resolve_line`] finds it.
+///
+/// `None`: the game is not in the library, or none of its lines there holds
+/// the files this version keeps. Such a game gets a record of its own, which
+/// [`dedupe_with`] then puts on the card as one more line.
+pub fn line_to_join<'a>(records: &'a [GameRecord], ids: &[String], format: &str, def: &str) -> Option<&'a GameRecord> {
+    let Match::Record(card) = find(records, ids) else { return None };
+    let mut of_card: Vec<&GameRecord> =
+        records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
+    of_card.sort_by(|a, b| (a.id != card.id).cmp(&(b.id != card.id)).then_with(|| seniority(a, b)));
+    of_card.into_iter().find(|r| {
+        r.lines
+            .iter()
+            .any(|l| l.id == MAIN_LINE && l.scope == SCOPE_SHARED && l.format == format && l.def.as_deref() == Some(def))
+    })
+}
+
 // ---------------------------------------------------------------- new records
 
 /// Crockford's base 32, as in snapshot ids: no i, l, o or u, so an id is
@@ -390,7 +428,8 @@ fn add_new(list: &mut Vec<String>, more: &[String]) {
     }
 }
 
-fn add_ids(list: &mut Vec<String>, more: &[String]) {
+/// Append the ids `list` lacks, whatever their letter case.
+pub fn add_ids(list: &mut Vec<String>, more: &[String]) {
     let mut have: HashSet<String> = list.iter().map(|id| key(id)).collect();
     for id in more {
         if have.insert(key(id)) {
@@ -800,6 +839,77 @@ mod tests {
         let b = record("zelda-1a1a", &["nx:01007EF00011E000"], Some(3));
         let records = vec![a, b.clone()];
         assert_eq!(find(&records, &strings(&["wiiu:00050000101C9400", "nx:01007EF00011E000"])), Match::Record(&b));
+    }
+
+    // ------------------------------------------------------------ joining
+
+    #[test]
+    fn a_game_continues_the_line_that_holds_its_files() {
+        let with_def = |r: GameRecord, def: &str| {
+            let mut r = r;
+            r.lines[0].def = Some(def.into());
+            r
+        };
+        let steam = with_def(record("hades-2b9d", &["ludusavi:hades", "name:hades"], Some(0)), "aaaa");
+        let other = with_def(record("celeste", &["ludusavi:celeste"], Some(1)), "aaaa");
+        let records = vec![steam.clone(), other];
+        let ids = strings(&["LUDUSAVI:Hades", "name:hadesgoty"]);
+
+        // The same game, the same files: its line.
+        assert_eq!(line_to_join(&records, &ids, "pc", "aaaa"), Some(&steam));
+        // Other files (another store's folder), or another format: no.
+        assert_eq!(line_to_join(&records, &ids, "pc", "bbbb"), None);
+        assert_eq!(line_to_join(&records, &ids, "nx", "aaaa"), None);
+        // A name is never enough, and neither is nothing at all.
+        assert_eq!(line_to_join(&records, &strings(&["name:hades"]), "pc", "aaaa"), None);
+        assert_eq!(line_to_join(&records, &[], "pc", "aaaa"), None);
+        // A line that doesn't say which files it holds is not assumed to
+        // hold these.
+        let silent = vec![record("hades-2b9d", &["ludusavi:hades"], Some(0))];
+        assert_eq!(line_to_join(&silent, &ids, "pc", "aaaa"), None);
+        // A line a device keeps to itself is not the one to share.
+        let mut solo = steam.clone();
+        solo.lines[0].scope = SCOPE_INDEPENDENT.into();
+        assert_eq!(line_to_join(&[solo], &ids, "pc", "aaaa"), None);
+
+        // A card made of two records: each kept its own line. The game
+        // continues the one with its files, found through the record that
+        // line came with.
+        let xbox = with_def(record("hades-xbox", &["ludusavi:hades", "xbox:supergiantgames.hades"], Some(5)), "bbbb");
+        let merged = dedupe_with(&[steam.clone(), xbox.clone()], &same_saves).remove(0);
+        assert_eq!(merged.survivor.lines.len(), 2);
+        let records = vec![merged.survivor.clone(), merged.losers[0].clone()];
+        assert_eq!(line_to_join(&records, &ids, "pc", "aaaa").map(|r| r.id.as_str()), Some("hades-2b9d"));
+        let joined = line_to_join(&records, &ids, "pc", "bbbb").unwrap();
+        assert_eq!(joined.id, "hades-xbox");
+        let (card, line) = resolve_line(&records, &joined.id, MAIN_LINE).unwrap();
+        assert_eq!((card.id.as_str(), line.id.as_str()), ("hades-2b9d", "main-hades-xbox"));
+        assert_eq!(line_to_join(&records, &ids, "pc", "cccc"), None);
+    }
+
+    #[test]
+    fn lines_with_the_same_files_become_one_history() {
+        let mut a = record("stardew", &["ludusavi:stardew valley"], Some(0));
+        let mut b = record("stardew-valley", &["ludusavi:stardew valley"], Some(1));
+        let mut c = record("stardew-xbox", &["ludusavi:stardew valley"], Some(2));
+        a.lines[0].def = Some("aaaa".into());
+        b.lines[0].def = Some("aaaa".into());
+        c.lines[0].def = Some("bbbb".into());
+        assert!(same_saves(&a.lines[0], &b.lines[0]));
+        assert!(!same_saves(&a.lines[0], &c.lines[0]));
+        // Nothing known is not "the same".
+        let unknown = record("x", &[], Some(0));
+        assert!(!same_saves(&unknown.lines[0], &unknown.lines[0]));
+        let mut nx = a.lines[0].clone();
+        nx.format = "nx".into();
+        assert!(!same_saves(&a.lines[0], &nx));
+
+        let out = dedupe_with(&[a.clone(), b, c], &same_saves).remove(0);
+        assert_eq!(out.survivor.id, "stardew");
+        assert_eq!(out.survivor.lines.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["main", "main-stardew-xbox"]);
+        assert_eq!(out.survivor.lines[0].also, strings(&["games/stardew-valley/saves/main"]));
+        assert_eq!(out.survivor.lines[0].def.as_deref(), Some("aaaa"));
+        assert_eq!(out.survivor.lines[1].def.as_deref(), Some("bbbb"));
     }
 
     // -------------------------------------------------------- new records
