@@ -212,7 +212,12 @@ fn two_devices_full_flow() {
     let named = |id: &str| list.iter().find(|s| s.id == id).map(|s| (s.locked, s.comment.clone(), s.trigger));
     assert_eq!(named(&kept), Some((true, "before boss".to_string(), Trigger::AutoExit)));
     assert_eq!(named(&by_hand), Some((true, "by hand".to_string(), Trigger::Manual)));
-    let autos = list.iter().filter(|s| !s.locked).count();
+    // So does the version the other device said it was at when it last
+    // wrote its record: what it uploads next may be built on it.
+    let devices = ctx.cloud().unwrap().list_devices().unwrap();
+    let of_a = devices.iter().find(|d| d.name == "PC-A").and_then(|d| d.installs.first()).and_then(|i| i.synced.clone()).expect("PC-A says where it is");
+    assert!(list.iter().any(|s| s.id == of_a && !s.locked), "{list:#?}");
+    let autos = list.iter().filter(|s| !s.locked && s.id != of_a).count();
     assert_eq!(autos, 2, "the newest two automatic versions stay: {list:#?}");
     assert!(list.last().is_some_and(|s| s.head && !s.locked));
 

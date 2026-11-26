@@ -248,8 +248,11 @@ fn requests(root: &Path) {
     assert_eq!(status_with(&ctx()), Status::NotUploaded);
     let first = uploaded(sync_with(&ctx(), Resolution::Auto, Trigger::AutoExit));
     let log = store.take();
+    // A cloud nobody has used gets its layout without the lock and the
+    // reading an upgrade needs.
     assert!(log.contains(&"write format.json".to_string()));
     assert!(log.contains(&format!("write library/{KEY}.json")));
+    assert!(!log.iter().any(|l| l.contains("upgrade.lock")), "{log:#?}");
     // A game added on this version has nothing where 0.6 would have put it,
     // and its line doesn't look there.
     assert_eq!(state::game(KEY).line.unwrap().dirs, vec![LINE.to_string()]);

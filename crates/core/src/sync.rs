@@ -1024,11 +1024,6 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
             return Err(e);
         }
     }
-    // Keep launching fast: bookkeeping happens after playing, not before.
-    if !launching {
-        best_effort_housekeeping(ctx, cloud, game);
-    }
-
     let local = snapshot::local_state(game)?;
     let st = state::game(&game.key);
     let seen = with_queue(&s.line.view, &s.line.place, &game.key);
@@ -1076,7 +1071,12 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
         (Action::Push { bases, parent }, Resolution::Auto) => s.push(&local, Shot { bases, parent, trigger: Some(trigger), ..Shot::default() }, launching)?,
         (Action::Conflict { candidates, local_is_candidate }, Resolution::Auto) => s.conflict(&local, &candidates, local_is_candidate, trigger)?,
     };
+    // Keep launching fast: bookkeeping happens after playing, not before.
+    // And after the saves: what this device tells the others about itself
+    // (which version it is at) is then true, and a cloud nobody has used
+    // yet gets its layout before anything else is written to it.
     if !launching {
+        best_effort_housekeeping(ctx, cloud, game);
         // An index that didn't cover the line is written again for the next
         // device (an upload has done that already).
         if s.line.view.needs_index && !matches!(outcome, Outcome::Uploaded { .. }) && cloud.access().is_ok_and(|a| a == v2::Access::ReadWrite) {
@@ -1183,19 +1183,21 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
         Err(e) => return Err(e),
     };
     flush(cloud, &mut s.line, Some(game))?;
-    best_effort_housekeeping(ctx, cloud, game);
     let same = s.line.view.snapshots.iter().rev().find(|x| x.content_hash == local.hash).map(|x| x.id.clone());
-    if let Some(id) = same {
+    let outcome = if let Some(id) = same {
         ready_to_write(cloud, &mut s.line, Some(game))?;
         saves::keep(cloud.files(), &s.line.place, &s.line.view, &id, comment, cloud.device_id(), Utc::now())?;
-        return Ok(Outcome::Uploaded { id });
-    }
-    let loc = local_of(&local, &state::game(&game.key));
-    let shot = match decide::decide(&loc, &s.line.view) {
-        Action::Push { bases, parent } => Shot { bases, parent, ..Shot::default() },
-        _ => Shot { parent: loc.base.as_ref().map(|b| b.id.clone()), side: true, ..Shot::default() },
+        Outcome::Uploaded { id }
+    } else {
+        let loc = local_of(&local, &state::game(&game.key));
+        let shot = match decide::decide(&loc, &s.line.view) {
+            Action::Push { bases, parent } => Shot { bases, parent, ..Shot::default() },
+            _ => Shot { parent: loc.base.as_ref().map(|b| b.id.clone()), side: true, ..Shot::default() },
+        };
+        s.push(&local, Shot { trigger: Some(Trigger::Manual), comment: comment.to_string(), ..shot }, false)?
     };
-    s.push(&local, Shot { trigger: Some(Trigger::Manual), comment: comment.to_string(), ..shot }, false)
+    best_effort_housekeeping(ctx, cloud, game);
+    Ok(outcome)
 }
 
 /// Restore a specific snapshot and make it the newest version.
@@ -1224,10 +1226,11 @@ pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl F
     if after.is_empty() {
         bail!(crate::tr!("应用后没有找到「{}」的存档文件", "No save files of \"{}\" found after applying", game.name));
     }
-    best_effort_housekeeping(ctx, cloud, game);
     let loc = local_of(&after, &state::game(&game.key));
     let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
-    s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), comment: comment.to_string(), ..Shot::default() }, false)
+    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), comment: comment.to_string(), ..Shot::default() }, false)?;
+    best_effort_housekeeping(ctx, cloud, game);
+    Ok(outcome)
 }
 
 /// Keep a version or stop keeping it (`locked`), and name it (`comment`).
