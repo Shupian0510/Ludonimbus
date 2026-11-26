@@ -1,0 +1,14 @@
+{
+  "key": "test-game",
+  "name": "Test Game",
+  "adapter": null,
+  "saves": [
+    "{install}/save/**"
+  ],
+  "exclude": [
+    "{install}/save/cache/**"
+  ],
+  "waitFor": [],
+  "roots": {},
+  "ludusaviTitle": null
+}

@@ -1,0 +1,31 @@
+{
+  "id": "01M8BF8VTPYSHJJW84JQZESW8K",
+  "game": "test-game",
+  "parent": "01M8BF8VQZ5ER60961CN37THNP",
+  "deviceId": "d-01m8bf8vmmdmey8afh42vz71ba",
+  "deviceName": "PC-A",
+  "createdAt": "2026-11-26T08:24:07.766721400Z",
+  "trigger": "conflict-keep",
+  "roots": {
+    "install": "C:\\lnfix\\pc-a\\test-game"
+  },
+  "contentHash": "b690be350534ad0ae49bf9e3f6c9136f3e2f977737ec325db2694bbee39454b3",
+  "files": [
+    {
+      "path": "install/save/slot1.sav",
+      "size": 9,
+      "hash": "5a3184a83267ff80bb99c9d8cdf2625d42a6f9668a3819d8e31dad7becab791e",
+      "mtime": 1795681447
+    },
+    {
+      "path": "install/save/slot2.sav",
+      "size": 6,
+      "hash": "cd85637651ec7a557bddd61c5ddd1df21ad8bbbaf6c3c098482b3ed1c1014964",
+      "mtime": 1795681447
+    }
+  ],
+  "totalSize": 15,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}

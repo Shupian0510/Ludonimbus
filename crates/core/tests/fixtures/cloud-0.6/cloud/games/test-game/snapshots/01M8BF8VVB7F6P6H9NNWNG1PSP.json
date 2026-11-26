@@ -1,0 +1,31 @@
+{
+  "id": "01M8BF8VVB7F6P6H9NNWNG1PSP",
+  "game": "test-game",
+  "parent": "01M8BF8VSSNB2VEZDDHYXT771A",
+  "deviceId": "d-01m8bf8vmmdmey8afh42vz71ba",
+  "deviceName": "PC-A",
+  "createdAt": "2026-11-26T08:24:07.787238200Z",
+  "trigger": "pre-restore",
+  "roots": {
+    "install": "C:\\lnfix\\pc-a\\test-game"
+  },
+  "contentHash": "7364f3c8857a0d45968bb0fecc3046ba6bd8f47c81daab7df50fbbc9928dafef",
+  "files": [
+    {
+      "path": "install/save/slot1.sav",
+      "size": 7,
+      "hash": "e17f3c27879052a610c934b5a4b6feef6f19ace11af2d561a437246d3cd955c9",
+      "mtime": 1795681447
+    },
+    {
+      "path": "install/save/slot2.sav",
+      "size": 6,
+      "hash": "cd85637651ec7a557bddd61c5ddd1df21ad8bbbaf6c3c098482b3ed1c1014964",
+      "mtime": 1795681447
+    }
+  ],
+  "totalSize": 13,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}

@@ -1,0 +1,207 @@
+{
+  "abs-game": [
+    {
+      "comment": "",
+      "contentHash": "4129947e66d7df8b64c9045dc385d4baab7e6b6d3d8f43b2af70a90cbe82116f",
+      "deviceName": "PC-A",
+      "files": {
+        "drive-c/lnfix/abs-saves/profile.dat": "p1"
+      },
+      "id": "01M8BF8W1JHVY9HQNBQA3V3AME",
+      "locked": false,
+      "parent": null,
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "01b97d40aa26ac413a1b6d872560b19a02aa6700508cd00abe9b7e1285cbca7c",
+      "deviceName": "PC-A",
+      "files": {
+        "drive-c/lnfix/abs-saves/profile.dat": "p2",
+        "drive-c/lnfix/abs-saves/sub/extra.dat": "x"
+      },
+      "id": "01M8BF8W2G1Q54DM8BWM86XH1S",
+      "locked": false,
+      "parent": "01M8BF8W1JHVY9HQNBQA3V3AME",
+      "trigger": "auto-exit"
+    }
+  ],
+  "fe-fortunes-weave": [
+    {
+      "comment": "",
+      "contentHash": "ac9f6eb6c5bf4d833e837c1bbfe5a589631a8420293e5e8e79ad2ef3a325f699",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot0.sav": "a1"
+      },
+      "id": "01M8BF8W3TTE06F1RYDKGBAKDK",
+      "locked": false,
+      "parent": null,
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "5e0cb27096f48033e8994b3215527297fe8ad5c9608068df7bbc0f80db172605",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot0.sav": "a2"
+      },
+      "id": "01M8BF8W4Q4YC4PBWAW2CGPV8B",
+      "locked": false,
+      "parent": "01M8BF8W3TTE06F1RYDKGBAKDK",
+      "trigger": "auto-exit"
+    }
+  ],
+  "fe-fortunes-weave-2": [
+    {
+      "comment": "",
+      "contentHash": "9c85d384119380d42926e72d444874f2c40340b85799a77cd89e5bae98160478",
+      "deviceName": "PC-B",
+      "files": {
+        "install/save/slot0.sav": "b1"
+      },
+      "id": "01M8BF8W6VSQ8HWH4YGKF4R1YX",
+      "locked": false,
+      "parent": null,
+      "trigger": "auto-exit"
+    }
+  ],
+  "test-game": [
+    {
+      "comment": "",
+      "contentHash": "6fcccffce9ed3cc57bdc99dd6d4cf1f0a4c6eb4a7c91eb395d28acbdcd5fb06e",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot1.sav": "v1"
+      },
+      "id": "01M8BF8VNWFVTPV7BF5VK5CJ01",
+      "locked": false,
+      "parent": null,
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "f00de346a52b4beb6595311b8661dbc3681327976be64a823e50d9dd6d7bc01f",
+      "deviceName": "PC-B",
+      "files": {
+        "install/save/slot1.sav": "v2",
+        "install/save/slot2.sav": "second"
+      },
+      "id": "01M8BF8VQZ5ER60961CN37THNP",
+      "locked": false,
+      "parent": "01M8BF8VNWFVTPV7BF5VK5CJ01",
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "e05a553eed053ef2fafba040b1e88df2f8350bd1851cf8beaef1eab474c275f5",
+      "deviceName": "PC-B",
+      "files": {
+        "install/save/slot1.sav": "v3-from-b",
+        "install/save/slot2.sav": "second"
+      },
+      "id": "01M8BF8VSSNB2VEZDDHYXT771A",
+      "locked": false,
+      "parent": "01M8BF8VQZ5ER60961CN37THNP",
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "b690be350534ad0ae49bf9e3f6c9136f3e2f977737ec325db2694bbee39454b3",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot1.sav": "v3-from-a",
+        "install/save/slot2.sav": "second"
+      },
+      "id": "01M8BF8VTPYSHJJW84JQZESW8K",
+      "locked": false,
+      "parent": "01M8BF8VQZ5ER60961CN37THNP",
+      "trigger": "conflict-keep"
+    },
+    {
+      "comment": "",
+      "contentHash": "7364f3c8857a0d45968bb0fecc3046ba6bd8f47c81daab7df50fbbc9928dafef",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot1.sav": "unsaved",
+        "install/save/slot2.sav": "second"
+      },
+      "id": "01M8BF8VVB7F6P6H9NNWNG1PSP",
+      "locked": false,
+      "parent": "01M8BF8VSSNB2VEZDDHYXT771A",
+      "trigger": "pre-restore"
+    },
+    {
+      "comment": "恢复自 PC-A 在 2026-11-26 03:24 的版本",
+      "contentHash": "6fcccffce9ed3cc57bdc99dd6d4cf1f0a4c6eb4a7c91eb395d28acbdcd5fb06e",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot1.sav": "v1"
+      },
+      "id": "01M8BF8VVM65TR5H8XYZ6ME0N7",
+      "locked": false,
+      "parent": "01M8BF8VSSNB2VEZDDHYXT771A",
+      "trigger": "restore"
+    },
+    {
+      "comment": "before boss",
+      "contentHash": "6fcccffce9ed3cc57bdc99dd6d4cf1f0a4c6eb4a7c91eb395d28acbdcd5fb06e",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot1.sav": "v1"
+      },
+      "id": "01M8BF8VVVZG4K02KAX6N9P95H",
+      "locked": false,
+      "parent": "01M8BF8VVM65TR5H8XYZ6ME0N7",
+      "trigger": "manual"
+    },
+    {
+      "comment": "keep this",
+      "contentHash": "ce21f639f6dd51f85a0b9acdde554bdaff67f7b7d80b61955bf7b02ade627ad1",
+      "deviceName": "PC-A",
+      "files": {
+        "install/save/slot1.sav": "v4"
+      },
+      "id": "01M8BF8VWR2QEHXFPVZM3DQKSB",
+      "locked": true,
+      "parent": "01M8BF8VVVZG4K02KAX6N9P95H",
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "0552df833d2ad540089cff63478b05fc40a7a7b8f304478e97f4ea11f2888161",
+      "deviceName": "PC-B",
+      "files": {
+        "install/save/slot1.sav": "v5-0"
+      },
+      "id": "01M8BF8VYN7JTQH1HHTSXMWJGT",
+      "locked": false,
+      "parent": "01M8BF8VWR2QEHXFPVZM3DQKSB",
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "f7505d5bc99f0c2cd4d79c5181ea613cfacdeae001516c5b34bc340d047e1dcc",
+      "deviceName": "PC-B",
+      "files": {
+        "install/save/slot1.sav": "v5-1"
+      },
+      "id": "01M8BF8VZKGBBMWTKHC8XGX568",
+      "locked": false,
+      "parent": "01M8BF8VYN7JTQH1HHTSXMWJGT",
+      "trigger": "auto-exit"
+    },
+    {
+      "comment": "",
+      "contentHash": "0b7acdbfa42fcf046aed1e4683564fc80b762a26c1f14f4ed7cc34c569d1fecd",
+      "deviceName": "PC-B",
+      "files": {
+        "install/save/slot1.sav": "v5-2"
+      },
+      "id": "01M8BF8W0GMGZ4ZFRRSTMWXMXJ",
+      "locked": false,
+      "parent": "01M8BF8VZKGBBMWTKHC8XGX568",
+      "trigger": "auto-exit"
+    }
+  ]
+}

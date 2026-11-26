@@ -1,0 +1,23 @@
+{
+  "id": "01M8BF8W1JHVY9HQNBQA3V3AME",
+  "game": "abs-game",
+  "parent": null,
+  "deviceId": "d-01m8bf8vmmdmey8afh42vz71ba",
+  "deviceName": "PC-A",
+  "createdAt": "2026-11-26T08:24:07.986087800Z",
+  "trigger": "auto-exit",
+  "roots": {},
+  "contentHash": "4129947e66d7df8b64c9045dc385d4baab7e6b6d3d8f43b2af70a90cbe82116f",
+  "files": [
+    {
+      "path": "drive-c/lnfix/abs-saves/profile.dat",
+      "size": 2,
+      "hash": "410da8a2863956fc7c4ac02bebe7c8ea3bb686fd1a304bc3ace506d2ac1b478f",
+      "mtime": 1795681447
+    }
+  ],
+  "totalSize": 2,
+  "appVersion": "0.6.2",
+  "comment": "",
+  "locked": false
+}
