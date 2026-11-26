@@ -37,6 +37,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             app/package-lock.json
+            plugin-millennium/package-lock.json
             plugin-decky/package-lock.json
       - name: System libraries
         run: |
@@ -46,6 +47,10 @@ jobs:
         if: inputs.version-suffix != ''
         shell: pwsh
         run: ./scripts/set-build-version.ps1 -Suffix "${{ inputs.version-suffix }}"
+      # The app bundles the Steam plugin; prepare-sidecars.sh expects it built.
+      - name: Steam plugin
+        shell: pwsh
+        run: ./scripts/build-plugin.ps1
       - name: Build
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
