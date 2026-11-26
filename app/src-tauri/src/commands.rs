@@ -82,7 +82,7 @@ pub struct GameView {
     pending: usize,
     last_check: Option<serde_json::Value>,
     /// Playtime over all devices (from local data; refreshed by every sync).
-    playtime: playtime::Summary,
+    playtime: PlaytimeView,
     /// Emulator / recomp / PC game…, for the library's badges and groups.
     source: games::Source,
     /// Which game this is a version of: the key of the first of its
@@ -184,7 +184,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         last_error: st.last_error,
         pending: st.pending.len(),
         last_check: st.last_check,
-        playtime: playtime::summary(cfg, &g.key),
+        playtime: playtime_view(cfg, playtime::summary(cfg, &g.key)),
         source: games::Source {
             logo: logos::for_game(g, adapter).and_then(|f| art::logo_url(&f)),
             ..games::source(g)
@@ -212,7 +212,7 @@ pub struct CloudOnlyView {
     /// Artwork downloaded from the cloud (see `artsync`).
     art: ArtView,
     /// From this PC's copy of the other devices' playtime.
-    playtime: playtime::Summary,
+    playtime: PlaytimeView,
     family: String,
     link: Option<String>,
 }
@@ -244,7 +244,7 @@ pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &
                     logo: pick("logo"),
                     icon: pick("icon"),
                 },
-                playtime: playtime::summary(cfg, &c.key),
+                playtime: playtime_view(cfg, playtime::summary(cfg, &c.key)),
                 family: families.get(&c.key).cloned().unwrap_or_else(|| c.key.clone()),
                 link: c.game.clone(),
             }
@@ -456,6 +456,23 @@ fn platform_mark(cfg: &config::AppConfig, platform: &str) -> PlatformMark {
         .find_map(|g| logos::for_game(g, g.adapter.as_deref().and_then(adapters::find)))
         .and_then(|f| art::logo_url(&f));
     PlatformMark { label, logo }
+}
+
+/// A game's playtime as the app shows it: the summary, and what each
+/// platform it was played on is called.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaytimeView {
+    #[serde(flatten)]
+    summary: playtime::Summary,
+    /// Platform ([`playtime::PlatformTotal::platform`]) → its name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    platform_names: BTreeMap<String, String>,
+}
+
+pub(crate) fn playtime_view(cfg: &config::AppConfig, summary: playtime::Summary) -> PlaytimeView {
+    let platform_names = summary.platforms.iter().map(|p| (p.platform.clone(), platform_mark(cfg, &p.platform).label)).collect();
+    PlaytimeView { summary, platform_names }
 }
 
 fn platform_marks<'a>(cfg: &config::AppConfig, platforms: impl IntoIterator<Item = &'a str>) -> BTreeMap<String, PlatformMark> {

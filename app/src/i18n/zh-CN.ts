@@ -840,6 +840,8 @@ export const game = {
   playtimeTitle: "所有设备的游戏时间",
   playtimeDevice: (name: string, time: string, mine: boolean) => `${name}${mine ? "（本机）" : ""}：${time}`,
   playtimeSteam: (time: string) => `　其中 ${time}是开始使用 Ludonimbus 之前 Steam 记录的`,
+  playtimePlatforms: "按平台",
+  playtimePlatform: (name: string, time: string) => `${name}：${time}`,
   conflictTitle: "本机和云端都有新的存档改动",
   conflictText: (device: string, at: string, size: string, files: number, localSize: string) =>
     `云端最新：${device} 于 ${at} 保存（${size}）。本机：${files} 个文件，${localSize}。没选的那份也会留在「存档」里。`,

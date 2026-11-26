@@ -321,6 +321,16 @@ export interface PlaytimeSummary {
   totalSecs: number;
   lastPlayed: string | null;
   devices: PlaytimeDevice[];
+  /** Time per platform, most first. Sessions from before they said where they were played are only in the total. */
+  platforms?: { platform: string; secs: number }[];
+  /** What each of those platforms is called. */
+  platformNames?: Record<string, string>;
+}
+
+/** A game's playtime per platform, when it was played on more than one: `[name, seconds]`. */
+export function playtimePlatforms(p: PlaytimeSummary): Array<[string, number]> {
+  const list = (p.platforms ?? []).filter((x) => x.secs > 0);
+  return list.length > 1 ? list.map((x) => [p.platformNames?.[x.platform] ?? x.platform, x.secs]) : [];
 }
 
 export interface Overview {
