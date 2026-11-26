@@ -16,7 +16,7 @@ Ludonimbus 是一款开源的桌面应用（Windows 为主，也支持 Linux / S
 - Ludonimbus 会在你的 Google Drive 里创建名为 `Ludonimbus` 的文件夹，存放：游戏存档的压缩副本、每个版本的信息（时间、文件名、大小、校验值、可选备注），以及每台电脑一个小文件（设备名、操作系统、应用版本）。
 - 这些文件只用于实现应用本身的功能：恢复存档、显示版本历史、在你自己的多台电脑之间同步。
 - 你的邮箱地址只会显示在应用的设置页里。
-- 在 Ludonimbus 里删除的存档版本会移到 Google Drive 的回收站，30 天内可以在 Ludonimbus 的「最近删除」里恢复，之后由 Google 自动清除。
+- 在 Ludonimbus 里删除的存档版本会留在 `Ludonimbus` 文件夹里，30 天内可以在 Ludonimbus 的「最近删除」里恢复，之后由 Ludonimbus 彻底删除。
 
 数据怎么保存：数据通过 HTTPS 在你的电脑和 Google 服务器之间直接传输，不经过开发者的任何服务器。Google 登录凭据保存在你电脑的 Windows 凭据管理器里。
 

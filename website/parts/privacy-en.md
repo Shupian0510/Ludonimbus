@@ -19,7 +19,7 @@ If you choose to connect Google Drive, Ludonimbus asks for these permissions:
 
 - Data is transferred directly between your computer and Google's servers over HTTPS. It never passes through any server run by the developer.
 - The Google sign-in token is stored on your computer in the Windows Credential Manager. App settings and sync state are stored locally in `%APPDATA%\Ludonimbus` (`~/.config/Ludonimbus` on Linux); logs stay on your computer and are never uploaded.
-- Save versions you delete in Ludonimbus go to the Google Drive trash. You can restore them under Recently deleted in Ludonimbus for 30 days; after that Google removes them.
+- Save versions you delete in Ludonimbus stay in the `Ludonimbus` folder. You can restore them under Recently deleted in Ludonimbus for 30 days; after that Ludonimbus deletes them for good.
 
 ## Sharing
 
