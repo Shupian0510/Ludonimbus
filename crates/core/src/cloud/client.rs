@@ -13,6 +13,14 @@
 //! ([`Place::of_key`]), so reading never waits for the upgrade; the first
 //! write does it ([`Cloud::writable`]).
 //!
+//! A game the cloud has no record of under its key may still be one the
+//! cloud knows: another device added it under another key. What the game is
+//! (its ids) finds that card, and when the card has a line with the very
+//! files this version keeps, the game continues that line instead of
+//! starting a history of its own ([`Cloud::record_of`]; docs/plan-v2.md,
+//! section 6). Two records that turn out to be one game become one card the
+//! next time a device writes ([`Cloud::merge_duplicates`]).
+//!
 //! `main` is the line a game's devices share. A game on this device can
 //! follow another line of its record instead ([`wanted_line`]): one of the
 //! device's own, or one another device keeps (docs/plan-v2.md, section 7).
@@ -29,7 +37,7 @@ use super::saves::{self, Place};
 use super::store::{join, Store};
 use super::v2::{self, Access};
 use super::{upgrade, AccountInfo, CloudGame, DeviceInfo};
-use crate::config::{AppConfig, GameEntry};
+use crate::config::{self, AppConfig, GameEntry};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary};
 use crate::state::{self, CloudSeen, GameState, LineRef};
 use crate::{logger, paths, util};
@@ -60,9 +68,21 @@ pub struct Cloud {
     device_id: String,
     device_name: String,
     library: Mutex<Option<(Instant, Arc<Library>)>>,
-    /// The save line each game of this device follows, by key. A game that
-    /// isn't here follows the shared one.
-    lines: Mutex<HashMap<String, String>>,
+    /// What is known of each game of this device, by key.
+    games: Mutex<HashMap<String, Known>>,
+}
+
+/// What a [`Cloud`] knows of a game of this device.
+#[derive(Clone, Default)]
+struct Known {
+    /// The save line it follows; none is the shared one.
+    line: Option<String>,
+    /// The record it belongs to, where that is settled
+    /// ([`GameEntry::record`]).
+    record: Option<String>,
+    /// The game as this device defines it: what says which game it is and
+    /// which files its saves are.
+    entry: Option<GameEntry>,
 }
 
 /// A save line that has just been read.
@@ -203,17 +223,24 @@ impl Cloud {
             device_id: device_id.to_string(),
             device_name: device_name.to_string(),
             library: Mutex::default(),
-            lines: Mutex::default(),
+            games: Mutex::default(),
         }
     }
 
-    /// With the save line each game in `cfg` follows ([`wanted_line`]).
+    /// With the games in `cfg`: the save line each follows
+    /// ([`wanted_line`]), the record each belongs to and what each is.
     pub fn for_config(self, cfg: &AppConfig) -> Cloud {
         let state = state::load();
-        for g in &cfg.games {
-            let line = wanted_line(cfg, g, state.games.get(&g.key));
-            if line != library::MAIN_LINE {
-                self.follow(&g.key, &line);
+        {
+            let mut games = self.games.lock().unwrap();
+            for g in &cfg.games {
+                let line = wanted_line(cfg, g, state.games.get(&g.key));
+                let known = Known {
+                    line: (line != library::MAIN_LINE).then_some(line),
+                    record: g.record.clone().filter(|r| !r.is_empty()),
+                    entry: Some(g.clone()),
+                };
+                games.insert(g.key.clone(), known);
             }
         }
         self
@@ -221,12 +248,108 @@ impl Cloud {
 
     /// From here on the game `key` follows the save line `line`.
     pub fn follow(&self, key: &str, line: &str) {
-        self.lines.lock().unwrap().insert(key.to_string(), line.to_string());
+        self.games.lock().unwrap().entry(key.to_string()).or_default().line = Some(line.to_string());
     }
 
     /// The id of the save line the game `key` follows.
     pub fn following(&self, key: &str) -> String {
-        self.lines.lock().unwrap().get(key).cloned().unwrap_or_else(|| library::MAIN_LINE.to_string())
+        let games = self.games.lock().unwrap();
+        games.get(key).and_then(|g| g.line.clone()).unwrap_or_else(|| library::MAIN_LINE.to_string())
+    }
+
+    /// The record the game `key` belongs to, among `records`.
+    ///
+    /// - What is settled for it ([`GameEntry::record`]), while the cloud has
+    ///   that record.
+    /// - Else the record named like its key, when there is one: every game
+    ///   that came from 0.6 and every game this device added first.
+    /// - Else the card it is a version of, when that card has a line with
+    ///   the very files this version keeps ([`library::line_to_join`]). That
+    ///   is settled from then on, in the game's entry too.
+    /// - Else its key: the record it gets with its first upload. Should that
+    ///   record be of a game the cloud has a card of, the two become one
+    ///   card ([`Cloud::merge_duplicates`]) and this stays the answer.
+    ///
+    /// Only games of this device are looked for by what they are; any other
+    /// key is the record of that name. A game the user keeps apart from
+    /// every other (`solo:…`, [`GameEntry::game`]) has nothing that finds a
+    /// card, here or when records are merged.
+    fn record_of(&self, key: &str, records: &[v2::GameRecord]) -> String {
+        let known = self.games.lock().unwrap().get(key).cloned().unwrap_or_default();
+        if let Some(id) = known.record {
+            if library::get(records, &id).is_some() {
+                return id;
+            }
+        }
+        if library::get(records, key).is_some() {
+            return key.to_string();
+        }
+        let joined = known.entry.as_ref().and_then(|g| {
+            let def = CloudGame::from(g);
+            let (ids, format, files) = (upgrade::record_ids(&def), upgrade::line_format(&def), upgrade::line_def(&def));
+            library::line_to_join(records, &ids, &format, &files).map(|r| r.id.clone())
+        });
+        match joined {
+            Some(id) => {
+                self.settle(key, &id);
+                id
+            }
+            None => key.to_string(),
+        }
+    }
+
+    /// The game `key` belongs to the record `record` from here on.
+    fn settle(&self, key: &str, record: &str) {
+        self.games.lock().unwrap().entry(key.to_string()).or_default().record = Some(record.to_string());
+        logger::log("cloud", format!("{key}: the cloud has this game as {record}; its saves continue there"));
+        // Should this fail, the next look at the library finds the same card.
+        let kept = config::update(|c| {
+            if let Some(g) = c.game_mut(key) {
+                g.record = Some(record.to_string());
+            }
+            Ok(())
+        });
+        if let Err(e) = kept {
+            logger::log("cloud", format!("{key}: could not note the game's record: {e:#}"));
+        }
+    }
+
+    /// Whether the game `key` continues the saves of another game's card.
+    fn is_version_of_another(&self, key: &str) -> bool {
+        self.games.lock().unwrap().get(key).and_then(|g| g.record.as_deref()).is_some_and(|r| r != key)
+    }
+
+    /// Make one card of records that are the same game: two devices added
+    /// it before either saw the other's record ([`library::dedupe_with`];
+    /// the record that stays is written first). Their shared lines become
+    /// one history where they hold the same files ([`library::same_saves`]);
+    /// when both have versions the line shows a fork, and the next sync
+    /// asks which to continue, as after any two devices played at once.
+    /// Lines with other files stay lines of their own on the one card.
+    ///
+    /// No request unless there is something to merge. Returns whether
+    /// records were written.
+    fn merge_duplicates(&self, records: &[v2::GameRecord]) -> Result<bool> {
+        let found = library::dedupe_with(records, &library::same_saves);
+        if found.is_empty() {
+            return Ok(false);
+        }
+        let now = Utc::now();
+        for d in &found {
+            library::save(&self.store, &d.survivor, &self.device_id, now)?;
+            for other in &d.losers {
+                library::save(&self.store, other, &self.device_id, now)?;
+                logger::log("cloud", format!("{} and {} are one game: one card from here on", d.survivor.id, other.id));
+            }
+        }
+        self.forget_library();
+        // A line may be on another card now, or read more folders.
+        let _ = state::update(|s| {
+            for g in s.games.values_mut() {
+                g.line = None;
+            }
+        });
+        Ok(true)
     }
 
     pub fn kind(&self) -> &'static str {
@@ -374,7 +497,8 @@ impl Cloud {
             return Ok(if shared { (Place::of_key(key), Seen::Line) } else { (new_line(None), Seen::NewLine) });
         }
         let library = self.library()?;
-        if let Some((record, line)) = line_of(&library.records, key, &want) {
+        let record = self.record_of(key, &library.records);
+        if let Some((record, line)) = line_of(&library.records, &record, &want) {
             let place = Place::of(record, line);
             remember_place(key, &want, &place);
             return Ok((place, Seen::Line));
@@ -384,7 +508,7 @@ impl Cloud {
             // 0.6 may have left under this key.
             return Ok((Place::of_key(key), Seen::NoRecord));
         }
-        Ok((new_line(library::resolve(&library.records, key)), Seen::NewLine))
+        Ok((new_line(library::resolve(&library.records, &record)), Seen::NewLine))
     }
 
     /// Look at the record of the game `key` again when this device hasn't
@@ -400,7 +524,8 @@ impl Cloud {
         }
         let want = self.following(key);
         let library = self.library()?;
-        if let Some((record, line)) = line_of(&library.records, key, &want) {
+        let record = self.record_of(key, &library.records);
+        if let Some((record, line)) = line_of(&library.records, &record, &want) {
             remember_place(key, &want, &Place::of(record, line));
         }
         Ok(())
@@ -416,7 +541,12 @@ impl Cloud {
     /// ([`upgrade::record_for`]).
     ///
     /// A line of the device's own that the record doesn't have is added to
-    /// it, named after the device, in the format the game's shared line has.
+    /// it, named after the device, for the files this version keeps.
+    ///
+    /// The game's record is looked at once a day. That is also when records
+    /// that are one game become one card ([`Cloud::merge_duplicates`]), and
+    /// when the record learns what this version knows the game by (`ids`),
+    /// so that versions added later find the card.
     pub fn place_to_write(&self, key: &str, def: Option<&CloudGame>, has_old: bool) -> Result<Place> {
         self.writable()?;
         let want = self.following(key);
@@ -426,14 +556,37 @@ impl Cloud {
                 return Ok(place_of(line));
             }
         }
-        let library = self.library()?;
-        if let Some((record, line)) = line_of(&library.records, key, &want) {
+        let mut library = self.library()?;
+        if self.merge_duplicates(&library.records)? {
+            library = self.library()?;
+        }
+        let record_id = self.record_of(key, &library.records);
+        let ids = def.map(upgrade::record_ids).unwrap_or_default();
+        if let Some((record, line)) = line_of(&library.records, &record_id, &want) {
             let place = Place::of(record, line);
+            let mut more = record.clone();
+            library::add_ids(&mut more.ids, &ids);
+            // A line that doesn't say which files it holds (its folder had
+            // no definition when the cloud was upgraded) holds the ones of
+            // the game that syncs with it.
+            if let (None, Some(def)) = (&line.def, def.filter(|d| upgrade::line_format(d) == line.format)) {
+                if let Some(l) = more.lines.iter_mut().find(|l| l.id == line.id) {
+                    l.def = Some(upgrade::line_def(def));
+                }
+            }
+            if more != *record {
+                match library::save(&self.store, &more, &self.device_id, Utc::now()) {
+                    Ok(_) => self.forget_library(),
+                    Err(e) => logger::log("cloud", format!("{key}: could not add to the game's record: {e:#}")),
+                }
+            }
             remember_place(key, &want, &place);
             return Ok(place);
         }
         let now = Utc::now();
-        let mut record = match library::resolve(&library.records, key) {
+        let found = library::resolve(&library.records, &record_id);
+        let created = found.is_none();
+        let mut record = match found {
             // The game is known, the line is new.
             Some(record) => record.clone(),
             // The same record the upgrade would have made for this key, so
@@ -455,22 +608,43 @@ impl Cloud {
                 record
             }
         };
+        library::add_ids(&mut record.ids, &ids);
         if !record.lines.iter().any(|l| l.id == want) {
-            // A line of this device's own, in the format the game's shared
-            // line has.
+            // A line of this device's own holds the files this version
+            // keeps; for a game the device doesn't define, those of the
+            // game's shared line.
             let like = record.lines.iter().find(|l| l.id == library::MAIN_LINE).or_else(|| record.lines.first());
+            let format = def.map(upgrade::line_format).or_else(|| like.map(|l| l.format.clone()));
+            let files = def.map(upgrade::line_def).or_else(|| like.and_then(|l| l.def.clone()));
             let folder = record.folders.first().cloned().unwrap_or_else(|| key.to_string());
+            let own = want != library::MAIN_LINE;
             record.lines.push(v2::Line {
                 id: want.clone(),
-                format: like.map(|l| l.format.clone()).unwrap_or_else(|| "pc".to_string()),
-                scope: v2::SCOPE_INDEPENDENT.to_string(),
-                name: Some(self.device_name.clone()),
+                format: format.unwrap_or_else(|| "pc".to_string()),
+                scope: if own { v2::SCOPE_INDEPENDENT } else { v2::SCOPE_SHARED }.to_string(),
+                name: own.then(|| self.device_name.clone()),
                 path: v2::line_dir(&folder, &want),
+                def: files,
                 ..Default::default()
             });
         }
         let saved = library::save(&self.store, &record, &self.device_id, now)?;
         self.forget_library();
+        if created {
+            // The cloud may have a card of this game already, with other
+            // files (another store's version) or made at the same moment:
+            // one card then, which this record's line goes to.
+            let mut all: Vec<v2::GameRecord> = library.records.iter().filter(|r| r.id != saved.id).cloned().collect();
+            all.push(saved.clone());
+            if self.merge_duplicates(&all)? {
+                let library = self.library()?;
+                if let Some((record, line)) = line_of(&library.records, &record_id, &want) {
+                    let place = Place::of(record, line);
+                    remember_place(key, &want, &place);
+                    return Ok(place);
+                }
+            }
+        }
         let line = saved
             .lines
             .iter()
@@ -488,7 +662,8 @@ impl Cloud {
         let want = self.following(key);
         self.forget_library();
         let library = self.library()?;
-        let Some((record, line)) = line_of(&library.records, key, &want) else {
+        let id = self.record_of(key, &library.records);
+        let Some((record, line)) = line_of(&library.records, &id, &want) else {
             bail!(crate::tr!("云端还没有这条存档线", "The cloud doesn't have this save line yet"));
         };
         let name = Some(name.trim().to_string()).filter(|n| !n.is_empty());
@@ -505,17 +680,20 @@ impl Cloud {
         Ok(())
     }
 
-    /// The save lines the game `key` could follow: those of its card with
-    /// saves in the format its shared line has. None when the cloud has no
-    /// record of the game.
+    /// The save lines the game `key` could follow: those of its card that
+    /// hold the files its shared line holds (the same format, and the same
+    /// files where both lines say which those are). None when the cloud has
+    /// no record of the game.
     pub fn lines_of(&self, key: &str) -> Result<Vec<v2::Line>> {
         if self.access()? == Access::Legacy {
             return Ok(Vec::new());
         }
         let library = self.library()?;
-        let Some(record) = library::resolve(&library.records, key) else { return Ok(Vec::new()) };
-        let format = line_of(&library.records, key, library::MAIN_LINE).map(|(_, l)| l.format.clone());
-        Ok(record.lines.iter().filter(|l| format.as_ref().is_none_or(|f| &l.format == f)).cloned().collect())
+        let id = self.record_of(key, &library.records);
+        let Some(record) = library::resolve(&library.records, &id) else { return Ok(Vec::new()) };
+        let Some((_, shared)) = line_of(&library.records, &id, library::MAIN_LINE) else { return Ok(record.lines.clone()) };
+        let fits = |l: &v2::Line| l.format == shared.format && (l.def.is_none() || shared.def.is_none() || l.def == shared.def);
+        Ok(record.lines.iter().filter(|l| fits(l)).cloned().collect())
     }
 
     /// Make the line of the game `key` read the folder 0.6 keeps the key's
@@ -643,7 +821,14 @@ impl Cloud {
     /// A game's definition as 0.6 keeps it (`games/<key>/game.json`): what
     /// other devices need to find its saves. Game records don't hold that
     /// yet, so this file is still written.
+    ///
+    /// Not for a version that continues the saves of another game's card:
+    /// that card has its definition, and a folder under this key would show
+    /// up as one more game wherever the cloud's games are listed.
     pub fn put_game(&self, game: &CloudGame) -> Result<()> {
+        if self.is_version_of_another(&game.key) {
+            return Ok(());
+        }
         self.store.write(&join(&["games", &game.key, "game.json"]), &serde_json::to_vec_pretty(game)?)
     }
 

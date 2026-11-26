@@ -235,6 +235,13 @@ pub struct Line {
     /// migration, a line merged into this one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub also: Vec<String>,
+    /// Which files its saves are: a fingerprint of where the game they were
+    /// first uploaded from looks for them ([`super::upgrade::line_def`]).
+    /// Two lines of one format with the same value hold the same files, so
+    /// one history can serve both. Without a value nothing is known, and
+    /// nothing is assumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub def: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }
