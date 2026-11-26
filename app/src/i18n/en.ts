@@ -828,6 +828,8 @@ export const game: typeof Zh.game = {
   playtimeTitle: "Playtime on all devices",
   playtimeDevice: (name, time, mine) => `${name}${mine ? " (this PC)" : ""}: ${time}`,
   playtimeSteam: (time) => `  of which ${time} was counted by Steam before you used Ludonimbus`,
+  playtimePlatforms: "By platform",
+  playtimePlatform: (name, time) => `${name}: ${time}`,
   conflictTitle: "Both this PC and the cloud have new save changes",
   conflictText: (device, at, size, files, localSize) =>
     `Latest in the cloud: saved by ${device} at ${at} (${size}). This PC: ${files} ${plural(files, "file", "files")}, ${localSize}. The one you don't pick stays under Saves.`,

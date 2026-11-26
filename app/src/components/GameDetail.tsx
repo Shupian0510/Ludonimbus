@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
+import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, playtimePlatforms, SaveCandidate, StatusReport } from "../api";
 import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
@@ -524,13 +524,18 @@ export function GameDetail({
   );
 }
 
-/** Per-device breakdown shown when hovering the playtime. */
+/** Shown when hovering the playtime: per device, and per platform when there are several. */
 function playtimeTip(game: GameView): string {
   const g = msg().game;
   const lines = [g.playtimeTitle];
   for (const d of game.playtime.devices) {
     lines.push(g.playtimeDevice(d.deviceName, duration(d.secs), d.thisDevice));
     if (d.steamMinutes) lines.push(g.playtimeSteam(duration(d.steamMinutes * 60)));
+  }
+  const platforms = playtimePlatforms(game.playtime);
+  if (platforms.length > 0) {
+    lines.push("", g.playtimePlatforms);
+    for (const [name, secs] of platforms) lines.push(g.playtimePlatform(name, duration(secs)));
   }
   return lines.join("\n");
 }

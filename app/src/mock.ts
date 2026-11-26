@@ -248,6 +248,15 @@ const playtime: Record<string, PlaytimeSummary> = {
   "zelda-oot-longshot": devicePlaytime(16.5, 4.2, 12),
   "fe-fortunes-weave": devicePlaytime(7.3, 0, 0),
   "bloodborne-lantern": devicePlaytime(31, 9.5, 20),
+  // Played as two versions: the time per platform shows with the total.
+  celeste: {
+    ...devicePlaytime(9, 3.5, 0),
+    platforms: [
+      { platform: "pc:steam", secs: 9 * 3600 },
+      { platform: "pc", secs: 3.5 * 3600 },
+    ],
+    platformNames: { "pc:steam": "Steam", pc: "PC" },
+  },
 };
 
 const overview: Overview = {

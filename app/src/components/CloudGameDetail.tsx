@@ -2,7 +2,7 @@
 // versions and playtime from the cloud, adding it here, installing it from
 // a backup of the game itself, and applying its saves to another version.
 import { useEffect, useState } from "react";
-import { api, CloudGameInfo, CloudOnlyView, errorText, Overview, ShortcutView } from "../api";
+import { api, CloudGameInfo, CloudOnlyView, errorText, Overview, playtimePlatforms, ShortcutView } from "../api";
 import { bytes, dateTime, duration } from "../format";
 import { msg, useT } from "../i18n";
 import { AccountPicker, useAccounts } from "./AddGame";
@@ -109,6 +109,12 @@ export function CloudGameDetail({
               <div key={d.device} className="row space">
                 <span>{d.deviceName}</span>
                 <span className="muted">{duration(d.secs)}</span>
+              </div>
+            ))}
+            {playtimePlatforms(playtime).map(([name, secs]) => (
+              <div key={name} className="row space muted small">
+                <span>{name}</span>
+                <span>{duration(secs)}</span>
               </div>
             ))}
           </section>

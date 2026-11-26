@@ -73,7 +73,7 @@ pub struct GameBackupView {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudGameInfo {
-    playtime: playtime::Summary,
+    playtime: crate::commands::PlaytimeView,
     /// The newest backup of the game itself, when there is one.
     game_backup: Option<GameBackupView>,
 }
@@ -97,6 +97,7 @@ pub async fn cloud_game_info(key: String) -> CmdResult<CloudGameInfo> {
                 let n = v.len();
                 v.into_iter().last().map(|s| GameBackupView { versions: n, size: s.total_size, created_at: s.created_at, device_name: s.device_name })
             });
+        let playtime = crate::commands::playtime_view(&ctx.cfg, playtime);
         Ok(CloudGameInfo { playtime, game_backup })
     })
     .await
