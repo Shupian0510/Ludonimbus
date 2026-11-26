@@ -52,6 +52,10 @@ export interface SnapshotSummary {
   fileCount: number;
   comment: string;
   locked: boolean;
+  /** The game version that wrote these saves (read from them, where a rule says how). */
+  gameVersion?: string | null;
+  /** The game version installed on the device that saved. */
+  installedVersion?: string | null;
 }
 
 export interface FileEntry {
@@ -59,6 +63,14 @@ export interface FileEntry {
   size: number;
   hash: string;
   mtime: number;
+}
+
+/** A version in 「最近删除」, restorable until 30 days after `deletedAt`. */
+export interface TrashedSnapshot {
+  snapshot: SnapshotSummary;
+  deletedAt: string;
+  /** Device it was deleted on. */
+  deletedBy: string;
 }
 
 export interface SnapshotMeta extends Omit<SnapshotSummary, "fileCount"> {
@@ -98,6 +110,11 @@ export interface GameView {
   platform: string | null;
   exe: string | null;
   exeExists: boolean;
+  /**
+   * The game itself is on this PC (its program, and the game file its
+   * arguments name). False: only its saves are here, shown grey at the end.
+   */
+  playable: boolean;
   install: string | null;
   args: string;
   saves: string[];
@@ -122,10 +139,112 @@ export interface GameView {
   lastCheck: StatusReport | null;
   playtime: PlaytimeSummary;
   source: GameSource;
+  /**
+   * Which game this is a version of (the key of its first version): versions
+   * of one game share it and show as one card (docs/plan-phase5.md §5).
+   */
+  family: string;
+  /** The user's "same game" link (`solo:…` = kept apart); null = detected. */
+  link: string | null;
+}
+
+/** A game the cloud has but this PC doesn't: grey in the library. */
+export interface CloudOnlyView {
+  key: string;
+  name: string;
+  adapter: string | null;
+  adapterName: string | null;
+  platform: string | null;
+  ludusaviTitle: string | null;
+  saves: string[];
+  source: GameSource;
+  art: GameView["art"];
+  playtime: PlaytimeSummary;
+  family: string;
+  link: string | null;
+}
+
+export interface CloudLibrary {
+  cloudOnly: CloudOnlyView[];
+  families: Record<string, string>;
+  fetchedAt: string | null;
+  error: string | null;
+}
+
+export interface CloudGameInfo {
+  playtime: PlaytimeSummary;
+  gameBackup: { versions: number; size: number; createdAt: string; deviceName: string } | null;
+}
+
+/** What applying a save version to another version of the game would do. */
+export interface TransferPlan {
+  same: boolean;
+  fromXbox: boolean;
+  toXbox: boolean;
+  xboxRule: string | null;
+  items: { from: string; to: string; size: number; replaces: boolean }[];
+  unmatched: string[];
+  base: string | null;
+  matched: number;
+  needsFolder: boolean;
+  /** Different save formats: only versions the user linked by hand. */
+  crossPlatform: boolean;
+  /** Both versions follow this cross-platform rule (`adapters/cross-saves.yaml`). */
+  formatRule: string | null;
+  /** Source files that aren't saves under that rule (settings…): not written. */
+  skipped: string[];
+  sourceVersion: string | null;
+  targetVersion: string | null;
+  /** The source's saves are from a newer game version than the target's. */
+  tooNew: boolean;
+  /** The target is a Switch version only in the cloud: uploaded as its newest version. */
+  cloudTarget: boolean;
+}
+
+/** A question of the launch wrapper, shown full screen (`ludonimbus-app --prompt`). */
+export interface PromptRequest {
+  title: string;
+  text: string;
+  level: "info" | "warn" | "error";
+  buttons: { id: string; label: string; key: "a" | "b" | "x" | "y" }[];
+}
+
+export interface LaunchInfo {
+  mode: "desktop" | "handheld" | "prompt";
+  prompt: PromptRequest | null;
+}
+
+export type HandheldMode = "auto" | "on" | "off";
+
+export interface HandheldInfo {
+  device: string | null;
+  steamGamepadUi: boolean;
+  mode: HandheldMode;
+  inSteam: { account: string; appid: number } | null;
+}
+
+/** Settings → Switch: the Switch client's LAN connection. */
+export interface NxStatus {
+  enabled: boolean;
+  running: boolean;
+  address: string | null;
+  port: number;
+  fingerprint: string | null;
+  devices: { id: string; name: string; pairedAt: string; lastSeen: string | null }[];
+  pairingCode: string | null;
+  error: string | null;
+}
+
+/** Another version of a game with newer saves than this one. */
+export interface NewerVersion {
+  key: string;
+  name: string;
+  label: string;
+  snapshot: SnapshotSummary;
 }
 
 /** What a game runs on: detected from its save rule and program. */
-export type SourceKind = "emulator" | "recomp" | "pc" | "xbox" | "custom";
+export type SourceKind = "emulator" | "console" | "recomp" | "pc" | "xbox" | "custom";
 
 export interface GameSource {
   kind: SourceKind;
@@ -165,6 +284,9 @@ export interface Overview {
   steamFound: boolean;
   steamRunning: boolean;
   games: GameView[];
+  /** Games the cloud has but this PC doesn't (from the copy kept on this PC). */
+  cloudOnly: CloudOnlyView[];
+  cloudFetchedAt: string | null;
 }
 
 export type Outcome =
@@ -458,7 +580,12 @@ export const api = {
   restore: (key: string, id: string) => invoke<Outcome>("restore_snapshot", { key, id }),
   setSnapshot: (key: string, id: string, patch: { locked?: boolean; comment?: string }) =>
     invoke<void>("set_snapshot", { key, id, locked: patch.locked ?? null, comment: patch.comment ?? null }),
+  /** Moves the version to 「最近删除」. */
   deleteSnapshot: (key: string, id: string) => invoke<void>("delete_snapshot", { key, id }),
+  deletedSnapshots: (key: string) => invoke<TrashedSnapshot[]>("deleted_snapshots", { key }),
+  /** Resolves to whether the version was also locked (so retention keeps it). */
+  restoreDeletedSnapshot: (key: string, id: string) => invoke<boolean>("restore_deleted_snapshot", { key, id }),
+  purgeDeletedSnapshot: (key: string, id: string) => invoke<void>("purge_deleted_snapshot", { key, id }),
   exportSnapshot: (key: string, id: string) => invoke<string | null>("export_snapshot", { key, id }),
   localFiles: (key: string) =>
     invoke<{ files: LocalFile[]; roots: Record<string, string> }>("local_files", { key }),
@@ -486,6 +613,29 @@ export const api = {
   addCustom: (name: string, exe: string | null, saves: string[], ludusaviTitle: string | null) =>
     invoke<string>("add_custom", { name, exe, saves, ludusaviTitle }),
   cloudGames: () => invoke<CloudGame[]>("cloud_games"),
+  refreshCloudLibrary: () => invoke<CloudLibrary>("refresh_cloud_library"),
+  cloudGameInfo: (key: string) => invoke<CloudGameInfo>("cloud_game_info", { key }),
+  linkGames: (keys: string[]) => invoke<void>("link_games", { keys }),
+  unlinkGame: (key: string) => invoke<void>("unlink_game", { key }),
+  transferPlan: (source: string, id: string, target: string, base: string | null) =>
+    invoke<TransferPlan>("transfer_plan", { source, id, target, base }),
+  transferApply: (source: string, id: string, target: string, base: string | null) =>
+    invoke<Outcome>("transfer_apply", { source, id, target, base }),
+  requestInstall: (key: string) => invoke<void>("game_backup_request_install", { key }),
+  launchMode: () => invoke<LaunchInfo>("launch_mode"),
+  promptAnswer: (choice: string | null) => invoke<void>("prompt_answer", { choice }),
+  setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
+  quitHandheld: () => invoke<void>("quit_handheld"),
+  handheldInfo: () => invoke<HandheldInfo>("handheld_info"),
+  setHandheldMode: (mode: HandheldMode) => invoke<void>("set_handheld_mode", { mode }),
+  steamAddLudonimbus: (account: string, closeSteam: boolean) => invoke<number>("steam_add_ludonimbus", { account, closeSteam }),
+  newerVersion: (key: string) => invoke<NewerVersion | null>("newer_version", { key }),
+  dismissNewer: (key: string, id: string) => invoke<void>("dismiss_newer", { key, id }),
+  nxStatus: () => invoke<NxStatus>("nx_status"),
+  nxSetEnabled: (enabled: boolean) => invoke<NxStatus>("nx_set_enabled", { enabled }),
+  nxStartPairing: () => invoke<NxStatus>("nx_start_pairing"),
+  nxCancelPairing: () => invoke<NxStatus>("nx_cancel_pairing"),
+  nxRemoveDevice: (id: string) => invoke<NxStatus>("nx_remove_device", { id }),
   addFromCloud: (key: string, account: string | null, appid: number | null, exe: string | null) =>
     invoke<string>("add_from_cloud", { key, account, appid, exe }),
   updateGame: (

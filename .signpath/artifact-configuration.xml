@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for Ludonimbus (the project's default
+  configuration in SignPath; keep this copy in sync with it).
+
+  release.yml sends two signing requests per release, both using this file:
+    1. a zip with ludonimbus-app.exe and ludonimbus-run.exe
+    2. a zip with the NSIS installer built from them
+  Each request contains only some of the files below, hence min-matches="0";
+  release.yml checks afterwards that every file it needs came back signed.
+
+  SignPath Foundation requires product name and version restrictions on every
+  signed file. The version comes from the "version" parameter that release.yml
+  passes (the version in Cargo.toml / tauri.conf.json, e.g. 0.6.0).
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="ludonimbus-app.exe" min-matches="0" product-name="Ludonimbus" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="ludonimbus-run.exe" min-matches="0" product-name="Ludonimbus" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="Ludonimbus_*_x64-setup.exe" min-matches="0" product-name="Ludonimbus" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

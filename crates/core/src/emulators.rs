@@ -113,7 +113,7 @@ pub fn identify_any(a: &Adapter, exe: &Path, args: &str) -> Option<EmuGame> {
         "psp" => paths.iter().find_map(|p| psp(p)).or_else(|| serial_in(args).map(|s| serial_game(&s, None))),
         "vita" => vita(&toks),
         "rom" => rom(&toks, &paths),
-        "switch" => switch_game(exe, args, &paths),
+        "switch" => switch_game(a, exe, args, &paths),
         _ => None,
     };
     // No way to identify it: the file the launch options name is still the game.
@@ -189,10 +189,28 @@ fn ext_lower(p: &Path) -> String {
 // ---------------------------------------------------------------------------
 // Roots an emulator's own settings decide
 
+/// How a Switch emulator stores saves, told by its rule's data-folder root.
+enum NxLayout<'a> {
+    /// `{emu}`: saves numbered per PC through a save index.
+    Ryujinx(&'a Path),
+    /// `{user}`: saves at fixed paths per profile.
+    Yuzu(&'a Path),
+}
+
+fn nx_layout<'a>(a: &Adapter, roots: &'a BTreeMap<String, PathBuf>) -> Option<NxLayout<'a>> {
+    if a.game_id.as_deref() != Some("switch") {
+        return None;
+    }
+    roots
+        .get("emu")
+        .map(|p| NxLayout::Ryujinx(p.as_path()))
+        .or_else(|| roots.get("user").map(|p| NxLayout::Yuzu(p.as_path())))
+}
+
 /// Roots read from an emulator's settings and data on this PC, overriding
 /// the rule's defaults: the MLC folder picked in Cemu's first-run wizard,
-/// and Ryujinx's per-PC save folders for the `{nxsave-…}` / `{nxdevice-…}`
-/// roots used by `saves`.
+/// and the Switch emulators' per-PC save folders for the `{nxsave-…}` /
+/// `{nxdevice-…}` roots used by `saves`.
 pub fn config_roots(a: &Adapter, known: &BTreeMap<String, PathBuf>, saves: &[String]) -> BTreeMap<String, PathBuf> {
     let mut out = BTreeMap::new();
     if a.key == "cemu" {
@@ -200,15 +218,15 @@ pub fn config_roots(a: &Adapter, known: &BTreeMap<String, PathBuf>, saves: &[Str
             out.insert("mlc".to_string(), p);
         }
     }
-    if a.game_id.as_deref() == Some("switch") {
-        if let Some(emu) = known.get("emu") {
-            for s in saves {
-                let Ok((root, _)) = crate::spec::split_pattern(s) else { continue };
-                if let Some((kind, title)) = switch::parse_root(&root) {
-                    let p = switch::find_save(emu, kind, title).unwrap_or_else(|| switch::pending_dir(emu, kind, title));
-                    out.insert(root, p);
-                }
-            }
+    if let Some(layout) = nx_layout(a, known) {
+        for s in saves {
+            let Ok((root, _)) = crate::spec::split_pattern(s) else { continue };
+            let Some((kind, title)) = switch::parse_root(&root) else { continue };
+            let p = match layout {
+                NxLayout::Ryujinx(emu) => switch::find_save(emu, kind, title).unwrap_or_else(|| switch::pending_dir(emu, kind, title)),
+                NxLayout::Yuzu(user) => switch::yuzu_save(user, kind, title).unwrap_or_else(|| switch::yuzu_pending_dir(user, kind, title)),
+            };
+            out.insert(root, p);
         }
     }
     out
@@ -218,10 +236,17 @@ pub fn config_roots(a: &Adapter, known: &BTreeMap<String, PathBuf>, saves: &[Str
 /// PC doesn't have yet (Ryujinx numbers saves per PC). The emulator must be
 /// closed for that.
 pub fn prepare_restore(a: &Adapter, roots: &mut BTreeMap<String, PathBuf>, used: &[String]) -> anyhow::Result<()> {
-    if a.game_id.as_deref() != Some("switch") {
-        return Ok(());
-    }
-    let Some(emu) = roots.get("emu").cloned() else { return Ok(()) };
+    let emu = match nx_layout(a, roots) {
+        Some(NxLayout::Ryujinx(emu)) => emu.to_path_buf(),
+        Some(NxLayout::Yuzu(_)) => {
+            // Fixed paths, created as files are written; only a profile is needed.
+            if used.iter().any(|n| switch::parse_root(n).is_some() && roots.get(n).is_some_and(|p| switch::is_pending(p))) {
+                anyhow::bail!(crate::tr!("请先打开一次 {}，建好一个用户：这个游戏的存档要放在用户名下", "Open {} once and set up a user first: this game's save belongs to a user", a.name));
+            }
+            return Ok(());
+        }
+        None => return Ok(()),
+    };
     for name in used {
         let Some((kind, title)) = switch::parse_root(name) else { continue };
         if roots.get(name).is_some_and(|p| !switch::is_pending(p)) {
@@ -239,7 +264,7 @@ pub fn prepare_restore(a: &Adapter, roots: &mut BTreeMap<String, PathBuf>, used:
 /// After a restore: Ryujinx keeps a working copy of each save next to the
 /// committed one; make it match what was restored.
 pub fn finish_restore(a: &Adapter, roots: &BTreeMap<String, PathBuf>) -> anyhow::Result<()> {
-    if a.game_id.as_deref() != Some("switch") {
+    if !matches!(nx_layout(a, roots), Some(NxLayout::Ryujinx(_))) {
         return Ok(());
     }
     for (name, p) in roots {
@@ -588,9 +613,23 @@ pub fn ryujinx_dirs(exe: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn switch_game(exe: &Path, args: &str, paths: &[PathBuf]) -> Option<EmuGame> {
-    let dirs = ryujinx_dirs(exe);
-    let mut keys: Vec<PathBuf> = dirs.iter().map(|d| d.join("system").join("prod.keys")).collect();
+/// A Switch emulator's data folders for this exe: Ryujinx's, or the yuzu
+/// family's `user` folder candidates (portable first).
+fn switch_dirs(a: &Adapter, exe: &Path) -> Vec<PathBuf> {
+    if a.roots.contains_key("emu") {
+        return ryujinx_dirs(exe);
+    }
+    let known = crate::spec::builtin_roots(exe.parent());
+    a.roots
+        .get("user")
+        .map(|t| t.split('|').filter_map(|alt| crate::spec::expand(alt.trim(), &known).ok()).filter(|p| p.is_dir()).collect())
+        .unwrap_or_default()
+}
+
+fn switch_game(a: &Adapter, exe: &Path, args: &str, paths: &[PathBuf]) -> Option<EmuGame> {
+    let dirs = switch_dirs(a, exe);
+    // Ryujinx keeps keys in system/, the yuzu family in keys/.
+    let mut keys: Vec<PathBuf> = dirs.iter().flat_map(|d| [d.join("system").join("prod.keys"), d.join("keys").join("prod.keys")]).collect();
     if let Some(h) = dirs::home_dir() {
         keys.push(h.join(".switch").join("prod.keys"));
     }

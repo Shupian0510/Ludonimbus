@@ -329,6 +329,8 @@ fn meta(game: &str, id: &str, parent: Option<&str>) -> SnapshotMeta {
         app_version: "test".into(),
         comment: String::new(),
         locked: false,
+        game_version: None,
+        installed_version: None,
     }
 }
 
@@ -429,6 +431,29 @@ fn baidu_cloud() {
     assert_eq!(dav.list_snapshots("fe").unwrap()[0].comment, "通关前");
     dav.delete("fe", "01BBB").unwrap();
     assert_eq!(dav.list_snapshots("fe").unwrap().len(), 1);
+
+    // Deleting a version by hand moves it to 「最近删除」: gone from the
+    // history, restorable, and deleted for good only on request.
+    assert!(dav.list_trash("fe").unwrap().is_empty());
+    dav.trash("fe", "01AAA", "PC-A").unwrap();
+    assert!(dav.list_snapshots("fe").unwrap().is_empty());
+    let trash = dav.list_trash("fe").unwrap();
+    assert_eq!(trash.len(), 1);
+    assert_eq!(
+        (trash[0].snapshot.id.as_str(), trash[0].deleted_by.as_str(), trash[0].snapshot.comment.as_str()),
+        ("01AAA", "PC-A", "通关前")
+    );
+    dav.untrash("fe", "01AAA").unwrap();
+    assert_eq!(dav.list_snapshots("fe").unwrap()[0].comment, "通关前");
+    assert!(dav.list_trash("fe").unwrap().is_empty());
+    // A restored version is live again: purging it is refused.
+    assert!(dav.purge("fe", "01AAA").is_err());
+    dav.trash("fe", "01AAA", "PC-A").unwrap();
+    dav.purge("fe", "01AAA").unwrap();
+    assert!(dav.list_trash("fe").unwrap().is_empty());
+    assert!(dav.store().list("games/fe/snapshots").unwrap().is_empty());
+    assert!(dav.store().list("games/fe/trash").unwrap().is_empty());
+    assert!(dav.untrash("fe", "01AAA").is_err());
 
     // An app name that does not match the registered one cannot write.
     let t = dav.store().token();

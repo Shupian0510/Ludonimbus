@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, Settings } from "../api";
-import { LANGS, useI18n } from "../i18n";
+import { api, errorText, HandheldInfo, Settings } from "../api";
+import { LANGS, msg, useI18n } from "../i18n";
 import { DISCORD_URL, docsUrl, GITHUB_URL } from "../links";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions } from "./CloudForms";
 import { MILLENNIUM_URL, SteamPluginRows, useSteamPlugin } from "./SteamPlugin";
+import { withSteamClosed } from "./steamAction";
 import { Button, Icon, Spinner, useUi } from "./ui";
 
 export type Usage = "emulators" | "recomps" | "steamThirdParty" | "multiDevice";
@@ -15,8 +16,8 @@ const USAGES: { id: Usage; icon: string }[] = [
   { id: "multiDevice", icon: "devices" },
 ];
 
-const STEPS = ["welcome", "usage", "cloud", "art", "steam", "done"] as const;
-type Step = (typeof STEPS)[number];
+const ALL_STEPS = ["welcome", "usage", "cloud", "art", "steam", "handheld", "done"] as const;
+type Step = (typeof ALL_STEPS)[number];
 
 /**
  * First-run guide: what Ludonimbus does, what the user wants it for, then
@@ -39,7 +40,14 @@ export function Onboarding({
   const { t, lang, setPref } = useI18n();
   const o = t.onboarding;
   const p = t.steamPlugin;
-  const [step, setStep] = useState<Step>(STEPS.find((s) => s === initialStep) ?? "welcome");
+  const [step, setStep] = useState<Step>(ALL_STEPS.find((s) => s === initialStep) ?? "welcome");
+  // A handheld (by its firmware): one more step for its settings.
+  const [hh, setHh] = useState<HandheldInfo | null>(null);
+  const [isHandheld, setIsHandheld] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.handheldInfo().then(setHh, () => setHh(null));
+  }, []);
+  const STEPS = ALL_STEPS.filter((s) => s !== "handheld" || !!hh?.device || initialStep === "handheld");
   const [usage, setUsage] = useState<Set<Usage>>(
     new Set(initialStep === "usage" ? ["emulators", "multiDevice"] : initialStep === "done" ? ["emulators", "steamThirdParty"] : []),
   );
@@ -267,6 +275,64 @@ export function Onboarding({
             </div>
           )}
 
+          {step === "handheld" && (
+            <div>
+              <h2>{o.handheld.title}</h2>
+              <p className="muted">{o.handheld.text(hh?.device ?? "")}</p>
+              <div className="row">
+                <Button
+                  kind={isHandheld ? "primary" : "secondary"}
+                  icon="check"
+                  onClick={async () => {
+                    setIsHandheld(true);
+                    await api.setHandheldMode("on").catch(() => undefined);
+                  }}
+                >
+                  {o.handheld.yes}
+                </Button>
+                <Button
+                  kind={isHandheld === false ? "primary" : "secondary"}
+                  onClick={async () => {
+                    setIsHandheld(false);
+                    await api.setHandheldMode("auto").catch(() => undefined);
+                  }}
+                >
+                  {o.handheld.no}
+                </Button>
+              </div>
+              {isHandheld && (
+                <>
+                  <p>{o.handheld.yesText}</p>
+                  <div className="row">
+                    {hh?.inSteam ? (
+                      <span className="muted">{t.handheld.steamIn}</span>
+                    ) : (
+                      <Button
+                        icon="steam"
+                        onClick={async () => {
+                          try {
+                            const a = await api.steamAccounts();
+                            if (!a.selected) return ui.toast(msg().handheld.steamNone, "bad");
+                            if ((await withSteamClosed(ui, (c) => api.steamAddLudonimbus(a.selected!, c))) !== null) {
+                              ui.toast(msg().handheld.steamAdded);
+                              setHh(await api.handheldInfo());
+                            }
+                          } catch (e) {
+                            ui.toast(errorText(e), "bad");
+                          }
+                        }}
+                      >
+                        {t.handheld.steamAdd}
+                      </Button>
+                    )}
+                  </div>
+                  <p className="muted small">{t.handheld.xboxHow}</p>
+                  <p className="muted small">{o.handheld.autostart}</p>
+                </>
+              )}
+            </div>
+          )}
+
           {step === "done" && (
             <div>
               <h2>{o.done.title}</h2>
@@ -343,7 +409,7 @@ export function Onboarding({
               {o.start}
             </Button>
           )}
-          {(step === "usage" || step === "cloud" || step === "art" || step === "steam") && (
+          {(step === "usage" || step === "cloud" || step === "art" || step === "steam" || step === "handheld") && (
             <>
               {!(step === "cloud" && connected) &&
                 !(step === "art" && sgdb?.hasKey) &&

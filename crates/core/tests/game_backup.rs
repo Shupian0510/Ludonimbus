@@ -304,7 +304,7 @@ fn pc_game_part(tmp: &Path, store: &dyn Store) {
     let m7 = remote::read_manifest(store, "zelda", &v7).unwrap();
     let victim_id = m7.components[0].chunks[0].h.clone();
     let cloud = tmp.join("cloud");
-    let victim = cloud.join(remote::chunk_path(&victim_id).replace('/', "\\"));
+    let victim = cloud.join(remote::chunk_path(&victim_id));
     let good = std::fs::read(&victim).unwrap();
     let mut bad = good.clone();
     let last = bad.len() - 1;

@@ -8,7 +8,12 @@
 //! `LUDONIMBUS_BAIDU_APP_NAME` at build time), see docs/baidu-netdisk-setup.md.
 //!
 //! An app may only touch `/apps/<app name>/` (shown to users as
-//! 「我的应用数据/<app name>」), which is the root of this store.
+//! 「我的应用数据/<app name>」), which is the root of this store; paths are
+//! never allowed to climb out of it (`..` is dropped).
+//!
+//! Users may sign in with their own app instead (「使用自己的百度应用」).
+//! Its SecretKey is kept in the system credential store under
+//! [`app_secret_user`], never in `config.json`.
 //!
 //! Tokens: the access token lives 30 days, the refresh token 10 years but is
 //! single-use, so refreshes are serialized across processes with a file lock
@@ -45,16 +50,19 @@ pub struct BaiduClient {
 }
 
 impl BaiduClient {
-    /// Configured values win; otherwise the ones built into the release.
+    /// Configured values win; otherwise the ones built into the release. A
+    /// configured AppKey never borrows the built-in SecretKey.
     pub fn resolve(app_key: &str, secret_key: &str, app_name: &str) -> Option<Self> {
         let pick = |v: &str, builtin: Option<&str>| {
             let v = v.trim();
             if v.is_empty() { builtin.unwrap_or("").trim().to_string() } else { v.to_string() }
         };
+        let own = !app_key.trim().is_empty();
         let app_key = pick(app_key, option_env!("LUDONIMBUS_BAIDU_APP_KEY"));
-        let secret_key = pick(secret_key, option_env!("LUDONIMBUS_BAIDU_SECRET_KEY"));
-        let mut app_name = pick(app_name, option_env!("LUDONIMBUS_BAIDU_APP_NAME"));
-        if app_name.is_empty() {
+        let secret_key = if own { secret_key.trim().to_string() } else { pick(secret_key, option_env!("LUDONIMBUS_BAIDU_SECRET_KEY")) };
+        // The app name is one folder under /apps.
+        let mut app_name = pick(app_name, option_env!("LUDONIMBUS_BAIDU_APP_NAME")).replace(['/', '\\'], "");
+        if app_name.is_empty() || app_name == "." || app_name == ".." {
             app_name = "Ludonimbus".into();
         }
         (!app_key.is_empty() && !secret_key.is_empty()).then_some(BaiduClient {
@@ -119,6 +127,24 @@ impl Token {
     fn fresh(&self) -> bool {
         chrono::Utc::now().timestamp() < self.expires_at - 86_400
     }
+}
+
+/// Credential name of the SecretKey of the user's own app with `app_key`.
+pub fn app_secret_user(app_key: &str) -> String {
+    format!("baidu-app-secret:{}", app_key.trim())
+}
+
+/// SecretKey of the user's own app: `legacy` (from a `config.json` written
+/// before 0.6.3) when set, else the one in the credential store. Empty for
+/// the built-in app.
+pub fn saved_app_secret(app_key: &str, legacy: &str) -> Result<String> {
+    if !legacy.trim().is_empty() {
+        return Ok(legacy.trim().to_string());
+    }
+    if app_key.trim().is_empty() {
+        return Ok(String::new());
+    }
+    Ok(super::secrets::load(&app_secret_user(app_key))?.unwrap_or_default())
 }
 
 pub fn load_token() -> Result<Option<Token>> {
@@ -424,8 +450,14 @@ impl BaiduPan {
         })
     }
 
+    /// Absolute netdisk path below the app folder. `.` and `..` segments
+    /// are dropped, so no path can point outside 「我的应用数据/<app name>」.
     fn full(&self, path: &str) -> String {
-        let rel = join(&[path]);
+        let rel = join(&[path])
+            .split('/')
+            .filter(|s| *s != "." && *s != "..")
+            .collect::<Vec<_>>()
+            .join("/");
         if rel.is_empty() { self.root.clone() } else { format!("{}/{rel}", self.root) }
     }
 
@@ -857,5 +889,20 @@ mod tests {
         let c = BaiduClient::resolve("key", "secret", "").unwrap();
         assert_eq!(c.app_name, BaiduClient::builtin_app_name());
         assert_eq!(c.app_key, "key");
+        // An own AppKey without its SecretKey is incomplete, whatever is built in.
+        assert!(BaiduClient::resolve("key", "", "").is_none());
+        assert_eq!(BaiduClient::resolve("key", "secret", "../x").unwrap().app_name, "..x");
+        assert_eq!(BaiduClient::resolve("key", "secret", "..").unwrap().app_name, "Ludonimbus");
+    }
+
+    #[test]
+    fn paths_stay_in_the_app_folder() {
+        let client = BaiduClient::resolve("key", "secret", "Ludonimbus").unwrap();
+        let token = Token { access_token: "a".into(), refresh_token: "r".into(), expires_at: i64::MAX };
+        let pan = BaiduPan::new(client, Endpoints::default(), token, TokenSink::Memory, Duration::from_secs(5));
+        assert_eq!(pan.full(""), "/apps/Ludonimbus");
+        assert_eq!(pan.full("games/x/snapshots/1.zip"), "/apps/Ludonimbus/games/x/snapshots/1.zip");
+        assert_eq!(pan.full("../../我的资源/a.txt"), "/apps/Ludonimbus/我的资源/a.txt");
+        assert_eq!(pan.full("games/./../.."), "/apps/Ludonimbus/games");
     }
 }

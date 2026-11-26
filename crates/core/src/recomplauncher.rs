@@ -142,8 +142,8 @@ mod tests {
         assert_eq!(play_id("--play zelda64recomp").as_deref(), Some("zelda64recomp"));
         assert_eq!(play_id("--fullscreen --play \"project-helix--fe2\"").as_deref(), Some("project-helix--fe2"));
         assert_eq!(play_id("--bigpicture"), None);
-        assert!(is_launcher(Path::new(r"C:\Apps\RecompLauncher\recomplauncher.exe")));
-        assert!(!is_launcher(Path::new(r"C:\Games\Zelda64Recompiled.exe")));
+        assert!(is_launcher(Path::new("C:/Apps/RecompLauncher/recomplauncher.exe")));
+        assert!(!is_launcher(Path::new("C:/Games/Zelda64Recompiled.exe")));
         assert_eq!(convert_place("{local}/Zelda64Recompiled/saves/").as_deref(), Some("{localappdata}/Zelda64Recompiled/saves"));
         assert_eq!(convert_place("{data}/saves").as_deref(), Some("{install}/recompdata/saves"));
         assert_eq!(convert_place("{localx}/a"), None);

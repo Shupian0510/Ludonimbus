@@ -31,6 +31,8 @@ fn meta(id: &str, parent: Option<&str>) -> SnapshotMeta {
         app_version: "e1".into(),
         comment: String::new(),
         locked: false,
+        game_version: None,
+        installed_version: None,
     }
 }
 

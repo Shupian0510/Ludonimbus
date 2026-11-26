@@ -16,18 +16,47 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Case-insensitive path equality (Windows semantics), ignoring slash style
-/// and surrounding quotes.
+/// Path equality the way this system's file names compare, ignoring slash
+/// style and surrounding quotes: any case on Windows and macOS, exact on Linux.
 pub fn same_path(a: &str, b: &str) -> bool {
     norm_path(a) == norm_path(b)
 }
 
+/// A key for comparing paths (see [`same_path`]).
 pub fn norm_path(p: &str) -> String {
-    p.trim()
-        .trim_matches('"')
-        .replace('/', "\\")
-        .trim_end_matches('\\')
-        .to_lowercase()
+    let p = native_sep(p.trim().trim_matches('"'));
+    let trimmed = p.trim_end_matches(std::path::MAIN_SEPARATOR);
+    // Keep the root folder `/` itself.
+    let p = if trimmed.is_empty() { &p[..p.len().min(1)] } else { trimmed };
+    if cfg!(any(windows, target_os = "macos")) {
+        p.to_lowercase()
+    } else {
+        p.to_string()
+    }
+}
+
+/// Tests: a Windows path (`D:\Emu\x`) as is on Windows, or as an absolute
+/// path on Linux and macOS (`/d/Emu/x`).
+#[cfg(test)]
+pub fn test_path(win: &str) -> PathBuf {
+    if cfg!(windows) {
+        return PathBuf::from(win);
+    }
+    match win.split_once(":\\") {
+        Some((drive, rest)) => PathBuf::from(format!("/{}/{}", drive.to_lowercase(), rest.replace('\\', "/"))),
+        None => PathBuf::from(win.replace('\\', "/")),
+    }
+}
+
+/// A path written with either slash, in this system's separators. Windows
+/// takes both; elsewhere a `\` from a Windows-style path (a launcher's
+/// manifest, an emulator's settings) is read as a separator too.
+pub fn native_sep(p: &str) -> String {
+    if cfg!(windows) {
+        p.replace('/', "\\")
+    } else {
+        p.replace('\\', "/")
+    }
 }
 
 /// Remove one level of surrounding double quotes.
@@ -118,7 +147,11 @@ mod tests {
 
     #[test]
     fn compares_paths() {
-        assert!(same_path(r#""C:\Games\x.exe""#, "c:/games/X.EXE"));
         assert!(!same_path(r"C:\a", r"C:\b"));
+        assert!(same_path(r#""C:\Games\x.exe""#, "C:/Games/x.exe/"));
+        // File names: any case on Windows and macOS, exact on Linux.
+        assert_eq!(same_path(r#""C:\Games\x.exe""#, "c:/games/X.EXE"), cfg!(any(windows, target_os = "macos")));
+        assert!(same_path("/", "/"));
+        assert!(!same_path("/", "/home"));
     }
 }

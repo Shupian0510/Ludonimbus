@@ -10,7 +10,7 @@
 |---|---|
 | **Google Drive** | 点「连接 Google Drive」，在浏览器里登录即可。见 [Google Drive](../clouds/google-drive.md) |
 | **夸克网盘** | 用夸克 App 扫码登录（实验性）。见[夸克网盘](../clouds/quark.md) |
-| **WebDAV** | 坚果云、群晖 / 威联通等 NAS、Nextcloud，或者通过 OpenList / AList 接入百度网盘、阿里云盘等。填地址、用户名和密码，先点「测试连接」。见 [WebDAV](../clouds/webdav.md) |
+| **WebDAV** | 坚果云、群晖 / 威联通等 NAS、Nextcloud，或者你自己部署的 OpenList / AList 等 WebDAV 服务。填地址、用户名和密码，先点「测试连接」。见 [WebDAV](../clouds/webdav.md) |
 | **S3 兼容存储** | NAS 上的 MinIO，或阿里云 OSS、腾讯云 COS、Cloudflare R2。见 [S3 兼容存储](../clouds/s3.md) |
 | **文件夹** | OneDrive / Google Drive 电脑版同步的文件夹、NAS 共享目录、移动硬盘。见[本地 / 同步文件夹](../clouds/folder.md) |
 

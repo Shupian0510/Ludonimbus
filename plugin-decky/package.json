@@ -1,0 +1,25 @@
+{
+  "name": "ludonimbus-decky",
+  "private": true,
+  "version": "0.7.0",
+  "description": "Ludonimbus for Steam Deck Game Mode (Decky Loader)",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "check": "tsc --noEmit",
+    "watch": "rollup -c -w"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@decky/api": "1.1.2",
+    "@decky/ui": "4.10.2",
+    "react-icons": "5.4.0"
+  },
+  "devDependencies": {
+    "@decky/rollup": "1.0.1",
+    "@types/react": "18.3.3",
+    "@types/webpack": "5.28.5",
+    "rollup": "4.28.1",
+    "typescript": "5.7.2"
+  }
+}

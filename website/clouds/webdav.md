@@ -1,6 +1,6 @@
 # WebDAV：坚果云、NAS、Nextcloud、OpenList
 
-WebDAV 是很多网盘和 NAS 都支持的标准协议。坚果云、群晖、威联通、Nextcloud 都自带 WebDAV；百度网盘、阿里云盘、夸克等可以先挂载到 OpenList / AList，再通过它的 WebDAV 接入。
+WebDAV 是很多网盘和 NAS 都支持的标准协议。坚果云、群晖、威联通、Nextcloud 都自带 WebDAV；你自己部署的 OpenList / AList 等服务也提供 WebDAV。Ludonimbus 只是标准的 WebDAV 客户端，连接到哪个服务器完全由你自主配置。
 
 ## 通用步骤
 
@@ -76,7 +76,11 @@ WebDAV 是很多网盘和 NAS 都支持的标准协议。坚果云、群晖、�
 0.5 起夸克网盘可以[一键连接](./quark.md)，Ludonimbus 会自己下载并运行 OpenList，不需要手动配置。下面的步骤适合已经在用 OpenList、或者要接入其他网盘的情况。
 :::
 
-[OpenList](https://github.com/OpenListTeam/OpenList)（AList 的社区分支）可以把百度网盘、阿里云盘、夸克等网盘挂载成一个 WebDAV 服务。这些网盘没有面向个人开发者的官方接口（百度网盘的一键登录还在审核中），用 OpenList 是目前接入它们的办法。
+[OpenList](https://github.com/OpenListTeam/OpenList)（AList 的社区分支）是一个第三方开源工具，可以把你自己的存储挂载成一个 WebDAV 服务，再让 Ludonimbus 通过 WebDAV 连接它。
+
+::: warning 关于第三方工具
+Ludonimbus 只是标准的 WebDAV 客户端，本身不提供网盘挂载或聚合能力。OpenList / AList 是独立的第三方开源工具，是否使用、挂载哪些存储、是否符合对应网盘的用户协议，都由你自主决定和负责。Ludonimbus 不会通过 OpenList 等第三方工具接入百度网盘；百度网盘只通过[百度网盘开放平台的官方接口](./baidu.md)接入。
+:::
 
 1. 安装并运行 OpenList（Windows 程序或 Docker 都可以），打开它的管理页面，按 OpenList 的文档添加你的网盘存储，记下挂载路径（例如 `/夸克`）。
 2. 用来连接的 OpenList 用户要有 WebDAV 的读取和管理权限（管理员账号默认都有）。

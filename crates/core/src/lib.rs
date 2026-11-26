@@ -22,13 +22,18 @@
 
 pub mod achievements;
 pub mod adapters;
+pub mod artsync;
+pub mod catchup;
 pub mod cloud;
 pub mod config;
+pub mod credstore;
+pub mod crosssaves;
 pub mod discover;
 pub mod emugames;
 pub mod emulators;
 pub mod gamebackup;
 pub mod games;
+pub mod handheld;
 pub mod i18n;
 pub mod localart;
 pub mod logos;
@@ -36,12 +41,15 @@ pub mod lockfile;
 pub mod logger;
 pub mod ludusavi;
 pub mod millennium;
+pub mod nxlan;
 pub mod openlist;
 pub mod recomplauncher;
 pub mod paths;
 pub mod playtime;
 pub mod process;
+pub mod prompt;
 pub mod relocate;
+pub mod savelib;
 pub mod savefind;
 pub mod screenshots;
 pub mod snapshot;
@@ -51,9 +59,12 @@ pub mod steam;
 pub mod steamgriddb;
 pub mod switch;
 pub mod sync;
+pub mod transfer;
 pub mod util;
 pub mod vdf;
+pub mod wgs;
 pub mod xbox;
+pub mod xboxsaves;
 
 pub use anyhow::{Error, Result};
 

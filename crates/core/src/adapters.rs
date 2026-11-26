@@ -40,6 +40,10 @@ pub struct Adapter {
     pub recomplauncher: Vec<String>,
     #[serde(default)]
     pub roots: BTreeMap<String, String>,
+    /// Linux: roots that differ there (XDG folders, Flatpak), replacing the
+    /// ones in `roots` (docs/plan-platforms.md §1.4).
+    #[serde(default, skip_serializing)]
+    pub roots_linux: BTreeMap<String, String>,
     #[serde(default)]
     pub saves: Vec<String>,
     #[serde(default)]
@@ -174,6 +178,13 @@ impl Adapter {
     pub fn is_emulator(&self) -> bool {
         self.kind == Kind::Emulator
     }
+
+    /// Whether one game's saves mean the same thing in both rules, so a
+    /// game can move between them: the Switch emulators (their per-game
+    /// saves are `{nxsave-…}` / `{nxdevice-…}`, found by each on its own PC).
+    pub fn shares_game_saves(&self, other: &Adapter) -> bool {
+        self.key == other.key || (self.game_id.as_deref() == Some("switch") && other.game_id.as_deref() == Some("switch"))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +200,30 @@ pub struct Matcher {
     /// Only when the launch options contain this (case-insensitive).
     #[serde(default)]
     pub args: Option<String>,
+    /// Linux: program names (`dolphin-emu`, `ryujinx*.appimage`) and Flatpak
+    /// app ids (`org.DolphinEmu.dolphin-emu`). `*` as in `exe`.
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub linux: Vec<String>,
+}
+
+/// Names a Linux program goes by for `linux` patterns: its file name, an
+/// AppImage's name without version (`Ryujinx-1.2.3-x64.AppImage` →
+/// `ryujinx`), and the app id of `flatpak run <id>`.
+fn linux_names(exe: &Path, args: &str) -> Vec<String> {
+    let file = exe.file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let mut out = vec![file.clone()];
+    if let Some(stem) = file.strip_suffix(".appimage") {
+        out.push(stem.split(['-', '_', '.']).next().unwrap_or(stem).to_string());
+    }
+    if file == "flatpak" {
+        let a = crate::util::split_args(args);
+        if let Some(i) = a.iter().position(|x| x == "run") {
+            if let Some(id) = a[i + 1..].iter().find(|x| !x.starts_with('-')) {
+                out.push(id.to_lowercase());
+            }
+        }
+    }
+    out
 }
 
 fn one_or_many<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
@@ -234,7 +269,11 @@ pub fn builtin() -> &'static [Adapter] {
         for (file, text) in FILES {
             let list: Vec<Adapter> =
                 serde_yaml::from_str(text).unwrap_or_else(|e| panic!("adapters/{file} must be valid: {e}"));
-            for a in list {
+            for mut a in list {
+                if cfg!(unix) {
+                    let linux = std::mem::take(&mut a.roots_linux);
+                    a.roots.extend(linux);
+                }
                 // A generated rule never replaces a hand-written one.
                 if !all.iter().any(|x| x.key == a.key) {
                     all.push(a);
@@ -321,6 +360,16 @@ pub fn detect_with(exe: &Path, args: &str) -> Option<Detected> {
             }
         }
     }
+    if best.is_none() && cfg!(unix) {
+        let names = linux_names(exe, args);
+        for a in builtin() {
+            let Some(m) = &a.matcher else { continue };
+            if m.linux.iter().any(|p| names.iter().any(|n| wildcard(&p.to_lowercase(), n))) {
+                best = Some((1, a, 1));
+                break;
+            }
+        }
+    }
     best.map(|(_, adapter, depth)| Detected {
         adapter,
         install: (depth > 1).then(|| exe.ancestors().nth(depth).map(Path::to_path_buf)).flatten(),
@@ -388,6 +437,13 @@ mod tests {
     }
 
     #[test]
+    fn linux_program_names() {
+        assert_eq!(linux_names(Path::new("/opt/Ryujinx-1.2.3-x64.AppImage"), ""), vec!["ryujinx-1.2.3-x64.appimage".to_string(), "ryujinx".into()]);
+        assert_eq!(linux_names(Path::new("/usr/bin/flatpak"), "run --branch=stable org.DolphinEmu.dolphin-emu -e /roms/x.iso")[1], "org.dolphinemu.dolphin-emu");
+        assert!(builtin().iter().any(|a| a.matcher.as_ref().is_some_and(|m| !m.linux.is_empty())));
+    }
+
+    #[test]
     fn wildcards() {
         assert!(wildcard("duckstation*.exe", "duckstation-qt-x64-releaseltcg.exe"));
         assert!(wildcard("*.exe", "a.exe"));
@@ -413,9 +469,10 @@ mod tests {
                 m.exe.iter().find(|e| e.contains('/') && !e.contains('*')).map(|e| (a, e.clone()))
             })
             .expect("some generated rule has a nested exe");
-        let exe = PathBuf::from(r"E:\Recomps\Release").join(nested.1.replace('/', "\\"));
+        let release = PathBuf::from(if cfg!(windows) { r"E:\Recomps\Release" } else { "/mnt/e/Recomps/Release" });
+        let exe = release.join(crate::util::native_sep(&nested.1));
         let d = detect_with(&exe, "").unwrap();
-        assert_eq!(d.install.as_deref(), Some(Path::new(r"E:\Recomps\Release")), "{}", nested.0.key);
+        assert_eq!(d.install.as_deref(), Some(release.as_path()), "{}", nested.0.key);
     }
 
     #[test]

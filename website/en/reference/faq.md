@@ -10,9 +10,9 @@ It uploads, but it can't pull before launch. With Ludonimbus in the tray, it not
 
 Before the game starts, Ludonimbus asks whether to use the cloud's saves or this PC's. Both are kept in the version history, so you can restore the other one at any time. See [Conflicts](../sync/conflicts.md).
 
-### Can I use Baidu Netdisk, Aliyun Drive or Quark?
+### Can I use Baidu Netdisk or Quark?
 
-Quark connects in one click with a QR code (experimental); see [Quark](../clouds/quark.md). One-click Baidu Netdisk sign-in is ready and waiting for Baidu's open-platform review; it will come in a new version once approved. Until then, and for Aliyun Drive (which has no official API for individual developers), connect through [OpenList](https://github.com/OpenListTeam/OpenList) / AList: mount your netdisk in OpenList, then connect Ludonimbus to OpenList over WebDAV with the folder inside the mounted netdisk. See [WebDAV → OpenList / AList](../clouds/webdav.md#openlist).
+Quark connects in one click with a QR code (experimental); see [Quark](../clouds/quark.md). One-click Baidu Netdisk sign-in uses the official API of the Baidu Netdisk open platform and is waiting for Baidu's review; it will come in a new version once approved, see [Baidu Netdisk](../clouds/baidu.md). Ludonimbus provides no netdisk aggregation of its own; if you run a WebDAV service such as OpenList / AList yourself, you can connect it as described under [WebDAV](../clouds/webdav.md#openlist), with its configuration and compliance being your own responsibility.
 
 ### Can I switch the interface to English or Chinese?
 

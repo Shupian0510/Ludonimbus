@@ -108,7 +108,7 @@ fn with_steam_closed<T>(root: &Path, f: impl FnOnce() -> Result<T>) -> Result<(T
     }
     let out = f();
     if was_running {
-        if let Err(e) = std::process::Command::new(root.join("steam.exe")).spawn() {
+        if let Err(e) = steam::launch(root) {
             log(format!("could not restart Steam: {e}"));
         }
     }

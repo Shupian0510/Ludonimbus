@@ -10,9 +10,9 @@
 
 启动游戏前会弹窗让你选择使用云端还是本机的那份。两份都会保存在版本历史里，选错了也可以随时恢复。见[存档冲突](../sync/conflicts.md)。
 
-### 能用百度网盘、阿里云盘或夸克吗？
+### 能用百度网盘或夸克吗？
 
-夸克网盘可以扫码一键连接（实验性），见[夸克网盘](../clouds/quark.md)。百度网盘一键登录已经开发完成，正在等待百度开放平台审核，通过后会在新版本中开放。在此之前，以及阿里云盘（没有面向个人开发者的官方接口），都可以通过 [OpenList](https://github.com/OpenListTeam/OpenList) / AList 接入：先在 OpenList 里挂载你的网盘，再在 Ludonimbus 里用 WebDAV 连接 OpenList，文件夹写在挂载的网盘下面。见 [WebDAV → OpenList / AList](../clouds/webdav.md#openlist)。坚果云自带 WebDAV，可以直接连接。
+夸克网盘可以扫码一键连接（实验性），见[夸克网盘](../clouds/quark.md)。百度网盘一键登录已经开发完成，通过百度网盘开放平台的官方接口接入，正在等待百度审核，通过后会在新版本中开放，见[百度网盘](../clouds/baidu.md)。坚果云自带 WebDAV，可以直接连接。Ludonimbus 本身不提供网盘聚合能力；如果你自己部署了 OpenList / AList 等 WebDAV 服务，可以按 [WebDAV](../clouds/webdav.md#openlist) 连接，配置和合规由你自己负责。
 
 ### 界面能换成英文吗？
 

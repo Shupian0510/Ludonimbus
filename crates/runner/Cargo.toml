@@ -14,3 +14,6 @@ anyhow.workspace = true
 serde_json.workspace = true
 rfd = "0.15"
 chrono.workspace = true
+
+[build-dependencies]
+tauri-winres = "0.3"

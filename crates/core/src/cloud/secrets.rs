@@ -1,9 +1,10 @@
-//! Passwords and secret keys of WebDAV / S3 clouds, kept in the Windows
-//! Credential Manager (never in `config.json`). Google Drive keeps its
-//! refresh token separately, see [`super::oauth`].
+//! Passwords and secret keys of WebDAV / S3 clouds, the Baidu Netdisk sign-in
+//! and the SecretKey of an own Baidu app, kept in the system's credential
+//! store (never in `config.json`, see [`crate::credstore`]). Google Drive
+//! keeps its refresh token separately, see [`super::oauth`].
 
 use crate::config::CloudConfig;
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 
 const SERVICE: &str = "Ludonimbus";
 
@@ -23,29 +24,16 @@ pub fn user_for(cloud: &CloudConfig) -> Option<String> {
     }
 }
 
-fn entry(user: &str) -> Result<keyring::Entry> {
-    Ok(keyring::Entry::new(SERVICE, user)?)
-}
-
 pub fn store(user: &str, secret: &str) -> Result<()> {
-    entry(user)?
-        .set_password(secret)
-        .context(crate::tr!("无法把密码保存到 Windows 凭据管理器", "Couldn't save the password to Windows Credential Manager"))
+    crate::credstore::set(SERVICE, user, secret)
 }
 
 pub fn load(user: &str) -> Result<Option<String>> {
-    match entry(user)?.get_password() {
-        Ok(s) => Ok(Some(s)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow!(crate::tr!("无法读取保存的密码：{e}", "Couldn't read the saved password: {e}"))),
-    }
+    crate::credstore::get(SERVICE, user)
 }
 
 pub fn clear(user: &str) -> Result<()> {
-    match entry(user)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(anyhow!(crate::tr!("无法删除保存的密码：{e}", "Couldn't delete the saved password: {e}"))),
-    }
+    crate::credstore::delete(SERVICE, user)
 }
 
 pub fn load_for(cloud: &CloudConfig) -> Result<Option<String>> {
@@ -57,6 +45,12 @@ pub fn load_for(cloud: &CloudConfig) -> Result<Option<String>> {
 
 /// Forget the secret of `dropped` unless one of `keep` uses the same one.
 pub fn release(dropped: &CloudConfig, keep: &[&CloudConfig]) {
+    if let CloudConfig::BaiduPan { app_key, .. } = dropped {
+        let same_app = |k: &&CloudConfig| matches!(k, CloudConfig::BaiduPan { app_key: a, .. } if a.trim() == app_key.trim());
+        if !app_key.trim().is_empty() && !keep.iter().any(same_app) {
+            let _ = clear(&super::baidu::app_secret_user(app_key));
+        }
+    }
     // Quark's sign-in lives in OpenList's data folder.
     if matches!(dropped, CloudConfig::Quark { .. }) && !keep.iter().any(|k| matches!(k, CloudConfig::Quark { .. })) {
         crate::openlist::forget();

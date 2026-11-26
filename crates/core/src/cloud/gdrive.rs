@@ -10,7 +10,7 @@
 
 use super::oauth::{self, describe, GoogleClient};
 use super::store::{Entry, Store};
-use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo};
+use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo, TrashedSnapshot};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary, Trigger};
 use crate::{paths, util};
 use anyhow::{anyhow, Context, Result};
@@ -376,6 +376,17 @@ impl GoogleDrive {
         Ok(self.list(&q)?.into_iter().next())
     }
 
+    /// A file of ours in the Drive trash (「最近删除」).
+    fn find_trashed(&self, parent: &str, name: &str) -> Result<Option<DriveFile>> {
+        let q = format!("name='{}' and '{}' in parents and trashed=true", esc(name), esc(parent));
+        Ok(self.list(&q)?.into_iter().next())
+    }
+
+    fn snapshots_folder(&self, game: &str) -> Result<String> {
+        self.folder_id(&["games", game, "snapshots"], false)?
+            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))
+    }
+
     /// Create a file with a resumable upload (works for any size).
     fn create_file(&self, parent: &str, name: &str, mime: &str, meta_extra: Value, body: Vec<u8>) -> Result<String> {
         let mut meta = json!({ "name": name, "parents": [parent] });
@@ -472,8 +483,14 @@ impl GoogleDrive {
             "lnCount": meta.files.len().to_string(),
             "lnLocked": if meta.locked { "1" } else { "0" },
         });
-        let desc = json!({ "deviceName": meta.device_name, "comment": meta.comment }).to_string();
-        (props, desc)
+        let mut desc = json!({ "deviceName": meta.device_name, "comment": meta.comment });
+        if let Some(v) = &meta.game_version {
+            desc["gameVersion"] = json!(v);
+        }
+        if let Some(v) = &meta.installed_version {
+            desc["installedVersion"] = json!(v);
+        }
+        (props, desc.to_string())
     }
 
     fn summary_from(f: &DriveFile) -> Option<SnapshotSummary> {
@@ -495,6 +512,8 @@ impl GoogleDrive {
             file_count: a.get("lnCount").and_then(|s| s.parse().ok()).unwrap_or(0),
             comment: desc["comment"].as_str().unwrap_or_default().to_string(),
             locked: a.get("lnLocked").map(|s| s == "1").unwrap_or(false),
+            game_version: desc["gameVersion"].as_str().map(str::to_string),
+            installed_version: desc["installedVersion"].as_str().map(str::to_string),
         })
     }
 }
@@ -595,6 +614,69 @@ impl CloudProvider for GoogleDrive {
         };
         for name in [format!("{id}.zip"), format!("{id}.json")] {
             if let Some(f) = self.find_file(&folder, &name)? {
+                self.delete_file(&f.id)?;
+            }
+        }
+        Ok(())
+    }
+
+    // 「最近删除」 is the Drive trash: trashed files keep their place and are
+    // emptied by Google after 30 days (the same as TRASH_DAYS). The deletion
+    // time and device go into the zip's appProperties.
+    fn trash(&self, game: &str, id: &str, by: &str) -> Result<()> {
+        let folder = self.snapshots_folder(game)?;
+        let zip = self
+            .find_file(&folder, &format!("{id}.zip"))?
+            .ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
+        // appProperties allow 124 bytes per key and value.
+        let by: String = by.chars().take(30).collect();
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        self.patch_meta(&zip.id, json!({ "trashed": true, "appProperties": { "lnDeletedAt": now, "lnDeletedBy": by } }))?;
+        if let Some(f) = self.find_file(&folder, &format!("{id}.json"))? {
+            self.patch_meta(&f.id, json!({ "trashed": true }))?;
+        }
+        Ok(())
+    }
+
+    fn list_trash(&self, game: &str) -> Result<Vec<TrashedSnapshot>> {
+        let Some(folder) = self.folder_id(&["games", game, "snapshots"], false)? else {
+            return Ok(Vec::new());
+        };
+        let q = format!("'{}' in parents and trashed=true", esc(&folder));
+        let mut out: Vec<TrashedSnapshot> = self
+            .list(&q)?
+            .iter()
+            .filter(|f| f.name.ends_with(".zip"))
+            .filter_map(|f| {
+                // Files trashed by hand in Drive carry no deletion time.
+                let at = chrono::DateTime::parse_from_rfc3339(f.app.get("lnDeletedAt")?).ok()?;
+                Some(TrashedSnapshot {
+                    snapshot: Self::summary_from(f)?,
+                    deleted_at: at.with_timezone(&chrono::Utc),
+                    deleted_by: f.app.get("lnDeletedBy").cloned().unwrap_or_default(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        Ok(out)
+    }
+
+    fn untrash(&self, game: &str, id: &str) -> Result<()> {
+        let folder = self.snapshots_folder(game)?;
+        let zip = self.find_trashed(&folder, &format!("{id}.zip"))?.ok_or_else(|| {
+            anyhow!(crate::tr!("「最近删除」里没有这个版本了，可能已经被彻底删除", "This version is no longer in Recently deleted; it may have been deleted for good"))
+        })?;
+        // The metadata first: the zip makes the snapshot visible.
+        if let Some(f) = self.find_trashed(&folder, &format!("{id}.json"))? {
+            self.patch_meta(&f.id, json!({ "trashed": false }))?;
+        }
+        self.patch_meta(&zip.id, json!({ "trashed": false, "appProperties": { "lnDeletedAt": null, "lnDeletedBy": null } }))
+    }
+
+    fn purge(&self, game: &str, id: &str) -> Result<()> {
+        let folder = self.snapshots_folder(game)?;
+        for name in [format!("{id}.zip"), format!("{id}.json")] {
+            if let Some(f) = self.find_trashed(&folder, &name)? {
                 self.delete_file(&f.id)?;
             }
         }

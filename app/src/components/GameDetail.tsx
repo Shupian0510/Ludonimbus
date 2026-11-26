@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, LocalFile, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
+import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
 import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
@@ -14,6 +14,7 @@ import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Versions } from "./Versions";
+import { ApplyDialog, familyOf, VersionBar } from "./SaveLibrary";
 import { GameAchievements } from "./Achievements";
 
 type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
@@ -28,6 +29,7 @@ export function GameDetail({
   check,
   checking,
   onBack,
+  onOpen,
   onChanged,
   onRemoved,
 }: {
@@ -36,12 +38,22 @@ export function GameDetail({
   check?: StatusReport;
   checking: boolean;
   onBack: () => void;
+  /** Open another game's page (another version of this game). */
+  onOpen: (key: string) => void;
   onChanged: () => Promise<void>;
   onRemoved: () => Promise<void>;
 }) {
   const ui = useUi();
   const t = useT();
   const g = t.game;
+  // Another version of this game (on another device or platform) has newer saves.
+  const [newer, setNewer] = useState<NewerVersion | null>(null);
+  const [applyNewer, setApplyNewer] = useState(false);
+  const versionCount = familyOf(overview, game.key).length;
+  useEffect(() => {
+    if (versionCount < 2 || overview.cloud.kind === "none") return;
+    api.newerVersion(game.key).then(setNewer, () => setNewer(null));
+  }, [game.key, versionCount, overview.cloud.kind]);
   const [tab, setTab] = useState<Tab>(
     sceneIs("game-settings") ? "config" : sceneIs("game-screenshots") ? "screenshots" : sceneIs("game-achievements") ? "achievements" : "versions",
   );
@@ -284,6 +296,58 @@ export function GameDetail({
             <Icon name="cloud" /> {g.pending(game.pending)}
           </div>
         )}
+        {!game.playable && (
+          <div className="banner banner-info not-here">
+            <Icon name="locate" />
+            <div>
+              <b>{!game.exe ? g.notHere.noExe : !game.exeExists ? g.notHere.moved : g.notHere.noFile}</b>
+              <p>{g.notHere.hint}</p>
+            </div>
+            <Button small onClick={findExe}>
+              {g.findAuto}
+            </Button>
+          </div>
+        )}
+
+        {newer && (
+          <div className="banner banner-info not-here">
+            <Icon name="transfer" />
+            <div>
+              <b>{t.savelib.newerTitle(newer.label)}</b>
+              <p>{t.savelib.newerText(newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))}</p>
+            </div>
+            <Button small kind="primary" onClick={() => setApplyNewer(true)}>
+              {t.savelib.applyHere}
+            </Button>
+            <Button
+              small
+              kind="ghost"
+              onClick={() => {
+                api.dismissNewer(game.key, newer.snapshot.id).catch(() => undefined);
+                setNewer(null);
+              }}
+            >
+              {t.savelib.notNow}
+            </Button>
+          </div>
+        )}
+        {applyNewer && newer && (
+          <ApplyDialog
+            overview={overview}
+            sourceKey={newer.key}
+            sourceName={newer.name}
+            snapshot={newer.snapshot}
+            target={game.key}
+            onClose={() => setApplyNewer(false)}
+            onApplied={async () => {
+              setApplyNewer(false);
+              setNewer(null);
+              await onChanged();
+            }}
+          />
+        )}
+
+        <VersionBar overview={overview} current={game.key} onOpen={onOpen} onChanged={onChanged} />
 
         <div className="cards2">
           <section className="panel">
@@ -405,7 +469,7 @@ export function GameDetail({
         </div>
 
         {tab === "versions" && (
-          <Versions key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} />
+          <Versions key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} onApplied={async (k) => onOpen(k)} />
         )}
         {tab === "files" && <Files game={game} />}
         {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}

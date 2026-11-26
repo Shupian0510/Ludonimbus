@@ -84,11 +84,15 @@ impl Recognized {
 }
 
 /// Recognise a game from its exe and launch options. `forced` is a rule the
-/// caller already chose (e.g. from the cloud).
+/// caller already chose (e.g. from the cloud). A Switch game added in one
+/// emulator follows the emulator this exe is ([`Adapter::shares_game_saves`]).
 pub fn recognize(exe: &Path, args: &str, forced: Option<&str>) -> Option<Recognized> {
     let detected = adapters::detect_with(exe, args);
     let (adapter, detected) = match forced.and_then(adapters::find) {
-        Some(a) => (a, detected.filter(|d| d.adapter.key == a.key)),
+        Some(a) => match detected {
+            Some(d) if d.adapter.key != a.key && a.shares_game_saves(d.adapter) => (d.adapter, Some(d)),
+            d => (a, d.filter(|d| d.adapter.key == a.key)),
+        },
         None => {
             let d = detected?;
             (d.adapter, Some(d))
@@ -126,7 +130,55 @@ fn check_emulator_overlap(cfg: &AppConfig, adapter: &Adapter, saves: &[String]) 
     if let Some(g) = same.iter().find(|g| g.saves == saves) {
         bail!(crate::tr!("这个游戏的存档已经由「{}」同步了", "This game's saves are already synced by \"{}\"", g.name));
     }
+    // The same Switch game added in another emulator syncs the same saves.
+    if !saves.is_empty() {
+        let twin = cfg.games.iter().find(|g| {
+            g.saves == saves && g.adapter.as_deref().and_then(adapters::find).is_some_and(|b| b.key != adapter.key && b.shares_game_saves(adapter))
+        });
+        if let Some(g) = twin {
+            bail!(crate::tr!("这个游戏的存档已经由「{}」同步了", "This game's saves are already synced by \"{}\"", g.name));
+        }
+    }
     Ok(())
+}
+
+/// Saves only in a Switch game's own roots (`{nxsave-<id>}`,
+/// `{nxdevice-<id>}`) with no emulator rule: the game's saves on a Switch
+/// (uploaded by Ludonimbus for Switch).
+pub fn switch_console(saves: &[String]) -> bool {
+    !saves.is_empty()
+        && saves.iter().all(|s| crate::spec::split_pattern(s).ok().and_then(|(root, _)| crate::switch::parse_root(&root)).is_some())
+}
+
+/// The Switch title id a game's saves are for (`{nxsave-<id>}/…`).
+pub fn switch_title(saves: &[String]) -> Option<u64> {
+    saves
+        .iter()
+        .find_map(|s| crate::spec::split_pattern(s).ok().and_then(|(root, _)| crate::switch::parse_root(&root)))
+        .map(|(_, title)| title)
+}
+
+/// A Switch game just added on this device that the cloud already has
+/// under another key (added on another device, maybe in another emulator):
+/// take over that key so both sync the same saves. Returns the new key.
+/// Only for a game that hasn't synced yet.
+pub fn adopt_cloud_key(key: &str, cloud: &[CloudGame]) -> Result<Option<String>> {
+    let cfg = config::load()?;
+    let Some(title) = cfg.game(key).and_then(|g| switch_title(&g.saves)) else { return Ok(None) };
+    let Some(cg) = cloud.iter().find(|c| c.key != key && cfg.game(&c.key).is_none() && switch_title(&c.saves) == Some(title)) else {
+        return Ok(None);
+    };
+    config::update(|cfg| {
+        if cfg.game(&cg.key).is_some() {
+            return Ok(None);
+        }
+        let Some(e) = cfg.games.iter_mut().find(|e| e.key == key) else { return Ok(None) };
+        e.key = cg.key.clone();
+        if e.source.is_none() {
+            e.source = cg.source.clone();
+        }
+        Ok(Some(cg.key.clone()))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,7 +261,8 @@ pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<Gam
     }
     let exe = PathBuf::from(&sc.exe);
     let rec = recognize(&exe, &sc.launch_options, opts.adapter.as_deref());
-    let adapter_key = opts.adapter.clone().or_else(|| rec.as_ref().map(|r| r.adapter.key.clone()));
+    // The recognized rule is the chosen one, or a Switch emulator standing in for it.
+    let adapter_key = rec.as_ref().map(|r| r.adapter.key.clone()).or_else(|| opts.adapter.clone());
     let adapter = adapter_key.as_deref().and_then(adapters::find);
     // Saves the rule works out (one emulator game) unless the user chose.
     let from_rule = opts.saves.is_empty();
@@ -345,6 +398,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
             e.roots = cg.roots.clone();
             e.ludusavi_title = cg.ludusavi_title.clone();
             e.source = cg.source.clone();
+            e.game = cg.game.clone();
             Ok(())
         });
     }
@@ -352,15 +406,20 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
         if cfg.game(&cg.key).is_some() {
             bail!(crate::tr!("本机已经添加过「{}」", "\"{}\" is already added on this PC", cg.name));
         }
-        let install = exe
+        let rec = exe
             .as_deref()
             .filter(|_| cg.saves.is_empty() || cg.adapter.as_deref().and_then(adapters::find).is_some_and(Adapter::is_emulator))
-            .and_then(|e| recognize(e, "", cg.adapter.as_deref()))
-            .and_then(|r| r.install);
+            .and_then(|e| recognize(e, "", cg.adapter.as_deref()));
+        // A Switch game from another emulator uses the one picked here.
+        let adapter = rec.as_ref().map(|r| r.adapter.key.clone()).or_else(|| cg.adapter.clone());
+        if let Some(a) = adapter.as_deref().and_then(adapters::find) {
+            check_emulator_overlap(cfg, a, &cg.saves)?;
+        }
+        let install = rec.and_then(|r| r.install);
         let entry = GameEntry {
             key: cg.key.clone(),
             name: cg.name.clone(),
-            adapter: cg.adapter.clone(),
+            adapter,
             install,
             exe,
             saves: cg.saves.clone(),
@@ -370,6 +429,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
             ludusavi_title: cg.ludusavi_title.clone(),
             auto_sync: true,
             source: cg.source.clone(),
+            game: cg.game.clone(),
             ..Default::default()
         };
         cfg.games.push(entry.clone());
@@ -390,6 +450,8 @@ pub enum SourceKind {
     Pc,
     /// An Xbox app (Game Pass) game, started through `gamelaunchhelper.exe`.
     Xbox,
+    /// The game's saves on a console itself (Ludonimbus for Switch).
+    Console,
     /// Added by hand with its own save folders.
     Custom,
 }
@@ -417,6 +479,7 @@ pub fn source(g: &GameEntry) -> Source {
     let (kind, name, detail) = match adapter {
         Some(a) if a.is_emulator() => (SourceKind::Emulator, Some(a.name.clone()), a.platform_label()),
         Some(a) => (SourceKind::Recomp, None, a.platform_label()),
+        None if switch_console(&g.saves) => (SourceKind::Console, Some("Switch".to_string()), None),
         None if g.exe.as_deref().is_some_and(|e| crate::xbox::is_launch_helper(e) || crate::xbox::content_dir(e).is_some()) => {
             (SourceKind::Xbox, None, None)
         }
@@ -425,6 +488,23 @@ pub fn source(g: &GameEntry) -> Source {
     };
     let label = g.source.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     Source { kind, name, detail, label, logo: None }
+}
+
+/// The game itself is on this device: its program is here and so is the
+/// game file its launch arguments name (an emulator's disc or cartridge
+/// image). Otherwise the library shows only its saves (left behind by an
+/// uninstall, or on a drive that isn't plugged in).
+pub fn playable(g: &GameEntry) -> bool {
+    let Some(exe) = &g.exe else { return false };
+    if !exe.is_file() {
+        return false;
+    }
+    // Game files have an extension; switches such as `/fullscreen` don't.
+    util::split_args(&g.args)
+        .iter()
+        .map(Path::new)
+        .filter(|p| p.is_absolute() && p.extension().is_some())
+        .all(Path::exists)
 }
 
 pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> Result<GameEntry> {
@@ -457,8 +537,14 @@ pub fn set_exe(key: &str, exe: &Path) -> Result<GameEntry> {
         }
         // A rule whose exe sits deeper in the release knows the game folder.
         if g.saves.is_empty() || g.adapter.as_deref().and_then(adapters::find).is_some_and(Adapter::is_emulator) {
-            if let Some(i) = recognize(exe, &g.args, g.adapter.as_deref()).and_then(|r| r.install) {
-                g.install = Some(i);
+            if let Some(r) = recognize(exe, &g.args, g.adapter.as_deref()) {
+                // A Switch game moved to another Switch emulator (Ryujinx → Eden) follows it.
+                if g.adapter.as_deref().and_then(adapters::find).is_some_and(|a| a.key != r.adapter.key && a.shares_game_saves(r.adapter)) {
+                    g.adapter = Some(r.adapter.key.clone());
+                }
+                if let Some(i) = r.install {
+                    g.install = Some(i);
+                }
             }
         }
         Ok(())
@@ -592,14 +678,21 @@ pub fn add_to_steam(key: &str, account: &str) -> Result<u32> {
         .or_else(|| exe.parent().map(Path::to_path_buf))
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Linux: the shortcut starts the game (so Proton can run it) and the
+    // wrapper goes in front of %command% in the launch options.
+    let (sc_exe, sc_options) = if cfg!(windows) {
+        (runner.to_string_lossy().into_owned(), format!("--game {key}"))
+    } else {
+        (exe_s.clone(), steam::wrapper_options(&runner, key, &g.args))
+    };
     let appid = steam::add_shortcut(
         &root,
         account,
         &steam::NewShortcut {
             name: g.name.clone(),
-            exe: runner.to_string_lossy().into_owned(),
+            exe: sc_exe,
             start_dir: work_dir.clone(),
-            launch_options: format!("--game {key}"),
+            launch_options: sc_options,
             icon: exe_s.clone(),
         },
     )?;
@@ -768,9 +861,9 @@ mod tests {
         assert_eq!(s.kind, SourceKind::Recomp);
         assert_eq!(s.name, None);
 
-        let xbox = r"C:\XboxGames\Some Game\Content\gamelaunchhelper.exe";
+        let xbox = "C:/XboxGames/Some Game/Content/gamelaunchhelper.exe";
         assert_eq!(source(&game(None, Some(xbox), Some("Some Game"))).kind, SourceKind::Xbox);
-        assert_eq!(source(&game(None, Some(r"C:\Games\x.exe"), Some("X"))).kind, SourceKind::Pc);
+        assert_eq!(source(&game(None, Some("C:/Games/x.exe"), Some("X"))).kind, SourceKind::Pc);
         assert_eq!(source(&game(None, None, None)).kind, SourceKind::Custom);
         // A rule that no longer exists.
         assert_eq!(source(&game(Some("gone"), None, None)).kind, SourceKind::Custom);
@@ -784,5 +877,28 @@ mod tests {
         assert_eq!(source(&g).label.as_deref(), Some("RetroArch"));
         g.source = Some("   ".into());
         assert_eq!(source(&g).label, None);
+    }
+
+    #[test]
+    fn playable_needs_program_and_game_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("Dolphin.exe");
+        let iso = tmp.path().join("Game.iso");
+        std::fs::write(&exe, b"").unwrap();
+        let mut g = game(Some("dolphin"), None, None);
+        // Saves left behind: no program set.
+        assert!(!playable(&g));
+        g.exe = Some(tmp.path().join("gone.exe"));
+        assert!(!playable(&g));
+        g.exe = Some(exe.clone());
+        assert!(playable(&g));
+        // The game file the emulator is started with must be here too.
+        g.args = format!("-b -e \"{}\"", iso.display());
+        assert!(!playable(&g));
+        std::fs::write(&iso, b"").unwrap();
+        assert!(playable(&g));
+        // Switches and relative paths aren't game files.
+        g.args = "/fullscreen --config cfg.ini".into();
+        assert!(playable(&g));
     }
 }

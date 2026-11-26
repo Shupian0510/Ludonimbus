@@ -170,6 +170,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '设置项说明', link: '/reference/settings' },
         { text: '常见问题与故障排查', link: '/reference/faq' },
         { text: '隐私政策', link: '/privacy' },
+        { text: '服务条款', link: '/terms' },
         { text: '更新日志', link: '/reference/changelog' },
         { text: '参与贡献', link: '/reference/contributing' },
       ],
@@ -255,6 +256,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Settings', link: '/en/reference/settings' },
         { text: 'FAQ and troubleshooting', link: '/en/reference/faq' },
         { text: 'Privacy policy', link: '/en/privacy' },
+        { text: 'Terms of service', link: '/en/terms' },
         { text: 'Changelog', link: '/en/reference/changelog' },
         { text: 'Contributing', link: '/en/reference/contributing' },
       ],
@@ -342,7 +344,7 @@ export default defineConfig({
         lastUpdated: { text: '最后更新于' },
         editLink: { pattern: `${repo}/edit/main/website/:path`, text: '在 GitHub 上改进这一页' },
         footer: {
-          message: `<a href="${base}privacy.html">隐私政策</a> · <a href="${repo}">GitHub</a> · <a href="${repo}/issues">反馈问题</a> · MIT 许可`,
+          message: `<a href="${base}privacy.html">隐私政策</a> · <a href="${base}terms.html">服务条款</a> · <a href="${repo}">GitHub</a> · <a href="${repo}/issues">反馈问题</a> · MIT 许可`,
           copyright: '© 2026 Shupian0510',
         },
         outline: { label: '本页内容', level: [2, 3] },
@@ -384,7 +386,7 @@ export default defineConfig({
         lastUpdated: { text: 'Last updated' },
         editLink: { pattern: `${repo}/edit/main/website/:path`, text: 'Improve this page on GitHub' },
         footer: {
-          message: `<a href="${base}en/privacy.html">Privacy policy</a> · <a href="${repo}">GitHub</a> · <a href="${repo}/issues">Report a problem</a> · MIT licensed`,
+          message: `<a href="${base}en/privacy.html">Privacy policy</a> · <a href="${base}en/terms.html">Terms of service</a> · <a href="${repo}">GitHub</a> · <a href="${repo}/issues">Report a problem</a> · MIT licensed`,
           copyright: '© 2026 Shupian0510',
         },
         outline: { label: 'On this page', level: [2, 3] },

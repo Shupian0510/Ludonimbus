@@ -1,19 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, GameView, Overview, SnapshotMeta, SnapshotSummary } from "../api";
+import { api, errorText, Overview, SnapshotMeta, SnapshotSummary, TrashedSnapshot } from "../api";
 import { bytes, dateTime, outcomeText, relTime, triggerLabel } from "../format";
 import { msg, useT } from "../i18n";
+import { ApplyDialog } from "./SaveLibrary";
 import { Badge, Button, Empty, Icon, useUi } from "./ui";
 
+/** Days a deleted version stays in 「最近删除」 (cloud::TRASH_DAYS). */
+const TRASH_DAYS = 30;
+
+function daysLeft(d: TrashedSnapshot): number {
+  return Math.max(0, TRASH_DAYS - Math.floor((Date.now() - Date.parse(d.deletedAt)) / 86_400_000));
+}
+
+/**
+ * A game's save versions in the cloud. `cloudOnly`: a game this PC doesn't
+ * have (only exporting and applying to another version work).
+ */
 export function Versions({
   game,
   overview,
   disabled,
+  cloudOnly,
   onChanged,
+  onApplied,
 }: {
-  game: GameView;
+  game: { key: string; name: string };
   overview: Overview;
   disabled: boolean;
+  cloudOnly?: boolean;
   onChanged: () => Promise<void>;
+  /** After saves were applied to `target` (another version of the game). */
+  onApplied?: (target: string) => Promise<void>;
 }) {
   const ui = useUi();
   const t = useT();
@@ -22,6 +39,18 @@ export function Versions({
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [meta, setMeta] = useState<Record<string, SnapshotMeta>>({});
+  const [applying, setApplying] = useState<SnapshotSummary | null>(null);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trash, setTrash] = useState<TrashedSnapshot[] | null>(null);
+
+  const loadTrash = useCallback(async () => {
+    try {
+      setTrash(await api.deletedSnapshots(game.key));
+    } catch (e) {
+      setTrash([]);
+      ui.toast(errorText(e), "bad");
+    }
+  }, [game.key, ui]);
 
   const load = useCallback(async () => {
     try {
@@ -94,7 +123,42 @@ export function Versions({
       confirm: v.delete,
       danger: true,
     });
-    if (ok) await act(() => api.deleteSnapshot(game.key, s.id), msg().versions.deleted);
+    if (!ok) return;
+    await act(() => api.deleteSnapshot(game.key, s.id), msg().versions.deleted);
+    if (trashOpen) await loadTrash();
+  };
+
+  const toggleTrash = async () => {
+    setTrashOpen(!trashOpen);
+    if (!trashOpen) await loadTrash();
+  };
+
+  const restoreDeleted = async (d: TrashedSnapshot) => {
+    try {
+      const locked = await api.restoreDeletedSnapshot(game.key, d.snapshot.id);
+      ui.toast(locked ? msg().versions.restoredLocked : msg().versions.restoredDeleted);
+      await Promise.all([load(), loadTrash()]);
+      await onChanged();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  const purge = async (d: TrashedSnapshot) => {
+    const ok = await ui.confirm({
+      title: v.purgeTitle,
+      text: v.purgeText(d.snapshot.deviceName, dateTime(d.snapshot.createdAt)),
+      confirm: v.purge,
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.purgeDeletedSnapshot(game.key, d.snapshot.id);
+      ui.toast(msg().versions.purged);
+      await loadTrash();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
   };
 
   const exportZip = async (s: SnapshotSummary) => {
@@ -147,6 +211,11 @@ export function Versions({
                 <span className="muted">{triggerLabel(s.trigger)}</span>
                 <span className="muted">
                   {t.library.files(s.fileCount)} · {bytes(s.totalSize)}
+                  {s.gameVersion ? (
+                    <span title={v.gameVersionTitle}> · {v.gameVersion(s.gameVersion)}</span>
+                  ) : s.installedVersion ? (
+                    <span title={v.installedVersionTitle}> · {v.installedVersion(s.installedVersion)}</span>
+                  ) : null}
                 </span>
                 <span className="tags">
                   {isHead && <Badge tone="info">{v.latest}</Badge>}
@@ -155,25 +224,34 @@ export function Versions({
                 </span>
               </button>
               <div className="version-actions">
-                <Button small icon="restore" onClick={() => restore(s)} disabled={disabled || isCurrent} title={isCurrent ? v.alreadyCurrent : v.restoreThis}>
-                  {v.restore}
-                </Button>
+                {!cloudOnly && (
+                  <Button small icon="restore" onClick={() => restore(s)} disabled={disabled || isCurrent} title={isCurrent ? v.alreadyCurrent : v.restoreThis}>
+                    {v.restore}
+                  </Button>
+                )}
+                <button className="icon-btn" title={t.savelib.applyToTitle} onClick={() => setApplying(s)}>
+                  <Icon name="transfer" size={16} />
+                </button>
                 <button className="icon-btn" title={v.exportZip} onClick={() => exportZip(s)}>
                   <Icon name="download" size={16} />
                 </button>
-                <button className="icon-btn" title={v.comment} onClick={() => editComment(s)}>
-                  <Icon name="edit" size={16} />
-                </button>
-                <button
-                  className="icon-btn"
-                  title={s.locked ? v.unlockTitle : v.lockTitle}
-                  onClick={() => act(() => api.setSnapshot(game.key, s.id, { locked: !s.locked }), s.locked ? v.unlocked : v.lockedToast)}
-                >
-                  <Icon name={s.locked ? "lock" : "unlock"} size={16} />
-                </button>
-                <button className="icon-btn danger" title={v.delete} disabled={s.locked || isHead} onClick={() => remove(s)}>
-                  <Icon name="trash" size={16} />
-                </button>
+                {!cloudOnly && (
+                  <>
+                    <button className="icon-btn" title={v.comment} onClick={() => editComment(s)}>
+                      <Icon name="edit" size={16} />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      title={s.locked ? v.unlockTitle : v.lockTitle}
+                      onClick={() => act(() => api.setSnapshot(game.key, s.id, { locked: !s.locked }), s.locked ? v.unlocked : v.lockedToast)}
+                    >
+                      <Icon name={s.locked ? "lock" : "unlock"} size={16} />
+                    </button>
+                    <button className="icon-btn danger" title={v.delete} disabled={s.locked || isHead} onClick={() => remove(s)}>
+                      <Icon name="trash" size={16} />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             {s.comment && <div className="version-comment">{v.quoted(s.comment)}</div>}
@@ -201,6 +279,68 @@ export function Versions({
           </div>
         );
       })}
+      {!cloudOnly && (
+        <div className="versions-trash">
+          <button className="link small" onClick={toggleTrash} aria-expanded={trashOpen}>
+            <Icon name="trash" size={14} /> {trashOpen && trash ? v.trashCount(trash.length) : v.trash}
+          </button>
+          {trashOpen && (
+            <>
+              <p className="muted small">{v.trashHint}</p>
+              {!trash ? (
+                <span className="muted small">{v.reading}</span>
+              ) : trash.length === 0 ? (
+                <span className="muted small">{v.trashEmpty}</span>
+              ) : (
+                trash.map((d) => (
+                  <div key={d.snapshot.id} className="version side deleted">
+                    <div className="version-row">
+                      <div className="version-main">
+                        <span className="dot" data-tone="side" />
+                        <span className="version-time">
+                          <b>{dateTime(d.snapshot.createdAt)}</b>
+                          <small className="muted">{relTime(d.snapshot.createdAt)}</small>
+                        </span>
+                        <span className="device">
+                          <Icon name="devices" size={14} />
+                          {d.snapshot.deviceName}
+                        </span>
+                        <span className="muted">{triggerLabel(d.snapshot.trigger)}</span>
+                        <span className="muted">
+                          {t.library.files(d.snapshot.fileCount)} · {bytes(d.snapshot.totalSize)}
+                        </span>
+                        <span />
+                      </div>
+                      <div className="version-actions">
+                        <Button small icon="restore" onClick={() => restoreDeleted(d)}>
+                          {v.restoreDeleted}
+                        </Button>
+                        <button className="icon-btn danger" title={v.purge} onClick={() => purge(d)}>
+                          <Icon name="trash" size={16} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="version-deleted muted small">{v.deletedInfo(dateTime(d.deletedAt), d.deletedBy || "?", daysLeft(d))}</div>
+                  </div>
+                ))
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {applying && (
+        <ApplyDialog
+          overview={overview}
+          sourceKey={game.key}
+          sourceName={game.name}
+          snapshot={applying}
+          onClose={() => setApplying(null)}
+          onApplied={async (target) => {
+            setApplying(null);
+            await onApplied?.(target);
+          }}
+        />
+      )}
     </div>
   );
 }

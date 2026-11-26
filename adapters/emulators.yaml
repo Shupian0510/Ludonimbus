@@ -7,6 +7,7 @@
 #   saves      认不出是哪个游戏时（例如只打开了模拟器）同步整个模拟器的存档
 #   gameId     怎么认出快捷方式启动的是哪个游戏，见 crates/core/src/emulators.rs
 #   gameSaves  一个游戏的存档，<占位符> 由游戏 ID 填入；按游戏类型分组（default，或 gc / wii）
+#   match.linux / rootsLinux  Linux 上的程序名（含 AppImage、Flatpak 应用 ID）和存档位置（XDG 文件夹 {xdgconfig} / {xdgdata}、Flatpak 的 ~/.var/app），见 docs/plan-platforms.md 1.4
 #
 # 游戏本体备份（docs/plan-game-backup.md 第 8 节）用的字段：
 #   gameFiles       除了快捷方式指向的光盘镜像 / 游戏文件夹以外，这个游戏自己的文件（更新、DLC），写法同 gameSaves
@@ -16,8 +17,9 @@
 #   gamePacks       附加包文件夹（Cemu 的图形包）：说明文件里列出这个游戏 ID 的，算作这个游戏的设置和 mods
 #
 # 只同步存档：不含密钥、固件、着色器缓存、即时存档（state）。
-# Switch 模拟器的存档文件夹和本机的用户档案、存档编号绑定，换到另一台电脑后对不上：
-# Ryujinx 按游戏同步时在每台电脑上查存档编号（没有就新建），其他 Switch 模拟器整个一起同步（连同用户档案）。
+# Switch 模拟器按游戏同步时用 {nxsave-<标题 ID>}（当前用户的存档）和 {nxdevice-<标题 ID>}（设备存档）两个路径根，
+# 每台电脑按自己的模拟器找：Ryujinx 查存档编号（没有就新建），yuzu 系（Eden 等）按用户 ID 和标题 ID 拼出固定路径。
+# 所以同一个游戏在 Ryujinx 和 Eden 之间也能互通，见 crates/core/src/switch.rs。整个模拟器一起同步时连同用户档案。
 
 # --- 任天堂 ---------------------------------------------------------------
 
@@ -25,7 +27,8 @@
   name: Dolphin
   kind: emulator
   platform: GameCube / Wii 模拟器
-  match: { exe: [Dolphin.exe, DolphinQt2.exe, DolphinWX.exe] }
+  match: { exe: [Dolphin.exe, DolphinQt2.exe, DolphinWX.exe], linux: [dolphin-emu, dolphin-emu-nogui, "dolphin*.appimage", org.DolphinEmu.dolphin-emu] }
+  rootsLinux: { emu: "{install}/User|{home}/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu|{xdgdata}/dolphin-emu" }
   roots: { emu: "{install}/User|{documents}/Dolphin Emulator|{appdata}/Dolphin Emulator" }
   saves:
     - "{emu}/GC/*/Card ?/**"
@@ -55,7 +58,8 @@
   name: Cemu
   kind: emulator
   platform: Wii U 模拟器
-  match: { exe: Cemu.exe }
+  match: { exe: Cemu.exe, linux: [cemu, "cemu*.appimage", info.cemu.Cemu] }
+  rootsLinux: { mlc: "{install}/portable/mlc01|{home}/.var/app/info.cemu.Cemu/data/Cemu/mlc01|{xdgdata}/Cemu/mlc01" }
   roots: { mlc: "{install}/portable/mlc01|{install}/mlc01|{appdata}/Cemu/mlc01" }
   saves: ["{mlc}/usr/save/**"]
   gameId: wiiu
@@ -74,7 +78,8 @@
   name: Azahar
   kind: emulator
   platform: 3DS 模拟器
-  match: { exe: [azahar.exe, azahar-qt.exe] }
+  match: { exe: [azahar.exe, azahar-qt.exe], linux: [azahar, azahar-qt, "azahar*.appimage", org.azahar_emu.Azahar] }
+  rootsLinux: { user: "{install}/user|{home}/.var/app/org.azahar_emu.Azahar/data/azahar-emu|{xdgdata}/azahar-emu" }
   roots: { user: "{install}/user|{appdata}/Azahar" }
   saves: &n3ds-saves
     - "{user}/sdmc/Nintendo 3DS/*/*/title/*/*/data/**"
@@ -87,7 +92,8 @@
   name: Citra
   kind: emulator
   platform: 3DS 模拟器
-  match: { exe: [citra-qt.exe, citra.exe] }
+  match: { exe: [citra-qt.exe, citra.exe], linux: [citra-qt, citra, "citra*.appimage"] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/citra-emu" }
   roots: { user: "{install}/user|{appdata}/Citra" }
   saves: *n3ds-saves
   gameId: 3ds
@@ -97,7 +103,8 @@
   name: Lime3DS
   kind: emulator
   platform: 3DS 模拟器
-  match: { exe: [lime3ds-gui.exe, lime3ds.exe, lime-qt.exe] }
+  match: { exe: [lime3ds-gui.exe, lime3ds.exe, lime-qt.exe], linux: [lime3ds-gui, lime3ds, "lime3ds*.appimage"] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/lime3ds-emu" }
   roots: { user: "{install}/user|{appdata}/Lime3DS" }
   saves: *n3ds-saves
   gameId: 3ds
@@ -107,7 +114,8 @@
   name: Ryujinx
   kind: emulator
   platform: Switch 模拟器
-  match: { exe: [Ryujinx.exe, Ryujinx.Ava.exe] }
+  match: { exe: [Ryujinx.exe, Ryujinx.Ava.exe], linux: [ryujinx, "ryujinx*.appimage", org.ryujinx.Ryujinx] }
+  rootsLinux: { emu: "{install}/portable|{home}/.var/app/org.ryujinx.Ryujinx/config/Ryujinx|{xdgconfig}/Ryujinx" }
   roots: { emu: "{install}/portable|{appdata}/Ryujinx" }
   # 整个模拟器：存档按本机分配的编号存放，编号表在 bis/system/save/8000000000000000
   saves:
@@ -131,43 +139,61 @@
   name: Eden
   kind: emulator
   platform: Switch 模拟器
-  match: { exe: eden.exe }
+  match: { exe: eden.exe, linux: [eden, "eden*.appimage"] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/eden" }
   roots: { user: "{install}/user|{appdata}/eden" }
+  # 整个模拟器：所有用户的存档，连同用户档案
   saves: &yuzu-saves
     - "{user}/nand/user/save/**"
     - "{user}/nand/system/save/8000000000000010/su/avators/**"
+  # 单个游戏：和 Ryujinx 用同一套路径根，nand/user/save/0000000000000000/<用户 ID>/<标题 ID>
+  gameId: switch
+  gameSaves: &yuzu-game-saves
+    default: ["{nxsave-<id>}/**", "{nxdevice-<id>}/**"]
 
 - key: citron
   name: Citron
   kind: emulator
   platform: Switch 模拟器
-  match: { exe: citron.exe }
+  match: { exe: citron.exe, linux: [citron, "citron*.appimage"] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/citron" }
   roots: { user: "{install}/user|{appdata}/citron" }
   saves: *yuzu-saves
+  gameId: switch
+  gameSaves: *yuzu-game-saves
 
 - key: sudachi
   name: Sudachi
   kind: emulator
   platform: Switch 模拟器
-  match: { exe: sudachi.exe }
+  match: { exe: sudachi.exe, linux: [sudachi, "sudachi*.appimage"] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/sudachi" }
   roots: { user: "{install}/user|{appdata}/sudachi" }
   saves: *yuzu-saves
+  gameId: switch
+  gameSaves: *yuzu-game-saves
 
 - key: suyu
   name: Suyu
   kind: emulator
   platform: Switch 模拟器
-  match: { exe: suyu.exe }
+  match: { exe: suyu.exe, linux: [suyu, "suyu*.appimage"] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/suyu" }
   roots: { user: "{install}/user|{appdata}/suyu" }
   saves: *yuzu-saves
+  gameId: switch
+  gameSaves: *yuzu-game-saves
 
 - key: yuzu
   name: yuzu
   kind: emulator
   platform: Switch 模拟器（含 torzu 等分支）
-  match: { exe: yuzu.exe }
+  match: { exe: yuzu.exe, linux: [yuzu, "yuzu*.appimage", org.yuzu_emu.yuzu] }
+  rootsLinux: { user: "{install}/user|{home}/.var/app/org.yuzu_emu.yuzu/data/yuzu|{xdgdata}/yuzu" }
   roots: { user: "{install}/user|{appdata}/yuzu" }
   saves: *yuzu-saves
+  gameId: switch
+  gameSaves: *yuzu-game-saves
 
 # --- 索尼 -----------------------------------------------------------------
 
@@ -175,7 +201,8 @@
   name: shadPS4
   kind: emulator
   platform: PS4 模拟器
-  match: { exe: shadPS4.exe }
+  match: { exe: shadPS4.exe, linux: [shadps4, "shadps4*.appimage", net.shadps4.shadPS4] }
+  rootsLinux: { user: "{install}/user|{xdgdata}/shadPS4" }
   roots: { user: "{install}/user|{appdata}/shadPS4" }
   saves: ["{user}/savedata/**"]
   gameId: ps4
@@ -188,7 +215,8 @@
   name: RPCS3
   kind: emulator
   platform: PS3 模拟器
-  match: { exe: rpcs3.exe }
+  match: { exe: rpcs3.exe, linux: [rpcs3, "rpcs3*.appimage", net.rpcs3.RPCS3] }
+  rootsLinux: { install: "{home}/.var/app/net.rpcs3.RPCS3/config/rpcs3|{xdgconfig}/rpcs3" }
   saves: ["{install}/dev_hdd0/home/00000001/savedata/**"]
   gameId: ps3
   gameSaves:
@@ -205,7 +233,8 @@
   name: PCSX2
   kind: emulator
   platform: PS2 模拟器
-  match: { exe: "pcsx2*.exe" }
+  match: { exe: "pcsx2*.exe", linux: ["pcsx2*", net.pcsx2.PCSX2] }
+  rootsLinux: { cards: "{install}/memcards|{home}/.var/app/net.pcsx2.PCSX2/config/PCSX2/memcards|{xdgconfig}/PCSX2/memcards" }
   # 记忆卡是所有游戏共用的，只能整体同步
   roots: { cards: "{install}/memcards|{documents}/PCSX2/memcards" }
   saves: ["{cards}/**"]
@@ -214,7 +243,8 @@
   name: DuckStation
   kind: emulator
   platform: PS1 模拟器
-  match: { exe: "duckstation*.exe" }
+  match: { exe: "duckstation*.exe", linux: ["duckstation*", org.duckstation.DuckStation] }
+  rootsLinux: { cards: "{install}/memcards|{home}/.var/app/org.duckstation.DuckStation/data/duckstation/memcards|{xdgdata}/duckstation/memcards" }
   roots: { cards: "{install}/memcards|{documents}/DuckStation/memcards|{localappdata}/DuckStation/memcards" }
   saves: ["{cards}/**"]
 
@@ -222,7 +252,8 @@
   name: PPSSPP
   kind: emulator
   platform: PSP 模拟器
-  match: { exe: "PPSSPPWindows*.exe" }
+  match: { exe: "PPSSPPWindows*.exe", linux: [ppsspp, ppssppsdl, ppssppqt, "ppsspp*.appimage", org.ppsspp.PPSSPP] }
+  rootsLinux: { emu: "{install}/memstick|{home}/.var/app/org.ppsspp.PPSSPP/config/ppsspp|{xdgconfig}/ppsspp" }
   roots: { emu: "{install}/memstick|{documents}/PPSSPP|{install}/memstick" }
   saves: ["{emu}/PSP/SAVEDATA/**"]
   gameId: psp
@@ -233,7 +264,8 @@
   name: Vita3K
   kind: emulator
   platform: PS Vita 模拟器
-  match: { exe: Vita3K.exe }
+  match: { exe: Vita3K.exe, linux: [vita3k, "vita3k*.appimage"] }
+  rootsLinux: { ux0: "{install}/ux0|{xdgdata}/Vita3K/Vita3K/ux0" }
   roots: { ux0: "{install}/ux0|{appdata}/Vita3K/Vita3K/ux0" }
   saves: ["{ux0}/user/00/savedata/**"]
   gameId: vita
@@ -261,7 +293,8 @@
   name: RetroArch
   kind: emulator
   platform: 多平台模拟器
-  match: { exe: retroarch.exe }
+  match: { exe: retroarch.exe, linux: [retroarch, org.libretro.RetroArch] }
+  rootsLinux: { install: "{home}/.var/app/org.libretro.RetroArch/config/retroarch|{xdgconfig}/retroarch" }
   saves: ["{install}/saves/**"]
   gameId: rom
   gameSaves:

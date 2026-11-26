@@ -50,7 +50,7 @@ export function AddGame({
   );
 }
 
-function useAccounts() {
+export function useAccounts() {
   const [accounts, setAccounts] = useState<SteamAccount[]>([]);
   const [account, setAccount] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +67,7 @@ function useAccounts() {
   return { accounts, account, setAccount, error };
 }
 
-function AccountPicker({ accounts, account, setAccount }: { accounts: SteamAccount[]; account: string | null; setAccount: (a: string) => void }) {
+export function AccountPicker({ accounts, account, setAccount }: { accounts: SteamAccount[]; account: string | null; setAccount: (a: string) => void }) {
   const t = useT();
   if (accounts.length < 2) return null;
   return (

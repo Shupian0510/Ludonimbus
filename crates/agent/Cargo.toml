@@ -1,0 +1,19 @@
+[package]
+name = "ludonimbus-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Ludonimbus without a window, for Steam Deck Game Mode (systemd user service).
+[[bin]]
+name = "ludonimbus-agent"
+path = "src/main.rs"
+
+[dependencies]
+ludonimbus-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tiny_http = "0.12"
+rand = "0.8"

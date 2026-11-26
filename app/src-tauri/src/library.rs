@@ -58,7 +58,7 @@ pub async fn add_found(found: Found, name: String, saves: Vec<String>, ludusavi_
                 exe: exe.map(PathBuf::from),
             },
         )?;
-        Ok(g.key)
+        Ok(crate::commands::adopt_cloud_key(g.key))
     })
     .await
 }
@@ -190,6 +190,21 @@ pub async fn sgdb_images(game_id: u64, kind: String) -> CmdResult<Vec<SgdbImage>
     blocking(move || sgdb::images(&key()?, game_id, &kind)).await
 }
 
+/// Send a game's artwork to the cloud in the background, so other devices
+/// show it too (see `artsync`).
+fn push_art(key: &str) {
+    let key = key.to_string();
+    std::thread::spawn(move || {
+        let Ok(cfg) = config::load() else { return };
+        let Some(g) = cfg.game(&key).cloned() else { return };
+        if let Ok(Some(cloud)) = ludonimbus_core::cloud::open(&cfg) {
+            if let Err(e) = ludonimbus_core::artsync::push(cloud.files(), &cfg, &g) {
+                ludonimbus_core::logger::log("app", format!("{key}: artwork upload failed: {e:#}"));
+            }
+        }
+    });
+}
+
 /// Use a SteamGridDB image as a game's artwork.
 #[tauri::command]
 pub async fn art_set_url(key: String, kind: String, url: String) -> CmdResult<()> {
@@ -197,7 +212,9 @@ pub async fn art_set_url(key: String, kind: String, url: String) -> CmdResult<()
         let file = sgdb::download(&url)?;
         let res = games::set_art(&key, &kind, &file);
         let _ = std::fs::remove_file(&file);
-        res
+        res?;
+        push_art(&key);
+        Ok(())
     })
     .await
 }
@@ -205,7 +222,12 @@ pub async fn art_set_url(key: String, kind: String, url: String) -> CmdResult<()
 /// Use a local image as a game's artwork.
 #[tauri::command]
 pub async fn art_set_file(key: String, kind: String, path: String) -> CmdResult<()> {
-    blocking(move || games::set_art(&key, &kind, Path::new(&path))).await
+    blocking(move || {
+        games::set_art(&key, &kind, Path::new(&path))?;
+        push_art(&key);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]

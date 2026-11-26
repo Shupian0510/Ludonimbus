@@ -27,6 +27,22 @@ pub struct AppConfig {
     pub onboarding: Onboarding,
     /// Steam screenshots of linked games in the cloud.
     pub screenshots: ScreenshotMode,
+    /// Handheld mode: the launch wrapper asks its questions in a full-screen
+    /// window instead of system dialogs (see [`crate::handheld`]).
+    pub handheld: HandheldMode,
+    /// The Switch client's connection over the local network (see
+    /// [`crate::nxlan`]). Off unless the user turns it on.
+    pub nx_lan: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HandheldMode {
+    /// When Steam starts the game from Big Picture / Game Mode.
+    #[default]
+    Auto,
+    On,
+    Off,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +80,8 @@ impl Default for AppConfig {
             language: "system".into(),
             onboarding: Onboarding::default(),
             screenshots: ScreenshotMode::Off,
+            handheld: HandheldMode::Auto,
+            nx_lan: false,
         }
     }
 }
@@ -220,6 +238,11 @@ pub struct GameEntry {
     /// added with its own save folders); `None` = the detected source, see
     /// [`crate::games::source`].
     pub source: Option<String>,
+    /// Which game this is, set by the user: entries with the same value are
+    /// versions of one game in the save library (`solo:…` = not the same as
+    /// any other). `None` = worked out from [`crate::savelib::ids`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
 }
 
 fn yes() -> bool {

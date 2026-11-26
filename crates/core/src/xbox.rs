@@ -136,7 +136,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let content = tmp.path().join("Doom Eternal - PC").join("Content");
         std::fs::create_dir_all(content.join("launcher")).unwrap();
-        for f in ["gamelaunchhelper.exe", "DOOMEternalx64vk.exe", "CrashReporter.exe", r"launcher\idTechLauncher.exe"] {
+        for f in ["gamelaunchhelper.exe", "DOOMEternalx64vk.exe", "CrashReporter.exe", "launcher/idTechLauncher.exe"] {
             std::fs::write(content.join(f), b"x").unwrap();
         }
         std::fs::write(

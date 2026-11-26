@@ -43,15 +43,15 @@ fn ryujinx(dir: &Path, last_opened: &str, saves: &[(u64, (u64, u64), u64)]) -> P
     idx.extend_from_slice(&(saves.len() as u32).to_le_bytes());
     for &(t, u, id) in saves {
         idx.extend(entry(t, u, 1, id));
-        write(&emu.join(format!(r"bis\user\save\{id:016x}\ExtraData0")), &[0u8; 0x200]);
-        fs::create_dir_all(emu.join(format!(r"bis\user\save\{id:016x}\0"))).unwrap();
+        write(&emu.join(format!(r"bis/user/save/{id:016x}/ExtraData0")), &[0u8; 0x200]);
+        fs::create_dir_all(emu.join(format!(r"bis/user/save/{id:016x}/0"))).unwrap();
     }
     let last = saves.iter().map(|s| s.2).max().unwrap_or(0);
     for d in ["0", "1"] {
-        write(&emu.join(format!(r"bis\system\save\8000000000000000\{d}\imkvdb.arc")), &idx);
-        write(&emu.join(format!(r"bis\system\save\8000000000000000\{d}\lastPublishedId")), &last.to_le_bytes());
+        write(&emu.join(format!(r"bis/system/save/8000000000000000/{d}/imkvdb.arc")), &idx);
+        write(&emu.join(format!(r"bis/system/save/8000000000000000/{d}/lastPublishedId")), &last.to_le_bytes());
     }
-    write(&emu.join(r"system\Profiles.json"), format!(r#"{{"profiles":[],"last_opened":"{last_opened}"}}"#).as_bytes());
+    write(&emu.join(r"system/Profiles.json"), format!(r#"{{"profiles":[],"last_opened":"{last_opened}"}}"#).as_bytes());
     exe
 }
 
@@ -81,11 +81,11 @@ fn ryujinx_per_game() {
     let default_user = "00000000000000010000000000000000";
     let exe_a = ryujinx(&tmp.path().join("A"), default_user, &[(MHGU, (1, 0), 1), (0x0100_7EF0_0011_E000, (1, 0), 2)]);
     let emu_a = exe_a.parent().unwrap().join("portable");
-    write(&emu_a.join(r"bis\user\save\0000000000000001\0\save.bin"), b"hunter rank 50");
-    write(&emu_a.join(r"bis\user\save\0000000000000001\0\sub\opts.bin"), b"options");
-    write(&emu_a.join(r"bis\user\save\0000000000000001\1\save.bin"), b"working copy");
-    write(&emu_a.join(r"bis\user\save\0000000000000002\0\zelda.bin"), b"other game");
-    write(&emu_a.join(r"games\0100770008dd8000\gui\metadata.json"), br#"{"title":"MONSTER HUNTER GENERATIONS ULTIMATE","favorite":false}"#);
+    write(&emu_a.join(r"bis/user/save/0000000000000001/0/save.bin"), b"hunter rank 50");
+    write(&emu_a.join(r"bis/user/save/0000000000000001/0/sub/opts.bin"), b"options");
+    write(&emu_a.join(r"bis/user/save/0000000000000001/1/save.bin"), b"working copy");
+    write(&emu_a.join(r"bis/user/save/0000000000000002/0/zelda.bin"), b"other game");
+    write(&emu_a.join(r"games/0100770008dd8000/gui/metadata.json"), br#"{"title":"MONSTER HUNTER GENERATIONS ULTIMATE","favorite":false}"#);
     let roms = tmp.path().join("ROMs");
     let nsp = roms.join("MHGU [0100770008dd8000][v0].nsp");
     write(&nsp, b"PFS0");
@@ -132,24 +132,24 @@ fn ryujinx_per_game() {
     let g = games::set_exe(&g.key, &exe_b).unwrap();
     assert!(logical(&g.key).is_empty(), "no save on PC B yet");
     snapshot::apply(&zip, &meta, &g).unwrap();
-    let save = emu_b.join(r"bis\user\save\0000000000000008");
-    assert_eq!(fs::read(save.join(r"0\save.bin")).unwrap(), b"hunter rank 50");
-    assert_eq!(fs::read(save.join(r"1\sub\opts.bin")).unwrap(), b"options", "working copy filled too");
+    let save = emu_b.join(r"bis/user/save/0000000000000008");
+    assert_eq!(fs::read(save.join(r"0/save.bin")).unwrap(), b"hunter rank 50");
+    assert_eq!(fs::read(save.join(r"1/sub/opts.bin")).unwrap(), b"options", "working copy filled too");
     assert_eq!(switch::find_save(&emu_b, switch::SaveKind::Account, MHGU), Some(save.join("0")));
     let extra = fs::read(save.join("ExtraData0")).unwrap();
     assert_eq!(&extra[0x08..0x18], &[0x80, 0x4f, 0x1e, 0xe6, 0xee, 0xa3, 0x04, 0x4b, 0x9d, 0xb1, 0xaf, 0xd0, 0xd3, 0x15, 0x8c, 0x8c]);
-    let idx = fs::read(emu_b.join(r"bis\system\save\8000000000000000\0\imkvdb.arc")).unwrap();
+    let idx = fs::read(emu_b.join(r"bis/system/save/8000000000000000/0/imkvdb.arc")).unwrap();
     assert_eq!(switch::parse_index(&idx).unwrap().len(), 2);
     assert_eq!(logical(&g.key), vec!["nxsave-0100770008dd8000/save.bin".to_string(), "nxsave-0100770008dd8000/sub/opts.bin".to_string()]);
     // The old index was kept in Ludonimbus's local backups.
-    assert!(tmp.path().join(r"home\local-backups\ryujinx-save-index").read_dir().unwrap().next().is_some());
+    assert!(tmp.path().join(r"home/local-backups/ryujinx-save-index").read_dir().unwrap().next().is_some());
 
     // Restoring again uses that save; nothing new in the index.
-    write(&save.join(r"0\stray.bin"), b"left over");
+    write(&save.join(r"0/stray.bin"), b"left over");
     snapshot::apply(&zip, &meta, &g).unwrap();
-    assert!(!save.join(r"0\stray.bin").exists());
-    assert!(!save.join(r"1\stray.bin").exists());
-    let idx = fs::read(emu_b.join(r"bis\system\save\8000000000000000\1\imkvdb.arc")).unwrap();
+    assert!(!save.join(r"0/stray.bin").exists());
+    assert!(!save.join(r"1/stray.bin").exists());
+    let idx = fs::read(emu_b.join(r"bis/system/save/8000000000000000/1/imkvdb.arc")).unwrap();
     assert_eq!(switch::parse_index(&idx).unwrap().len(), 2);
 
     // The whole emulator can't be added next to a game synced on its own.

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type GameView, type Overview, type StatusReport } from "../api";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { api, type GameSource, type GameView, type Overview, type StatusReport } from "../api";
 import { bytes, duration, relTime, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { groupBySource, type Grouped, type SourceGroup, tagText } from "../source";
+import { type Member, membersOf } from "./SaveLibrary";
 import { Badge, Button, Empty, Icon, Spinner, Toggle, useUi } from "./ui";
 
 function stored(storage: () => Storage, key: string): string | null {
@@ -38,14 +39,47 @@ function needsAttention(g: GameView): boolean {
   return ["changed", "runnerMoved", "shortcutMissing"].includes(g.health.state) || (!g.exeExists && !!g.exe);
 }
 
-function Cover({ game }: { game: GameView }) {
+/**
+ * One card in the library: a game with all its versions, on this PC and
+ * only in the cloud (docs/plan-phase5.md §5). It shows its main version:
+ * one this PC can start, else one on this PC, else one in the cloud.
+ */
+export interface Card {
+  key: string;
+  name: string;
+  source: GameSource;
+  main: Member;
+  members: Member[];
+  /** Some version of the game is on this PC: shown in colour. */
+  playable: boolean;
+  secs: number;
+}
+
+export function cardsOf(overview: Overview): Card[] {
+  const byFamily = new Map<string, Member[]>();
+  for (const m of membersOf(overview)) {
+    const list = byFamily.get(m.family);
+    if (list) list.push(m);
+    else byFamily.set(m.family, [m]);
+  }
+  const rank = (m: Member) => (m.playable ? 0 : m.game ? 1 : 2);
+  return [...byFamily.values()].map((members) => {
+    const main = [...members].sort((a, b) => rank(a) - rank(b))[0];
+    const secs = members.reduce((n, m) => n + (m.game?.playtime.totalSecs ?? m.cloud?.playtime.totalSecs ?? 0), 0);
+    return { key: main.key, name: main.name, source: main.source, main, members, playable: members.some((m) => m.playable), secs };
+  });
+}
+
+const artOf = (m: Member) => (m.game ?? m.cloud)!.art;
+
+function Cover({ name, cover }: { name: string; cover: string | null }) {
   const [failed, setFailed] = useState(false);
-  if (game.art.cover && !failed) {
-    return <img src={game.art.cover} alt="" loading="lazy" onError={() => setFailed(true)} />;
+  if (cover && !failed) {
+    return <img src={cover} alt="" loading="lazy" onError={() => setFailed(true)} />;
   }
   return (
     <div className="cover-fallback">
-      <span>{game.name}</span>
+      <span>{name}</span>
     </div>
   );
 }
@@ -61,29 +95,33 @@ function Logo({ src, size }: { src: string | null; size: number }) {
 }
 
 /** A game's source in the list: its program's logo and the group's name. */
-function SourceTag({ group, game }: { group: SourceGroup; game: GameView }) {
+function SourceTag({ group, source }: { group: SourceGroup; source: GameSource }) {
   const text = tagText(group);
   if (!text) return null;
-  const detail = game.source.detail ?? group.detail;
+  const detail = source.detail ?? group.detail;
   return (
     <span className="src-tag" title={detail ?? undefined}>
-      <Logo src={game.source.logo ?? group.logo} size={13} />
+      <Logo src={source.logo ?? group.logo} size={13} />
       {text}
     </span>
   );
 }
 
-/** Display options: group by source, show the source filter. */
+/** Display options: group by source, show the source filter, show games that aren't installed. */
 function ViewMenu({
   grouped,
   setGrouped,
   showChips,
   setShowChips,
+  showMissing,
+  setShowMissing,
 }: {
   grouped: boolean;
   setGrouped: (v: boolean) => void;
   showChips: boolean;
   setShowChips: (v: boolean) => void;
+  showMissing: boolean;
+  setShowMissing: (v: boolean) => void;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -104,7 +142,7 @@ function ViewMenu({
   return (
     <div className="view-menu" ref={ref}>
       <div className="seg">
-        <button className={open || grouped ? "on" : ""} onClick={() => setOpen(!open)} title={t.source.view} aria-expanded={open}>
+        <button className={open || grouped || !showMissing ? "on" : ""} onClick={() => setOpen(!open)} title={t.source.view} aria-expanded={open}>
           <Icon name="sliders" />
         </button>
       </div>
@@ -118,6 +156,10 @@ function ViewMenu({
             <span>{t.source.showChips}</span>
             <Toggle checked={showChips} onChange={setShowChips} />
           </label>
+          <label className="popover-row">
+            <span>{t.source.showMissing}</span>
+            <Toggle checked={showMissing} onChange={setShowMissing} />
+          </label>
         </div>
       )}
     </div>
@@ -126,22 +168,25 @@ function ViewMenu({
 
 type GroupAction = { id: string; mode: "sync" | "backup"; progress: string };
 
+/** The versions on this PC of the games in a group (what group actions run on). */
+const localGames = (cards: Card[]) => cards.flatMap((c) => c.members.flatMap((m) => (m.game ? [m.game] : [])));
+
 /** A group's title, size and the actions that run on all of its games. */
 function GroupHead({
   entry,
   busy,
   onRun,
 }: {
-  entry: Grouped;
+  entry: Grouped<Card>;
   busy: GroupAction | null;
-  onRun: (entry: Grouped, mode: "sync" | "backup") => void;
+  onRun: (entry: Grouped<Card>, mode: "sync" | "backup") => void;
 }) {
   const t = useT();
   const { group, games } = entry;
-  const secs = games.reduce((n, g) => n + g.playtime.totalSecs, 0);
+  const secs = games.reduce((n, g) => n + g.secs, 0);
   const mine = busy?.id === group.id ? busy : null;
   const action = (mode: "sync" | "backup", icon: string, label: string, title: string) => (
-    <button className="btn btn-secondary btn-sm" disabled={!!busy} onClick={() => onRun(entry, mode)} title={title}>
+    <button className="btn btn-secondary btn-sm" disabled={!!busy || localGames(games).length === 0} onClick={() => onRun(entry, mode)} title={title}>
       {mine?.mode === mode ? <span className="spinner" /> : <Icon name={icon} size={15} />}
       {mine?.mode === mode ? `${label} ${mine.progress}` : label}
     </button>
@@ -193,6 +238,7 @@ export function Library({
   const [query, setQuery] = useState("");
   const [grouped, setGrouped] = useState(() => stored(local, "ln.group") === "1" || sceneIs("library-sources"));
   const [showChips, setShowChips] = useState(() => stored(local, "ln.sourceChips") !== "0");
+  const [showMissing, setShowMissing] = useState(() => stored(local, "ln.showMissing") !== "0");
   // Kept while moving between the library and a game, not across restarts.
   const [filter, setFilter] = useState<string | null>(() => stored(session, "ln.source"));
   const [busy, setBusy] = useState<GroupAction | null>(null);
@@ -213,27 +259,37 @@ export function Library({
     setFilter(id);
     store(session, "ln.source", id);
   };
+  const setMissingSaved = (v: boolean) => {
+    setShowMissing(v);
+    store(local, "ln.showMissing", v ? "1" : "0");
+  };
 
-  const sorted = useMemo(
-    () => [...overview.games].sort((a, b) => a.name.localeCompare(b.name, currentLang())),
-    [overview.games],
-  );
+  const allCards = useMemo(() => cardsOf(overview), [overview]);
+  // Games on this PC first, then the grey ones (only their saves here, or
+  // only in the cloud); by name within each. Groups keep this order.
+  const sorted = useMemo(() => {
+    const lang = currentLang();
+    return allCards
+      .filter((c) => showMissing || c.playable)
+      .sort((a, b) => Number(b.playable) - Number(a.playable) || a.name.localeCompare(b.name, lang));
+  }, [allCards, showMissing]);
   // Groups of the whole library (for the filter), and of the games shown.
   const all = useMemo(() => groupBySource(sorted), [sorted]);
   // A hidden filter bar shows the whole library.
   const active = showChips && filter && all.groups.some((g) => g.group.id === filter) ? filter : null;
-  const games = useMemo(() => {
+  const cards = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return sorted.filter((g) => g.name.toLowerCase().includes(q) && (!active || all.of.get(g.key)?.id === active));
+    return sorted.filter((c) => c.members.some((m) => m.name.toLowerCase().includes(q)) && (!active || all.of.get(c.key)?.id === active));
   }, [sorted, query, active, all]);
   const sections = useMemo(() => {
-    const shown = new Set(games.map((g) => g.key));
-    return all.groups.map((e) => ({ group: e.group, games: e.games.filter((g) => shown.has(g.key)) })).filter((e) => e.games.length);
-  }, [games, all]);
+    const shown = new Set(cards.map((c) => c.key));
+    return all.groups.map((e) => ({ group: e.group, games: e.games.filter((c) => shown.has(c.key)) })).filter((e) => e.games.length);
+  }, [cards, all]);
 
-  const runGroup = async (entry: Grouped, mode: "sync" | "backup") => {
+  const runGroup = async (entry: Grouped<Card>, mode: "sync" | "backup") => {
     const s = msg().source;
-    const { group, games: list } = entry;
+    const { group } = entry;
+    const list = localGames(entry.games);
     if (overview.cloud.kind === "none") {
       ui.toast(msg().library.noCloud, "warn");
       return;
@@ -275,36 +331,73 @@ export function Library({
     await onChanged(todo.map((g) => g.key));
   };
 
-  const renderGrid = (list: GameView[]) => (
-    <div className="grid">
-      {list.map((g) => (
-        <button key={g.key} className="card" onClick={() => onOpen(g.key)}>
-          <div className="cover">
-            <Cover game={g} />
-            {needsAttention(g) && (
-              <span className="attention" title={t.library.needsAttention}>
-                <Icon name="warn" size={15} />
-              </span>
-            )}
-            {checking[g.key] && (
-              <span className="card-spinner">
-                <Spinner />
-              </span>
-            )}
-          </div>
-          <div className="card-meta">
-            <div className="card-name">{g.name}</div>
-            <div className="card-sub">
-              <StatusBadge game={g} check={checks[g.key]} checking={checking[g.key]} />
-              {g.playtime.totalSecs > 0 && <span className="card-time muted">{duration(g.playtime.totalSecs)}</span>}
-            </div>
-          </div>
-        </button>
-      ))}
+  /** Where the grey games start, under a divider. */
+  const divider = (n: number) => (
+    <div className="lib-divider" title={t.library.missingHint}>
+      {t.library.missingTitle}
+      <span className="chip-count">{n}</span>
     </div>
   );
 
-  const renderTable = (list: GameView[]) => (
+  const hint = (c: Card) => (c.playable ? undefined : c.main.cloud ? t.savelib.cloudOnlyHint : t.library.missingHint);
+
+  /** Status of the card's main version: its sync status, or "only in the cloud". */
+  const status = (c: Card) =>
+    c.main.game ? (
+      <StatusBadge game={c.main.game} check={checks[c.main.key]} checking={checking[c.main.key]} />
+    ) : (
+      <Badge tone="muted">{t.savelib.cloudOnly}</Badge>
+    );
+
+  const renderGrid = (list: Card[], divide: boolean) => {
+    const at = divide ? list.findIndex((c) => !c.playable) : -1;
+    if (at < 0) return renderCards(list);
+    return (
+      <>
+        {at > 0 && renderCards(list.slice(0, at))}
+        {divider(list.length - at)}
+        {renderCards(list.slice(at))}
+      </>
+    );
+  };
+
+  const renderCards = (list: Card[]) => (
+    <div className="grid">
+      {list.map((c) => {
+        const g = c.main.game;
+        return (
+          <button key={c.key} className={c.playable ? "card" : "card missing"} onClick={() => onOpen(c.key)} title={hint(c)}>
+            <div className="cover">
+              <Cover name={c.name} cover={artOf(c.main).cover} />
+              {g && needsAttention(g) && (
+                <span className="attention" title={t.library.needsAttention}>
+                  <Icon name="warn" size={15} />
+                </span>
+              )}
+              {checking[c.key] && (
+                <span className="card-spinner">
+                  <Spinner />
+                </span>
+              )}
+            </div>
+            <div className="card-meta">
+              <div className="card-name">{c.name}</div>
+              <div className="card-sub">
+                {status(c)}
+                <span className="card-time muted">
+                  {c.members.length > 1 && t.savelib.versions(c.members.length)}
+                  {c.members.length > 1 && c.secs > 0 && " · "}
+                  {c.secs > 0 && duration(c.secs)}
+                </span>
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const renderTable = (list: Card[], divide: boolean) => (
     <div className="table">
       <div className="tr th">
         <span>{t.library.col.game}</span>
@@ -314,54 +407,69 @@ export function Library({
         <span>{t.library.col.playtime}</span>
         <span>Steam</span>
       </div>
-      {list.map((g) => {
-        const c = checks[g.key];
+      {list.map((c, i) => {
+        const g = c.main.game;
+        const chk = checks[c.key];
+        const first = divide && !c.playable && (i === 0 || list[i - 1].playable);
+        const icon = artOf(c.main).icon;
         return (
-          <button key={g.key} className="tr" onClick={() => onOpen(g.key)}>
-            <span className="cell-game">
-              {g.art.icon ? <img src={g.art.icon} alt="" /> : <span className="icon-fallback">{g.name.slice(0, 1)}</span>}
-              <span>
-                <b>{g.name}</b>
-                <small className="muted">
-                  <SourceTag group={all.of.get(g.key)!} game={g} />
-                  {g.platform ?? g.adapterName ?? (g.ludusaviTitle ? t.library.ludusavi : t.library.custom)}
-                </small>
+          <Fragment key={c.key}>
+            {first && (
+              <div className="tr th tr-divider" title={t.library.missingHint}>
+                {t.library.missingTitle}
+                <span className="chip-count">{list.length - i}</span>
+              </div>
+            )}
+            <button className={c.playable ? "tr" : "tr missing"} onClick={() => onOpen(c.key)} title={hint(c)}>
+              <span className="cell-game">
+                {icon ? <img src={icon} alt="" /> : <span className="icon-fallback">{c.name.slice(0, 1)}</span>}
+                <span>
+                  <b>{c.name}</b>
+                  <small className="muted">
+                    <SourceTag group={all.of.get(c.key)!} source={c.source} />
+                    {g
+                      ? (g.platform ?? g.adapterName ?? (g.ludusaviTitle ? t.library.ludusavi : t.library.custom))
+                      : (c.main.cloud?.platform ?? c.main.cloud?.adapterName ?? t.savelib.cloudOnly)}
+                    {c.members.length > 1 && ` · ${t.savelib.versions(c.members.length)}`}
+                  </small>
+                </span>
               </span>
-            </span>
-            <span>
-              <StatusBadge game={g} check={c} checking={checking[g.key]} />
-            </span>
-            <span className="muted">{c ? `${t.library.files(c.localFiles)} · ${bytes(c.localSize)}` : "—"}</span>
-            <span className="muted">
-              {relTime(g.lastSyncAt)}
-              {g.lastSyncedDevice ? ` · ${g.lastSyncedDevice}` : ""}
-            </span>
-            <span className="muted">{g.playtime.totalSecs > 0 ? duration(g.playtime.totalSecs) : "—"}</span>
-            <span>
-              {needsAttention(g) ? (
-                <Badge tone="warn">{t.library.needsAttention}</Badge>
-              ) : g.steam?.enabled ? (
-                <Badge tone="ok">{t.library.steam.on}</Badge>
-              ) : g.steam ? (
-                <Badge tone="muted">{t.library.steam.off}</Badge>
-              ) : (
-                <Badge tone="muted">{t.library.steam.none}</Badge>
-              )}
-            </span>
-          </button>
+              <span>{status(c)}</span>
+              <span className="muted">{chk ? `${t.library.files(chk.localFiles)} · ${bytes(chk.localSize)}` : "—"}</span>
+              <span className="muted">
+                {g ? relTime(g.lastSyncAt) : "—"}
+                {g?.lastSyncedDevice ? ` · ${g.lastSyncedDevice}` : ""}
+              </span>
+              <span className="muted">{c.secs > 0 ? duration(c.secs) : "—"}</span>
+              <span>
+                {!g ? (
+                  <Badge tone="muted">{t.library.steam.none}</Badge>
+                ) : needsAttention(g) ? (
+                  <Badge tone="warn">{t.library.needsAttention}</Badge>
+                ) : g.steam?.enabled ? (
+                  <Badge tone="ok">{t.library.steam.on}</Badge>
+                ) : g.steam ? (
+                  <Badge tone="muted">{t.library.steam.off}</Badge>
+                ) : (
+                  <Badge tone="muted">{t.library.steam.none}</Badge>
+                )}
+              </span>
+            </button>
+          </Fragment>
         );
       })}
     </div>
   );
 
-  const renderList = (list: GameView[]) => (view === "grid" ? renderGrid(list) : renderTable(list));
+  /** `divide`: put a divider before the grey games. */
+  const renderList = (list: Card[], divide = false) => (view === "grid" ? renderGrid(list, divide) : renderTable(list, divide));
 
   return (
     <div className="page">
       <header className="page-head">
         <div>
           <h1>{t.library.title}</h1>
-          <p className="muted">{t.library.subtitle(overview.games.length)}</p>
+          <p className="muted">{t.library.subtitle(allCards.length)}</p>
         </div>
         <div className="head-actions">
           <div className="search">
@@ -376,7 +484,14 @@ export function Library({
               <Icon name="list" />
             </button>
           </div>
-          <ViewMenu grouped={grouped} setGrouped={setGroupedSaved} showChips={showChips} setShowChips={setChipsSaved} />
+          <ViewMenu
+            grouped={grouped}
+            setGrouped={setGroupedSaved}
+            showChips={showChips}
+            setShowChips={setChipsSaved}
+            showMissing={showMissing}
+            setShowMissing={setMissingSaved}
+          />
           <Button icon="sync" onClick={onRefresh} title={t.library.refreshTitle}>
             {t.library.refresh}
           </Button>
@@ -409,7 +524,7 @@ export function Library({
         <div className="chips source-chips">
           <button className={`chip${active ? "" : " on"}`} onClick={() => setFilterSaved(null)}>
             {t.source.all}
-            <span className="chip-count">{overview.games.length}</span>
+            <span className="chip-count">{sorted.length}</span>
           </button>
           {all.groups.map(({ group, games: list }) => (
             <button
@@ -426,12 +541,17 @@ export function Library({
         </div>
       )}
 
-      {overview.games.length === 0 ? (
+      {allCards.length === 0 ? (
         <Empty icon="library" title={t.library.emptyTitle}>
           <p className="muted">{t.library.emptyText}</p>
           <Button kind="primary" icon="plus" onClick={onAdd}>
             {t.library.add}
           </Button>
+        </Empty>
+      ) : sorted.length === 0 ? (
+        <Empty icon="library" title={t.library.allMissingTitle}>
+          <p className="muted">{t.library.allMissingText}</p>
+          <Button onClick={() => setMissingSaved(true)}>{t.source.showMissing}</Button>
         </Empty>
       ) : grouped || active ? (
         sections.map((entry) => (
@@ -441,7 +561,7 @@ export function Library({
           </section>
         ))
       ) : (
-        renderList(games)
+        renderList(cards, true)
       )}
     </div>
   );

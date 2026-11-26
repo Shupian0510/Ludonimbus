@@ -1,4 +1,5 @@
-//! Nintendo Switch games in Ryujinx.
+//! Nintendo Switch games in Ryujinx and the yuzu family (Eden, Citron,
+//! Sudachi, Suyu, yuzu).
 //!
 //! **Which game.** Most dump file names carry the title id
 //! (`… [0100770008DD8000][v0].nsp`). Otherwise it is read from the NSP (its
@@ -15,6 +16,10 @@
 //! the save's committed folder `0`). Before a restore, a save this PC doesn't
 //! have yet is created the way Ryujinx creates one: an index entry, the
 //! numbered folder and its extra data.
+//!
+//! The yuzu family keeps saves at fixed paths instead (see
+//! [`yuzu_save`]), so the same two roots work there too: a snapshot made
+//! in Ryujinx restores into Eden and back, on the same PC or another one.
 
 use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit};
 use aes::Aes128;
@@ -587,6 +592,187 @@ pub fn game_name(emu: &Path, title: u64) -> Option<String> {
     v["title"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
 
+// ---------------------------------------------------------------------------
+// The yuzu family (Eden, Citron, Sudachi, Suyu, yuzu)
+//
+// No index: a save is `nand/user/save/0000000000000000/<user id>/<title id>/`
+// under the emulator's `user` folder, both in upper-case hex, with the files
+// right in it (yuzu's `SaveDataFactory::GetFullPath`). The user id is the
+// profile's 16-byte UUID read as two little-endian halves, high half
+// written first; device saves use an all-zero user id. The profiles are in
+// `profiles.dat`, and the one in use is `current_user` (an index) in the
+// emulator's Qt settings.
+
+/// Size bookkeeping yuzu writes into each save folder. It isn't part of the
+/// game's save and would show up as a file in Ryujinx, so it isn't synced.
+pub const YUZU_SIZE_FILE: &str = ".yuzu_save_size";
+
+fn yuzu_saves_dir(user_dir: &Path) -> PathBuf {
+    user_dir.join("nand").join("user").join("save").join("0000000000000000")
+}
+
+fn yuzu_user_folder(user: (u64, u64)) -> String {
+    format!("{:016X}{:016X}", user.0, user.1)
+}
+
+/// The profiles in `profiles.dat`, in the emulator's order.
+pub fn yuzu_profiles(user_dir: &Path) -> Vec<(u64, u64)> {
+    let p = user_dir.join("nand").join("system").join("save").join("8000000000000010").join("su").join("avators").join("profiles.dat");
+    std::fs::read(p).map(|b| parse_yuzu_profiles(&b)).unwrap_or_default()
+}
+
+/// `profiles.dat`: 0x10 bytes of padding, then up to 8 records of 0xC8
+/// bytes that start with the profile's UUID.
+fn parse_yuzu_profiles(b: &[u8]) -> Vec<(u64, u64)> {
+    const HEADER: usize = 0x10;
+    const RECORD: usize = 0xC8;
+    (0..8)
+        .map(|i| HEADER + i * RECORD)
+        .take_while(|&at| at + 16 <= b.len())
+        .map(|at| (u64_le(b, at + 8), u64_le(b, at)))
+        .filter(|&u| u != (0, 0))
+        .collect()
+}
+
+/// Where a yuzu-family emulator keeps its settings: `<user>/config` (Windows
+/// and portable installs), or on Linux `~/.config/<name>` while its data
+/// is in `~/.local/share/<name>`.
+fn yuzu_config_dir(user_dir: &Path) -> PathBuf {
+    let inside = user_dir.join("config");
+    if inside.is_dir() || !cfg!(unix) {
+        return inside;
+    }
+    user_dir
+        .file_name()
+        .and_then(|n| dirs::config_dir().map(|c| c.join(n)))
+        .filter(|d| d.is_dir())
+        .unwrap_or(inside)
+}
+
+/// `current_user=<n>` in the `[System]` section of the emulator's settings
+/// (`config/qt-config.ini`, or another `.ini` there in renamed forks).
+fn yuzu_current_index(user_dir: &Path) -> Option<usize> {
+    let dir = yuzu_config_dir(user_dir);
+    let mut files = vec![dir.join("qt-config.ini")];
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut more: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ini")) && !files.contains(p))
+            .collect();
+        more.sort();
+        files.extend(more);
+    }
+    files
+        .iter()
+        .find_map(|f| ini_value(&std::fs::read_to_string(f).ok()?, "System", "current_user")?.parse().ok())
+}
+
+/// A value in a Qt-style `.ini` file.
+pub(crate) fn ini_value(text: &str, section: &str, key: &str) -> Option<String> {
+    let mut inside = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            inside = name.eq_ignore_ascii_case(section);
+        } else if inside {
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim().eq_ignore_ascii_case(key) {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The profile the emulator uses: `current_user` in its settings (the first
+/// profile when that is missing). Without `profiles.dat`, the user folder
+/// with saves that changed last.
+pub fn yuzu_current_user(user_dir: &Path) -> Option<(u64, u64)> {
+    let profiles = yuzu_profiles(user_dir);
+    if !profiles.is_empty() {
+        let i = yuzu_current_index(user_dir).filter(|&i| i < profiles.len()).unwrap_or(0);
+        return Some(profiles[i]);
+    }
+    let mut best: Option<((u64, u64), std::time::SystemTime)> = None;
+    for e in std::fs::read_dir(yuzu_saves_dir(user_dir)).into_iter().flatten().flatten() {
+        let Some(u) = parse_user(&e.file_name().to_string_lossy()).filter(|&u| u != (0, 0)) else { continue };
+        let t = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        if best.is_none_or(|(_, bt)| t > bt) {
+            best = Some((u, t));
+        }
+    }
+    best.map(|(u, _)| u)
+}
+
+/// Where a game's save is (or goes, when the game hasn't made one yet) for
+/// the profile the emulator uses. `None` for an account save while the
+/// emulator has no profile yet.
+pub fn yuzu_save(user_dir: &Path, kind: SaveKind, title: u64) -> Option<PathBuf> {
+    let user = match kind {
+        SaveKind::Account => yuzu_current_user(user_dir)?,
+        SaveKind::Device => (0, 0),
+    };
+    Some(yuzu_saves_dir(user_dir).join(yuzu_user_folder(user)).join(format!("{title:016X}")))
+}
+
+/// Stands for an account save while the emulator has no profile yet: scans
+/// find nothing there, and a restore asks to open the emulator once.
+pub fn yuzu_pending_dir(user_dir: &Path, kind: SaveKind, title: u64) -> PathBuf {
+    user_dir.join("nand").join("user").join("save").join(format!("ludonimbus-new-{}", root_name(kind, title))).join("0")
+}
+
+/// The game saves per-game sync would use: the current profile's and the
+/// device saves.
+pub fn yuzu_saves(user_dir: &Path) -> Vec<NxSave> {
+    let base = yuzu_saves_dir(user_dir);
+    let mut owners = Vec::new();
+    if let Some(u) = yuzu_current_user(user_dir) {
+        owners.push((SaveKind::Account, u));
+    }
+    owners.push((SaveKind::Device, (0, 0)));
+    let mut out = Vec::new();
+    for (kind, user) in owners {
+        let Ok(rd) = std::fs::read_dir(base.join(yuzu_user_folder(user))) else { continue };
+        let mut found: Vec<NxSave> = rd
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let title = (name.len() == 16).then(|| u64::from_str_radix(&name, 16).ok()).flatten()?;
+                is_app_title(title).then(|| NxSave { title, kind, dir: e.path() })
+            })
+            .collect();
+        found.sort_by_key(|s| s.title);
+        out.extend(found);
+    }
+    out
+}
+
+/// The game folders set in the emulator (`Paths\gamedirs\<n>\path` in its
+/// Qt settings), for finding the file that starts each game.
+pub fn yuzu_game_dirs(user_dir: &Path) -> Vec<PathBuf> {
+    let Ok(text) = std::fs::read_to_string(yuzu_config_dir(user_dir).join("qt-config.ini")) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            inside = name.eq_ignore_ascii_case("UI");
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=').filter(|_| inside) else { continue };
+        let k = k.trim().replace('/', "\\").to_lowercase();
+        if k.starts_with("paths\\gamedirs\\") && k.ends_with("\\path") {
+            let v = v.trim().trim_matches('"');
+            if !["SDMC", "UserNAND", "SysNAND"].contains(&v) && !v.is_empty() {
+                // Qt writes `/` on every system.
+                out.push(PathBuf::from(v.replace('/', std::path::MAIN_SEPARATOR_STR)));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,6 +1033,90 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = create_save_with_backup(tmp.path(), SaveKind::Account, MHGU, &tmp.path().join("b")).unwrap_err();
         assert!(err.to_string().contains("先打开一次 Ryujinx") || err.to_string().contains("Open Ryujinx once"), "{err}");
+    }
+
+    /// A `profiles.dat` with these UUIDs (16 raw bytes each).
+    fn profiles_dat(uuids: &[[u8; 16]]) -> Vec<u8> {
+        let mut b = vec![0u8; 0x650];
+        for (i, u) in uuids.iter().enumerate() {
+            let at = 0x10 + i * 0xC8;
+            b[at..at + 16].copy_from_slice(u);
+            b[at + 16..at + 32].copy_from_slice(u);
+            b[at + 0x28..at + 0x2e].copy_from_slice(b"Player");
+        }
+        b
+    }
+
+    /// An Eden `user` folder with two profiles.
+    fn eden(dir: &Path, current: Option<usize>) -> PathBuf {
+        let user = dir.join("user");
+        let avatars = user.join("nand/system/save/8000000000000010/su/avators");
+        std::fs::create_dir_all(&avatars).unwrap();
+        let first: [u8; 16] = [0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+        let second: [u8; 16] = [0x11; 16];
+        std::fs::write(avatars.join("profiles.dat"), profiles_dat(&[first, second])).unwrap();
+        if let Some(i) = current {
+            std::fs::create_dir_all(user.join("config")).unwrap();
+            std::fs::write(
+                user.join("config/qt-config.ini"),
+                format!("[UI]\nPaths\\gamedirs\\size=2\nPaths\\gamedirs\\1\\path=SDMC\nPaths\\gamedirs\\2\\path=D:/Games/Switch\n\n[System]\ncurrent_user\\default=false\ncurrent_user={i}\n"),
+            )
+            .unwrap();
+        }
+        user
+    }
+
+    #[test]
+    fn yuzu_family_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let user = eden(tmp.path(), None);
+        // UUID bytes 0..8 are the low half, 8..16 the high half; the high half is written first.
+        let first = (0xefcd_ab89_6745_2301, 0xfedc_ba98_7654_3210);
+        assert_eq!(yuzu_profiles(&user), vec![first, (0x1111_1111_1111_1111, 0x1111_1111_1111_1111)]);
+        assert_eq!(yuzu_current_user(&user), Some(first));
+        let saves = user.join("nand/user/save/0000000000000000");
+        assert_eq!(yuzu_save(&user, SaveKind::Account, MHGU), Some(saves.join("EFCDAB8967452301FEDCBA9876543210").join("0100770008DD8000")));
+        assert_eq!(yuzu_save(&user, SaveKind::Device, MHGU), Some(saves.join("00000000000000000000000000000000").join("0100770008DD8000")));
+
+        // The second profile is the current one.
+        let user = eden(&tmp.path().join("b"), Some(1));
+        assert_eq!(yuzu_current_user(&user), Some((0x1111_1111_1111_1111, 0x1111_1111_1111_1111)));
+        assert_eq!(yuzu_game_dirs(&user), vec![PathBuf::from("D:/Games/Switch".replace('/', std::path::MAIN_SEPARATOR_STR))]);
+        // An index past the profiles falls back to the first.
+        let user = eden(&tmp.path().join("c"), Some(5));
+        assert_eq!(yuzu_current_user(&user), Some(first));
+    }
+
+    #[test]
+    fn yuzu_family_saves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let user = eden(tmp.path(), Some(0));
+        let mine = yuzu_save(&user, SaveKind::Account, MHGU).unwrap();
+        let device = yuzu_save(&user, SaveKind::Device, 0x0100_0000_0001_2000).unwrap();
+        let other = user.join("nand/user/save/0000000000000000/11111111111111111111111111111111/0100A00000001000");
+        for d in [&mine, &device, &other] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("data.bin"), b"x").unwrap();
+        }
+        // A system save in the same place is not a game's.
+        std::fs::create_dir_all(user.join("nand/user/save/0000000000000000/00000000000000000000000000000000/0100000000001000")).unwrap();
+        let found = yuzu_saves(&user);
+        assert_eq!(
+            found,
+            vec![
+                NxSave { title: MHGU, kind: SaveKind::Account, dir: mine },
+                NxSave { title: 0x0100_0000_0001_2000, kind: SaveKind::Device, dir: device },
+            ]
+        );
+
+        // No profiles.dat: the user folder that changed last.
+        std::fs::remove_file(user.join("nand/system/save/8000000000000010/su/avators/profiles.dat")).unwrap();
+        assert!(yuzu_current_user(&user).is_some());
+        let fresh = tempfile::tempdir().unwrap();
+        assert_eq!(yuzu_current_user(fresh.path()), None);
+        assert_eq!(yuzu_save(fresh.path(), SaveKind::Account, MHGU), None);
+        assert!(yuzu_save(fresh.path(), SaveKind::Device, MHGU).is_some());
+        assert!(is_pending(&yuzu_pending_dir(fresh.path(), SaveKind::Account, MHGU)));
     }
 
     /// Reads the title id from the NCA headers of a real dump with the

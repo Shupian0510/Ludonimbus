@@ -11,7 +11,8 @@
 //! | offline               | —                     | continue, queue uploads        |
 //!
 //! Nothing is ever deleted except by retention, which never touches manual,
-//! locked, head or last-synced snapshots.
+//! locked, head or last-synced snapshots. Versions the user deletes go to
+//! 「最近删除」 first and are purged after `cloud::TRASH_DAYS` days.
 
 use crate::cloud::{self, CloudGame, CloudProvider};
 use crate::config::{self, AppConfig, GameEntry};
@@ -147,7 +148,8 @@ fn mark_synced(key: &str, id: &str, hash: &str, device: &str) -> Result<()> {
     })
 }
 
-fn queue_pending(meta: &SnapshotMeta, zip: &std::path::Path) -> Result<()> {
+/// Keep a version on this device until the cloud takes it.
+pub fn queue_pending(meta: &SnapshotMeta, zip: &std::path::Path) -> Result<()> {
     let dir = paths::pending_dir().join(&meta.game);
     std::fs::create_dir_all(&dir)?;
     std::fs::rename(zip, dir.join(format!("{}.zip", meta.id)))
@@ -160,32 +162,57 @@ fn queue_pending(meta: &SnapshotMeta, zip: &std::path::Path) -> Result<()> {
     })
 }
 
-/// Upload snapshots that were created while offline.
-pub fn flush_pending(cloud: &dyn CloudProvider, key: &str) -> Result<usize> {
+/// Versions of `key` waiting on this device for the cloud, oldest first.
+pub fn pending_metas(key: &str) -> Vec<SnapshotMeta> {
     let dir = paths::pending_dir().join(key);
     let mut metas = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().is_some_and(|x| x == "json") {
-                if let Ok(m) = serde_json::from_slice::<SnapshotMeta>(&std::fs::read(&p)?) {
+                if let Some(m) = std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<SnapshotMeta>(&b).ok()) {
                     metas.push(m);
                 }
             }
         }
     }
-    metas.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    let mut n = 0;
-    for m in metas {
-        let zip = dir.join(format!("{}.zip", m.id));
-        cloud.upload(&m, &zip)?;
-        let _ = std::fs::remove_file(&zip);
-        let _ = std::fs::remove_file(dir.join(format!("{}.json", m.id)));
-        state::update_game(key, |g| g.pending.retain(|x| x != &m.id))?;
-        log(format!("{key}: uploaded pending snapshot {}", m.id));
-        n += 1;
+    metas.sort_by_key(|m| m.created_at);
+    metas
+}
+
+/// The games with versions waiting for the cloud.
+pub fn pending_keys() -> Vec<String> {
+    std::fs::read_dir(paths::pending_dir())
+        .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Upload one waiting version (nothing when another process did already);
+/// [`drop_pending`] then takes it off the queue.
+pub fn upload_pending(cloud: &dyn CloudProvider, m: &SnapshotMeta) -> Result<()> {
+    let zip = paths::pending_dir().join(&m.game).join(format!("{}.zip", m.id));
+    if zip.is_file() {
+        cloud.upload(m, &zip)?;
+        log(format!("{}: uploaded pending snapshot {}", m.game, m.id));
     }
-    Ok(n)
+    Ok(())
+}
+
+pub fn drop_pending(m: &SnapshotMeta) -> Result<()> {
+    let dir = paths::pending_dir().join(&m.game);
+    let _ = std::fs::remove_file(dir.join(format!("{}.zip", m.id)));
+    let _ = std::fs::remove_file(dir.join(format!("{}.json", m.id)));
+    state::update_game(&m.game, |g| g.pending.retain(|x| x != &m.id))
+}
+
+/// Upload snapshots that were created while offline.
+pub fn flush_pending(cloud: &dyn CloudProvider, key: &str) -> Result<usize> {
+    let metas = pending_metas(key);
+    for m in &metas {
+        upload_pending(cloud, m)?;
+        drop_pending(m)?;
+    }
+    Ok(metas.len())
 }
 
 fn best_effort_housekeeping(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEntry) {
@@ -202,6 +229,15 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEnt
     // Upload this device's playtime, fetch the other devices'.
     if let Err(e) = crate::playtime::sync(cloud.files(), &ctx.cfg, &game.key) {
         logger::log("sync", format!("{}: playtime sync failed: {e:#}", game.key));
+    }
+    // Artwork: send what this device shows, fetch what it has none of.
+    if let Err(e) = crate::artsync::push(cloud.files(), &ctx.cfg, game) {
+        logger::log("sync", format!("{}: artwork upload failed: {e:#}", game.key));
+    }
+    if crate::artsync::KINDS.iter().any(|k| crate::artsync::shown(&ctx.cfg, game, k).is_none()) {
+        if let Err(e) = crate::artsync::pull(cloud.files(), &ctx.cfg, &game.key, Some(game)) {
+            logger::log("sync", format!("{}: artwork download failed: {e:#}", game.key));
+        }
     }
 }
 
@@ -535,6 +571,25 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     upload_local(ctx, cloud, game, &restored, head.map(|h| h.id), Trigger::Restore, &comment)
 }
 
+/// Change a game's saves from outside a sync (the save library's "apply
+/// to…"): keep the current saves in the cloud first (a pre-restore version),
+/// run `change`, then upload the result as the newest version.
+pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
+    let cloud = ctx.cloud()?;
+    let list = cloud.list_snapshots(&game.key)?;
+    let local = snapshot::local_state(game).ok();
+    if let Some(local) = &local {
+        protect_local(ctx, cloud, game, local, &list, Trigger::PreRestore)?;
+    }
+    change()?;
+    let after = snapshot::local_state(game)?;
+    if after.is_empty() {
+        bail!(crate::tr!("应用后没有找到「{}」的存档文件", "No save files of \"{}\" found after applying", game.name));
+    }
+    best_effort_housekeeping(ctx, cloud, game);
+    upload_local(ctx, cloud, game, &after, mainline_head(&list).map(|h| h.id), Trigger::Restore, comment)
+}
+
 /// Delete old automatic snapshots according to the retention settings.
 pub fn prune(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEntry) -> Result<usize> {
     let list = cloud.list_snapshots(&game.key)?;
@@ -579,6 +634,11 @@ pub fn prune(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEntry) -> Result<u
     if deleted > 0 {
         log(format!("{}: retention removed {deleted} snapshots", game.key));
     }
+    match purge_expired(cloud, game) {
+        Ok(0) => {}
+        Ok(n) => log(format!("{}: purged {n} versions deleted over {} days ago", game.key, cloud::TRASH_DAYS)),
+        Err(e) => log(format!("{}: purging recently deleted failed: {e:#}", game.key)),
+    }
     Ok(deleted)
 }
 
@@ -604,7 +664,46 @@ pub fn delete_snapshot(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<()> {
     if mainline_head(&list).is_some_and(|h| h.id == id) {
         bail!(crate::tr!("不能删除最新版本", "The latest version can't be deleted"));
     }
-    cloud.delete(&game.key, id)
+    // Into 「最近删除」, restorable for TRASH_DAYS days.
+    cloud.trash(&game.key, id, &ctx.cfg.device.name)
+}
+
+/// Versions in 「最近删除」, newest deletion first.
+pub fn deleted_snapshots(ctx: &Ctx, game: &GameEntry) -> Result<Vec<cloud::TrashedSnapshot>> {
+    ctx.cloud()?.list_trash(&game.key)
+}
+
+/// Put a version from 「最近删除」 back into the history. An automatic one is
+/// locked too, or retention could delete it again right away. Returns whether
+/// it was locked.
+pub fn restore_deleted(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<bool> {
+    let cloud = ctx.cloud()?;
+    cloud.untrash(&game.key, id)?;
+    let mut meta = cloud.get_meta(&game.key, id)?;
+    if meta.locked || meta.trigger.is_pinned() {
+        return Ok(false);
+    }
+    meta.locked = true;
+    cloud.update_meta(&meta)?;
+    Ok(true)
+}
+
+/// Delete a version in 「最近删除」 for good.
+pub fn purge_deleted(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<()> {
+    ctx.cloud()?.purge(&game.key, id)
+}
+
+/// Delete versions that have been in 「最近删除」 longer than TRASH_DAYS.
+fn purge_expired(cloud: &dyn CloudProvider, game: &GameEntry) -> Result<usize> {
+    let now = Utc::now();
+    let mut purged = 0;
+    for t in cloud.list_trash(&game.key)? {
+        if (now - t.deleted_at).num_days() >= cloud::TRASH_DAYS {
+            cloud.purge(&game.key, &t.snapshot.id)?;
+            purged += 1;
+        }
+    }
+    Ok(purged)
 }
 
 /// Save a snapshot zip to a user-chosen location.

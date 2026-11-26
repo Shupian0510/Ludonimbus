@@ -55,7 +55,11 @@ pub fn games(a: &Adapter, install: Option<&Path>) -> Vec<SavedGame> {
         .map(|(root, _)| root)
         .unwrap_or_default();
     let mut out = match a.game_id.as_deref() {
-        Some("switch") => dir("emu").map(|emu| ryujinx(&emu)).unwrap_or_default(),
+        Some("switch") => match (dir("emu"), dir("user")) {
+            (Some(emu), _) => ryujinx(&emu),
+            (None, Some(user)) => yuzu(&user),
+            (None, None) => Vec::new(),
+        },
         Some(kind) => match dir(&save_root) {
             None => Vec::new(),
             Some(base) => match kind {
@@ -405,25 +409,42 @@ fn retroarch(saves: &Path) -> Vec<SavedGame> {
 }
 
 // ---------------------------------------------------------------------------
-// Ryujinx
+// Switch: Ryujinx and the yuzu family
 
 fn ryujinx(emu: &Path) -> Vec<SavedGame> {
+    let found = switch_saved(switch::saves(emu), |t| switch::game_name(emu, t));
+    switch_launch_args(found, &[emu.join("system").join("prod.keys")], &ryujinx_game_dirs(emu))
+}
+
+/// Eden, Citron, Sudachi, Suyu, yuzu (`user`: the emulator's user folder).
+fn yuzu(user: &Path) -> Vec<SavedGame> {
+    let found = switch_saved(switch::yuzu_saves(user), |_| None);
+    let dirs: Vec<PathBuf> = switch::yuzu_game_dirs(user).into_iter().filter(|d| d.is_dir()).collect();
+    switch_launch_args(found, &[user.join("keys").join("prod.keys")], &dirs)
+}
+
+/// One entry per game with files in its save.
+fn switch_saved(saves: Vec<switch::NxSave>, name: impl Fn(u64) -> Option<String>) -> Vec<SavedGame> {
     let mut out: Vec<SavedGame> = Vec::new();
-    for s in switch::saves(emu) {
+    for s in saves {
         if out.iter().any(|g| g.game.id == format!("{:016X}", s.title)) || !has_files(&s.dir) {
             continue;
         }
-        out.push(SavedGame::new(emulators::switch_emu_game(s.title, None).named(switch::game_name(emu, s.title))));
+        out.push(SavedGame::new(emulators::switch_emu_game(s.title, None).named(name(s.title))));
     }
+    out
+}
+
+/// Game files in the emulator's game folders: launch options that start each game.
+fn switch_launch_args(mut out: Vec<SavedGame>, keys: &[PathBuf], game_dirs: &[PathBuf]) -> Vec<SavedGame> {
     if out.is_empty() {
         return out;
     }
-    // Game files in Ryujinx's game folders: launch options that start each game.
-    let mut keys = vec![emu.join("system").join("prod.keys")];
+    let mut keys = keys.to_vec();
     if let Some(h) = dirs::home_dir() {
         keys.push(h.join(".switch").join("prod.keys"));
     }
-    let files = game_files(&ryujinx_game_dirs(emu), &["nsp", "xci", "nsz", "xcz"]);
+    let files = game_files(game_dirs, &["nsp", "xci", "nsz", "xcz"]);
     for f in files {
         if out.iter().all(|g| !g.args.is_empty()) {
             break;
@@ -575,12 +596,14 @@ mod tests {
         assert_eq!((list[0].game.id.as_str(), list[0].game.name.as_deref()), ("ULUS10041", Some("Lord of Arcana")));
         assert_eq!(list[0].game.saves(a), vec!["{emu}/PSP/SAVEDATA/ULUS10041*/**".to_string()]);
 
-        // RPCS3 is always portable.
-        let rp = tmp.path().join("rpcs3");
-        write(&rp, "dev_hdd0/home/00000001/savedata/BLUS30443-AUTOSAVE/PARAM.SFO", &sfo("Demon's Souls"));
-        let list = games(adapters::find("rpcs3").unwrap(), Some(&rp));
-        assert_eq!(list[0].game.name.as_deref(), Some("Demon's Souls"));
-        assert!(games(adapters::find("rpcs3").unwrap(), None).is_empty(), "no install, no RPCS3 folder");
+        // RPCS3 is always portable on Windows (on Linux it uses ~/.config/rpcs3).
+        if cfg!(windows) {
+            let rp = tmp.path().join("rpcs3");
+            write(&rp, "dev_hdd0/home/00000001/savedata/BLUS30443-AUTOSAVE/PARAM.SFO", &sfo("Demon's Souls"));
+            let list = games(adapters::find("rpcs3").unwrap(), Some(&rp));
+            assert_eq!(list[0].game.name.as_deref(), Some("Demon's Souls"));
+            assert!(games(adapters::find("rpcs3").unwrap(), None).is_empty(), "no install, no RPCS3 folder");
+        }
 
         // shadPS4 and Vita3K.
         let sh = tmp.path().join("shadPS4");
@@ -593,7 +616,11 @@ mod tests {
         let list = games(adapters::find("vita3k").unwrap(), Some(&v));
         assert_eq!(list[0].game.name.as_deref(), Some("Persona 4 Golden"));
 
-        // RetroArch: one game per save file name, in core folders too.
+        // RetroArch: one game per save file name, in core folders too
+        // (portable on Windows; ~/.config/retroarch on Linux).
+        if !cfg!(windows) {
+            return;
+        }
         let ra = tmp.path().join("RetroArch");
         write(&ra, "saves/Super Metroid (Japan, USA) [!].srm", b"x");
         write(&ra, "saves/mGBA/Pokemon Emerald.srm", b"x");
