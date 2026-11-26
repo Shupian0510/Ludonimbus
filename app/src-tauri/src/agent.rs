@@ -11,14 +11,18 @@
 //! GET  /v1/ping
 //! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut
 //! GET  /v1/steam/playtime[?account={id}]                  playtime totals of every linked shortcut (API 2)
-//! POST /v1/games/{key}/sync                               start "sync now" in the background
+//! POST /v1/games/{key}/sync[?resolution=cloud|local]     start "sync now" in the background (resolution: API 3)
 //! POST /v1/games/{key}/open                               show the game in the Ludonimbus window
 //! GET  /v1/games/{key}/snapshots                          version history in the cloud (API 2)
 //! POST /v1/games/{key}/restore/{id}                       restore a version in the background (API 2)
 //! GET  /v1/games/{key}/playtime                           playtime over all devices (API 2)
 //! GET  /v1/games/{key}/gamebackup                         game files missing? newest game backup, running job (API 2)
 //! POST /v1/games/{key}/gamebackup/install                 show the game with the restore dialog open (API 2)
+//! GET  /v1/games/{key}/newer                              newer saves in another version of the game (API 3)
+//! POST /v1/games/{key}/newer/{id}/apply                   apply them in the background (API 3)
+//! POST /v1/games/{key}/newer/{id}/dismiss                 don't offer them again (API 3)
 //! ```
+//! `crates/agent` serves the same protocol without a window (Steam Deck Game Mode).
 //! Achievements (`/v1/steam/apps/{appid}/achievements`, `/v1/achievements/…`)
 //! are handled in `achievements.rs`.
 
@@ -36,7 +40,8 @@ use tauri::{AppHandle, Emitter};
 use tiny_http::{Header, Method, Request, Response, Server};
 
 /// 2 (0.6.0): version history, restore, playtime.
-pub const API_VERSION: u32 = 2;
+/// 3 (0.7.0): conflict resolution on sync, newer saves in another version.
+pub const API_VERSION: u32 = 3;
 
 /// A cached status younger than this is returned as is, even with `refresh=1`.
 const FRESH_SECS: i64 = 60;
@@ -195,7 +200,17 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
             steam_app_status(appid, account, refresh)
         }
         (Method::Get, ["v1", "steam", "playtime"]) => steam_playtimes(query_param(query, "account").filter(|a| !a.is_empty())),
-        (Method::Post, ["v1", "games", key, "sync"]) => start_sync(app, key),
+        (Method::Post, ["v1", "games", key, "sync"]) => start_sync(app, key, query_param(query, "resolution")),
+        (Method::Get, ["v1", "games", key, "newer"]) => {
+            let ctx = Ctx::load()?;
+            let g = find_by_key(&ctx.cfg, key)?;
+            Ok(serde_json::to_value(ludonimbus_core::savelib::newer_version(&ctx, &g)?).map_err(anyhow::Error::from)?)
+        }
+        (Method::Post, ["v1", "games", key, "newer", id, "apply"]) => apply_newer(app, key, id),
+        (Method::Post, ["v1", "games", key, "newer", id, "dismiss"]) => {
+            ludonimbus_core::savelib::dismiss_newer(key, id)?;
+            Ok(json!({ "ok": true }))
+        }
         (Method::Get, ["v1", "games", key, "snapshots"]) => snapshots(key),
         (Method::Post, ["v1", "games", key, "restore", id]) => start_restore(app, key, id),
         (Method::Get, ["v1", "games", key, "playtime"]) => {
@@ -350,7 +365,37 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
 // ---------------------------------------------------------------------------
 // Actions
 
-fn start_sync(app: &AppHandle, key: &str) -> ApiResult {
+/// Apply the newer saves of another version (the one `newer` offered).
+fn apply_newer(app: &AppHandle, key: &str, id: &str) -> ApiResult {
+    let ctx = Ctx::load()?;
+    let g = find_by_key(&ctx.cfg, key)?;
+    if let Some(reason) = busy_reason(&g) {
+        return Err(ApiError::new(409, reason));
+    }
+    let n = ludonimbus_core::savelib::newer_version(&ctx, &g)?
+        .filter(|n| n.snapshot.id == id)
+        .ok_or_else(|| ApiError::new(404, "no such newer version"))?;
+    let guard = busy::begin(key).ok_or_else(|| ApiError::new(409, ludonimbus_core::tr!("正在同步", "Syncing")))?;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let _guard = guard;
+        let result = ludonimbus_core::transfer::apply(&ctx, &n.key, &n.snapshot.id, &g.key, None);
+        log(format!("{}: applied {} of {} from Steam {:?}", g.key, n.snapshot.id, n.key, result.as_ref().map_err(|e| e.to_string())));
+        commands::cache_check(&g.key, &sync::check(&ctx, &g));
+        let _ = app.emit(
+            "sync-finished",
+            watcher::SyncEvent { key: g.key.clone(), name: g.name.clone(), outcome: result.as_ref().ok().cloned(), error: result.err().map(|e| format!("{e:#}")) },
+        );
+    });
+    Ok(json!({ "started": true }))
+}
+
+fn start_sync(app: &AppHandle, key: &str, resolution: Option<&str>) -> ApiResult {
+    let res = match resolution {
+        Some("cloud") => Resolution::UseCloud,
+        Some("local") => Resolution::UseLocal,
+        _ => Resolution::Auto,
+    };
     let cfg = config::load()?;
     let g = find_by_key(&cfg, key)?;
     if watcher::runner_active(key) || process::is_running(&watcher::watch_names(&g)) {
@@ -361,7 +406,7 @@ fn start_sync(app: &AppHandle, key: &str) -> ApiResult {
     std::thread::spawn(move || {
         let _guard = guard;
         let ctx = Ctx::from_config(cfg);
-        let result = sync::sync(&ctx, &g, Resolution::Auto, Trigger::SyncNow);
+        let result = sync::sync(&ctx, &g, res, Trigger::SyncNow);
         log(format!("{}: sync from Steam {:?}", g.key, result.as_ref().map_err(|e| e.to_string())));
         if let Err(e) = &result {
             let _ = state::update_game(&g.key, |s| s.last_error = Some(format!("{e:#}")));

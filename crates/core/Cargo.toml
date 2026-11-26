@@ -32,7 +32,20 @@ crc32fast = "1"
 notify = "9.0.0"
 aes = "0.8"
 zstd = { version = "0.13", default-features = false }
+# Reading compressed saves for their game version (crosssaves.rs).
+flate2 = "1"
 ico = "0.6"
+# The Switch client's LAN connection (nxlan.rs): HTTPS with a self-signed certificate.
+tiny_http = { version = "0.12", features = ["ssl-rustls"] }
+rcgen = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Linux: passwords go to the Secret Service (KWallet / GNOME Keyring) when
+# there is one, else to a file only this user can read (see credstore.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

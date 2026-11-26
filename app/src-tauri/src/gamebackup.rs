@@ -583,6 +583,14 @@ fn pending_install() -> &'static Mutex<Option<String>> {
     P.get_or_init(|| Mutex::new(None))
 }
 
+/// Open the restore dialog when the game's page opens next ("install from
+/// the cloud" for a game only the cloud has, after it was added here).
+#[tauri::command]
+pub async fn game_backup_request_install(key: String) -> CmdResult<()> {
+    *pending_install().lock().unwrap() = Some(key);
+    Ok(())
+}
+
 /// The plugin asked to install this game: the game page opens the restore dialog.
 #[tauri::command]
 pub async fn game_backup_take_install(key: String) -> CmdResult<bool> {

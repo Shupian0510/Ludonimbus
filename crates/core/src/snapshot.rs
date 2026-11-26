@@ -75,6 +75,15 @@ pub struct SnapshotMeta {
     pub comment: String,
     #[serde(default)]
     pub locked: bool,
+    /// The game version that wrote these saves, read from the saves where a
+    /// rule says how (`adapters/cross-saves.yaml`), e.g. `1.6.15`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_version: Option<String>,
+    /// The version of the game installed on the device that made the
+    /// snapshot: an emulated game's update, a recompilation's release, an
+    /// Xbox app package's version, a program's own version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -93,6 +102,10 @@ pub struct SnapshotSummary {
     pub comment: String,
     #[serde(default)]
     pub locked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
 }
 
 impl From<&SnapshotMeta> for SnapshotSummary {
@@ -109,6 +122,8 @@ impl From<&SnapshotMeta> for SnapshotSummary {
             file_count: m.files.len(),
             comment: m.comment.clone(),
             locked: m.locked,
+            game_version: m.game_version.clone(),
+            installed_version: m.installed_version.clone(),
         }
     }
 }
@@ -191,7 +206,7 @@ pub fn scan(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, PathBu
 
     if let Some(title) = &spec.ludusavi_title {
         let mut out = BTreeMap::new();
-        for abs in ludusavi::resolve_files(title)? {
+        for abs in ludusavi::resolve_files_in(title, spec::proton_prefix(game).as_deref())? {
             let logical = spec::tokenize(&abs, &roots);
             let root_name = logical.split('/').next().unwrap_or_default().to_string();
             if let Some(p) = spec::resolve_root_name(&root_name, &roots) {
@@ -369,6 +384,8 @@ pub fn build(
         app_version: crate::APP_VERSION.to_string(),
         comment: comment.to_string(),
         locked: false,
+        game_version: crate::crosssaves::local_version(game, &local.files, &local.roots),
+        installed_version: crate::gamebackup::version::installed(game),
     };
     let zip_path = paths::staging_dir().join(format!("{id}.zip"));
     write_zip(&zip_path, local, &meta)?;
@@ -392,6 +409,57 @@ fn write_zip(zip_path: &Path, local: &LocalState, meta: &SnapshotMeta) -> Result
     zw.write_all(&serde_json::to_vec_pretty(meta)?)?;
     zw.finish()?;
     Ok(())
+}
+
+/// Pack a snapshot from files given in memory as `(logical path, contents)`
+/// (what the Switch client uploads, see [`crate::nxlan`]). `game_version`:
+/// the game version that wrote them ([`crate::crosssaves::files_version`]).
+pub fn build_from_files(
+    game_key: &str,
+    files: &[(String, Vec<u8>)],
+    trigger: Trigger,
+    parent: Option<String>,
+    device: (&str, &str),
+    comment: &str,
+    game_version: Option<String>,
+) -> Result<(SnapshotMeta, PathBuf)> {
+    let now = Utc::now().timestamp();
+    let mut entries = Vec::with_capacity(files.len());
+    for (path, data) in files {
+        validate_logical(path)?;
+        entries.push(FileEntry { path: path.clone(), size: data.len() as u64, hash: blake3::hash(data).to_hex().to_string(), mtime: now });
+    }
+    let id = ulid::Ulid::new().to_string();
+    let meta = SnapshotMeta {
+        id: id.clone(),
+        game: game_key.to_string(),
+        parent,
+        device_id: device.0.to_string(),
+        device_name: device.1.to_string(),
+        created_at: Utc::now(),
+        trigger,
+        roots: BTreeMap::new(),
+        content_hash: content_hash(&entries),
+        total_size: entries.iter().map(|e| e.size).sum(),
+        files: entries,
+        app_version: crate::APP_VERSION.to_string(),
+        comment: comment.to_string(),
+        locked: false,
+        game_version,
+        installed_version: None,
+    };
+    let zip_path = paths::staging_dir().join(format!("{id}.zip"));
+    let file = File::create(&zip_path)?;
+    let mut zw = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (path, data) in files {
+        zw.start_file(format!("files/{path}"), opts)?;
+        zw.write_all(data)?;
+    }
+    zw.start_file("snapshot.json", opts)?;
+    zw.write_all(&serde_json::to_vec_pretty(&meta)?)?;
+    zw.finish()?;
+    Ok((meta, zip_path))
 }
 
 /// Read the metadata stored inside a snapshot zip.

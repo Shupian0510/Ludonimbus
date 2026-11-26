@@ -477,6 +477,13 @@ textarea.input {
   gap: 8px;
   flex-direction: column;
 }
+.banner.not-here > div {
+  flex: 1;
+}
+.banner.not-here p {
+  margin: 3px 0 0;
+  opacity: 0.85;
+}
 
 /* Library ----------------------------------------------------------------- */
 .grid {
@@ -623,6 +630,43 @@ textarea.input {
   place-items: center;
   background: #2f4a66;
   font-weight: 700;
+}
+
+/* Library: games with only their saves on this PC (grey, at the end) ------ */
+.card.missing .cover img,
+.card.missing .cover-fallback,
+.tr.missing .cell-game img,
+.tr.missing .icon-fallback {
+  filter: grayscale(1);
+  opacity: 0.5;
+  transition: opacity 0.18s ease;
+}
+.card.missing:hover .cover img,
+.card.missing:hover .cover-fallback {
+  opacity: 0.75;
+}
+.card.missing .card-name,
+.tr.missing .cell-game b {
+  color: var(--muted);
+}
+.lib-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 30px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.lib-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+/* Also `.th`: the header's look, no hover. */
+.tr.tr-divider {
+  display: flex;
+  gap: 8px;
 }
 
 /* Library: game sources (logos, filter, groups) --------------------------- */
@@ -981,6 +1025,50 @@ textarea.input {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+.versions-trash {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.versions-trash > .link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.versions-trash p {
+  margin: 0;
+}
+.version.deleted .version-main {
+  cursor: default;
+}
+.version.deleted .version-main:hover {
+  background: transparent;
+}
+.version-deleted {
+  padding: 0 14px 10px 40px;
+}
+details.revoke-help {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+details.revoke-help > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+details.revoke-help > summary:hover {
+  color: var(--text);
+}
+details.revoke-help ol {
+  margin: 6px 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.5;
 }
 .version-comment {
   padding: 0 14px 10px 40px;
@@ -2120,3 +2208,404 @@ html.toast-window, html.toast-window body, html.toast-window #root { background:
 .ach-toast-game { font-size: 12px; color: #a9b8c7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes ach-in { from { transform: translateY(-14px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes ach-out { to { transform: translateY(-14px); opacity: 0; } }
+
+/* Save library: versions of one game, applying saves (docs/plan-phase5.md §5) */
+.version-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+}
+.version-bar .chips {
+  margin: 0;
+}
+.version-bar-actions {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+}
+.version-bar-actions .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.chip.chip-missing img {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.chip.chip-missing:not(.on) {
+  color: var(--muted);
+}
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 8px 0 14px;
+}
+.pick-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.pick-row:hover {
+  background: #22313f;
+}
+.pick-row code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.apply-plan > p {
+  margin: 0 0 10px;
+}
+.apply-plan .row {
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.apply-files {
+  margin: 6px 0 10px;
+}
+.apply-files code {
+  word-break: break-all;
+}
+.apply-files .arrow {
+  color: var(--muted);
+}
+.banner.unmatched {
+  flex-direction: column;
+  align-items: flex-start;
+}
+/* A game only the cloud has: its banner art in grey too. */
+.hero-img.missing-art {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+/* Handheld view: full screen, large, run with a controller (docs/plan-phase5.md §1) */
+.hh {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(1200px 600px at 20% -10%, #22344a 0%, transparent 60%), var(--bg);
+  font-size: 18px;
+  color: var(--text);
+  z-index: 10;
+}
+.hh-head {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 22px 48px 10px;
+}
+.hh-head > img {
+  width: 40px;
+  height: 40px;
+}
+.hh-tabs {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 22px;
+  font-weight: 600;
+}
+.hh-tabs span:not(.hh-glyph) {
+  color: var(--muted);
+  padding-bottom: 6px;
+  border-bottom: 3px solid transparent;
+}
+.hh-tabs span.on {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.hh-head-right {
+  margin-left: auto;
+  font-size: 15px;
+}
+.hh-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 48px 28px;
+}
+.hh-center {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  text-align: center;
+}
+.hh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 28px 22px;
+}
+.hh-card {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  outline: none;
+}
+.hh-card[data-current] .cover {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 4px var(--accent), 0 18px 36px rgba(0, 0, 0, 0.6);
+}
+.hh-card-name {
+  margin-top: 12px;
+  font-weight: 600;
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hh-card-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 14px;
+}
+.hh-card.missing .cover img,
+.hh-card.missing .cover-fallback,
+.missing-cover img,
+.missing-cover .cover-fallback {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+.hh-card.missing .hh-card-name {
+  color: var(--muted);
+}
+.hh button[data-nav]:not(.hh-card) {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: inherit;
+  font-size: 17px;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: #22313f;
+  color: var(--text);
+  cursor: pointer;
+}
+.hh button[data-nav]:disabled {
+  opacity: 0.45;
+}
+.hh button[data-nav].primary {
+  background: var(--accent);
+  color: #0b1a26;
+  border-color: transparent;
+  font-weight: 600;
+}
+.hh button[data-nav]:not(.hh-card)[data-current] {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+.hh-hints {
+  display: flex;
+  justify-content: flex-end;
+  gap: 28px;
+  padding: 14px 48px;
+  border-top: 1px solid var(--line);
+  background: rgba(10, 14, 20, 0.6);
+  font-size: 16px;
+}
+.hh-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.hh-glyph {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+.hh-glyph-a {
+  background: #3fa34d;
+}
+.hh-glyph-b {
+  background: #d0453b;
+}
+.hh-glyph-x {
+  background: #2f6fd6;
+}
+.hh-glyph-y {
+  background: #d1a419;
+  color: #1b1405;
+}
+.hh-glyph-lb,
+.hh-glyph-rb {
+  background: #3a4656;
+  border-radius: 6px;
+}
+.hh section {
+  margin-bottom: 28px;
+}
+.hh section h2 {
+  margin: 0 0 12px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.hh-game-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+  margin-bottom: 28px;
+}
+.hh-game-head .cover {
+  width: 200px;
+  flex: none;
+}
+.hh-game-info h1 {
+  margin: 0 0 8px;
+  font-size: 34px;
+}
+.hh-game-info p {
+  margin: 4px 0;
+}
+.hh-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+}
+.hh-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hh .hh-list-row {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  gap: 20px;
+  text-align: left;
+}
+.hh .hh-list-row.on,
+.hh .hh-chip.on {
+  border-color: var(--accent);
+}
+.hh .hh-chip.missing {
+  color: var(--muted);
+}
+.hh-banner {
+  margin-top: 16px;
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  background: rgba(102, 192, 244, 0.1);
+  border: 1px solid rgba(102, 192, 244, 0.3);
+}
+.hh-banner.warn {
+  background: rgba(240, 176, 74, 0.1);
+  border-color: rgba(240, 176, 74, 0.35);
+}
+.hh-banner p {
+  margin: 0;
+}
+.hh-warn {
+  color: #f6d49c;
+}
+.hh-error {
+  color: #f6b9b4;
+  padding: 0 48px;
+}
+.hh-dialog-back {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 8, 12, 0.78);
+}
+.hh-dialog,
+.hh-prompt-card {
+  width: min(780px, 90vw);
+  max-height: 86vh;
+  overflow: auto;
+  background: #1b2633;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 30px 34px;
+}
+.hh-dialog h2 {
+  margin: 0 0 14px;
+  font-size: 24px;
+}
+.hh-dialog-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 22px;
+}
+.hh-pick {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.hh-prompt {
+  display: grid;
+  place-items: center;
+}
+.hh-prompt-card {
+  width: min(840px, 92vw);
+  padding: 40px 44px;
+}
+.hh-prompt-icon {
+  color: var(--accent);
+}
+.hh-prompt-card.level-warn .hh-prompt-icon {
+  color: var(--warn);
+}
+.hh-prompt-card.level-error .hh-prompt-icon {
+  color: var(--bad);
+}
+.hh-prompt-card h1 {
+  margin: 12px 0;
+  font-size: 30px;
+}
+.hh-prompt-text {
+  white-space: pre-wrap;
+  font-size: 19px;
+  line-height: 1.55;
+}
+
+/* Settings → Switch */
+.nx-code {
+  align-items: flex-start;
+}
+.nx-code > div {
+  flex: 1;
+}
+.nx-digits {
+  margin: 6px 0;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  font-variant-numeric: tabular-nums;
+}
+.nx-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

@@ -5,6 +5,7 @@
 //! <root>/devices/<device-id>.json
 //! <root>/games/<game-key>/game.json
 //! <root>/games/<game-key>/snapshots/<ULID>.zip   (+ <ULID>.json metadata)
+//! <root>/games/<game-key>/trash/<ULID>.json      (「最近删除」, path-based clouds)
 //! <root>/games/<game-key>/playtime/<device-id>.json
 //! <root>/games/<game-key>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
 //! ```
@@ -103,6 +104,14 @@ pub struct CloudGame {
     /// in the same group.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// What identifies the game on any platform (`nx:…`, `ludusavi:…`,
+    /// `xbox:…`, `name:…`), so other devices can tell versions of the same
+    /// game apart from other games (see [`crate::savelib`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
+    /// The user's "same game as" link ([`GameEntry::game`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game: Option<String>,
 }
 
 impl From<&GameEntry> for CloudGame {
@@ -117,8 +126,26 @@ impl From<&GameEntry> for CloudGame {
             roots: g.roots.clone(),
             ludusavi_title: g.ludusavi_title.clone(),
             source: g.source.clone(),
+            ids: crate::savelib::ids(g),
+            game: g.game.clone(),
         }
     }
+}
+
+/// How long a deleted version stays in 「最近删除」 before it is purged
+/// (Google Drive empties its own trash after the same 30 days).
+pub const TRASH_DAYS: i64 = 30;
+
+/// A version the user deleted: hidden from the history on every device and
+/// restorable until it is purged [`TRASH_DAYS`] after `deleted_at`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashedSnapshot {
+    pub snapshot: SnapshotSummary,
+    pub deleted_at: DateTime<Utc>,
+    /// Name of the device it was deleted on.
+    #[serde(default)]
+    pub deleted_by: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -136,7 +163,19 @@ pub trait CloudProvider: Send + Sync {
     fn get_meta(&self, game: &str, id: &str) -> Result<SnapshotMeta>;
     fn upload(&self, meta: &SnapshotMeta, zip: &Path) -> Result<()>;
     fn download(&self, game: &str, id: &str, dest: &Path) -> Result<()>;
+    /// Delete a snapshot for good (retention of automatic snapshots).
     fn delete(&self, game: &str, id: &str) -> Result<()>;
+    /// Move a snapshot to 「最近删除」: it disappears from the history on
+    /// every device (older Ludonimbus versions included) but its files stay
+    /// in the Ludonimbus folder until [`CloudProvider::purge`]. `by` is the
+    /// device name shown next to it.
+    fn trash(&self, game: &str, id: &str, by: &str) -> Result<()>;
+    /// Snapshots in 「最近删除」, newest deletion first.
+    fn list_trash(&self, game: &str) -> Result<Vec<TrashedSnapshot>>;
+    /// Put a snapshot from 「最近删除」 back into the history.
+    fn untrash(&self, game: &str, id: &str) -> Result<()>;
+    /// Delete a snapshot in 「最近删除」 for good.
+    fn purge(&self, game: &str, id: &str) -> Result<()>;
     /// Update comment / lock flag.
     fn update_meta(&self, meta: &SnapshotMeta) -> Result<()>;
     fn put_device(&self, device: &DeviceInfo) -> Result<()>;
@@ -255,7 +294,8 @@ pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration)
             app_name,
             ..
         } => {
-            let client = baidu::BaiduClient::resolve(app_key, secret_key, app_name)
+            let secret_key = baidu::saved_app_secret(app_key, secret_key)?;
+            let client = baidu::BaiduClient::resolve(app_key, &secret_key, app_name)
                 .ok_or_else(|| anyhow!(crate::tr!("百度网盘缺少应用的 AppKey / SecretKey，请在设置里填写", "Baidu Netdisk is missing the app's AppKey / SecretKey. Enter them in Settings")))?;
             let token = baidu::load_token()?.ok_or_else(|| anyhow!(crate::tr!("百度网盘登录已失效，请在设置里重新连接", "The Baidu Netdisk sign-in has expired. Reconnect in Settings")))?;
             Box::new(baidu::BaiduPan::new(
@@ -338,7 +378,9 @@ pub fn connect_quark(cookie: &str) -> Result<String> {
 }
 
 /// Sign in to Baidu Netdisk, save the token and switch to it. Empty app
-/// fields use the app built into the release. Returns the account name.
+/// fields use the app built into the release; an empty SecretKey with an
+/// AppKey reuses the saved one. The SecretKey of an own app goes to the
+/// credential store, never into `config.json`. Returns the account name.
 pub fn connect_baidu(
     app_key: &str,
     secret_key: &str,
@@ -346,15 +388,35 @@ pub fn connect_baidu(
     on_code: impl FnOnce(&baidu::DeviceCode),
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<String> {
-    let client = baidu::BaiduClient::resolve(app_key, secret_key, app_name)
+    let cfg = config::load()?;
+    let secret_key = if secret_key.trim().is_empty() {
+        let legacy = match &cfg.cloud {
+            CloudConfig::BaiduPan { app_key: k, secret_key, .. } if k.trim() == app_key.trim() => secret_key.as_str(),
+            _ => "",
+        };
+        baidu::saved_app_secret(app_key, legacy)?
+    } else {
+        secret_key.trim().to_string()
+    };
+    let client = baidu::BaiduClient::resolve(app_key, &secret_key, app_name)
         .ok_or_else(|| anyhow!(crate::tr!("请先填写百度网盘应用的 AppKey 和 SecretKey", "Enter the Baidu Netdisk app's AppKey and SecretKey first")))?;
-    let timeout = timeout(&config::load()?).max(Duration::from_secs(15));
+    let timeout = timeout(&cfg).max(Duration::from_secs(15));
     let (token, name, _) = baidu_sign_in(&client, &baidu::Endpoints::default(), on_code, cancel, timeout)?;
     baidu::store_token(&token)?;
+    let app_key = app_key.trim().to_string();
+    if !app_key.is_empty() {
+        secrets::store(&baidu::app_secret_user(&app_key), &secret_key)?;
+    }
+    // Signing in with another app replaces the old one's SecretKey.
+    if let CloudConfig::BaiduPan { app_key: old, .. } = &cfg.cloud {
+        if !old.trim().is_empty() && old.trim() != app_key {
+            let _ = secrets::clear(&baidu::app_secret_user(old));
+        }
+    }
     switch_to(
         CloudConfig::BaiduPan {
-            app_key: app_key.trim().to_string(),
-            secret_key: secret_key.trim().to_string(),
+            app_key,
+            secret_key: String::new(),
             app_name: app_name.trim().to_string(),
             account: Some(name.clone()),
         },
@@ -363,7 +425,29 @@ pub fn connect_baidu(
     Ok(name)
 }
 
+/// Move the SecretKey of an own Baidu app out of a `config.json` written
+/// before 0.6.3 into the credential store. Runs at start-up.
+pub fn move_secrets_out_of_config() -> Result<()> {
+    let cfg = config::load()?;
+    let legacy = |c: &CloudConfig| matches!(c, CloudConfig::BaiduPan { app_key, secret_key, .. } if !app_key.trim().is_empty() && !secret_key.is_empty());
+    if !legacy(&cfg.cloud) && !cfg.previous_cloud.as_ref().is_some_and(legacy) {
+        return Ok(());
+    }
+    config::update(|c| {
+        for cloud in std::iter::once(&mut c.cloud).chain(c.previous_cloud.as_mut()) {
+            if let CloudConfig::BaiduPan { app_key, secret_key, .. } = cloud {
+                if !app_key.trim().is_empty() && !secret_key.is_empty() {
+                    secrets::store(&baidu::app_secret_user(app_key), secret_key.trim())?;
+                    secret_key.clear();
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
 fn reset_markers() -> Result<()> {
+    crate::savelib::forget();
     state::update(|s| {
         for g in s.games.values_mut() {
             g.cloud_def_uploaded = false;

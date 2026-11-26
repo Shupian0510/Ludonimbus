@@ -22,6 +22,48 @@ cd ..
 
 只改 Steam 插件时运行 `./scripts/build-plugin.ps1`。插件源码在 `plugin-millennium/`，用 Millennium 官方的 starlight 工具打包成 `.star`，说明见 [steam-plugin.md](steam-plugin.md)。
 
+### Linux（WSL2）
+
+Steam Deck 版的基础（[plan-phase5.md](plan-phase5.md)）。在 WSL2 的 Ubuntu 24.04 里直接用 Windows 这边的源码文件夹，编译输出放在 Linux 自己的磁盘上（快得多，也不和 Windows 的 `target/` 混在一起）：
+
+```bash
+# 一次性：编译工具和桌面应用要的系统库（sudo 要密码时，可以在 Windows 里用 wsl -u root 运行这一行）
+sudo apt-get install -y build-essential pkg-config file rustup libssl-dev libdbus-1-dev \
+  libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libsoup-3.0-dev
+rustup default stable
+
+cd /mnt/c/Users/<你>/…/Ludonimbus
+export CARGO_TARGET_DIR=$HOME/target/ludonimbus
+cargo test --workspace --exclude ludonimbus-app
+scripts/prepare-sidecars.sh            # 启动包装器 + Ludusavi 官方 Linux 版（校验 SHA-256）；只想编译时加 --stand-ins
+cargo build -p ludonimbus-app          # 前端用 Windows 这边 npm run build 生成的 app/dist
+```
+
+CI 的 `linux` 任务（ubuntu-24.04）跑同样的测试，并检查桌面应用能编译。`linux-dev-build`（main 上每次提交）打出 Linux 下载包和 Decky 插件，做法和下面相同：
+
+```bash
+scripts/prepare-sidecars.sh --release
+cargo build --release -p ludonimbus-agent          # 游戏模式的后台服务
+(cd app && npx tauri build --bundles appimage)      # 要 libfuse2；容器里设 APPIMAGE_EXTRACT_AND_RUN=1
+# 下载包 = AppImage + target/release/ludonimbus-run + ludonimbus-agent + scripts/install-linux.sh
+```
+
+**Decky 插件**（`plugin-decky/`，游戏模式的快捷菜单）：`npm ci && npm run build` 生成 `dist/index.js`；装到 Deck 时把 `dist/`、`main.py`、`plugin.json`、`package.json` 放进 `~/homebrew/plugins/Ludonimbus/`。后端只读 `~/.config/Ludonimbus/agent.json` 转发请求，本地接口的说明在 [agent/src/main.rs](../crates/agent/src/main.rs)。
+
+**后台服务**：`ludonimbus-agent --once` 只补做一次「被强制结束的包装器」然后退出，排查时有用；正常由 `systemd --user` 一直运行，日志和应用写在同一个文件夹。
+
+**Switch 客户端**（单独的仓库 [Ludonimbus-NX](https://github.com/Shupian0510/Ludonimbus-NX)，本地放在本仓库旁边）：用 devkitPro 编译。devkitpro.org 拒绝这台电脑的下载，WSL2 里的 `/opt/devkitpro` 是从 Docker Hub 的官方镜像 `devkitpro/devkita64` 解出来的；编译：
+
+```bash
+export DEVKITPRO=/opt/devkitpro PATH=/opt/devkitpro/tools/bin:/opt/devkitpro/devkitA64/bin:$PATH
+cd /mnt/c/…/Ludonimbus-NX && make            # ludonimbus.nro
+cd tests/host && make                         # 共用部分的 Linux 版（要 libmbedtls-dev libjansson-dev）
+```
+
+**Switch 局域网接口**：协议见 [nx-protocol.md](nx-protocol.md)；`crates/core/tests/nx_lan.rs` 按 Switch 的角色走一遍，不用 TLS。要试真正的 HTTPS，在设置里打开「允许 Switch 连接」，然后 `curl -k https://127.0.0.1:47716/nx/v1/hello`。
+
+写测试时注意：Linux 上 `\` 不是路径分隔符，`tmp.join(r"a\b")` 会建出一个名字里带反斜杠的文件。测试里的路径用 `/`（Windows 也认）；需要绝对路径的 Windows 例子用 `util::test_path(r"D:\Emu")`，在 Linux 上会变成 `/d/Emu`。代码里比较、拼接路径用 `util::same_path` / `util::native_sep` / `std::path::MAIN_SEPARATOR`，不要写死 `\`。
+
 ## 测试与排查
 
 ```powershell
@@ -130,8 +172,10 @@ cargo test -p ludonimbus-core adapters                     # 检查规则能解�
 crates/core          同步引擎：存档扫描、快照、云盘、Steam 快捷方式、同步判定、Millennium 安装
 crates/cli           ludonimbus 命令行
 crates/runner        ludonimbus-run，Steam 快捷方式实际启动的程序
-app/                 桌面应用（Tauri 2 + React + TypeScript），含给 Steam 插件用的本机接口
+crates/agent         ludonimbus-agent，不带界面的后台服务（Steam Deck 游戏模式）
+app/                 桌面应用（Tauri 2 + React + TypeScript），含给 Steam 插件用的本机接口和手柄界面（app/src/handheld）
 plugin-millennium/   Steam 插件（Millennium：Lua 后端 + TypeScript 前端）
+plugin-decky/        游戏模式插件（Decky Loader：Python 后端 + TypeScript 前端）
 adapters/            内置存档规则（游戏、模拟器、从 RecompLauncher 目录生成的规则）
 website/             文档站（VitePress），发布到 GitHub Pages
 docs/                设计文档、测试清单（不发布到文档站）

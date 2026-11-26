@@ -45,7 +45,7 @@ Use cases: [cloud saves for non-Steam games](https://shupian0510.github.io/Ludon
 - **Add games without hunting for saves**: "Add game → Scan this PC" lists non-Steam games in Steam, games installed by Epic / GOG / Xbox, games with saves inside emulators, folders you point it at, and any of the thousands of PC games that already have saves on this PC, ready to tick and add in bulk. Games Steam Cloud already syncs are listed apart, so nothing is managed twice. For games it doesn't recognise, "play and find": start the game, save once, and Ludonimbus lists the folders that were just written to.
 - **Finds where games are installed**: for games found only by their saves, Ludonimbus looks for the game program in the install folders of Epic, GOG, Xbox, EA, Ubisoft and other stores; if it can't, you can pick from those install folders directly.
 - **One-click Add to Steam**: games that aren't in Steam (including Xbox app / PC Game Pass games) can be added with one click, or in bulk, and sync from their first launch. Cover, background, logo and icon can be set automatically or picked from SteamGridDB, or come from local images.
-- **Your choice of cloud**: Google Drive (one-click sign-in), Quark (QR-code sign-in, experimental), a NAS such as Synology, Jianguoyun, Nextcloud, object storage such as Aliyun OSS / Tencent COS; Baidu Netdisk, Aliyun Drive and others through OpenList / AList. When you switch clouds, the history is copied over in one click.
+- **Your choice of cloud**: Google Drive (one-click sign-in), Quark (QR-code sign-in, experimental), a NAS such as Synology, Jianguoyun, Nextcloud, object storage such as Aliyun OSS / Tencent COS, and WebDAV services you run yourself such as OpenList / AList; one-click Baidu Netdisk sign-in (official open platform) is waiting for review. When you switch clouds, the history is copied over in one click.
 - **Steam-style interface**: a grid / list library that uses the covers, banners and logos you set in Steam; games that aren't in Steam can have artwork too.
 - **English and Chinese**: the interface follows the Windows display language and can be switched in Settings. A first-run guide helps you connect a cloud and start adding games.
 
@@ -67,7 +67,7 @@ Use cases: [cloud saves for non-Steam games](https://shupian0510.github.io/Ludon
 1. **Connect a cloud**: the first-run guide walks you through this; you can change it later in Settings → Cloud:
    - **Google Drive**: just sign in in your browser.
    - **Quark** (experimental): scan a QR code with the Quark app. The first time, the open-source OpenList (about 57 MB) is downloaded; the rest is automatic.
-   - **WebDAV**: a NAS (Synology, QNAP…), Jianguoyun, Nextcloud, or [OpenList](https://github.com/OpenListTeam/OpenList) / AList (which can mount Baidu Netdisk, Aliyun Drive and others). Enter the address, user name and password, and click "Test connection" first.
+   - **WebDAV**: a NAS (Synology, QNAP…), Jianguoyun, Nextcloud, or an [OpenList](https://github.com/OpenListTeam/OpenList) / AList you run yourself (a third-party tool you configure; Ludonimbus provides no netdisk aggregation). Enter the address, user name and password, and click "Test connection" first.
    - **S3-compatible storage**: MinIO on a NAS, or Aliyun OSS, Tencent COS, Cloudflare R2.
    - **Folder**: a folder synced by the OneDrive / Google Drive desktop app, a NAS share, a USB drive.
 2. **Add games**: "Add game → Scan this PC" lists the games it found. Tick the ones whose save location is known; for the others, click "Choose saves…" and follow the steps to find the save folder. For games kept elsewhere, click "Scan folder…".
@@ -168,9 +168,9 @@ Before the game starts, a dialog asks whether to use the cloud's saves or this P
 </details>
 
 <details>
-<summary><b>Can I use Baidu Netdisk, Aliyun Drive or Quark?</b></summary>
+<summary><b>Can I use Baidu Netdisk or Quark?</b></summary>
 
-Quark connects in one click with a QR code (experimental); see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/quark.html). One-click Baidu Netdisk sign-in is ready and waiting for Baidu's open-platform review; it will be enabled in a new version once approved. Until then, and for Aliyun Drive (which has no official API for individual developers), connect through [OpenList](https://github.com/OpenListTeam/OpenList) / AList: mount your netdisk in OpenList first, then connect Ludonimbus to OpenList over WebDAV, with the folder inside the mounted netdisk. Speed and reliability depend on the netdisk and OpenList's driver. Jianguoyun has WebDAV built in and can be connected directly.
+Quark connects in one click with a QR code (experimental); see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/quark.html). One-click Baidu Netdisk sign-in uses the official API of the Baidu Netdisk open platform, only accesses the folder 我的应用数据/Ludonimbus in your netdisk, and is waiting for Baidu's review; it will be enabled in a new version once approved, see the [documentation](https://shupian0510.github.io/Ludonimbus/en/clouds/baidu.html). Jianguoyun has WebDAV built in and can be connected directly. Ludonimbus provides no netdisk aggregation of its own; a WebDAV service you run yourself, such as OpenList / AList, can be connected over WebDAV, with its configuration and compliance being your own responsibility.
 </details>
 
 <details>
@@ -238,6 +238,7 @@ More questions and troubleshooting: [FAQ and troubleshooting](https://shupian051
 - [Ludusavi](https://github.com/mtkennerly/ludusavi) (MIT): the save location database and lookup; the installer includes its official program.
 - [RecompLauncher](https://recomplauncher.com/): save locations of recompiled games come from its game catalog.
 - [Millennium](https://github.com/SteamClientHomebrew/Millennium) (MIT): the Steam client plugin framework. Ludonimbus doesn't bundle it; it's downloaded from the official releases page only when you click "Install".
+- [XGP-save-extractor](https://github.com/Z1ni/XGP-save-extractor) (MIT): how Xbox app save containers are read and what each game's files are called; its per-game rules are in `adapters/xbox-saves.yaml`. The [AbioticEditor Game Pass format reference](https://christophervr.github.io/AbioticEditor/reference/game-pass-format) describes how to write them.
 - [Tauri](https://tauri.app/)
 
 ## License

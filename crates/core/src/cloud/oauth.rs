@@ -227,27 +227,16 @@ fn grants_drive(token_response: &serde_json::Value) -> bool {
         .is_none_or(|s| s.split_whitespace().any(|x| x == DRIVE_SCOPE))
 }
 
-fn entry() -> Result<keyring::Entry> {
-    Ok(keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?)
-}
-
 pub fn store_refresh_token(token: &str) -> Result<()> {
-    entry()?.set_password(token).context(crate::tr!("无法把登录凭据保存到 Windows 凭据管理器", "Couldn't save the sign-in to Windows Credential Manager"))
+    crate::credstore::set(KEYRING_SERVICE, KEYRING_USER, token)
 }
 
 pub fn load_refresh_token() -> Result<Option<String>> {
-    match entry()?.get_password() {
-        Ok(t) => Ok(Some(t)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow!(crate::tr!("无法读取登录凭据：{e}", "Couldn't read the saved sign-in: {e}"))),
-    }
+    crate::credstore::get(KEYRING_SERVICE, KEYRING_USER)
 }
 
 pub fn clear_refresh_token() -> Result<()> {
-    match entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(anyhow!(crate::tr!("无法删除登录凭据：{e}", "Couldn't delete the saved sign-in: {e}"))),
-    }
+    crate::credstore::delete(KEYRING_SERVICE, KEYRING_USER)
 }
 
 #[cfg(test)]

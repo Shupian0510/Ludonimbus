@@ -1,7 +1,7 @@
 // Browser-only mock backend, used when the UI runs outside Tauri
 // (`npm run dev` in a normal browser) so the interface can be developed and
 // reviewed without the Rust side. Never loaded inside the app.
-import type { Found, GameView, Outcome, Overview, PlaytimeDevice, PlaytimeSummary, SnapshotSummary, StatusReport } from "./api";
+import type { CloudOnlyView, Found, GameView, Outcome, Overview, PlaytimeDevice, PlaytimeSummary, SnapshotSummary, StatusReport, TrashedSnapshot } from "./api";
 
 // Sample data in the preview's language (?lang=, the saved choice, or the browser's).
 const mockLang = (() => {
@@ -48,14 +48,18 @@ function snap(id: string, min: number, device: string, trigger: SnapshotSummary[
 
 const snapshots: Record<string, SnapshotSummary[]> = {
   "zelda-oot-longshot": [
-    snap("01OOT5", 35, "DESKTOP-MAIN", "auto-exit", 1258291, 14),
+    snap("01OOT5", 35, "DESKTOP-MAIN", "auto-exit", 1258291, 14, { installedVersion: "1.2.2" }),
     snap("01OOT4", 60 * 26, "GPD-Win-Mini", "auto-exit", 1240000, 14),
     snap("01OOT3", 60 * 50, "DESKTOP-MAIN", "manual", 1100000, 12, { comment: L("进入水之神殿前", "Before the Water Temple"), locked: true }),
     snap("01OOT2", 60 * 75, "DESKTOP-MAIN", "pre-restore", 1090000, 12),
     snap("01OOT1", 60 * 24 * 4, "DESKTOP-MAIN", "auto-exit", 800000, 10),
   ],
-  "fe-fortunes-weave": [snap("01FE2", 60 * 3, "DESKTOP-MAIN", "auto-exit", 56422, 4), snap("01FE1", 60 * 30, "DESKTOP-MAIN", "auto-exit", 40100, 3)],
+  "fe-fortunes-weave": [snap("01FE2", 60 * 3, "DESKTOP-MAIN", "auto-exit", 56422, 4, { gameVersion: "0.2.7" }), snap("01FE1", 60 * 30, "DESKTOP-MAIN", "auto-exit", 40100, 3)],
   "bloodborne-lantern": [snap("01BB2", 60 * 5, "GPD-Win-Mini", "auto-exit", 15309618, 16), snap("01BB1", 60 * 48, "DESKTOP-MAIN", "auto-exit", 15309618, 16)],
+};
+
+const trash: Record<string, TrashedSnapshot[]> = {
+  "zelda-oot-longshot": [{ snapshot: snap("01OOT0", 60 * 24 * 6, "DESKTOP-MAIN", "auto-exit", 790000, 10), deletedAt: ago(60 * 24 * 2), deletedBy: "DESKTOP-MAIN" }],
 };
 
 function report(key: string, status: StatusReport["status"], files: number, size: number): StatusReport {
@@ -90,6 +94,7 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     platform,
     exe,
     exeExists: true,
+    playable: true,
     install: exe.replace(/\\[^\\]+$/, ""),
     args: "",
     saves,
@@ -115,6 +120,27 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     playtime: playtime[key] ?? { totalSecs: 0, lastPlayed: null, devices: [] },
     // A recomp's logo is its program's icon, which is the game's icon here.
     source: { kind: "recomp", name: null, detail: platform || null, label: null, logo: appid ? art(appid, "_icon.png") : null },
+    family: key,
+    link: null,
+    ...extra,
+  };
+}
+
+/** A game only the cloud has (added on another device). */
+function cloudGame(key: string, name: string, family: string, source: CloudOnlyView["source"], extra: Partial<CloudOnlyView> = {}): CloudOnlyView {
+  return {
+    key,
+    name,
+    adapter: null,
+    adapterName: null,
+    platform: null,
+    ludusaviTitle: name,
+    saves: [],
+    source,
+    art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+    playtime: devicePlaytime(0, 6, 0),
+    family,
+    link: null,
     ...extra,
   };
 }
@@ -156,6 +182,13 @@ const overview: Overview = {
   cloud: { kind: "googleDrive", label: "player@example.com", error: null },
   steamFound: true,
   steamRunning: true,
+  cloudFetchedAt: ago(2),
+  // Hollow Knight was added on the laptop only; so was Celeste's GOG version
+  // (one game with this PC's Celeste in the save library).
+  cloudOnly: [
+    cloudGame("hollow-knight", "Hollow Knight", "hollow-knight", { kind: "pc", name: null, detail: null, label: null, logo: null }),
+    cloudGame("celeste-gog", "Celeste", "celeste", { kind: "pc", name: null, detail: null, label: "GOG", logo: null }),
+  ],
   games: [
     game("zelda-oot-longshot", L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), 4079546474, L("Longshot（原生重制）", "Longshot (native port)"), "C:\\Users\\me\\AppData\\Local\\Programs\\LongshotLauncher\\LongshotLauncher.exe", ["{data}/save/**"]),
     game("fe-fortunes-weave", L("火焰纹章：万缕千丝", "Fire Emblem: Fortune's Weave"), 2661209017, "fefw recomp", "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", ["{install}/save/**"], {
@@ -182,6 +215,7 @@ const overview: Overview = {
       platform: null,
       exe: null,
       exeExists: false,
+      playable: false,
       install: null,
       ludusaviTitle: "Starfield",
       steam: null,
@@ -215,7 +249,8 @@ if (!mockScene || mockScene === "library-sources") {
     emuGame("dolphin-gzle01", L("塞尔达传说：风之杖", "The Legend of Zelda: The Wind Waker"), "Dolphin", gcWii, dolphin, ["{emu}/GC/*/Card ?/01-GZLE-*.gci"], 22),
     emuGame("ryujinx-0100770008dd8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-0100770008dd8000}/**"], 64),
     emuGame("ryujinx-01006a800016e000", L("超级马力欧 奥德赛", "Super Mario Odyssey"), "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-01006a800016e000}/**"], 18),
-    emuGame("pcsx2-slus21115", L("大神", "Okami"), "PCSX2", L("PS2 模拟器", "PS2 emulator"), "D:\\Emulators\\PCSX2\\pcsx2-qt.exe", ["{memcards}/Mcd001.ps2"], 31),
+    // The disc image it was started with is gone: saves only.
+    { ...emuGame("pcsx2-slus21115", L("大神", "Okami"), "PCSX2", L("PS2 模拟器", "PS2 emulator"), "D:\\Emulators\\PCSX2\\pcsx2-qt.exe", ["{memcards}/Mcd001.ps2"], 31), playable: false },
     emuGame("azahar-00040000001b5000", L("宝可梦 究极之日", "Pokémon Ultra Sun"), "Azahar", L("3DS 模拟器", "3DS emulator"), "D:\\Emulators\\Azahar\\azahar.exe", ["{user}/sdmc/Nintendo 3DS/*/*/title/00040000/001b5000/data/**"], 45),
     // Added by hand (no rule), put in a group named by the user.
     game("mgba-emerald", L("宝可梦 绿宝石", "Pokémon Emerald"), 0, "", "D:\\Emulators\\mGBA\\mGBA.exe", ["{install}/saves/emerald.sav"], {
@@ -295,6 +330,18 @@ const sgdbIcons = [art(4079546474, "_icon.png"), art(2661209017, "_icon.png"), a
 
 const delay = <T,>(v: T, ms = 250) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 
+let mockHandheldMode = "auto";
+const mockNx = {
+  enabled: false,
+  running: false,
+  address: "192.168.1.20",
+  port: 47716,
+  fingerprint: "b4bdeea64b1574511583648318fb8953f8ca4905d04b4a460ede11ce11d6d454",
+  devices: [{ id: "sw-1", name: "Switch", pairedAt: new Date(Date.now() - 86400000).toISOString(), lastSeen: new Date(Date.now() - 3600000).toISOString() }],
+  pairingCode: null as string | null,
+  error: null,
+};
+
 export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
   const key = args.key as string;
   switch (cmd) {
@@ -348,6 +395,25 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined);
     case "list_snapshots":
       return delay({ snapshots: snapshots[key] ?? [], headId: snapshots[key]?.[0]?.id ?? null, lastSyncedId: snapshots[key]?.[0]?.id ?? null });
+    case "delete_snapshot": {
+      const list = snapshots[key] ?? [];
+      const s = list.find((x) => x.id === args.id);
+      if (s) {
+        snapshots[key] = list.filter((x) => x !== s);
+        trash[key] = [{ snapshot: s, deletedAt: new Date().toISOString(), deletedBy: "DESKTOP-MAIN" }, ...(trash[key] ?? [])];
+      }
+      return delay(undefined);
+    }
+    case "deleted_snapshots":
+      return delay(trash[key] ?? []);
+    case "restore_deleted_snapshot":
+    case "purge_deleted_snapshot": {
+      const t = (trash[key] ?? []).find((x) => x.snapshot.id === args.id);
+      trash[key] = (trash[key] ?? []).filter((x) => x !== t);
+      const restore = cmd === "restore_deleted_snapshot" && t;
+      if (restore) snapshots[key] = [...(snapshots[key] ?? []), { ...t.snapshot, locked: true }].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return delay(restore ? true : undefined);
+    }
     case "get_snapshot": {
       const s = (snapshots[key] ?? []).find((x) => x.id === args.id)!;
       return delay({ ...s, game: key, roots: {}, appVersion: "0.1.0", files: [{ path: "install/save/slot_00/progress.sav", size: 162099, hash: "", mtime: now / 1000 }] });
@@ -450,6 +516,119 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(1) },
         { id: "d-laptop", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(300) },
       ]);
+    case "nx_status":
+    case "nx_set_enabled":
+    case "nx_start_pairing":
+    case "nx_cancel_pairing":
+    case "nx_remove_device": {
+      if (cmd === "nx_set_enabled") mockNx.enabled = args.enabled as boolean;
+      if (cmd === "nx_start_pairing") mockNx.pairingCode = "482915";
+      if (cmd === "nx_cancel_pairing") mockNx.pairingCode = null;
+      if (cmd === "nx_remove_device") mockNx.devices = [];
+      return delay({ ...mockNx, running: mockNx.enabled });
+    }
+    case "launch_mode": {
+      // Browser preview: `?handheld` opens the handheld view, `?prompt` a launch question.
+      const q = new URLSearchParams(location.search);
+      if (q.has("prompt"))
+        return delay({
+          mode: "prompt",
+          prompt: {
+            title: L("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"),
+            text: L(
+              "「Bloodborne」的存档在本机和云端都有新的改动。\n\n云端：GPD-Win-Mini 于 2026-11-24 21:30 保存（16 个文件，14.6 MB）\n本机：16 个文件，14.6 MB\n\n请选择这次要使用哪一份。没选的那份也会保存在版本历史里，随时可以恢复。",
+              "Both this PC and the cloud have new changes to the saves of \"Bloodborne\".\n\nCloud: saved by GPD-Win-Mini at 2026-11-24 21:30 (16 files, 14.6 MB)\nThis PC: 16 files, 14.6 MB\n\nChoose which one to use this time. The other one is kept in the version history and can be restored at any time.",
+            ),
+            level: "warn",
+            buttons: [
+              { id: "cloud", label: L("使用云端存档", "Use cloud saves"), key: "a" },
+              { id: "local", label: L("使用本机存档", "Use this PC's saves"), key: "x" },
+              { id: "cancel", label: L("暂不启动", "Don't start"), key: "b" },
+            ],
+          },
+        });
+      return delay({ mode: q.has("handheld") ? "handheld" : "desktop", prompt: null });
+    }
+    case "prompt_answer":
+      console.info("prompt answer:", args.choice);
+      return delay(undefined);
+    case "set_fullscreen":
+    case "quit_handheld":
+    case "dismiss_newer":
+      return delay(undefined);
+    case "handheld_info":
+      return delay({ device: "ROG Ally", steamGamepadUi: false, mode: mockHandheldMode, inSteam: null });
+    case "set_handheld_mode":
+      mockHandheldMode = args.mode as string;
+      return delay(undefined);
+    case "steam_add_ludonimbus":
+      return delay(3123456789, 600);
+    case "newer_version":
+      return delay(
+        key === "celeste"
+          ? { key: "celeste-gog", name: "Celeste", label: "GOG", snapshot: snap("01NEWER", 90, "LAPTOP", "auto-exit", 30_000, 3) }
+          : null,
+        300,
+      );
+    case "refresh_cloud_library": {
+      const families: Record<string, string> = {};
+      for (const g of overview.games) families[g.key] = g.family;
+      for (const c of overview.cloudOnly) families[c.key] = c.family;
+      return delay({ cloudOnly: overview.cloudOnly, families, fetchedAt: ago(0), error: null }, 300);
+    }
+    case "cloud_game_info":
+      return delay(
+        {
+          playtime: overview.cloudOnly.find((c) => c.key === key)?.playtime ?? devicePlaytime(0, 0, 0),
+          gameBackup: key === "hollow-knight" ? { versions: 2, size: 9.1e9, createdAt: ago(60 * 26), deviceName: "GPD-Win-Mini" } : null,
+        },
+        300,
+      );
+    case "link_games": {
+      const keys = args.keys as string[];
+      const all = [...overview.games, ...overview.cloudOnly];
+      const fam = all.find((g) => g.key === keys[1])?.family ?? keys[0];
+      for (const g of all) if (keys.includes(g.key)) Object.assign(g, { family: fam, link: `link:${fam}` });
+      return delay(undefined);
+    }
+    case "unlink_game": {
+      const g = [...overview.games, ...overview.cloudOnly].find((x) => x.key === key);
+      if (g) Object.assign(g, { family: key, link: `solo:${key}` });
+      return delay(undefined);
+    }
+    case "transfer_plan": {
+      const target = overview.games.find((g) => g.key === args.target);
+      const xbox = target?.source.kind === "xbox";
+      const base = xbox
+        ? "C:\\Users\\me\\AppData\\Local\\Packages\\X_y\\SystemAppData\\wgs\\0009_00AB"
+        : "C:\\Users\\me\\AppData\\Local\\Celeste\\Saves";
+      const files = ["0.celeste", "1.celeste", "settings.celeste"];
+      return delay(
+        {
+          same: false,
+          fromXbox: false,
+          toXbox: xbox,
+          xboxRule: null,
+          items: files.map((f, i) => ({ from: f, to: xbox ? `${f} / Data` : `${base}\\${f}`, size: 2048 * (i + 1), replaces: i !== 1 })),
+          unmatched: [],
+          base: (args.base as string | null) ?? base,
+          matched: 2,
+          needsFolder: false,
+          crossPlatform: false,
+          formatRule: null,
+          skipped: [],
+          sourceVersion: "1.6.15",
+          targetVersion: "1.6.9",
+          tooNew: true,
+          cloudTarget: false,
+        },
+        500,
+      );
+    }
+    case "transfer_apply":
+      return delay({ kind: "uploaded", id: "01APPLIED" }, 600);
+    case "game_backup_request_install":
+      return delay(undefined);
     case "cloud_games":
       return delay([{ key: "hollow-knight", name: "Hollow Knight", adapter: null, saves: [], ludusaviTitle: "Hollow Knight" }]);
     case "ludusavi_search":
@@ -551,7 +730,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined, 500);
     case "set_game_exe": {
       const g = overview.games.find((x) => x.key === key);
-      if (g) Object.assign(g, { exe: args.path as string, exeExists: true });
+      if (g) Object.assign(g, { exe: args.path as string, exeExists: true, playable: true });
       return delay(undefined);
     }
     case "relocate_auto":

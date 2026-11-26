@@ -26,8 +26,18 @@ The installer is not code-signed yet, so it may be stopped on the way:
 <!-- screenshot: smartscreen-warning (real-environment screenshot needed) -->
 
 ::: tip Why it isn't signed
-Code-signing certificates cost money every year. Ludonimbus is open source; the installer is built automatically by GitHub Actions from the [public source code](https://github.com/Shupian0510/Ludonimbus), and you can build it yourself too.
+Code-signing certificates cost money every year. Ludonimbus has applied for the free code signing that SignPath Foundation offers open-source projects; installers released after the approval will be signed (see the [Code signing policy](#code-signing-policy)). Until then, the installer is built automatically by GitHub Actions from the [public source code](https://github.com/Shupian0510/Ludonimbus), and you can build it yourself too.
 :::
+
+## Code signing policy {#code-signing-policy}
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- Only installers that GitHub Actions builds from the [public source code](https://github.com/Shupian0510/Ludonimbus) are signed, and the maintainer approves every release before it is signed. Signed files show "SignPath Foundation" as the publisher.
+- Committers and reviewers: [Shupian0510](https://github.com/Shupian0510)
+- Approvers: [Shupian0510](https://github.com/Shupian0510)
+- Privacy: Ludonimbus sends nothing to the developer. It connects only to the services you set up (your cloud storage, SteamGridDB with your own key) and to GitHub, to check for updates and to download Ludusavi's game database. See the [Privacy policy](../privacy.md).
+- The application to SignPath Foundation is in progress; installers are unsigned until it is approved.
 
 ::: info Interface language
 Ludonimbus 0.4 shows its interface in Chinese. This guide names buttons and menus in English; the [Quick start](./quick-start.md#labels) has a short list of the Chinese names.

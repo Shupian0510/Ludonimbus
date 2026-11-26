@@ -103,10 +103,13 @@ pub fn resolve_target(chosen: &Path, original: &str) -> PathBuf {
     if empty {
         return chosen.to_path_buf();
     }
-    let name = Path::new(original.trim_end_matches(['\\', '/']))
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .filter(|n| !n.is_empty())
+    // The folder's name, whichever system the backup was made on.
+    let name = original
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|n| !n.is_empty() && !n.ends_with(':'))
+        .map(str::to_string)
         .unwrap_or_else(|| "Game".into());
     // Picking the backed-up folder itself (it still has files): restore into it.
     if chosen.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name)) {

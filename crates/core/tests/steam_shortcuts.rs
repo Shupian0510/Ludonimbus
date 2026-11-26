@@ -94,5 +94,5 @@ fn shortcuts_art_and_libraries() {
     assert_eq!(apps.len(), 1);
     assert_eq!(apps[0].appid, 367520);
     assert_eq!(apps[0].name, "Hollow Knight");
-    assert!(apps[0].install_dir.ends_with(r"steamapps\common\Hollow Knight"));
+    assert!(apps[0].install_dir.ends_with("steamapps/common/Hollow Knight"));
 }

@@ -26,8 +26,18 @@
 <!-- screenshot: smartscreen-warning (需要真实环境截图) -->
 
 ::: tip 为什么没有签名
-代码签名证书需要每年付费购买。Ludonimbus 是开源软件，安装包由 GitHub Actions 从[公开的源码](https://github.com/Shupian0510/Ludonimbus)自动构建，你也可以自己从源码构建。
+代码签名证书需要每年付费购买。Ludonimbus 已经申请 SignPath Foundation 为开源项目提供的免费代码签名，通过后发布的安装包会带签名（见下面的[代码签名政策](#code-signing-policy)）。在那之前，安装包由 GitHub Actions 从[公开的源码](https://github.com/Shupian0510/Ludonimbus)自动构建，你也可以自己从源码构建。
 :::
+
+## 代码签名政策 {#code-signing-policy}
+
+免费代码签名由 [SignPath.io](https://about.signpath.io/) 提供，证书由 [SignPath Foundation](https://signpath.org/) 颁发（Free code signing provided by SignPath.io, certificate by SignPath Foundation）。
+
+- 只有 GitHub Actions 从[公开源码](https://github.com/Shupian0510/Ludonimbus)自动构建的安装包才会签名，每个版本签名前都由维护者手动批准。签名后的文件里，发布者显示为「SignPath Foundation」。
+- 提交者与审核者：[Shupian0510](https://github.com/Shupian0510)
+- 签名批准者：[Shupian0510](https://github.com/Shupian0510)
+- 隐私：Ludonimbus 不向开发者发送任何数据，只连接你自己设置的服务（你的云盘、用你自己 Key 的 SteamGridDB），以及 GitHub：检查更新、下载 Ludusavi 的游戏数据库。详见[隐私政策](../privacy.md)。
+- 目前正在向 SignPath Foundation 申请，通过之前的安装包没有签名。
 
 ## 更新
 

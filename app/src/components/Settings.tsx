@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { AccountInfo, api, CloudKind, errorText, ScreenshotMode, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
-import { CloudOptions, MigrateBanner } from "./CloudForms";
+import { BaiduRevokeHelp, CloudOptions, MigrateBanner } from "./CloudForms";
 import { SteamPluginPanel } from "./SteamPlugin";
+import { HandheldPanel } from "./HandheldPanel";
+import { NxPanel } from "./NxPanel";
 import { SpeedTestPanel } from "./SpeedTest";
 import { AchievementSettingsPanel } from "./Achievements";
 import { Badge, Button, Icon, PathChoice, PathField, samePath, Spinner, useUi } from "./ui";
@@ -36,7 +38,7 @@ function currentLabel(s: Settings): string {
   }
 }
 
-export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<void>; onGuide: () => void }) {
+export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: () => Promise<void>; onGuide: () => void; onHandheld?: () => void }) {
   const ui = useUi();
   const { t, lang } = useI18n();
   const st = t.settings;
@@ -90,7 +92,15 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
   const disconnect = async () => {
     const ok = await ui.confirm({
       title: st.disconnectTitle,
-      text: st.disconnectText,
+      text:
+        s.cloud.kind === "baiduPan" ? (
+          <>
+            <p>{st.disconnectText}</p>
+            <p className="muted">{st.disconnectBaidu}</p>
+          </>
+        ) : (
+          st.disconnectText
+        ),
       confirm: st.disconnect,
       danger: true,
     });
@@ -151,7 +161,10 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
               {accountError && <div className="health health-warn">{accountError}</div>}
               {s.cloud.kind === "googleDrive" && <div className="muted small">{st.googleWhere(s.cloud.folder)}</div>}
               {s.cloud.kind === "baiduPan" && (
-                <div className="muted small">{st.baiduWhere(s.cloud.appName || s.baiduAppName)}</div>
+                <>
+                  <div className="muted small">{st.baiduWhere(s.cloud.appName || s.baiduAppName)}</div>
+                  <BaiduRevokeHelp folder={s.cloud.appName || s.baiduAppName} />
+                </>
               )}
             </div>
             <Button kind="danger" onClick={disconnect}>
@@ -254,6 +267,10 @@ export function SettingsPage({ onChanged, onGuide }: { onChanged: () => Promise<
       </section>
 
       <SteamPluginPanel key={s.steamRoot ?? ""} />
+
+      <HandheldPanel onHandheld={onHandheld} />
+
+      <NxPanel />
 
       <AchievementSettingsPanel />
 

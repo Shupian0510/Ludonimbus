@@ -28,6 +28,7 @@ pub fn in_name(name: &str) -> Option<String> {
 }
 
 /// `a.b.c.d` with trailing zero parts dropped (at least `a.b`).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn tidy(parts: [u32; 4]) -> String {
     let mut n = 4;
     while n > 2 && parts[n - 1] == 0 {
@@ -189,6 +190,20 @@ pub fn xbox(exe: &Path) -> Option<String> {
     let start = id.find("Version=\"")? + 9;
     let end = start + id[start..].find('"')?;
     Some(id[start..end].to_string())
+}
+
+/// The version of a game as installed on this device, which is what a save
+/// made now was played with (kept with each save version): an emulated
+/// game's update or disc version, a recompilation's release, an Xbox app
+/// package's version, or the program's own version. `None` for games
+/// without a program (known by their saves only).
+pub fn installed(game: &crate::config::GameEntry) -> Option<String> {
+    let exe = game.exe.as_deref().filter(|e| e.is_file())?;
+    match game.adapter.as_deref().and_then(crate::adapters::find) {
+        Some(a) if a.is_emulator() => emulators::identify_any(a, exe, &game.args).and_then(|g| content(a.game_id.as_deref(), &g)),
+        Some(_) => program(&crate::spec::install_dir(game)?, Some(exe), false),
+        None => xbox(exe).or_else(|| exe_version(exe)),
+    }
 }
 
 /// Version of the game an emulator shortcut starts.

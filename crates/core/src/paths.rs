@@ -57,12 +57,50 @@ pub fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// The Steam launch wrapper, expected next to the current executable.
+/// File name of the Steam launch wrapper on this system.
+pub const RUNNER_NAME: &str = if cfg!(windows) { "ludonimbus-run.exe" } else { "ludonimbus-run" };
+
+/// The Steam launch wrapper: next to the current executable on Windows; on
+/// Linux and macOS the copy in `<data>/bin` (see [`install_runner`]).
 pub fn runner_exe() -> PathBuf {
     if let Ok(p) = std::env::var("LUDONIMBUS_RUNNER") {
         if !p.trim().is_empty() {
             return PathBuf::from(p);
         }
     }
-    exe_dir().join("ludonimbus-run.exe")
+    if cfg!(unix) {
+        let copy = data_dir().join("bin").join(RUNNER_NAME);
+        if copy.is_file() {
+            return copy;
+        }
+    }
+    exe_dir().join(RUNNER_NAME)
+}
+
+/// Linux / macOS: keep the wrapper (and a note where the app is) in
+/// `<data>/bin`, outside the AppImage, which is only mounted while it runs
+/// and may be moved: Steam's launch options must keep pointing at it.
+/// Called by the app when it starts.
+#[cfg(unix)]
+pub fn install_runner() -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = data_dir().join("bin");
+    std::fs::create_dir_all(&bin)?;
+    let app = std::env::var_os("APPIMAGE").map(PathBuf::from).or_else(|| std::env::current_exe().ok());
+    if let Some(app) = app {
+        std::fs::write(bin.join("app-path"), app.to_string_lossy().as_bytes())?;
+    }
+    let src = exe_dir().join(RUNNER_NAME);
+    let dest = bin.join(RUNNER_NAME);
+    let same = |a: &std::path::Path, b: &std::path::Path| match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) => x.len() == y.len() && x.modified().ok() <= y.modified().ok(),
+        _ => false,
+    };
+    if src.is_file() && !same(&src, &dest) {
+        let tmp = bin.join(format!("{RUNNER_NAME}.new"));
+        std::fs::copy(&src, &tmp)?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::rename(&tmp, &dest)?;
+    }
+    Ok(())
 }

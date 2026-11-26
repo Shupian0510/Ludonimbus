@@ -34,14 +34,40 @@ pub fn detect_root() -> Option<PathBuf> {
             }
         }
     }
-    let fallback = PathBuf::from(r"C:\Program Files (x86)\Steam");
-    fallback.is_dir().then_some(fallback)
+    #[cfg(windows)]
+    {
+        let fallback = PathBuf::from(r"C:\Program Files (x86)\Steam");
+        fallback.is_dir().then_some(fallback)
+    }
+    #[cfg(not(windows))]
+    {
+        unix_roots().into_iter().find(|p| is_root(p))
+    }
+}
+
+/// Where Steam keeps its files on Linux: the native install (and the
+/// `~/.steam` links to it), the Flatpak and the Snap.
+#[cfg(not(windows))]
+fn unix_roots() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else { return Vec::new() };
+    let mut out = vec![
+        home.join(".local/share/Steam"),
+        home.join(".steam/steam"),
+        home.join(".steam/root"),
+        home.join(".var/app/com.valvesoftware.Steam/.local/share/Steam"),
+        home.join("snap/steam/common/.local/share/Steam"),
+        home.join("Library/Application Support/Steam"),
+    ];
+    // The links point at one of the others: list each folder once.
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|p| seen.insert(std::fs::canonicalize(p).unwrap_or_else(|_| p.clone())));
+    out
 }
 
 /// A folder Steam is installed in (it holds `steam.exe`, or Steam's own
 /// `config` and `steamapps` folders).
 pub fn is_root(p: &Path) -> bool {
-    p.join("steam.exe").is_file() || (p.join("config").is_dir() && p.join("steamapps").is_dir())
+    p.join("steam.exe").is_file() || p.join("steam.sh").is_file() || (p.join("config").is_dir() && p.join("steamapps").is_dir())
 }
 
 /// The Steam install folder a picked folder is in: the folder itself or one
@@ -163,13 +189,21 @@ pub struct Shortcut {
 impl Shortcut {
     /// Whether this shortcut already launches through a Ludonimbus wrapper.
     pub fn wrapped_key(&self) -> Option<String> {
-        if !util::file_name_lower(Path::new(&self.exe)).eq("ludonimbus-run.exe") {
-            return None;
-        }
+        self.wrapper().map(|(_, key)| key)
+    }
+
+    /// The wrapper this shortcut launches through and the game's key: the
+    /// program itself (Windows), or a launch-options prefix
+    /// `"<wrapper>" --game <key> -- %command%` (Linux, so Proton keeps working).
+    pub fn wrapper(&self) -> Option<(String, String)> {
+        let is_runner = |p: &str| util::file_name_lower(Path::new(&util::native_sep(&util::unquote(p)))).starts_with("ludonimbus-run");
         let args = util::split_args(&self.launch_options);
-        args.iter()
-            .position(|a| a == "--game")
-            .and_then(|i| args.get(i + 1).cloned())
+        let key = |args: &[String]| args.iter().position(|a| a == "--game").and_then(|i| args.get(i + 1).cloned());
+        if is_runner(&self.exe) {
+            return key(&args).map(|k| (self.exe.clone(), k));
+        }
+        let first = args.first().filter(|a| is_runner(a))?;
+        key(&args).map(|k| (first.clone(), k))
     }
 }
 
@@ -288,10 +322,15 @@ pub struct NewShortcut {
 fn save_doc(root: &Path, account: &str, doc: &vdf::Value) -> Result<()> {
     let path = shortcuts_path(root, account);
     if path.exists() {
-        let backup = paths::steam_backups_dir().join(format!(
-            "shortcuts-{account}-{}.vdf",
-            chrono::Local::now().format("%Y%m%d-%H%M%S%.3f")
-        ));
+        let dir = paths::steam_backups_dir();
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+        // Two writes within a millisecond each keep their backup.
+        let mut backup = dir.join(format!("shortcuts-{account}-{stamp}.vdf"));
+        let mut n = 2;
+        while backup.exists() {
+            backup = dir.join(format!("shortcuts-{account}-{stamp}-{n}.vdf"));
+            n += 1;
+        }
         std::fs::copy(&path, &backup)?;
     }
     util::atomic_write(&path, &vdf::write(doc))
@@ -456,7 +495,26 @@ pub fn set_shortcut_icon(root: &Path, account: &str, appid: u32, icon: &Path) ->
 }
 
 pub fn is_running() -> bool {
-    process::is_running(&["steam.exe".to_string()])
+    process::is_running(&[if cfg!(windows) { "steam.exe" } else { "steam" }.to_string()])
+}
+
+/// The command that starts Steam: `steam.exe` in its folder, or on Linux
+/// the `steam` command (falling back to the folder's `steam.sh`).
+fn steam_command(root: &Path) -> std::process::Command {
+    if cfg!(windows) {
+        return std::process::Command::new(root.join("steam.exe"));
+    }
+    let on_path = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("steam").is_file()));
+    if on_path || !root.join("steam.sh").is_file() {
+        std::process::Command::new("steam")
+    } else {
+        std::process::Command::new(root.join("steam.sh"))
+    }
+}
+
+/// Start Steam again (after closing it to change its shortcuts).
+pub fn launch(root: &Path) -> Result<()> {
+    steam_command(root).spawn().map(|_| ()).with_context(|| crate::tr!("无法启动 Steam", "Couldn't start Steam"))
 }
 
 /// Ask Steam to exit and wait for it.
@@ -464,11 +522,10 @@ pub fn shutdown(root: &Path) -> Result<()> {
     if !is_running() {
         return Ok(());
     }
-    let exe = root.join("steam.exe");
-    std::process::Command::new(&exe)
+    steam_command(root)
         .arg("-shutdown")
         .spawn()
-        .with_context(|| crate::tr!("无法启动 {}", "Couldn't start {}", exe.display()))?;
+        .with_context(|| crate::tr!("无法关闭 Steam", "Couldn't close Steam"))?;
     let start = Instant::now();
     while is_running() {
         if start.elapsed() > Duration::from_secs(45) {
@@ -487,6 +544,7 @@ fn ensure_steam_closed(root: &Path) -> Result<()> {
     // A folder picked in Settings may differ from the registry entry; it is
     // still the real Steam when it holds steam.exe.
     let live = root.join("steam.exe").is_file()
+        || root.join("steam.sh").is_file()
         || detect_root().is_some_and(|r| util::same_path(&r.to_string_lossy(), &root.to_string_lossy()));
     if live && !cfg!(test) && is_running() {
         bail!(crate::tr!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）", "STEAM_RUNNING: Steam needs to be closed before changing its shortcuts (it overwrites changes while running)"));
@@ -528,12 +586,34 @@ pub fn wrap(root: &Path, account: &str, appid: u32, key: &str, runner: &Path) ->
     };
     let runner_s = runner.to_string_lossy().into_owned();
     let icon = if sc.icon.trim().is_empty() { sc.exe.clone() } else { sc.icon.clone() };
-    edit_shortcut(root, account, appid, |e| {
-        e.set_str("Exe", &util::quote(&runner_s));
-        e.set_str("LaunchOptions", &format!("--game {key}"));
-        e.set_str("icon", &util::quote(&icon));
-    })?;
+    if cfg!(windows) {
+        edit_shortcut(root, account, appid, |e| {
+            e.set_str("Exe", &util::quote(&runner_s));
+            e.set_str("LaunchOptions", &format!("--game {key}"));
+            e.set_str("icon", &util::quote(&icon));
+        })?;
+    } else {
+        // Proton runs `Exe`: it stays, the wrapper goes in front of %command%.
+        let options = wrapper_options(runner, key, &sc.launch_options);
+        edit_shortcut(root, account, appid, |e| e.set_str("LaunchOptions", &options))?;
+    }
     Ok(original)
+}
+
+/// Launch options that run a game through the wrapper on Linux: Steam
+/// replaces `%command%` with the whole command (Proton and the game's exe
+/// included). Whatever the user had stays: `gamemoderun %command%` keeps
+/// its place inside, other options go after the command.
+pub fn wrapper_options(runner: &Path, key: &str, original: &str) -> String {
+    let prefix = format!("{} --game {key} --", util::quote(&runner.to_string_lossy()));
+    let original = original.trim();
+    if original.contains("%command%") {
+        format!("{prefix} {original}")
+    } else if original.is_empty() {
+        format!("{prefix} %command%")
+    } else {
+        format!("{prefix} %command% {original}")
+    }
 }
 
 /// Restore the shortcut fields saved by [`wrap`], pointing at the current exe.
@@ -607,12 +687,12 @@ pub fn health(cfg: &AppConfig, game: &GameEntry) -> Health {
     if !link.enabled {
         return Health::Disabled;
     }
-    match sc.wrapped_key() {
-        Some(k) if k == game.key => {
-            if util::same_path(&sc.exe, &paths::runner_exe().to_string_lossy()) {
+    match sc.wrapper() {
+        Some((runner, k)) if k == game.key => {
+            if util::same_path(&runner, &paths::runner_exe().to_string_lossy()) {
                 Health::Ok
             } else {
-                Health::RunnerMoved { exe: sc.exe.clone() }
+                Health::RunnerMoved { exe: runner }
             }
         }
         _ => Health::Changed {
@@ -665,6 +745,25 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_options_keep_the_users() {
+        let r = Path::new("/home/deck/.config/Ludonimbus/bin/ludonimbus-run");
+        let q = "\"/home/deck/.config/Ludonimbus/bin/ludonimbus-run\"";
+        assert_eq!(wrapper_options(r, "fe", ""), format!("{q} --game fe -- %command%"));
+        assert_eq!(wrapper_options(r, "fe", "gamemoderun %command% -x"), format!("{q} --game fe -- gamemoderun %command% -x"));
+        let sc = Shortcut {
+            index: "0".into(),
+            appid: 1,
+            name: "x".into(),
+            exe: "/games/fe.exe".into(),
+            start_dir: String::new(),
+            icon: String::new(),
+            launch_options: wrapper_options(r, "fe", "--fullscreen"),
+            last_play_time: 0,
+        };
+        assert_eq!(sc.wrapper(), Some((r.to_string_lossy().into_owned(), "fe".to_string())));
+    }
+
+    #[test]
     fn wrap_health_unwrap() {
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_var("LUDONIMBUS_HOME", tmp.path().join("home"));
@@ -681,11 +780,20 @@ mod tests {
         assert_eq!(original.exe, EXE);
         assert_eq!(original.launch_options, "--fullscreen");
         let sc = find_shortcut(&root, "123", appid).unwrap().unwrap();
-        assert!(util::same_path(&sc.exe, &runner.to_string_lossy()));
-        assert_eq!(sc.launch_options, "--game fe");
+        if cfg!(windows) {
+            assert!(util::same_path(&sc.exe, &runner.to_string_lossy()));
+            assert_eq!(sc.launch_options, "--game fe");
+        } else {
+            // Linux: the program stays (Proton runs it); the wrapper goes in front of %command%.
+            assert_eq!(sc.exe, EXE);
+            assert_eq!(sc.launch_options, format!("{} --game fe -- %command% --fullscreen", util::quote(&runner.to_string_lossy())));
+        }
         assert_eq!(sc.wrapped_key().as_deref(), Some("fe"));
         assert_eq!(sc.name, "火焰纹章");
-        assert!(util::same_path(&sc.icon, EXE));
+        // Windows keeps the game's icon on the wrapper.
+        if cfg!(windows) {
+            assert!(util::same_path(&sc.icon, EXE));
+        }
 
         let mut cfg = AppConfig::default();
         cfg.steam.root = Some(root.clone());
@@ -704,9 +812,15 @@ mod tests {
         };
         assert_eq!(health(&cfg, &game), Health::Ok);
 
-        // The user points the shortcut at a new emulator build in Steam.
-        edit_shortcut(&root, "123", appid, |e| e.set_str("Exe", &util::quote(r"D:\New\fefw.exe"))).unwrap();
-        assert!(matches!(health(&cfg, &game), Health::Changed { ref exe, .. } if exe == r"D:\New\fefw.exe"));
+        // The user points the shortcut at a new emulator build in Steam
+        // (on Linux: removes the wrapper from the launch options).
+        if cfg!(windows) {
+            edit_shortcut(&root, "123", appid, |e| e.set_str("Exe", &util::quote(r"D:\New\fefw.exe"))).unwrap();
+            assert!(matches!(health(&cfg, &game), Health::Changed { ref exe, .. } if exe == r"D:\New\fefw.exe"));
+        } else {
+            edit_shortcut(&root, "123", appid, |e| e.set_str("LaunchOptions", "--fullscreen")).unwrap();
+            assert!(matches!(health(&cfg, &game), Health::Changed { .. }));
+        }
 
         unwrap(&root, "123", appid, &game, Some(&original)).unwrap();
         let sc = find_shortcut(&root, "123", appid).unwrap().unwrap();

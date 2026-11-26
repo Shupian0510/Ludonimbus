@@ -2,8 +2,10 @@
 //!
 //! Launchers often start the real game and exit immediately, so the game is
 //! started inside a Windows Job Object and we wait until the job has no
-//! active processes. Process-name watching is the fallback for games that
-//! escape the job.
+//! active processes. On Linux the wrapper becomes a "child subreaper":
+//! processes whose parent exits are handed to it instead of init, so it can
+//! wait until none of its descendants is left (Proton's wine processes
+//! included). Process-name watching is the fallback for games that escape.
 
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -15,7 +17,11 @@ pub fn process_names() -> Vec<String> {
     {
         win::process_names()
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        unix::process_names()
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         Vec::new()
     }
@@ -34,11 +40,23 @@ pub fn pid_alive(pid: u32) -> bool {
     {
         win::pid_alive(pid)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
+    {
+        unix::pid_alive(pid)
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = pid;
         false
     }
+}
+
+/// Linux: let the wrapper finish its work when Steam ends the game (its
+/// "Exit game" sends SIGTERM to the whole process tree): the signal is
+/// noted, the game exits, and the saves are still uploaded.
+pub fn defer_termination() {
+    #[cfg(unix)]
+    unix::defer_sigterm();
 }
 
 /// Start the game and block until it (and everything it spawned) has exited.
@@ -60,6 +78,8 @@ pub fn launch_and_wait(
 
     #[cfg(windows)]
     let job = win::Job::new().ok();
+    #[cfg(target_os = "linux")]
+    let subreaper = unix::become_subreaper();
 
     let mut child = cmd
         .spawn()
@@ -77,7 +97,9 @@ pub fn launch_and_wait(
         },
         None => false,
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    let tracked = subreaper;
+    #[cfg(not(any(windows, target_os = "linux")))]
     let tracked = false;
 
     let started = Instant::now();
@@ -101,7 +123,14 @@ pub fn launch_and_wait(
             (Some(j), true) => j.active_processes() > 0,
             _ => exit.is_none(),
         };
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        let active = if tracked {
+            unix::reap_orphans(child.id());
+            exit.is_none() || unix::live_descendants(std::process::id(), child.id()) > 0
+        } else {
+            exit.is_none()
+        };
+        #[cfg(not(any(windows, target_os = "linux")))]
         let active = exit.is_none();
 
         if watch_game {
@@ -131,7 +160,7 @@ pub fn launch_and_wait(
         std::thread::sleep(Duration::from_millis(if watch_game { 1000 } else { 500 }));
     }
     if tracked {
-        log("job is empty");
+        log("all started processes have exited");
     }
     let (code, main_lifetime) = match exit {
         Some(e) => e,
@@ -388,6 +417,127 @@ mod win {
             let ok = GetExitCodeProcess(h, &mut code);
             CloseHandle(h);
             ok != 0 && code == STILL_ACTIVE
+        }
+    }
+}
+
+#[cfg(unix)]
+mod unix {
+    use std::collections::HashMap;
+
+    /// `(pid, parent pid, state)` of every process, from `/proc/<pid>/stat`.
+    fn table() -> Vec<(u32, u32, char)> {
+        let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+        rd.flatten()
+            .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+            .filter_map(|pid| {
+                let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+                // `pid (name) S ppid …`; the name may hold spaces and parentheses.
+                let rest = &stat[stat.rfind(')')? + 2..];
+                let mut it = rest.split_whitespace();
+                let state = it.next()?.chars().next()?;
+                let ppid = it.next()?.parse().ok()?;
+                Some((pid, ppid, state))
+            })
+            .collect()
+    }
+
+    /// Names of the running processes, lowercase: the short name, the full
+    /// program name, and for Windows games under Proton / Wine the `.exe`
+    /// on their command line (that's what the game's rules list).
+    pub fn process_names() -> Vec<String> {
+        let mut out = Vec::new();
+        let Ok(rd) = std::fs::read_dir("/proc") else { return out };
+        for e in rd.flatten() {
+            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+            if let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+                out.push(comm.trim().to_lowercase());
+            }
+            let Ok(cmd) = std::fs::read(format!("/proc/{pid}/cmdline")) else { continue };
+            for (i, arg) in cmd.split(|&b| b == 0).filter(|a| !a.is_empty()).enumerate() {
+                let arg = String::from_utf8_lossy(arg);
+                let name = arg.rsplit(['/', '\\']).next().unwrap_or(&arg).to_lowercase();
+                if i == 0 || name.ends_with(".exe") {
+                    out.push(name);
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    pub fn pid_alive(pid: u32) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat.rfind(')').and_then(|i| stat[i + 2..].chars().next()).is_some_and(|s| s != 'Z'),
+            Err(_) => false,
+        }
+    }
+
+    /// Become the reaper of our orphaned descendants (Linux 3.4+).
+    #[cfg(target_os = "linux")]
+    pub fn become_subreaper() -> bool {
+        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1 as libc::c_ulong, 0, 0, 0) == 0 }
+    }
+
+    /// Live (not zombie) processes below `root`, other than ones we don't
+    /// wait for. `main` is the started process (std waits for it itself).
+    pub fn live_descendants(root: u32, main: u32) -> usize {
+        let t = table();
+        let parent: HashMap<u32, (u32, char)> = t.iter().map(|&(p, pp, s)| (p, (pp, s))).collect();
+        t.iter()
+            .filter(|&&(pid, _, state)| state != 'Z' && pid != root)
+            .filter(|&&(pid, _, _)| {
+                let mut cur = pid;
+                for _ in 0..64 {
+                    match parent.get(&cur) {
+                        Some(&(pp, _)) if pp == root => return true,
+                        Some(&(pp, _)) if pp > 1 => cur = pp,
+                        _ => return false,
+                    }
+                }
+                false
+            })
+            .filter(|&&(pid, _, _)| pid != main || pid_alive(main))
+            .count()
+    }
+
+    /// Collect the exit status of orphans handed to us (not the started
+    /// process: `Child` collects that one).
+    pub fn reap_orphans(main: u32) {
+        let me = std::process::id();
+        for (pid, ppid, state) in table() {
+            if ppid == me && state == 'Z' && pid != main {
+                let mut status = 0;
+                unsafe {
+                    libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG);
+                }
+            }
+        }
+    }
+
+    static TERM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    extern "C" fn on_term(_: libc::c_int) {
+        TERM.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn defer_sigterm() {
+        unsafe {
+            libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn sees_itself() {
+            assert!(pid_alive(std::process::id()));
+            assert!(!pid_alive(u32::MAX - 1));
+            let names = process_names();
+            assert!(!names.is_empty());
         }
     }
 }

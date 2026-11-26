@@ -59,6 +59,17 @@ pub fn effective(game: &GameEntry) -> SaveSpec {
     if adapter.is_some_and(|a| a.skip_junk) {
         spec.exclude.extend(junk_excludes(&spec.saves));
     }
+    // A Switch game's save moves between Ryujinx and the yuzu family: leave
+    // out the size file yuzu keeps in each save folder (it isn't the game's).
+    if adapter.is_some_and(|a| a.game_id.as_deref() == Some("switch")) {
+        for s in &spec.saves {
+            let Ok((root, _)) = split_pattern(s) else { continue };
+            let e = format!("{{{root}}}/{}", crate::switch::YUZU_SIZE_FILE);
+            if crate::switch::parse_root(&root).is_some() && !spec.exclude.contains(&e) {
+                spec.exclude.push(e);
+            }
+        }
+    }
     spec
 }
 
@@ -90,6 +101,38 @@ pub fn install_dir(game: &GameEntry) -> Option<PathBuf> {
         .or_else(|| game.exe.as_ref().and_then(|e| e.parent().map(Path::to_path_buf)))
 }
 
+/// The Proton prefix a Windows game runs in on this device (Linux): the
+/// game's program is an `.exe` and it starts from a Steam shortcut, whose
+/// Proton prefix is `steamapps/compatdata/<shortcut id>/pfx` in Steam's
+/// folder (docs/plan-platforms.md §1.3). The prefix may not exist yet.
+pub fn proton_prefix(game: &GameEntry) -> Option<PathBuf> {
+    if !cfg!(unix) {
+        return None;
+    }
+    let exe = game.exe.as_ref()?;
+    if !exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
+        return None;
+    }
+    let link = game.steam.as_ref()?;
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| crate::config::load().ok().and_then(|c| crate::steam::root(&c))).clone()?;
+    Some(root.join("steamapps").join("compatdata").join(link.appid.to_string()).join("pfx"))
+}
+
+/// What `{home}`, `{appdata}`, `{localappdata}` and `{documents}` are inside
+/// a Proton / Wine prefix: the Windows user folder `steamuser`.
+pub fn prefix_roots(pfx: &Path) -> BTreeMap<String, PathBuf> {
+    let user = pfx.join("drive_c").join("users").join("steamuser");
+    // Older prefixes call it "My Documents".
+    let docs = ["Documents", "My Documents"].iter().map(|d| user.join(d)).find(|p| p.is_dir()).unwrap_or_else(|| user.join("Documents"));
+    BTreeMap::from([
+        ("home".to_string(), user.clone()),
+        ("appdata".to_string(), user.join("AppData").join("Roaming")),
+        ("localappdata".to_string(), user.join("AppData").join("Local")),
+        ("documents".to_string(), docs),
+    ])
+}
+
 /// Roots every game can use.
 pub fn builtin_roots(install: Option<&Path>) -> BTreeMap<String, PathBuf> {
     let mut m = BTreeMap::new();
@@ -107,6 +150,16 @@ pub fn builtin_roots(install: Option<&Path>) -> BTreeMap<String, PathBuf> {
     }
     if let Some(p) = dirs::document_dir() {
         m.insert("documents".to_string(), p);
+    }
+    // Linux: where programs keep settings and data (XDG); emulator rules
+    // use these for their Linux folders (`rootsLinux`).
+    if cfg!(unix) {
+        if let Some(p) = dirs::config_dir() {
+            m.insert("xdgconfig".to_string(), p);
+        }
+        if let Some(p) = dirs::data_dir() {
+            m.insert("xdgdata".to_string(), p);
+        }
     }
     m
 }
@@ -133,7 +186,7 @@ pub fn expand(template: &str, known: &BTreeMap<String, PathBuf>) -> Result<PathB
         rest = &rest[end + 1..];
     }
     out.push_str(rest);
-    Ok(normalize(&PathBuf::from(out.replace('/', "\\"))))
+    Ok(normalize(&PathBuf::from(crate::util::native_sep(&out))))
 }
 
 /// Remove `.` and `..` components without touching the disk.
@@ -181,6 +234,10 @@ pub fn resolve_root_name(name: &str, known: &BTreeMap<String, PathBuf>) -> Optio
     if let Some(p) = known.get(name) {
         return Some(p.clone());
     }
+    // Linux and macOS: `abs/…` is a path from the root folder.
+    if cfg!(unix) && name == "abs" {
+        return Some(PathBuf::from("/"));
+    }
     let letter = name.strip_prefix("drive-")?;
     if letter.len() == 1 && letter.chars().all(|c| c.is_ascii_alphabetic()) {
         return Some(PathBuf::from(format!("{}:\\", letter.to_uppercase())));
@@ -191,6 +248,10 @@ pub fn resolve_root_name(name: &str, known: &BTreeMap<String, PathBuf>) -> Optio
 /// Resolve all roots for a game on this device.
 pub fn resolve_roots(game: &GameEntry, spec: &SaveSpec) -> Result<BTreeMap<String, PathBuf>> {
     let mut roots = builtin_roots(install_dir(game).as_deref());
+    // A Windows game under Proton keeps its saves in the prefix.
+    if let Some(pfx) = proton_prefix(game) {
+        roots.extend(prefix_roots(&pfx));
+    }
     for (name, tpl) in &spec.roots {
         let p = expand_root(tpl, &roots)?;
         roots.insert(name.clone(), p);
@@ -222,16 +283,19 @@ pub fn split_pattern(pattern: &str) -> Result<(String, String)> {
 
 /// Turn an absolute path into `{root}/rest` using the most specific root.
 pub fn tokenize(abs: &Path, roots: &BTreeMap<String, PathBuf>) -> String {
-    let abs_s = abs.to_string_lossy().replace('/', "\\");
-    let abs_l = abs_s.to_lowercase();
+    let sep = std::path::MAIN_SEPARATOR;
+    // File names compare case-insensitively on Windows only.
+    let fold = |s: &str| if cfg!(windows) { s.to_lowercase() } else { s.to_string() };
+    let abs_s = crate::util::native_sep(&abs.to_string_lossy());
+    let abs_l = fold(&abs_s);
     let mut best: Option<(&String, usize)> = None;
     for (name, p) in roots {
-        let base = p.to_string_lossy().replace('/', "\\");
-        let base_l = base.trim_end_matches('\\').to_lowercase();
+        let base = crate::util::native_sep(&p.to_string_lossy());
+        let base_l = fold(base.trim_end_matches(sep));
         if base_l.is_empty() {
             continue;
         }
-        if abs_l.starts_with(&(base_l.clone() + "\\")) && best.is_none_or(|(_, len)| base_l.len() > len) {
+        if abs_l.starts_with(&format!("{base_l}{sep}")) && best.is_none_or(|(_, len)| base_l.len() > len) {
             best = Some((name, base_l.len()));
         }
     }
@@ -246,7 +310,7 @@ pub fn tokenize(abs: &Path, roots: &BTreeMap<String, PathBuf>) -> String {
             let rest = abs_s[2..].trim_start_matches('\\').replace('\\', "/");
             format!("drive-{}/{}", d.to_ascii_lowercase(), rest)
         }
-        _ => format!("abs/{}", abs_s.replace('\\', "/")),
+        _ => format!("abs/{}", abs_s.replace('\\', "/").trim_start_matches('/')),
     }
 }
 
@@ -266,13 +330,22 @@ mod tests {
     #[test]
     fn tokenizes() {
         let mut roots = BTreeMap::new();
-        roots.insert("home".to_string(), PathBuf::from(r"C:\Users\me"));
-        roots.insert("appdata".to_string(), PathBuf::from(r"C:\Users\me\AppData\Roaming"));
-        assert_eq!(
-            tokenize(Path::new(r"C:\Users\me\AppData\Roaming\Game\a.sav"), &roots),
-            "appdata/Game/a.sav"
-        );
-        assert_eq!(tokenize(Path::new(r"D:\Saves\x.sav"), &roots), "drive-d/Saves/x.sav");
+        if cfg!(windows) {
+            roots.insert("home".to_string(), PathBuf::from(r"C:\Users\me"));
+            roots.insert("appdata".to_string(), PathBuf::from(r"C:\Users\me\AppData\Roaming"));
+            assert_eq!(tokenize(Path::new(r"C:\Users\me\AppData\Roaming\Game\a.sav"), &roots), "appdata/Game/a.sav");
+            assert_eq!(tokenize(Path::new(r"c:\users\ME\appdata\roaming\Game\a.sav"), &roots), "appdata/Game/a.sav");
+            assert_eq!(tokenize(Path::new(r"D:\Saves\x.sav"), &roots), "drive-d/Saves/x.sav");
+        } else {
+            roots.insert("home".to_string(), PathBuf::from("/home/me"));
+            roots.insert("appdata".to_string(), PathBuf::from("/home/me/.config/"));
+            assert_eq!(tokenize(Path::new("/home/me/.config/Game/a.sav"), &roots), "appdata/Game/a.sav");
+            // Linux file names are case-sensitive.
+            assert_eq!(tokenize(Path::new("/home/me/.Config/Game/a.sav"), &roots), "home/.Config/Game/a.sav");
+            // Outside every root: from the root folder, and back.
+            assert_eq!(tokenize(Path::new("/mnt/saves/x.sav"), &roots), "abs/mnt/saves/x.sav");
+            assert_eq!(resolve_root_name("abs", &roots), Some(PathBuf::from("/")));
+        }
     }
 
     #[test]

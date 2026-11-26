@@ -10,7 +10,7 @@ Open Settings → Cloud and pick one:
 |---|---|
 | **Google Drive** | Click "Connect Google Drive" and sign in in your browser. See [Google Drive](../clouds/google-drive.md) |
 | **Quark** | Scan a QR code with the Quark app (experimental). See [Quark](../clouds/quark.md) |
-| **WebDAV** | A NAS (Synology, QNAP…), Nextcloud, Jianguoyun, or Baidu / Aliyun through OpenList / AList. Enter the address, user name and password, then click "Test connection". See [WebDAV](../clouds/webdav.md) |
+| **WebDAV** | A NAS (Synology, QNAP…), Nextcloud, Jianguoyun, or a WebDAV service you run yourself, such as OpenList / AList. Enter the address, user name and password, then click "Test connection". See [WebDAV](../clouds/webdav.md) |
 | **S3-compatible storage** | MinIO on a NAS, Cloudflare R2, Aliyun OSS, Tencent COS. See [S3-compatible storage](../clouds/s3.md) |
 | **Folder** | A OneDrive / Google Drive desktop sync folder, a NAS share, a USB drive. See [Local / synced folder](../clouds/folder.md) |
 

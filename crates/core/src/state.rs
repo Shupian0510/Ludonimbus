@@ -30,6 +30,16 @@ pub struct GameState {
     pub pending: Vec<String>,
     pub cloud_def_uploaded: bool,
     pub last_check: Option<serde_json::Value>,
+    /// Artwork kind → hash of the image last uploaded / downloaded by
+    /// [`crate::artsync`].
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub art_pushed: std::collections::BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub art_pulled: std::collections::BTreeMap<String, String>,
+    /// A newer save version of another version of the game the user chose
+    /// not to apply (see [`crate::savelib::newer_version`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub newer_dismissed: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

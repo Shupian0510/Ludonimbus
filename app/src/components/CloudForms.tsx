@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgress, OpenListInfo, S3Config, Settings, WebDavConfig } from "../api";
 import { bytes } from "../format";
 import { Messages, msg, useI18n, useT } from "../i18n";
+import { BAIDU_AUTHORIZATIONS_URL, docsUrl } from "../links";
 import { scene, sceneIs } from "../scene";
 import { Button, PathChoice, PathField, Toggle, useUi } from "./ui";
 
@@ -300,6 +301,30 @@ export function S3Option({ settings, done }: { settings: Settings; done: (msg: s
   );
 }
 
+/** How to withdraw Ludonimbus's access to Baidu Netdisk, in the app and on Baidu's side. */
+export function BaiduRevokeHelp({ folder }: { folder: string }) {
+  const { t, lang } = useI18n();
+  const b = t.cloud.baidu;
+  return (
+    <details className="revoke-help">
+      <summary>{b.revoke}</summary>
+      <ol>
+        <li>{b.revokeApp}</li>
+        <li>
+          {b.revokeBaidu}{" "}
+          <button className="link small" onClick={() => api.openPath(BAIDU_AUTHORIZATIONS_URL).catch(() => undefined)}>
+            {b.revokeOpen}
+          </button>
+        </li>
+        <li>{b.revokeData(folder)}</li>
+      </ol>
+      <button className="link small" onClick={() => api.openPath(docsUrl(lang, lang === "en" ? "privacy.html#baidu-netdisk" : "privacy.html#baidu")).catch(() => undefined)}>
+        {b.revokeMore}
+      </button>
+    </details>
+  );
+}
+
 export function BaiduOption({ settings, done }: { settings: Settings; done: (msg: string) => Promise<void> }) {
   const ui = useUi();
   const t = useT();
@@ -349,6 +374,8 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
       <div className="cloud-option-head">
         <b>{t.cloudNames.baiduPan}</b>
         <span className="muted small">{b.intro(folder)}</span>
+        {/* When connected, Settings shows it next to the current cloud. */}
+        {!current && <BaiduRevokeHelp folder={folder} />}
       </div>
       {(needApp || showAdvanced) && !waiting && (
         <div className="form compact">
@@ -367,6 +394,7 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
             <span>{b.appName}</span>
             <input className="input" value={appName} onChange={(e) => setAppName(e.target.value)} placeholder={settings.baiduAppName} />
           </label>
+          <p className="muted small">{b.secretNote}</p>
         </div>
       )}
       {waiting && (

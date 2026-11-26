@@ -69,7 +69,7 @@ impl Bases {
             .iter()
             .filter_map(|(name, base)| {
                 let b = path_key(base);
-                (key == b || key.starts_with(&format!("{b}\\"))).then_some((name.clone(), base.clone(), b.len()))
+                (key == b || key.starts_with(&format!("{b}{}", std::path::MAIN_SEPARATOR))).then_some((name.clone(), base.clone(), b.len()))
             })
             .max_by_key(|(_, _, len)| *len);
         let (name, base) = match best {
@@ -241,7 +241,7 @@ fn rel_patterns(dir: &Path, patterns: &[String], roots: &BTreeMap<String, PathBu
         let rk = path_key(&r);
         let prefix = if rk == d {
             String::new()
-        } else if let Some(sub) = rk.strip_prefix(&format!("{d}\\")) {
+        } else if let Some(sub) = rk.strip_prefix(&format!("{d}{}", std::path::MAIN_SEPARATOR)) {
             globset::escape(&sub.replace('\\', "/"))
         } else {
             continue;
@@ -664,16 +664,17 @@ mod tests {
 
     #[test]
     fn bases_take_the_deepest_folder() {
-        let mut b = Bases::new(Some(Path::new("D:\\Emu\\Cemu")), Some(Path::new("D:\\Emu")));
-        assert_eq!(b.tokenize(Path::new("D:\\Emu\\Cemu\\Cemu.exe")), "{program}/Cemu.exe");
-        assert_eq!(b.tokenize(Path::new("D:\\Emu\\Game\\code\\a.rpx")), "{content}/Game/code/a.rpx");
-        assert_eq!(b.tokenize(Path::new("E:\\Other\\x.bin")), "{extra0}/x.bin");
-        assert_eq!(b.tokenize(Path::new("E:\\Other\\y.bin")), "{extra0}/y.bin");
+        let p = crate::util::test_path;
+        let mut b = Bases::new(Some(&p("D:\\Emu\\Cemu")), Some(&p("D:\\Emu")));
+        assert_eq!(b.tokenize(&p("D:\\Emu\\Cemu\\Cemu.exe")), "{program}/Cemu.exe");
+        assert_eq!(b.tokenize(&p("D:\\Emu\\Game\\code\\a.rpx")), "{content}/Game/code/a.rpx");
+        assert_eq!(b.tokenize(&p("E:\\Other\\x.bin")), "{extra0}/x.bin");
+        assert_eq!(b.tokenize(&p("E:\\Other\\y.bin")), "{extra0}/y.bin");
         assert_eq!(b.recorded(["{program}/a", "{extra0}/x.bin", "{appdata}/z"].into_iter()).len(), 2);
-        let mut r = Bases::new(Some(Path::new("C:\\New\\Cemu")), Some(Path::new("C:\\ROMs")));
-        r.set("extra0", PathBuf::from("C:\\ROMs\\extra0"));
-        assert_eq!(r.resolve("{content}/Game/code/a.rpx").unwrap(), PathBuf::from("C:\\ROMs\\Game\\code\\a.rpx"));
-        assert_eq!(r.resolve("{extra0}/x.bin").unwrap(), PathBuf::from("C:\\ROMs\\extra0\\x.bin"));
+        let mut r = Bases::new(Some(&p("C:\\New\\Cemu")), Some(&p("C:\\ROMs")));
+        r.set("extra0", p("C:\\ROMs\\extra0"));
+        assert_eq!(r.resolve("{content}/Game/code/a.rpx").unwrap(), p("C:\\ROMs\\Game\\code\\a.rpx"));
+        assert_eq!(r.resolve("{extra0}/x.bin").unwrap(), p("C:\\ROMs\\extra0\\x.bin"));
         assert!(r.resolve("{nope}/x").is_err());
         assert!(r.resolve("{program}/../x").is_err());
     }
@@ -696,9 +697,10 @@ mod tests {
 
     #[test]
     fn relative_patterns_for_roots_inside_the_folder() {
-        let roots = BTreeMap::from([("install".to_string(), PathBuf::from("D:\\Emu")), ("mlc".to_string(), PathBuf::from("D:\\Emu\\mlc01"))]);
+        let p = crate::util::test_path;
+        let roots = BTreeMap::from([("install".to_string(), p("D:\\Emu")), ("mlc".to_string(), p("D:\\Emu\\mlc01"))]);
         let pats = vec!["{mlc}/usr/title/**".to_string(), "{install}/log.txt".to_string(), "{mlc}".to_string()];
-        assert_eq!(rel_patterns(Path::new("D:\\Emu"), &pats, &roots), vec!["mlc01/usr/title/**", "log.txt", "mlc01"]);
-        assert!(rel_patterns(Path::new("D:\\Other"), &pats, &roots).is_empty());
+        assert_eq!(rel_patterns(&p("D:\\Emu"), &pats, &roots), vec!["mlc01/usr/title/**", "log.txt", "mlc01"]);
+        assert!(rel_patterns(&p("D:\\Other"), &pats, &roots).is_empty());
     }
 }

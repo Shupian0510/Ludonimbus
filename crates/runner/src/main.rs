@@ -4,16 +4,22 @@
 //! ludonimbus-run --game <key>                 # exe/args come from Ludonimbus config
 //! ludonimbus-run --game <key> -- <cmd...>     # explicit command (e.g. Steam %command%)
 //! ```
-//! 1. sync before launch (pull newer cloud saves, ask on conflict)
+//! 1. sync before launch (pull newer cloud saves, ask on conflict), and offer
+//!    newer saves of another version of the game (save library)
 //! 2. start the game and wait for the whole process tree to exit
-//! 3. sync after exit (upload new saves)
+//! 3. sync after exit (upload new saves); without the tray app, also finish
+//!    the sessions of terminated wrappers and upload screenshots
+//!
+//! Questions are system dialogs on the desktop and a full-screen window on
+//! handhelds (`ludonimbus-app --prompt`, see `core::prompt`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use anyhow::{anyhow, bail, Result};
-use ludonimbus_core::config::GameEntry;
+use ludonimbus_core::config::{self, GameEntry};
+use ludonimbus_core::prompt::Request;
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution};
-use ludonimbus_core::{games, logger, paths, playtime, process, relocate, spec, util};
+use ludonimbus_core::{catchup, games, handheld, logger, paths, playtime, process, prompt, relocate, savelib, spec, tr, transfer, util};
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -25,15 +31,13 @@ fn log(msg: impl AsRef<str>) {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     log(format!("args: {args:?}"));
+    // Linux: Steam's "Exit game" signals the whole tree; finish uploading first.
+    process::defer_termination();
     let code = match run(&args) {
         Ok(c) => c,
         Err(e) => {
             log(format!("fatal: {e:#}"));
-            MessageDialog::new()
-                .set_title("Ludonimbus")
-                .set_description(format!("{e:#}"))
-                .set_level(MessageLevel::Error)
-                .show();
+            tell("Ludonimbus", &format!("{e:#}"), "error");
             1
         }
     };
@@ -61,17 +65,62 @@ fn parse_args(args: &[String]) -> Result<(String, Option<Vec<String>>)> {
     Ok((key.ok_or_else(|| anyhow!(ludonimbus_core::tr!("用法：ludonimbus-run --game <游戏 id>", "Usage: ludonimbus-run --game <game id>")))?, None))
 }
 
+/// Whether questions go to a full-screen window (handhelds) instead of
+/// system dialogs.
+fn windowed() -> bool {
+    match config::load() {
+        Ok(cfg) => handheld::wants_prompt_window(&cfg),
+        Err(_) => handheld::steam_gamepad_ui(),
+    }
+}
+
+/// Ask a question; returns the chosen button's id (`None`: closed).
+fn ask(req: &Request) -> Option<String> {
+    if windowed() {
+        match prompt::ask_window(req) {
+            Ok(choice) => return choice,
+            Err(e) => log(format!("prompt window failed ({e:#}); using a system dialog")),
+        }
+    }
+    system_dialog(req)
+}
+
+fn system_dialog(req: &Request) -> Option<String> {
+    let level = match req.level.as_str() {
+        "warn" => MessageLevel::Warning,
+        "error" => MessageLevel::Error,
+        _ => MessageLevel::Info,
+    };
+    let dialog = MessageDialog::new().set_title(&req.title).set_description(&req.text).set_level(level);
+    let b = &req.buttons;
+    let by_label = |l: &str| b.iter().find(|x| x.label == l).map(|x| x.id.clone());
+    match b.len() {
+        0 | 1 => {
+            dialog.set_buttons(MessageButtons::Ok).show();
+            b.first().map(|x| x.id.clone())
+        }
+        2 => match dialog.set_buttons(MessageButtons::OkCancelCustom(b[0].label.clone(), b[1].label.clone())).show() {
+            MessageDialogResult::Custom(l) => by_label(&l),
+            MessageDialogResult::Ok | MessageDialogResult::Yes => Some(b[0].id.clone()),
+            _ => Some(b[1].id.clone()),
+        },
+        _ => match dialog.set_buttons(MessageButtons::YesNoCancelCustom(b[0].label.clone(), b[1].label.clone(), b[2].label.clone())).show() {
+            MessageDialogResult::Custom(l) => by_label(&l),
+            MessageDialogResult::Yes => Some(b[0].id.clone()),
+            MessageDialogResult::No => Some(b[1].id.clone()),
+            _ => Some(b[2].id.clone()),
+        },
+    }
+}
+
+/// Show a message with an OK button.
+fn tell(title: &str, text: &str, level: &str) {
+    ask(&Request::new(title, text, level).button("ok", tr!("确定", "OK"), "a"));
+}
+
 /// Ask a yes/no question.
-fn confirm(title: &str, text: &str) -> bool {
-    matches!(
-        MessageDialog::new()
-            .set_title(title)
-            .set_description(text)
-            .set_level(MessageLevel::Info)
-            .set_buttons(MessageButtons::YesNo)
-            .show(),
-        MessageDialogResult::Yes
-    )
+fn confirm(title: &str, text: &str, yes: &str, no: &str) -> bool {
+    ask(&Request::new(title, text, "info").button("yes", yes, "a").button("no", no, "b")).as_deref() == Some("yes")
 }
 
 /// Make sure the game exe exists; offer the new location after an update.
@@ -93,13 +142,22 @@ fn ensure_exe(game: &mut GameEntry) -> Result<()> {
             game.name,
             candidate.display()
         );
-        if confirm(&ludonimbus_core::tr!("Ludonimbus · 游戏位置变了", "Ludonimbus · The game has moved"), &text) {
+        let title = tr!("Ludonimbus · 游戏位置变了", "Ludonimbus · The game has moved");
+        if confirm(&title, &text, &tr!("改用这个位置", "Use this location"), &tr!("不用", "No")) {
             *game = games::set_exe(&game.key, &candidate)?;
             log(format!("{}: relocated to {}", game.key, candidate.display()));
             return Ok(());
         }
     }
 
+    // No file picker in a controller-only screen.
+    if windowed() {
+        bail!(tr!(
+            "找不到「{}」的游戏程序：{old}\n\n请在桌面模式里打开 Ludonimbus，在游戏页设置游戏位置。",
+            "The program of \"{}\" wasn't found: {old}\n\nOpen Ludonimbus in desktop mode and set the game's location on its page.",
+            game.name
+        ));
+    }
     let start_dir = game
         .exe
         .as_ref()
@@ -148,25 +206,74 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
         local_files,
         human(local_size),
     );
-    let cloud_label = ludonimbus_core::tr!("使用云端存档", "Use cloud saves");
-    let local_label = ludonimbus_core::tr!("使用本机存档", "Use this PC's saves");
-    let cancel_label = ludonimbus_core::tr!("暂不启动", "Don't start");
-    let result = MessageDialog::new()
-        .set_title(ludonimbus_core::tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"))
-        .set_description(text)
-        .set_level(MessageLevel::Warning)
-        .set_buttons(MessageButtons::YesNoCancelCustom(
-            cloud_label.clone(),
-            local_label.clone(),
-            cancel_label.clone(),
-        ))
-        .show();
-    match result {
-        MessageDialogResult::Custom(s) if s == cloud_label => Choice::Cloud,
-        MessageDialogResult::Custom(s) if s == local_label => Choice::Local,
-        MessageDialogResult::Yes => Choice::Cloud,
-        MessageDialogResult::No => Choice::Local,
+    let req = Request::new(tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"), text, "warn")
+        .button("cloud", tr!("使用云端存档", "Use cloud saves"), "a")
+        .button("local", tr!("使用本机存档", "Use this PC's saves"), "x")
+        .button("cancel", tr!("暂不启动", "Don't start"), "b");
+    match ask(&req).as_deref() {
+        Some("cloud") => Choice::Cloud,
+        Some("local") => Choice::Local,
         _ => Choice::Cancel,
+    }
+}
+
+/// Sync, trying again a couple of times while the cloud is unreachable: a
+/// handheld just woken from sleep needs a few seconds to get its network
+/// back.
+fn sync_retrying(ctx: &Ctx, game: &GameEntry, res: Resolution, trigger: Trigger) -> Result<Outcome> {
+    let waits: &[u64] = if matches!(trigger, Trigger::PreLaunch) { &[2, 4] } else { &[3, 6] };
+    let mut out = sync::sync(ctx, game, res, trigger)?;
+    for &w in waits {
+        if !matches!(out, Outcome::Offline { .. } | Outcome::Queued { .. }) {
+            break;
+        }
+        log(format!("{}: cloud unreachable, trying again in {w} s", game.key));
+        std::thread::sleep(Duration::from_secs(w));
+        out = sync::sync(ctx, game, res, trigger)?;
+    }
+    Ok(out)
+}
+
+/// Another version of the game (say the Xbox version, played on the PC) has
+/// newer saves than this one: offer to apply them before starting.
+fn offer_newer_version(ctx: &Ctx, game: &GameEntry) {
+    let newer = match savelib::newer_version(ctx, game) {
+        Ok(Some(n)) => n,
+        Ok(None) => return,
+        Err(e) => {
+            log(format!("{}: checking other versions failed: {e:#}", game.key));
+            return;
+        }
+    };
+    let when = newer.snapshot.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
+    let text = tr!(
+        "「{}」的另一个版本（{}）有更新的存档：{} 在 {} 保存。\n\n要先把它应用到这个版本再开始吗？这个版本现在的存档会先保存到云端，可以在 Ludonimbus 里撤回。",
+        "Another version of \"{}\" ({}) has newer saves: saved by {} at {}.\n\nApply them to this version before starting? This version's current saves are kept in the cloud first, so you can undo it in Ludonimbus.",
+        game.name,
+        newer.label,
+        newer.snapshot.device_name,
+        when
+    );
+    let req = Request::new(tr!("Ludonimbus · 另一个版本有更新的存档", "Ludonimbus · Newer saves in another version"), text, "info")
+        .button("apply", tr!("应用后开始", "Apply and start"), "a")
+        .button("skip", tr!("不用", "No thanks"), "b");
+    if ask(&req).as_deref() != Some("apply") {
+        let _ = savelib::dismiss_newer(&game.key, &newer.snapshot.id);
+        return;
+    }
+    match transfer::apply(ctx, &newer.key, &newer.snapshot.id, &game.key, None) {
+        Ok(out) => log(format!("{}: applied {} of {}: {out:?}", game.key, newer.snapshot.id, newer.key)),
+        Err(e) => {
+            log(format!("{}: applying {} failed: {e:#}", game.key, newer.key));
+            tell(
+                "Ludonimbus",
+                &tr!(
+                    "没能应用另一个版本的存档：\n{e:#}\n\n游戏会用现在的存档启动。",
+                    "The other version's saves couldn't be applied:\n{e:#}\n\nThe game starts with its current saves."
+                ),
+                "warn",
+            );
+        }
     }
 }
 
@@ -221,9 +328,12 @@ fn run(args: &[String]) -> Result<i32> {
     let lock = RunningLock::create(&key);
 
     let launch = match explicit {
+        // Steam's %command% (Linux): Steam already changed to the shortcut's
+        // start folder, and the command may begin with Proton or a tool
+        // such as gamemoderun, not with the game.
         Some(cmd) if !cmd.is_empty() => {
             let exe = PathBuf::from(&cmd[0]);
-            let work_dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+            let work_dir = std::env::current_dir().unwrap_or_else(|_| exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")));
             Launch { exe, args: cmd[1..].to_vec(), work_dir }
         }
         _ => {
@@ -247,7 +357,7 @@ fn run(args: &[String]) -> Result<i32> {
     }
 
     if game.auto_sync {
-        match sync::sync(&ctx, &game, Resolution::Auto, Trigger::PreLaunch) {
+        match sync_retrying(&ctx, &game, Resolution::Auto, Trigger::PreLaunch) {
             Ok(Outcome::Conflict { local_files, local_size, cloud }) => {
                 let res = match ask_conflict(&game, local_files, local_size, &cloud) {
                     Choice::Cloud => Resolution::UseCloud,
@@ -257,14 +367,19 @@ fn run(args: &[String]) -> Result<i32> {
                 let out = sync::sync(&ctx, &game, res, Trigger::PreLaunch)?;
                 log(format!("{key}: conflict resolved: {out:?}"));
             }
-            Ok(out) => log(format!("{key}: pre-launch {out:?}")),
+            Ok(out) => {
+                log(format!("{key}: pre-launch {out:?}"));
+                if !matches!(out, Outcome::Offline { .. }) {
+                    offer_newer_version(&ctx, &game);
+                }
+            }
             Err(e) => {
                 log(format!("{key}: pre-launch sync failed: {e:#}"));
-                let text = ludonimbus_core::tr!(
+                let text = tr!(
                     "启动前同步存档失败：\n{e:#}\n\n仍然启动游戏吗？退出游戏后会再尝试上传。",
                     "Syncing saves before launch failed:\n{e:#}\n\nStart the game anyway? Ludonimbus will try to upload again after you quit."
                 );
-                if !confirm("Ludonimbus", &text) {
+                if !confirm("Ludonimbus", &text, &tr!("仍然启动", "Start anyway"), &tr!("不启动", "Don't start")) {
                     return Ok(0);
                 }
             }
@@ -333,18 +448,18 @@ fn run(args: &[String]) -> Result<i32> {
         lock.phase("uploading");
         settle();
         log(format!("{key}: uploading saves"));
-        match sync::sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {
+        match sync_retrying(&ctx, &game, Resolution::Auto, Trigger::AutoExit) {
             Ok(Outcome::Conflict { cloud, .. }) => {
                 log(format!("{key}: post-exit conflict"));
-                MessageDialog::new()
-                    .set_title(ludonimbus_core::tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"))
-                    .set_description(ludonimbus_core::tr!(
+                tell(
+                    &tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"),
+                    &tr!(
                         "玩游戏期间，{} 也上传了「{}」的新存档。\n\n两份存档都已保存到云端。下次启动时会让你选择使用哪一份，也可以在 Ludonimbus 里处理。",
                         "While you were playing, {} also uploaded new saves of \"{}\".\n\nBoth are kept in the cloud. You'll be asked which one to use the next time you start the game, or you can sort it out in Ludonimbus.",
                         cloud.device_name, game.name
-                    ))
-                    .set_level(MessageLevel::Warning)
-                    .show();
+                    ),
+                    "warn",
+                );
             }
             Ok(out) => log(format!("{key}: post-exit {out:?}")),
             Err(e) => {
@@ -356,5 +471,11 @@ fn run(args: &[String]) -> Result<i32> {
     // Achievements earned in this session are recorded and uploaded even
     // when the tray app isn't running (popups are the tray app's job).
     ludonimbus_core::achievements::after_exit(&ctx, &game);
+    // No tray app (Xbox full screen experience, Deck Game Mode): do its work.
+    if !catchup::app_running() {
+        drop(lock);
+        catchup::stale_runners(&ctx.cfg, Some(&key), &|m| log(m));
+        catchup::screenshots(&ctx.cfg, &key, &|m| log(m));
+    }
     Ok(code)
 }

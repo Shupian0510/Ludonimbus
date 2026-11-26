@@ -133,7 +133,7 @@ pub fn parse_scan(v: &Value) -> Result<Vec<ScanGame>> {
             .map(|f| {
                 f.iter()
                     .filter(|(_, i)| i.get("ignored").and_then(Value::as_bool) != Some(true))
-                    .map(|(p, i)| (p.replace('/', "\\"), i.get("bytes").and_then(Value::as_u64).unwrap_or(0)))
+                    .map(|(p, i)| (crate::util::native_sep(p), i.get("bytes").and_then(Value::as_u64).unwrap_or(0)))
                     .collect()
             })
             .unwrap_or_default();
@@ -296,16 +296,26 @@ Other Game:
         let mut g = parse_scan(&v).unwrap();
         g.sort_by(|a, b| a.title.cmp(&b.title));
         assert_eq!(g.len(), 2);
-        assert_eq!(g[0].files, vec![(r"C:\x\a.sav".to_string(), 5)]);
+        assert_eq!(g[0].files, vec![(crate::util::native_sep("C:/x/a.sav"), 5)]);
         assert!(g[1].has_registry && g[1].files.is_empty());
     }
 }
 
 /// Absolute save files Ludusavi finds for a title on this PC.
 pub fn resolve_files(title: &str) -> Result<Vec<PathBuf>> {
+    resolve_files_in(title, None)
+}
+
+/// Like [`resolve_files`], looking inside a Proton / Wine prefix too (a
+/// Windows game on Linux).
+pub fn resolve_files_in(title: &str, wine_prefix: Option<&std::path::Path>) -> Result<Vec<PathBuf>> {
     let exe = exe_path().ok_or_else(|| anyhow!("没有找到 ludusavi.exe，无法查找「{title}」的存档"))?;
     let mut cmd = command(&exe);
-    cmd.args(["backup", "--preview", "--api", title]);
+    cmd.args(["backup", "--preview", "--api"]);
+    if let Some(p) = wine_prefix.filter(|p| p.is_dir()) {
+        cmd.arg("--wine-prefix").arg(p);
+    }
+    cmd.arg(title);
     let v = run_json(cmd)?;
     if let Some(errs) = v.get("errors").and_then(Value::as_object) {
         if let Some(unknown) = errs.get("unknownGames") {
@@ -322,7 +332,7 @@ pub fn resolve_files(title: &str) -> Result<Vec<PathBuf>> {
                     if info.get("ignored").and_then(Value::as_bool) == Some(true) {
                         continue;
                     }
-                    out.push(PathBuf::from(path.replace('/', "\\")));
+                    out.push(PathBuf::from(crate::util::native_sep(path)));
                 }
             }
         }

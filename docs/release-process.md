@@ -22,8 +22,10 @@ git commit -am "Release 0.1.3"
 ./scripts/release.ps1
 ```
 
-发布后大约 10–15 分钟，[Releases](https://github.com/Shupian0510/Ludonimbus/releases) 页面会出现新版本，包含：
-- `Ludonimbus_X.Y.Z_x64-setup.exe`：安装包（附带 Steam 插件 `millennium/ludonimbus.star`）
+配置了 SignPath 代码签名后，Actions 中途会停下两次，等你在 SignPath 里批准签名请求（先是程序，再是安装包），见 [code-signing.md](code-signing.md#3-每次发版)。
+
+发布后大约 10–15 分钟（加上等你批准签名的时间），[Releases](https://github.com/Shupian0510/Ludonimbus/releases) 页面会出现新版本，包含：
+- `Ludonimbus_X.Y.Z_x64-setup.exe`：安装包（附带 Steam 插件 `millennium/ludonimbus.star`），配置了 SignPath 时带 Authenticode 签名
 - `Ludonimbus_X.Y.Z_x64-setup.exe.sig`：更新签名
 - `latest.json`：自动更新读取的版本信息，说明文字来自 CHANGELOG.md
 
@@ -64,7 +66,7 @@ git commit -am "Release 0.1.3"
 |---|---|---|
 | 每次推送 / PR | 各处版本号（含 Steam 插件）一致、当前版本有双语更新日志、Rust 测试、前端构建、桌面应用能编译 | `.github/workflows/ci.yml` |
 | 推送到 main | 额外打一个开发版安装包（构建产物，保留 14 天） | `ci.yml` 的 `dev-build` |
-| 推送 `v*` 标签 | 标签与版本号一致、更新日志双语齐全，然后编译、签名、发布 Release 和 `latest.json` | `.github/workflows/release.yml` |
+| 推送 `v*` 标签 | 标签与版本号一致、更新日志双语齐全，然后编译、代码签名（配置了 SignPath 时）、生成更新签名、发布 Release 和 `latest.json` | `.github/workflows/release.yml` |
 | Release 发布后 | 给 winget-pkgs 提更新 PR（需要 `WINGET_TOKEN`） | `release.yml` 的 `winget` |
 
 ## 需要的仓库 Secrets
@@ -74,6 +76,7 @@ git commit -am "Release 0.1.3"
 | `LUDONIMBUS_GOOGLE_CLIENT_ID` / `LUDONIMBUS_GOOGLE_CLIENT_SECRET` | 内置的 Google OAuth 客户端（见 [google-oauth-setup.md](google-oauth-setup.md)） |
 | `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 更新签名私钥。**私钥丢失后无法再给已安装的用户推送更新**，本地备份在 `%USERPROFILE%\.tauri\ludonimbus.key` |
 | `WINGET_TOKEN` | 给 winget-pkgs 提 PR 用的 GitHub token：classic token，只勾 `public_repo`（Komac 不支持 fine-grained token）。它能写你所有的公开仓库，建议设过期时间，到期后换新的 |
+| `SIGNPATH_API_TOKEN` | SignPath 代码签名的 API token，和 Variables 里的 `SIGNPATH_ORGANIZATION_ID`（以及可选的 `SIGNPATH_PROJECT_SLUG`、`SIGNPATH_SIGNING_POLICY_SLUG`）一起配置，见 [code-signing.md](code-signing.md#2-通过后配置)；没配置时安装包不签名 |
 
 ## 以后：测试版通道
 
@@ -88,6 +91,7 @@ git commit -am "Release 0.1.3"
 
 - Single branch `main`. Stable releases are published by pushing a `vX.Y.Z` tag; every push to `main` also produces a development installer as a 14-day workflow artifact (never offered by the auto-updater).
 - Release: `./scripts/bump-version.ps1 -Version X.Y.Z` → write both `### 中文` and `### English` in `CHANGELOG.md` and commit → `./scripts/release.ps1` (checks branch, clean tree, versions, bilingual notes and tests, then tags and pushes). `release.yml` builds, signs and publishes the installer, its signature and `latest.json`.
+- Code signing: once SignPath is configured (`SIGNPATH_API_TOKEN` secret plus `SIGNPATH_ORGANIZATION_ID` variable), each release pauses twice for approval in SignPath (programs, then installer). See [code-signing.md](code-signing.md).
 - winget: the package is `Shupian0510.Ludonimbus`. After each release, the `winget` job in `release.yml` runs Komac (pinned version and SHA-256) to open an update PR on microsoft/winget-pkgs from the `Shupian0510/winget-pkgs` fork. It needs the `WINGET_TOKEN` secret (classic PAT, `public_repo` scope) and is skipped without it. Komac can only update existing packages, so it fails until the first manual submission (0.4.0, microsoft/winget-pkgs#487408) is merged.
 - CI checks on every push: matching versions (including the Steam plugin), a bilingual changelog entry for the current version, Rust tests, frontend build, desktop app build.
 - A beta channel (`-beta.N` prerelease tags plus an opt-in setting) will be added once there are more users.

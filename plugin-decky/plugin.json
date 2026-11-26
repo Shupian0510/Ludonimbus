@@ -1,0 +1,11 @@
+{
+  "name": "Ludonimbus",
+  "author": "Shupian0510",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["saves", "cloud", "sync"],
+    "description": "Cloud saves for non-Steam games: status, sync now, conflicts and version history from the quick access menu.",
+    "image": "https://raw.githubusercontent.com/Shupian0510/Ludonimbus/main/app/src-tauri/icons/128x128@2x.png"
+  }
+}

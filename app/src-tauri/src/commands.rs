@@ -7,9 +7,9 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, localart, logos, ludusavi, paths, playtime, process, relocate, screenshots, spec, steam, util};
+use ludonimbus_core::{adapters, games, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, spec, steam, util};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 pub(crate) type CmdResult<T> = std::result::Result<T, String>;
@@ -54,6 +54,9 @@ pub struct GameView {
     platform: Option<String>,
     exe: Option<String>,
     exe_exists: bool,
+    /// The game itself is on this PC; otherwise the library shows it grey,
+    /// as saves only (see `games::playable`).
+    playable: bool,
     install: Option<String>,
     args: String,
     saves: Vec<String>,
@@ -81,9 +84,14 @@ pub struct GameView {
     playtime: playtime::Summary,
     /// Emulator / recomp / PC game…, for the library's badges and groups.
     source: games::Source,
+    /// Which game this is a version of: the key of the first of its
+    /// versions in the save library (see `savelib::families`).
+    family: String,
+    /// The user's "same game" link (`solo:…` = kept apart).
+    link: Option<String>,
 }
 
-fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
+fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMap<String, String>) -> GameView {
     let adapter = g.adapter.as_deref().and_then(adapters::find);
     let eff = spec::effective(g);
     let st = state::game(&g.key);
@@ -113,6 +121,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
         platform: adapter.and_then(|a| a.platform_label()),
         exe: g.exe.as_ref().map(|p| p.display().to_string()),
         exe_exists: g.exe.as_ref().is_some_and(|p| p.is_file()),
+        playable: games::playable(g),
         install: spec::install_dir(g).map(|p| p.display().to_string()),
         args: g.args.clone(),
         saves: eff.saves.clone(),
@@ -145,7 +154,64 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String]) -> GameView {
             logo: logos::for_game(g, adapter).and_then(|f| art::logo_url(&f)),
             ..games::source(g)
         },
+        family: families.get(&g.key).cloned().unwrap_or_else(|| g.key.clone()),
+        link: g.game.clone(),
     }
+}
+
+/// A game the cloud has but this PC doesn't: shown grey in the library.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudOnlyView {
+    key: String,
+    name: String,
+    adapter: Option<String>,
+    adapter_name: Option<String>,
+    platform: Option<String>,
+    ludusavi_title: Option<String>,
+    saves: Vec<String>,
+    source: games::Source,
+    /// Artwork downloaded from the cloud (see `artsync`).
+    art: ArtView,
+    /// From this PC's copy of the other devices' playtime.
+    playtime: playtime::Summary,
+    family: String,
+    link: Option<String>,
+}
+
+pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &HashMap<String, String>) -> Vec<CloudOnlyView> {
+    cloud
+        .iter()
+        .filter(|c| cfg.game(&c.key).is_none())
+        .map(|c| {
+            let g = savelib::entry_of(c);
+            let adapter = c.adapter.as_deref().and_then(adapters::find);
+            let pick = |kind: &str| localart::file(&c.key, kind).map(|f| art::local_url(&c.key, kind, &f));
+            CloudOnlyView {
+                key: c.key.clone(),
+                name: c.name.clone(),
+                adapter: c.adapter.clone(),
+                adapter_name: adapter.map(|a| a.name.clone()),
+                platform: adapter.and_then(|a| a.platform_label()),
+                ludusavi_title: c.ludusavi_title.clone(),
+                saves: c.saves.clone(),
+                source: games::Source {
+                    logo: logos::for_game(&g, adapter).and_then(|f| art::logo_url(&f)),
+                    ..games::source(&g)
+                },
+                art: ArtView {
+                    cover: pick("cover"),
+                    wide: pick("wide"),
+                    hero: pick("hero"),
+                    logo: pick("logo"),
+                    icon: pick("icon"),
+                },
+                playtime: playtime::summary(cfg, &c.key),
+                family: families.get(&c.key).cloned().unwrap_or_else(|| c.key.clone()),
+                link: c.game.clone(),
+            }
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -165,6 +231,10 @@ pub struct Overview {
     steam_found: bool,
     steam_running: bool,
     games: Vec<GameView>,
+    /// Games the cloud has but this PC doesn't, from the copy of the cloud's
+    /// list kept on this PC (refreshed by `refresh_cloud_library`).
+    cloud_only: Vec<CloudOnlyView>,
+    cloud_fetched_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn cloud_view(cfg: &AppConfig) -> CloudView {
@@ -193,13 +263,17 @@ pub async fn get_overview() -> CmdResult<Overview> {
     blocking(|| {
         let cfg = config::load()?;
         let procs = process::process_names();
+        let cached = savelib::cached(&cfg);
+        let families = savelib::index(&cfg, &cached.games);
         Ok(Overview {
             device_id: cfg.device.id.clone(),
             device_name: cfg.device.name.clone(),
             cloud: cloud_view(&cfg),
             steam_found: steam::root(&cfg).is_some(),
             steam_running: procs.iter().any(|p| p == "steam.exe"),
-            games: cfg.games.iter().map(|g| game_view(&cfg, g, &procs)).collect(),
+            games: cfg.games.iter().map(|g| game_view(&cfg, g, &procs, &families)).collect(),
+            cloud_only: cloud_only_views(&cfg, &cached.games, &families),
+            cloud_fetched_at: cached.fetched_at,
         })
     })
     .await
@@ -265,16 +339,16 @@ pub struct SnapshotList {
 
 #[tauri::command]
 pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
+    // Also for games only the cloud has.
     blocking(move || {
-        with_game(&key, |ctx, _| {
-            let mut list = ctx.cloud()?.list_snapshots(&key)?;
-            let head = sync::mainline_head(&list).map(|h| h.id);
-            list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-            Ok(SnapshotList {
-                snapshots: list,
-                head_id: head,
-                last_synced_id: state::game(&key).last_synced_id,
-            })
+        let ctx = Ctx::load()?;
+        let mut list = ctx.cloud()?.list_snapshots(&key)?;
+        let head = sync::mainline_head(&list).map(|h| h.id);
+        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(SnapshotList {
+            snapshots: list,
+            head_id: head,
+            last_synced_id: state::game(&key).last_synced_id,
         })
     })
     .await
@@ -282,7 +356,7 @@ pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
 
 #[tauri::command]
 pub async fn get_snapshot(key: String, id: String) -> CmdResult<SnapshotMeta> {
-    blocking(move || with_game(&key, |ctx, _| ctx.cloud()?.get_meta(&key, &id))).await
+    blocking(move || Ctx::load()?.cloud()?.get_meta(&key, &id)).await
 }
 
 #[tauri::command]
@@ -306,9 +380,26 @@ pub async fn set_snapshot(key: String, id: String, locked: Option<bool>, comment
     blocking(move || with_game(&key, |ctx, g| sync::set_snapshot_flags(ctx, g, &id, locked, comment))).await
 }
 
+/// Move a version to 「最近删除」 (restorable for 30 days).
 #[tauri::command]
 pub async fn delete_snapshot(key: String, id: String) -> CmdResult<()> {
     blocking(move || with_game(&key, |ctx, g| sync::delete_snapshot(ctx, g, &id))).await
+}
+
+#[tauri::command]
+pub async fn deleted_snapshots(key: String) -> CmdResult<Vec<cloud::TrashedSnapshot>> {
+    blocking(move || with_game(&key, sync::deleted_snapshots)).await
+}
+
+/// Returns whether the version was locked so retention keeps it.
+#[tauri::command]
+pub async fn restore_deleted_snapshot(key: String, id: String) -> CmdResult<bool> {
+    blocking(move || with_game(&key, |ctx, g| sync::restore_deleted(ctx, g, &id))).await
+}
+
+#[tauri::command]
+pub async fn purge_deleted_snapshot(key: String, id: String) -> CmdResult<()> {
+    blocking(move || with_game(&key, |ctx, g| sync::purge_deleted(ctx, g, &id))).await
 }
 
 #[tauri::command]
@@ -323,7 +414,7 @@ pub async fn export_snapshot(key: String, id: String) -> CmdResult<Option<String
         else {
             return Ok(None);
         };
-        with_game(&key, |ctx, g| sync::export_snapshot(ctx, g, &id, &dest))?;
+        Ctx::load()?.cloud()?.download(&key, &id, &dest)?;
         Ok(Some(dest.display().to_string()))
     })
     .await
@@ -466,7 +557,7 @@ pub async fn add_from_shortcut(
 ) -> CmdResult<String> {
     blocking(move || {
         let g = games::add_from_shortcut(&account, appid, games::NewGame { name, adapter, saves, key, ludusavi_title: None })?;
-        Ok(g.key)
+        Ok(adopt_cloud_key(g.key))
     })
     .await
 }
@@ -475,9 +566,27 @@ pub async fn add_from_shortcut(
 pub async fn add_custom(name: String, exe: Option<String>, saves: Vec<String>, ludusavi_title: Option<String>) -> CmdResult<String> {
     blocking(move || {
         let exe = exe.filter(|s| !s.trim().is_empty()).map(PathBuf::from);
-        Ok(games::add_custom(name.trim(), exe, saves, ludusavi_title, None)?.key)
+        Ok(adopt_cloud_key(games::add_custom(name.trim(), exe, saves, ludusavi_title, None)?.key))
     })
     .await
+}
+
+/// A Switch game just added that the cloud already has under another key
+/// (added on another device, maybe in another emulator): link to it instead
+/// of starting a second cloud entry. Best effort: offline or without a
+/// cloud the new key stays.
+pub fn adopt_cloud_key(key: String) -> String {
+    let switch = config::load().ok().is_some_and(|c| c.game(&key).is_some_and(|g| games::switch_title(&g.saves).is_some()));
+    if !switch {
+        return key;
+    }
+    match Ctx::load().and_then(|ctx| ctx.cloud()?.list_games()).and_then(|list| games::adopt_cloud_key(&key, &list)) {
+        Ok(Some(linked)) => {
+            ludonimbus_core::logger::log("app", format!("{key}: the cloud already has this Switch game as {linked}; linked to it"));
+            linked
+        }
+        _ => key,
+    }
 }
 
 #[tauri::command]
@@ -646,7 +755,7 @@ pub(crate) fn with_steam_closed<T>(close_steam: bool, f: impl FnOnce() -> Result
     }
     let out = f();
     if was_running {
-        let _ = std::process::Command::new(root.join("steam.exe")).spawn();
+        let _ = steam::launch(&root);
     }
     out
 }
@@ -714,10 +823,14 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
         let root = steam::root(&cfg);
         let mut cloud = cfg.cloud.clone();
         match &mut cloud {
-            CloudConfig::GoogleDrive { client_secret, .. } | CloudConfig::BaiduPan { secret_key: client_secret, .. }
-                if !client_secret.is_empty() =>
-            {
+            CloudConfig::GoogleDrive { client_secret, .. } if !client_secret.is_empty() => {
                 *client_secret = "••••••••".into();
+            }
+            // The SecretKey of an own app lives in the credential store; the
+            // UI only learns whether one is saved.
+            CloudConfig::BaiduPan { app_key, secret_key, .. } => {
+                let saved = cloud::baidu::saved_app_secret(app_key, secret_key).is_ok_and(|s| !s.is_empty());
+                *secret_key = if saved { "••••••••".into() } else { String::new() };
             }
             _ => {}
         }
@@ -979,15 +1092,9 @@ pub async fn cloud_connect_baidu(app: tauri::AppHandle, app_key: String, secret_
     use tauri::Emitter;
     LOGIN_CANCEL.store(false, Ordering::SeqCst);
     blocking(move || {
-        // Keep the stored secret when the UI shows the masked placeholder.
-        let secret = if secret_key.starts_with('•') {
-            match config::load()?.cloud {
-                CloudConfig::BaiduPan { secret_key, .. } => secret_key,
-                _ => String::new(),
-            }
-        } else {
-            secret_key
-        };
+        // The masked placeholder means "keep the saved SecretKey" (an empty
+        // one makes connect_baidu look it up).
+        let secret = if secret_key.starts_with('•') { String::new() } else { secret_key };
         cloud::connect_baidu(
             &app_key,
             &secret,

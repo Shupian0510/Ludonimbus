@@ -64,7 +64,13 @@ fn add_found_game_to_steam() {
     let sc = steam::find_shortcut(&root, "42", appid).unwrap().unwrap();
     assert_eq!(sc.name, "Celeste");
     assert_eq!(sc.wrapped_key().as_deref(), Some("celeste"));
-    assert!(sc.exe.ends_with("ludonimbus-run.exe"));
+    // Windows: the shortcut starts the wrapper; Linux: the game, with the
+    // wrapper in front of %command% (so Proton keeps working).
+    if cfg!(windows) {
+        assert!(sc.exe.ends_with("ludonimbus-run.exe"));
+    } else {
+        assert!(sc.exe.ends_with("Celeste.exe") && sc.launch_options.contains("%command%"), "{} {}", sc.exe, sc.launch_options);
+    }
     assert!(sc.icon.ends_with(&format!("{appid}_icon.jpg")), "{}", sc.icon);
     assert!(steam::art(&root, "42", appid).cover.unwrap().ends_with(format!("{appid}p.jpg")));
     let cfg = config::load().unwrap();

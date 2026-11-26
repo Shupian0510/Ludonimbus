@@ -5,6 +5,7 @@ import { AddGame } from "./components/AddGame";
 import { Onboarding } from "./components/Onboarding";
 import { scene, SCENE_ADD, SCENE_GAME, SCENE_SETTINGS } from "./scene";
 import { Devices } from "./components/Devices";
+import { CloudGameDetail } from "./components/CloudGameDetail";
 import { GameDetail } from "./components/GameDetail";
 import { Library } from "./components/Library";
 import { SettingsPage } from "./components/Settings";
@@ -15,7 +16,8 @@ import { msg, useT } from "./i18n";
 
 export type Page = { name: "library" } | { name: "game"; key: string } | { name: "devices" } | { name: "settings" };
 
-export default function App() {
+/** `onHandheld`: switch this window to the handheld view. */
+export default function App({ onHandheld }: { onHandheld?: () => void }) {
   const ui = useUi();
   const t = useT();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -77,10 +79,21 @@ export default function App() {
     [check],
   );
 
+  /** Fetch the cloud's game list (games this PC doesn't have, links made elsewhere). */
+  const refreshCloud = useCallback(async () => {
+    try {
+      await api.refreshCloudLibrary();
+      await reload();
+    } catch {
+      /* offline: the library keeps the last list */
+    }
+  }, [reload]);
+
   const refresh = useCallback(async () => {
     const o = await reload();
+    refreshCloud();
     if (o) await checkAll(o.games);
-  }, [reload, checkAll]);
+  }, [reload, refreshCloud, checkAll]);
 
   useEffect(() => {
     refresh();
@@ -111,6 +124,7 @@ export default function App() {
     const timer = setInterval(() => reload(), 30000);
     // Re-check every game against the cloud now and then (other devices may have uploaded).
     const recheck = setInterval(() => {
+      refreshCloud();
       reload().then((o) => o && checkAll(o.games));
     }, 10 * 60 * 1000);
     return () => {
@@ -118,7 +132,7 @@ export default function App() {
       clearInterval(timer);
       clearInterval(recheck);
     };
-  }, [refresh, reload, check, checkAll, ui]);
+  }, [refresh, refreshCloud, reload, check, checkAll, ui]);
 
   // First-run guide: only for someone who has not used Ludonimbus yet
   // (no cloud, no games). The browser preview shows it with ?guide.
@@ -174,6 +188,8 @@ export default function App() {
   }, []);
 
   const game = page.name === "game" ? overview?.games.find((g) => g.key === page.key) : undefined;
+  const cloudGame = page.name === "game" && !game ? overview?.cloudOnly.find((g) => g.key === page.key) : undefined;
+  const openGame = (key: string) => setPage({ name: "game", key });
 
   return (
     <div className="app">
@@ -254,6 +270,7 @@ export default function App() {
             check={checks[game.key]}
             checking={!!checking[game.key]}
             onBack={() => setPage({ name: "library" })}
+            onOpen={openGame}
             onChanged={async () => {
               await reload();
               await check(game.key);
@@ -264,11 +281,30 @@ export default function App() {
             }}
           />
         )}
-        {overview && page.name === "game" && !game && (
+        {overview && page.name === "game" && cloudGame && (
+          <CloudGameDetail
+            key={cloudGame.key}
+            game={cloudGame}
+            overview={overview}
+            onBack={() => setPage({ name: "library" })}
+            onOpen={openGame}
+            onChanged={async () => {
+              await reload();
+            }}
+            onAdded={async (key) => {
+              const o = await reload();
+              if (o) {
+                setPage({ name: "game", key });
+                await check(key);
+              }
+            }}
+          />
+        )}
+        {overview && page.name === "game" && !game && !cloudGame && (
           <div className="center muted">{t.app.gameGone}</div>
         )}
         {page.name === "devices" && <Devices overview={overview} />}
-        {page.name === "settings" && <SettingsPage onChanged={refresh} onGuide={() => setGuide(true)} />}
+        {page.name === "settings" && <SettingsPage onChanged={refresh} onGuide={() => setGuide(true)} onHandheld={onHandheld} />}
       </main>
 
       {showUpdate && update && <UpdateDialog info={update} onClose={() => setShowUpdate(false)} />}

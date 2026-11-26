@@ -70,6 +70,8 @@ fn meta(game: &str, id: &str, parent: Option<&str>, comment: &str) -> SnapshotMe
         app_version: "test".into(),
         comment: comment.into(),
         locked: false,
+        game_version: None,
+        installed_version: None,
     }
 }
 
@@ -136,6 +138,8 @@ fn layout_and_migration(port: u16, tmp: &Path) {
             roots: BTreeMap::new(),
             ludusavi_title: None,
             source: None,
+            ids: vec![],
+            game: None,
         })
         .unwrap();
     local

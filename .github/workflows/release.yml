@@ -1,17 +1,27 @@
 name: Release
 
-# Push a tag like v0.1.1 to build the signed installer, create the GitHub
+# Push a tag like v0.1.1 to build the installer, sign it, create the GitHub
 # Release, and publish latest.json for in-app updates.
+#
+# Windows code signing goes through SignPath (free for open source, certificate
+# by SignPath Foundation; setup in docs/code-signing.md). It turns on once the
+# SIGNPATH_API_TOKEN secret and the SIGNPATH_ORGANIZATION_ID variable exist;
+# without them the installer is published unsigned. Each release sends two
+# signing requests that wait for approval in SignPath: first the programs that
+# go into the installer, then the installer built from them.
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  actions: read # SignPath downloads the files to sign from this run's artifacts
 
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,18 +42,25 @@ jobs:
             plugin-millennium/package-lock.json
 
       - name: Check version matches tag
+        id: version
         shell: pwsh
         run: |
           $version = ./scripts/check-versions.ps1
           if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match version $version" }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "installer=Ludonimbus_${version}_x64-setup.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # release-notes.md feeds latest.json (the in-app dialog splits it at
+      # "### English"); release-body.md is the GitHub Release text.
       - name: Release notes from CHANGELOG.md (must be bilingual)
-        id: notes
         shell: pwsh
         run: |
-          $body = (./scripts/changelog-section.ps1 -Version "${{ github.ref_name }}") -join "`n"
-          $delim = "EOF_" + [guid]::NewGuid().ToString("N")
-          "body<<$delim`n$body`n$delim" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $notes = (./scripts/changelog-section.ps1 -Version "${{ github.ref_name }}") -join "`n"
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8NoBOM -NoNewline
+          if ($env:SIGN -eq 'true') {
+            $notes += "`n`n---`n`n[Code signing policy](https://github.com/${{ github.repository }}#code-signing-policy)"
+          }
+          Set-Content -Path release-body.md -Value $notes -Encoding utf8NoBOM -NoNewline
 
       - name: Install frontend dependencies
         working-directory: app
@@ -59,26 +76,150 @@ jobs:
           LUDONIMBUS_BAIDU_APP_NAME: ${{ secrets.LUDONIMBUS_BAIDU_APP_NAME }}
         run: ./scripts/prepare-sidecars.ps1 -Release
 
-      - name: Build, sign and publish
-        uses: tauri-apps/tauri-action@v0
+      # Compile only; the installer is built after the programs are signed.
+      - name: Build the app
+        working-directory: app
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LUDONIMBUS_GOOGLE_CLIENT_ID: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_ID }}
           LUDONIMBUS_GOOGLE_CLIENT_SECRET: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_SECRET }}
           LUDONIMBUS_BAIDU_APP_KEY: ${{ secrets.LUDONIMBUS_BAIDU_APP_KEY }}
           LUDONIMBUS_BAIDU_SECRET_KEY: ${{ secrets.LUDONIMBUS_BAIDU_SECRET_KEY }}
           LUDONIMBUS_BAIDU_APP_NAME: ${{ secrets.LUDONIMBUS_BAIDU_APP_NAME }}
+        run: |
+          npx tauri build --no-bundle
+          if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
+
+      # Signing 1/2: our own programs. Ludusavi is an upstream release and is
+      # shipped as published (SignPath only signs the project's own builds).
+      - name: Collect programs to sign
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force signing/programs | Out-Null
+          Copy-Item target/release/ludonimbus-app.exe, target/release/ludonimbus-run.exe signing/programs/
+
+      - name: Upload programs for signing
+        id: upload-programs
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-programs
+          path: signing/programs/
+          retention-days: 1
+
+      - name: Sign programs (approve the request in SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'Ludonimbus' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload-programs.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: signing/programs-signed
+
+      - name: Put the signed programs in place
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $signed = "signing/programs-signed"
+          foreach ($exe in "ludonimbus-app.exe", "ludonimbus-run.exe") {
+            $sig = Get-AuthenticodeSignature "$signed/$exe"
+            if ($sig.Status -ne "Valid") { throw "$exe is not signed: $($sig.Status) $($sig.StatusMessage)" }
+            Write-Host "$exe signed by $($sig.SignerCertificate.Subject)"
+            Copy-Item "$signed/$exe" "target/release/$exe" -Force
+          }
+          # The installer takes sidecars from app/src-tauri/binaries.
+          $triple = (rustc -vV | Select-String "^host: (.+)$").Matches[0].Groups[1].Value
+          Copy-Item "$signed/ludonimbus-run.exe" "app/src-tauri/binaries/ludonimbus-run-$triple.exe" -Force
+
+      # --no-binary-patching: tauri would otherwise rewrite the main program
+      # (to record "installed by NSIS"), breaking its signature. The updater
+      # then looks up "windows-x86_64" instead of "windows-x86_64-nsis" in
+      # latest.json; both entries are published, and it recognizes the NSIS
+      # installer by its content.
+      - name: Build the installer
+        working-directory: app
+        shell: pwsh
+        run: |
+          npx tauri bundle --bundles nsis --no-binary-patching
+          if ($LASTEXITCODE -ne 0) { throw "tauri bundle failed" }
+
+      # Signing 2/2: the installer.
+      - name: Upload installer for signing
+        id: upload-installer
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: target/release/bundle/nsis/${{ steps.version.outputs.installer }}
+          retention-days: 1
+
+      - name: Sign installer (approve the request in SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'Ludonimbus' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+          parameters: |
+            version: "${{ steps.version.outputs.version }}"
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: signing/installer-signed
+
+      - name: Put the signed installer in place
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $name = "${{ steps.version.outputs.installer }}"
+          $sig = Get-AuthenticodeSignature "signing/installer-signed/$name"
+          if ($sig.Status -ne "Valid") { throw "$name is not signed: $($sig.Status) $($sig.StatusMessage)" }
+          Write-Host "$name signed by $($sig.SignerCertificate.Subject)"
+          Copy-Item "signing/installer-signed/$name" "target/release/bundle/nsis/$name" -Force
+
+      # The updater signature covers the final (Authenticode-signed) installer,
+      # so it is made last.
+      - name: Updater signature and latest.json
+        shell: pwsh
+        env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: app
-          args: --config src-tauri/tauri.release.conf.json
-          tagName: ${{ github.ref_name }}
-          releaseName: Ludonimbus ${{ github.ref_name }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $installer = (Resolve-Path "target/release/bundle/nsis/${{ steps.version.outputs.installer }}").Path
+          Push-Location app
+          npx tauri signer sign --app-version $version $installer
+          $code = $LASTEXITCODE
+          Pop-Location
+          if ($code -ne 0) { throw "updater signing failed" }
+          ./scripts/updater-manifest.ps1 -Version $version `
+            -Url "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.version.outputs.installer }}" `
+            -SignatureFile "$installer.sig" -NotesFile release-notes.md `
+            -Out target/release/bundle/nsis/latest.json
+
+      - name: Publish the GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $dir = "target/release/bundle/nsis"
+          $name = "${{ steps.version.outputs.installer }}"
+          # A draft left by an earlier failed run of this tag is replaced.
+          $existing = gh release view $tag --json isDraft --jq .isDraft 2>$null
+          if ($existing -eq "true") { gh release delete $tag --yes }
+          # Upload as a draft first, so the updater never sees a release without latest.json.
+          gh release create $tag "$dir/$name" "$dir/$name.sig" "$dir/latest.json" `
+            --verify-tag --draft --title "Ludonimbus $tag" --notes-file release-body.md
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
 
   # Open a PR on microsoft/winget-pkgs for the new version. Needs the
   # WINGET_TOKEN secret (classic PAT, public_repo scope); skipped without it.

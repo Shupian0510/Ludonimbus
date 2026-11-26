@@ -258,7 +258,7 @@ pub fn epic_games(dir: &Path) -> Vec<Found> {
         if name.is_empty() || install.is_empty() || launch.is_empty() {
             continue;
         }
-        let exe = Path::new(&install).join(launch.replace('/', "\\"));
+        let exe = Path::new(&install).join(util::native_sep(&launch));
         let mut f = found("epic", format!("epic:{}", v["AppName"].as_str().unwrap_or(&name)), name);
         f.adapter = adapters::detect(&exe).map(|a| a.key.clone());
         f.exe = Some(exe.to_string_lossy().into_owned());
@@ -294,6 +294,7 @@ pub fn recomplauncher_games(launcher: Option<&Path>) -> Vec<Found> {
 
 /// Games installed by GOG Galaxy / GOG installers (registry).
 pub fn gog_games() -> Vec<Found> {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut out = Vec::new();
     #[cfg(windows)]
     {
@@ -371,7 +372,12 @@ pub fn mark_added(cfg: &AppConfig, list: &mut [Found]) {
                     let a = f.adapter.as_deref().and_then(adapters::find);
                     a.is_some_and(|a| a.is_emulator())
                 };
-                same_exe || same_link || same_title || same_rule
+                // The same Switch game, added in another emulator.
+                let same_game = !f.saves.is_empty() && f.saves == g.saves && {
+                    let (a, b) = (f.adapter.as_deref().and_then(adapters::find), g.adapter.as_deref().and_then(adapters::find));
+                    a.zip(b).is_some_and(|(a, b)| a.shares_game_saves(b))
+                };
+                same_exe || same_link || same_title || same_rule || same_game
             })
             .map(|g| g.key.clone());
     }
@@ -641,7 +647,7 @@ pub fn xbox_games_in(roots: &[PathBuf]) -> Vec<Found> {
             let content = e.path().join("Content");
             let Ok(text) = std::fs::read_to_string(content.join("MicrosoftGame.config")) else { continue };
             // Add-on packages have no executable of their own.
-            let Some(exe) = xbox::xml_attr(&text, "Executable", "Name").map(|n| content.join(n.replace('/', "\\"))) else { continue };
+            let Some(exe) = xbox::xml_attr(&text, "Executable", "Name").map(|n| content.join(util::native_sep(&n))) else { continue };
             if !exe.is_file() {
                 continue;
             }
@@ -756,6 +762,7 @@ pub struct Install {
 /// Programs registered for uninstall (EA app, Ubisoft Connect, Battle.net
 /// and standalone installers add their games here).
 fn registered_programs() -> Vec<Install> {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut out = Vec::new();
     #[cfg(windows)]
     {
@@ -897,7 +904,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "Celeste");
         assert_eq!(list[0].id, "epic:Salt");
-        assert!(list[0].exe.as_ref().unwrap().ends_with(r"Celeste\Celeste.exe"));
+        assert!(Path::new(list[0].exe.as_ref().unwrap()).ends_with("Celeste/Celeste.exe"));
     }
 
     #[test]
@@ -908,15 +915,15 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, vec![0u8; size]).unwrap();
         };
-        mk(r"Hades\Hades.exe", 10);
-        mk(r"Hades\unins000.exe", 2_000_000);
-        mk(r"Hades\_CommonRedist\vcredist_x64.exe", 9_000_000);
-        mk(r"Fancy\Fancy.exe", 1);
-        mk(r"Fancy\Fancy\Binaries\Win64\Fancy-Win64-Shipping.exe", 50);
-        mk(r"NoExe\readme.txt", 1);
-        assert!(pick_exe(&tmp.path().join("Hades")).unwrap().ends_with(r"Hades\Hades.exe"));
+        mk("Hades/Hades.exe", 10);
+        mk("Hades/unins000.exe", 2_000_000);
+        mk("Hades/_CommonRedist/vcredist_x64.exe", 9_000_000);
+        mk("Fancy/Fancy.exe", 1);
+        mk("Fancy/Fancy/Binaries/Win64/Fancy-Win64-Shipping.exe", 50);
+        mk("NoExe/readme.txt", 1);
+        assert!(pick_exe(&tmp.path().join("Hades")).unwrap().ends_with("Hades/Hades.exe"));
         // The launcher next to the folder name wins over the deep shipping exe.
-        assert!(pick_exe(&tmp.path().join("Fancy")).unwrap().ends_with(r"Fancy\Fancy.exe"));
+        assert!(pick_exe(&tmp.path().join("Fancy")).unwrap().ends_with("Fancy/Fancy.exe"));
         assert!(pick_exe(&tmp.path().join("NoExe")).is_none());
     }
 
@@ -991,7 +998,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "Doom Eternal");
         // Started through the launch helper: the game's own program is protected.
-        assert!(list[0].exe.as_ref().unwrap().ends_with(r"Content\gamelaunchhelper.exe"));
+        assert!(Path::new(list[0].exe.as_ref().unwrap()).ends_with("Content/gamelaunchhelper.exe"));
         assert_eq!(list[0].source, "xbox");
         assert_eq!(pick_exe(&tmp.path().join("Doom Eternal - PC")), Some(game.join("gamelaunchhelper.exe")));
     }
@@ -1013,9 +1020,9 @@ mod tests {
             std::fs::write(&p, b"x").unwrap();
             p
         };
-        let titan = mk(r"EA Games\Titanfall2\Titanfall2.exe");
-        let doom = mk(r"XboxGames\Doom\Content\DOOMEternalx64vk.exe");
-        mk(r"Program Files\Control\Control.exe");
+        let titan = mk("EA Games/Titanfall2/Titanfall2.exe");
+        let doom = mk("XboxGames/Doom/Content/DOOMEternalx64vk.exe");
+        mk("Program Files/Control/Control.exe");
         let folder = |rel: &str, by_dir_only: bool| Install {
             store: "folder".into(),
             name: Path::new(rel).file_name().unwrap().to_string_lossy().into_owned(),
@@ -1024,9 +1031,9 @@ mod tests {
             by_dir_only,
         };
         let installs = vec![
-            Install { store: "xbox".into(), name: "Doom Eternal".into(), dir: tmp.path().join(r"XboxGames\Doom\Content"), exe: Some(doom.clone()), by_dir_only: false },
-            folder(r"EA Games\Titanfall2", false),
-            folder(r"Program Files\Control", true),
+            Install { store: "xbox".into(), name: "Doom Eternal".into(), dir: tmp.path().join("XboxGames/Doom/Content"), exe: Some(doom.clone()), by_dir_only: false },
+            folder("EA Games/Titanfall2", false),
+            folder("Program Files/Control", true),
         ];
         // By store name.
         assert_eq!(locate(&installs, "DOOM Eternal", &[]).unwrap().1, doom);

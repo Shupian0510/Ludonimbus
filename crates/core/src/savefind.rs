@@ -184,7 +184,8 @@ const NOISE_EXTS: [&str; 12] = [".log", ".tmp", ".etl", ".lock", ".dmp", ".pf", 
 
 /// Changes that are almost never saves.
 pub fn is_noise(path: &Path) -> bool {
-    let lower = path.to_string_lossy().to_lowercase();
+    // Matched in Windows form: Linux and macOS paths get `\` too.
+    let lower = path.to_string_lossy().replace('/', "\\").to_lowercase();
     // The Steam client's own folders (not games in a Steam library).
     let steam_client = lower.contains("\\steam\\") && !lower.contains("\\steamapps\\");
     steam_client
@@ -209,11 +210,23 @@ impl Watch {
             if !matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_)) {
                 return;
             }
+            let created = matches!(ev.kind, EventKind::Create(_));
             let mut map = sink.lock().unwrap();
             for p in ev.paths {
-                if !is_noise(&p) {
-                    *map.entry(p).or_insert(0) += 1;
+                if is_noise(&p) {
+                    continue;
                 }
+                // Linux watches a new folder only once it exists: files
+                // written into it right away come without events of their own.
+                if created && p.is_dir() {
+                    for e in walkdir::WalkDir::new(&p).max_depth(4).into_iter().flatten().take(2000) {
+                        if e.file_type().is_file() && !is_noise(e.path()) {
+                            *map.entry(e.into_path()).or_insert(0) += 1;
+                        }
+                    }
+                    continue;
+                }
+                *map.entry(p).or_insert(0) += 1;
             }
         })
         .context(crate::tr!("无法开始记录文件变化", "Couldn't start recording file changes"))?;
@@ -247,7 +260,7 @@ pub fn folders_from_changes(files: &[PathBuf]) -> Vec<Candidate> {
     let mut dirs: BTreeMap<String, (PathBuf, usize)> = BTreeMap::new();
     for f in files {
         if let Some(parent) = f.parent() {
-            let key = parent.to_string_lossy().to_lowercase();
+            let key = crate::util::norm_path(&parent.to_string_lossy());
             dirs.entry(key).or_insert_with(|| (parent.to_path_buf(), 0)).1 += 1;
         }
     }
@@ -255,7 +268,7 @@ pub fn folders_from_changes(files: &[PathBuf]) -> Vec<Candidate> {
     // ancestors come first).
     let mut kept: Vec<(String, PathBuf, usize)> = Vec::new();
     for (key, (path, n)) in dirs {
-        if let Some(k) = kept.iter_mut().find(|(k, _, _)| key.starts_with(&format!("{k}\\"))) {
+        if let Some(k) = kept.iter_mut().find(|(k, _, _)| key.starts_with(&format!("{k}{}", std::path::MAIN_SEPARATOR))) {
             k.2 += n;
         } else {
             kept.push((key, path, n));
@@ -299,7 +312,7 @@ mod tests {
 
     #[test]
     fn tokens_skip_generic_words() {
-        let t = tokens("The Witcher 3: Wild Hunt", Some(Path::new(r"C:\G\bin\x64\witcher3.exe")), None);
+        let t = tokens("The Witcher 3: Wild Hunt", Some(Path::new("C:/G/bin/x64/witcher3.exe")), None);
         assert!(t.contains(&"thewitcher3wildhunt".to_string()));
         assert!(t.contains(&"witcher".to_string()));
         assert!(t.contains(&"witcher3".to_string()));
@@ -320,7 +333,7 @@ mod tests {
         }
         let out = folders_from_changes(&files);
         assert_eq!(out.len(), 2);
-        let game = out.iter().find(|c| c.path.ends_with(r"Studio\Game")).unwrap();
+        let game = out.iter().find(|c| Path::new(&c.path).ends_with("Studio/Game")).unwrap();
         assert_eq!(game.files, 3);
         assert!(game.reason.contains('3'));
     }
