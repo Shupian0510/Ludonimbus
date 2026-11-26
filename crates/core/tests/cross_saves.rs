@@ -70,9 +70,7 @@ fn stardew_valley_between_switch_and_pc() {
     ];
     let version = crosssaves::files_version(&[format!("nx:{}", TITLE.to_uppercase())], "switch", &files, &BTreeMap::new());
     assert_eq!(version.as_deref(), Some("1.6.15"));
-    let (meta, zip) = snapshot::build_from_files(&switch_key, &files, Trigger::SyncNow, None, ("d-switch", "Switch"), "", version).unwrap();
     let c = ctx.cloud().unwrap();
-    c.upload(&meta, &zip).unwrap();
     c.put_game(&CloudGame {
         key: switch_key.clone(),
         name: "Stardew Valley".into(),
@@ -87,6 +85,24 @@ fn stardew_valley_between_switch_and_pc() {
         game: None,
     })
     .unwrap();
+    let meta = sync::queue_files(
+        &c.open(&switch_key).unwrap(),
+        &sync::Foreign {
+            key: &switch_key,
+            files: &files,
+            trigger: Trigger::SyncNow,
+            parent: None,
+            over_all: false,
+            device: ("d-switch", "Switch"),
+            platform: "console:switch",
+            comment: "",
+            game_version: version,
+            origin: None,
+        },
+    )
+    .unwrap();
+    sync::upload_pending(c, &meta).unwrap();
+    sync::drop_pending(&meta).unwrap();
     let from_switch = meta.id.clone();
 
     // The PC version: farms in StardewValley/Saves (one of them the same

@@ -16,7 +16,7 @@
 //! - Discovery: a UDP broadcast `LUDONIMBUS_DISCOVER` on port 47717 is
 //!   answered with this PC's name, port and fingerprint.
 
-use crate::cloud::{CloudGame, CloudProvider, DeviceInfo};
+use crate::cloud::{Cloud, CloudGame, DeviceInfo};
 use crate::config::AppConfig;
 use crate::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use crate::{config, paths, savelib, switch, sync, util};
@@ -289,7 +289,7 @@ const JOB_KEPT_FOR: Duration = Duration::from_secs(600);
 struct OpenCloud {
     scope: String,
     opened: Instant,
-    cloud: Arc<dyn CloudProvider>,
+    cloud: Arc<Cloud>,
 }
 
 struct Known {
@@ -330,14 +330,14 @@ fn scope_of(cfg: &AppConfig) -> String {
 
 /// The cloud, opened once and shared (opening Quark checks or starts
 /// OpenList and signs in to it).
-fn cloud(cfg: &AppConfig) -> Result<Arc<dyn CloudProvider>> {
+fn cloud(cfg: &AppConfig) -> Result<Arc<Cloud>> {
     let scope = scope_of(cfg);
     let mut slot = CLOUD.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(c) = slot.as_ref().filter(|c| c.scope == scope && c.opened.elapsed() < CLOUD_REUSE_FOR) {
         return Ok(c.cloud.clone());
     }
     let opened = crate::cloud::open(cfg)?.ok_or_else(|| anyhow!("no cloud is connected on the PC"))?;
-    let cloud: Arc<dyn CloudProvider> = Arc::from(opened);
+    let cloud = Arc::new(opened);
     *slot = Some(OpenCloud { scope, opened: Instant::now(), cloud: cloud.clone() });
     Ok(cloud)
 }
@@ -356,9 +356,17 @@ fn failed(cfg: &AppConfig, e: &anyhow::Error) {
     hub(cfg).error = Some(format!("{e:#}"));
 }
 
+/// A version in this PC's queue as it will be listed once it is uploaded:
+/// the newest of its game, unless it is kept beside the history.
+fn waiting_summary(m: &SnapshotMeta) -> SnapshotSummary {
+    let mut s = SnapshotSummary::from(m);
+    s.head = !s.side;
+    s
+}
+
 /// Versions of `key` on this PC that the cloud doesn't have yet.
 fn pending(key: &str) -> Vec<SnapshotSummary> {
-    sync::pending_metas(key).iter().map(SnapshotSummary::from).collect()
+    sync::pending_metas(key).iter().map(waiting_summary).collect()
 }
 
 fn remember_head(cfg: &AppConfig, key: &str, head: Option<SnapshotSummary>) {
@@ -482,7 +490,16 @@ fn register_device(cfg: &AppConfig, d: &Paired, client: String) {
     let (cfg, d) = (cfg.clone(), d.clone());
     std::thread::spawn(move || {
         let (id, name) = device_tuple(&d);
-        let info = DeviceInfo { id, name, os: "switch".into(), app_version: client, last_seen: Utc::now() };
+        // It reaches the cloud through this PC, so it knows the layout this PC knows.
+        let info = DeviceInfo {
+            id,
+            name,
+            os: "switch".into(),
+            app_version: client,
+            last_seen: Utc::now(),
+            layout: crate::cloud::v2::LAYOUT,
+            installs: Vec::new(),
+        };
         if let Err(e) = cloud(&cfg).and_then(|c| c.put_device(&info)) {
             failed(&cfg, &e);
         }
@@ -514,7 +531,7 @@ pub fn upload_waiting() -> Result<usize> {
     let cfg = config::load()?;
     let cloud = cloud(&cfg)?;
     for meta in &waiting {
-        sync::upload_pending(&*cloud, meta)?;
+        sync::upload_pending(&cloud, meta)?;
         note(format!("{}: uploaded the Switch's version {}", meta.game, meta.id));
         // Known as the cloud's before it leaves the queue, so an answer
         // never misses it in between.
@@ -522,7 +539,7 @@ pub fn upload_waiting() -> Result<usize> {
         h.error = None;
         if let Some(k) = h.heads.get_mut(&meta.game) {
             let mut all: Vec<SnapshotSummary> = k.head.take().into_iter().collect();
-            all.push(SnapshotSummary::from(meta));
+            all.push(waiting_summary(meta));
             k.head = sync::mainline_head(&all);
         }
         sync::drop_pending(meta)?;
@@ -601,13 +618,13 @@ fn jobs() -> std::sync::MutexGuard<'static, HashMap<String, Job>> {
 /// One version's files of the Switch game, as a zip for the Switch: from
 /// this PC's queue when it's still there, else from the cloud.
 fn fetch_for_switch(cfg: &AppConfig, key: &str, id: &str, title: u64, job: &str) -> Result<std::path::PathBuf> {
-    let queued = paths::pending_dir().join(key).join(format!("{id}.zip"));
-    let local = if queued.is_file() { repack_for_switch(&queued, title).ok() } else { None };
+    let queued = sync::pending_zips(key, id);
+    let local = if queued.is_empty() { None } else { repack_for_switch(&queued, title).ok() };
     let body = match local {
         Some(b) => b,
         None => {
             let tmp = paths::staging_dir().join(format!("nx-{job}.zip"));
-            let got = cloud(cfg).and_then(|c| c.download(key, id, &tmp)).and_then(|_| repack_for_switch(&tmp, title));
+            let got = cloud(cfg).and_then(|c| c.download(key, id, &tmp)).and_then(|_| repack_for_switch(std::slice::from_ref(&tmp), title));
             let _ = std::fs::remove_file(&tmp);
             got?
         }
@@ -847,7 +864,8 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             // older), counting versions this PC hasn't uploaded yet (read
             // first: one uploaded meanwhile is then in both).
             let waiting = pending(&key);
-            let listed = cloud.list_snapshots(&key)?;
+            let line = cloud.open(&key)?;
+            let listed = crate::cloud::client::summaries(&line.view);
             remember_head(&cfg, &key, sync::mainline_head(&listed));
             let mut all = listed;
             for p in waiting {
@@ -877,13 +895,26 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             let (id, name) = device_tuple(device);
             // The game version that wrote the saves, for games whose rule says how.
             let version = crate::crosssaves::files_version(&[format!("nx:{title:016X}")], "switch", &files, &Default::default());
-            let (meta, zip) = snapshot::build_from_files(&key, &files, trigger, parent, (&id, &name), "", version)?;
             // A backup the cloud already holds isn't stored twice.
-            if let Some(same) = all.iter().find(|s| backup && s.content_hash == meta.content_hash) {
-                let _ = std::fs::remove_file(&zip);
+            let hash = snapshot::files_hash(&files);
+            if let Some(same) = all.iter().find(|s| backup && s.content_hash == hash) {
                 return Ok(ok_json(json!({ "id": same.id, "key": key, "existing": true })));
             }
-            sync::queue_pending(&meta, &zip)?;
+            let meta = sync::queue_files(
+                &line,
+                &sync::Foreign {
+                    key: &key,
+                    files: &files,
+                    trigger,
+                    parent,
+                    over_all: force,
+                    device: (&id, &name),
+                    platform: "console:switch",
+                    comment: "",
+                    game_version: version,
+                    origin: None,
+                },
+            )?;
             upload_in_background();
             Ok(ok_json(json!({ "id": meta.id, "key": key, "pending": true })))
         }
@@ -897,17 +928,24 @@ fn is_switch_path(path: &str, title: u64) -> bool {
     switch::parse_root(root).is_some_and(|(_, t)| t == title)
 }
 
-fn repack_for_switch(zip: &std::path::Path, title: u64) -> Result<Vec<u8>> {
-    let meta = snapshot::read_meta(zip)?;
-    let mut src = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
+/// The Switch game's files out of the zips of a version (each file as
+/// `files/<path>` in one of them), as one zip for the Switch.
+fn repack_for_switch(zips: &[std::path::PathBuf], title: u64) -> Result<Vec<u8>> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    for f in meta.files.iter().filter(|f| is_switch_path(&f.path, title)) {
-        let mut e = src.by_name(&format!("files/{}", f.path))?;
-        let mut data = Vec::with_capacity(f.size as usize);
-        e.read_to_end(&mut data)?;
-        out.start_file(f.path.clone(), opts)?;
-        out.write_all(&data)?;
+    for zip in zips {
+        let mut src = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
+        for i in 0..src.len() {
+            let mut e = src.by_index(i)?;
+            let Some(path) = e.name().strip_prefix("files/").map(str::to_string) else { continue };
+            if e.is_dir() || !is_switch_path(&path, title) {
+                continue;
+            }
+            let mut data = Vec::with_capacity(e.size() as usize);
+            e.read_to_end(&mut data)?;
+            out.start_file(path, opts)?;
+            out.write_all(&data)?;
+        }
     }
     Ok(out.finish()?.into_inner())
 }

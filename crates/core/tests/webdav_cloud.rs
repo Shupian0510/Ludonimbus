@@ -149,6 +149,8 @@ fn layout_and_migration(port: u16, tmp: &Path) {
             os: "windows".into(),
             app_version: "test".into(),
             last_seen: chrono::Utc::now(),
+            layout: 0,
+            installs: Vec::new(),
         })
         .unwrap();
     let ids = ["01AAA", "01BBB", "01CCC"];
@@ -158,17 +160,17 @@ fn layout_and_migration(port: u16, tmp: &Path) {
         let parent = (i > 0).then(|| ids[i - 1]);
         local.upload(&meta("fe", id, parent, &format!("note {i}")), &zip).unwrap();
     }
-    // A game whose definition never reached the cloud is still copied when
-    // the device knows it.
+    // A game whose definition never reached the cloud is copied all the same.
     let zip = tmp.join("orphan.zip");
     write_file(&zip, b"zip-orphan");
     local.upload(&meta("orphan", "01DDD", None, ""), &zip).unwrap();
 
     let dav = Repo::new(dav_store(port, "migrated"));
     let mut seen = Vec::new();
-    let report = migrate::copy_all(&local, &dav, &["orphan".to_string()], |p| seen.push(p.done)).unwrap();
+    let report = migrate::copy_all(local.store(), dav.store(), ("d-a", "PC-A"), |p| seen.push(p.done)).unwrap();
     assert_eq!((report.games, report.copied, report.skipped), (2, 4, 0));
-    assert_eq!(seen.last(), Some(&4));
+    // Progress counts files: a zip and a manifest for each version.
+    assert_eq!(seen.last(), Some(&8));
 
     let list = dav.list_snapshots("fe").unwrap();
     assert_eq!(list.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ids);
@@ -190,7 +192,7 @@ fn layout_and_migration(port: u16, tmp: &Path) {
     assert_eq!(dav.list_snapshots("fe").unwrap(), list);
 
     // Running the copy again skips everything.
-    let again = migrate::copy_all(&local, &dav, &["orphan".to_string()], |_| {}).unwrap();
+    let again = migrate::copy_all(local.store(), dav.store(), ("d-a", "PC-A"), |_| {}).unwrap();
     assert_eq!((again.copied, again.skipped), (0, 4));
 
     // Edited metadata is picked up even though older copies are cached.

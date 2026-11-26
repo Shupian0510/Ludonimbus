@@ -8,8 +8,8 @@
 
 use ludonimbus_core::config::{self, AppConfig, CloudConfig};
 use ludonimbus_core::nxlan::{self, Req};
-use ludonimbus_core::snapshot::{self, Trigger};
-use ludonimbus_core::sync::Ctx;
+use ludonimbus_core::snapshot::Trigger;
+use ludonimbus_core::sync::{self, Ctx};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -171,17 +171,25 @@ fn switch_client_round_trip() {
     // An emulator on another PC saves a newer version. The PC's answers may
     // not know yet, but writing checks the cloud: the Switch's upload on top
     // of the old version is refused as a conflict.
-    let (meta, zip) = snapshot::build_from_files(
-        key,
-        &[("nxsave-0100770008dd8000/save.bin".to_string(), b"hunter rank 51".to_vec())],
-        Trigger::AutoExit,
-        Some(first.clone()),
-        ("d-pc", "PC"),
-        "",
-        None,
+    let cloud = ctx.cloud().unwrap();
+    let meta = sync::queue_files(
+        &cloud.open(key).unwrap(),
+        &sync::Foreign {
+            key,
+            files: &[("nxsave-0100770008dd8000/save.bin".to_string(), b"hunter rank 51".to_vec())],
+            trigger: Trigger::AutoExit,
+            parent: Some(first.clone()),
+            over_all: false,
+            device: ("d-pc", "PC"),
+            platform: "emu:ryujinx",
+            comment: "",
+            game_version: None,
+            origin: None,
+        },
     )
     .unwrap();
-    ctx.cloud().unwrap().upload(&meta, &zip).unwrap();
+    sync::upload_pending(cloud, &meta).unwrap();
+    sync::drop_pending(&meta).unwrap();
     let mine = zip_of(&[("nxsave-0100770008dd8000/save.bin", b"hunter rank 50, switch side")]);
     let (s, b) = upload(&auth, &format!("parent={first}"), &mine);
     assert_eq!((s, b["head"]["id"].as_str()), (409, Some(meta.id.as_str())));

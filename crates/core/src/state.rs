@@ -1,5 +1,7 @@
 //! Per-device sync state (`%APPDATA%\Ludonimbus\state.json`).
 
+use crate::cloud::decide::Base;
+use crate::vv::Vv;
 use crate::{lockfile::FileLock, paths, util};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -13,6 +15,57 @@ pub struct State {
     pub games: BTreeMap<String, GameState>,
     /// Last time this device refreshed its entry in the cloud.
     pub device_seen_at: Option<DateTime<Utc>>,
+    /// What this device knows about the cloud it is connected to. Forgotten
+    /// when another cloud is connected.
+    #[serde(skip_serializing_if = "CloudSeen::is_unknown")]
+    pub cloud: CloudSeen,
+}
+
+/// The layout of the connected cloud as this device last saw it, so that a
+/// sync doesn't have to read `format.json` every time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CloudSeen {
+    /// 0 = never looked; 1 = the layout of 0.6, not upgraded yet; 2 = the
+    /// current layout.
+    pub layout: u32,
+    /// A newer Ludonimbus wrote it: this build must not write.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+    /// When `format.json` was read last.
+    pub checked_at: Option<DateTime<Utc>>,
+}
+
+impl CloudSeen {
+    fn is_unknown(&self) -> bool {
+        self.layout == 0 && self.checked_at.is_none()
+    }
+}
+
+/// Where a game's save line is in the cloud, as worked out from its game
+/// record: remembered so that a check before playing needs no look at the
+/// library. The folders of a line never change once it exists; a line can
+/// only gain folders to read, which the refresh after playing picks up.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LineRef {
+    /// Id of the game record.
+    pub game: String,
+    pub line: String,
+    /// The game's folders under `games/`.
+    pub folders: Vec<String>,
+    /// The line's folders: the one written to first.
+    pub dirs: Vec<String>,
+    /// When the game record was looked at last.
+    pub checked_at: Option<DateTime<Utc>>,
+}
+
+impl LineRef {
+    /// The folder the line is written to. It never changes, so it is what
+    /// names the line across devices whatever card it is on.
+    pub fn dir(&self) -> &str {
+        self.dirs.first().map(String::as_str).unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -24,6 +77,20 @@ pub struct GameState {
     pub last_synced_hash: Option<String>,
     pub last_sync_at: Option<DateTime<Utc>>,
     pub last_synced_device: Option<String>,
+    /// Version vector of that snapshot. Empty in a state written by 0.6: the
+    /// save line is then asked, by id.
+    #[serde(skip_serializing_if = "Vv::is_empty")]
+    pub last_synced_vv: Vv,
+    /// The highest count this device used for itself on the game's save
+    /// line. Lost counts are found again in the line's snapshots.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub counter: u64,
+    /// The game's save line in the cloud.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<LineRef>,
+    /// When old versions and unused packs of this game were last cleaned up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleaned_at: Option<DateTime<Utc>>,
     pub conflict: Option<ConflictInfo>,
     pub last_error: Option<String>,
     /// Snapshots waiting in `pending/` for the cloud to come back.
@@ -42,14 +109,41 @@ pub struct GameState {
     pub newer_dismissed: Option<String>,
 }
 
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+impl GameState {
+    /// What this device synced last, for [`crate::cloud::decide`].
+    pub fn base(&self) -> Option<Base> {
+        Some(Base {
+            id: self.last_synced_id.clone()?,
+            vv: self.last_synced_vv.clone(),
+            content_hash: self.last_synced_hash.clone().unwrap_or_default(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictInfo {
+    /// The newest of the versions to choose from.
     pub cloud_id: String,
     pub cloud_device: String,
     pub cloud_created_at: DateTime<Utc>,
     pub local_hash: String,
     pub detected_at: DateTime<Utc>,
+    /// Every version to choose from, oldest first: one normally, several
+    /// when the line itself has forked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<String>,
+    /// The saves on this device are one more choice.
+    #[serde(default = "yes")]
+    pub local_is_candidate: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn lock() -> Result<FileLock> {

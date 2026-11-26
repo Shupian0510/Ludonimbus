@@ -417,7 +417,7 @@ fn baidu_cloud() {
         local.upload(&meta("fe", id, (i > 0).then_some("01AAA")), &zip).unwrap();
     }
     let dav = Repo::new(s);
-    let report = migrate::copy_all(&local, &dav, &["fe".to_string()], |_| {}).unwrap();
+    let report = migrate::copy_all(local.store(), dav.store(), ("d-a", "PC-A"), |_| {}).unwrap();
     assert_eq!((report.copied, report.skipped), (2, 0));
     let list = dav.list_snapshots("fe").unwrap();
     assert_eq!(list.len(), 2);

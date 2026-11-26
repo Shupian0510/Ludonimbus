@@ -559,7 +559,7 @@ fn a_line_read_before_the_upgrade_is_the_line_it_makes() {
     let mut before = BTreeMap::new();
     for key in &keys {
         // The record the upgrade writes for the key.
-        let r = upgrade::record_for(key, None, None);
+        let r = upgrade::record_for(key, None, None, true);
         assert_eq!(Place::of(&r, &r.lines[0]), Place::of_key(key), "{key}");
         let view = saves::open(&store, &Place::of_key(key), &mut LineCache::default()).unwrap();
         before.insert(key.to_string(), view);

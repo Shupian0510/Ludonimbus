@@ -30,7 +30,7 @@ pub mod speedtest;
 pub mod version;
 
 use crate::cloud::store::Store;
-use crate::cloud::{self, CloudProvider, NotConfigured};
+use crate::cloud::{self, Cloud, NotConfigured};
 use crate::config::{AppConfig, GameEntry};
 use crate::{paths, spec, util};
 use anyhow::{anyhow, Result};
@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// The current cloud; use `.files()` for the path-based store.
-pub fn open(cfg: &AppConfig) -> Result<Box<dyn CloudProvider>> {
+pub fn open(cfg: &AppConfig) -> Result<Cloud> {
     cloud::open(cfg)?.ok_or_else(|| anyhow!(NotConfigured))
 }
 

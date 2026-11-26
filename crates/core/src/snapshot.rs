@@ -33,9 +33,41 @@ pub enum Trigger {
     PreRestore,
     /// The side that lost a conflict.
     ConflictKeep,
+    /// A kind of snapshot a newer Ludonimbus makes.
+    #[serde(other)]
+    Unknown,
 }
 
 impl Trigger {
+    /// The name in the cloud.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Trigger::AutoExit => "auto-exit",
+            Trigger::PreLaunch => "pre-launch",
+            Trigger::Passive => "passive",
+            Trigger::SyncNow => "sync-now",
+            Trigger::Manual => "manual",
+            Trigger::Restore => "restore",
+            Trigger::PreRestore => "pre-restore",
+            Trigger::ConflictKeep => "conflict-keep",
+            Trigger::Unknown => "unknown",
+        }
+    }
+
+    pub fn parse(s: &str) -> Trigger {
+        match s {
+            "auto-exit" => Trigger::AutoExit,
+            "pre-launch" => Trigger::PreLaunch,
+            "passive" => Trigger::Passive,
+            "sync-now" => Trigger::SyncNow,
+            "manual" => Trigger::Manual,
+            "restore" => Trigger::Restore,
+            "pre-restore" => Trigger::PreRestore,
+            "conflict-keep" => Trigger::ConflictKeep,
+            _ => Trigger::Unknown,
+        }
+    }
+
     /// Mainline snapshots form the history; side snapshots never become head.
     pub fn is_mainline(self) -> bool {
         !matches!(self, Trigger::PreRestore | Trigger::ConflictKeep)
@@ -66,6 +98,7 @@ pub struct SnapshotMeta {
     pub created_at: DateTime<Utc>,
     pub trigger: Trigger,
     /// Absolute root folders on the device that made the snapshot.
+    #[serde(default)]
     pub roots: BTreeMap<String, String>,
     pub content_hash: String,
     pub files: Vec<FileEntry>,
@@ -106,6 +139,86 @@ pub struct SnapshotSummary {
     pub game_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_version: Option<String>,
+    /// A newest version of its save line (several when the line has forked).
+    /// Not set in lists read the way 0.6 reads them: there the newest
+    /// mainline snapshot is the head ([`crate::sync::mainline_head`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub head: bool,
+    /// Kept beside the history, never the newest version.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub side: bool,
+}
+
+/// The absolute folders of the device that made a snapshot. Layout 2 has no
+/// field for them; until bindings replace them (docs/plan-v2.md, 4.2) they
+/// ride along as an extra field, because applying a save of another version
+/// of the game still reads them.
+pub const ROOTS: &str = "roots";
+
+impl SnapshotSummary {
+    /// A snapshot of a save line as the app lists it. A kept save shows as
+    /// locked, its name as the comment; a snapshot of 0.6 that is not kept
+    /// still shows the note it had.
+    pub fn of(entry: &crate::cloud::v2::IndexEntry, head: bool) -> Self {
+        let comment = match &entry.pin {
+            Some(pin) if !pin.name.is_empty() => pin.name.clone(),
+            _ => entry.old_note().unwrap_or_default().to_string(),
+        };
+        SnapshotSummary {
+            id: entry.id.clone(),
+            parent: entry.parent.clone(),
+            device_id: entry.device_id.clone(),
+            device_name: entry.device_name.clone(),
+            created_at: entry.created_at,
+            trigger: Trigger::parse(&entry.trigger),
+            content_hash: entry.content_hash.clone(),
+            total_size: entry.total_size,
+            file_count: entry.file_count,
+            comment,
+            locked: entry.pin.is_some(),
+            game_version: entry.game_version.clone(),
+            installed_version: entry.installed_version.clone(),
+            head,
+            side: entry.is_side(),
+        }
+    }
+}
+
+impl SnapshotMeta {
+    /// A manifest in the shape the rest of the app reads snapshots in.
+    /// `game` is the key the caller knows the game by; `listed` is the
+    /// snapshot's entry in its line when the caller has it (for the name it
+    /// is kept under).
+    pub fn of(manifest: &crate::cloud::v2::Manifest, game: &str, listed: Option<&crate::cloud::v2::IndexEntry>) -> Self {
+        let summary = SnapshotSummary::of(listed.unwrap_or(&manifest.summary()), false);
+        let roots = manifest
+            .extra
+            .get(ROOTS)
+            .and_then(|v| serde_json::from_value::<BTreeMap<String, String>>(v.clone()).ok())
+            .unwrap_or_default();
+        SnapshotMeta {
+            id: manifest.id.clone(),
+            game: game.to_string(),
+            parent: manifest.parent.clone(),
+            device_id: manifest.device_id.clone(),
+            device_name: manifest.device_name.clone(),
+            created_at: manifest.created_at,
+            trigger: Trigger::parse(&manifest.trigger),
+            roots,
+            content_hash: manifest.content_hash.clone(),
+            files: manifest
+                .files
+                .iter()
+                .map(|f| FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime })
+                .collect(),
+            total_size: manifest.total_size,
+            app_version: manifest.app_version.clone(),
+            comment: summary.comment,
+            locked: summary.locked,
+            game_version: manifest.game_version.clone(),
+            installed_version: manifest.installed_version.clone(),
+        }
+    }
 }
 
 impl From<&SnapshotMeta> for SnapshotSummary {
@@ -124,6 +237,8 @@ impl From<&SnapshotMeta> for SnapshotSummary {
             locked: m.locked,
             game_version: m.game_version.clone(),
             installed_version: m.installed_version.clone(),
+            head: false,
+            side: !m.trigger.is_mainline(),
         }
     }
 }
@@ -152,6 +267,32 @@ pub struct LocalState {
 impl LocalState {
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
+    }
+
+    /// The saves as they go into a snapshot of layout 2.
+    pub fn pack_files(&self) -> Vec<crate::cloud::packs::LocalFile> {
+        self.files
+            .iter()
+            .zip(&self.entries)
+            .map(|(f, e)| crate::cloud::packs::LocalFile {
+                path: e.path.clone(),
+                size: e.size,
+                hash: e.hash.clone(),
+                mtime: e.mtime,
+                source: f.abs.clone(),
+            })
+            .collect()
+    }
+
+    /// The folders the saves are in on this device, by root name: only the
+    /// roots a file uses.
+    pub fn used_roots(&self) -> BTreeMap<String, String> {
+        let used: HashSet<&str> = self.entries.iter().filter_map(|e| e.path.split('/').next()).collect();
+        self.roots
+            .iter()
+            .filter(|(k, _)| used.contains(k.as_str()))
+            .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
+            .collect()
     }
 }
 
@@ -358,17 +499,7 @@ pub fn build(
     comment: &str,
 ) -> Result<(SnapshotMeta, PathBuf)> {
     let id = ulid::Ulid::new().to_string();
-    let used_roots: HashSet<&str> = local
-        .entries
-        .iter()
-        .filter_map(|e| e.path.split('/').next())
-        .collect();
-    let roots = local
-        .roots
-        .iter()
-        .filter(|(k, _)| used_roots.contains(k.as_str()))
-        .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
-        .collect();
+    let roots = local.used_roots();
     let meta = SnapshotMeta {
         id: id.clone(),
         game: game.key.clone(),
@@ -462,6 +593,41 @@ pub fn build_from_files(
     Ok((meta, zip_path))
 }
 
+/// The content hash of files given in memory as `(path, contents)`.
+pub fn files_hash(files: &[(String, Vec<u8>)]) -> String {
+    let entries: Vec<FileEntry> = files
+        .iter()
+        .map(|(path, data)| FileEntry { path: path.clone(), size: data.len() as u64, hash: blake3::hash(data).to_hex().to_string(), mtime: 0 })
+        .collect();
+    content_hash(&entries)
+}
+
+/// Where the file `path` of a snapshot is in a folder that holds the
+/// snapshot's files as `<dir>/<path>`.
+pub fn resolve_in(dir: &Path, path: &str) -> Result<PathBuf> {
+    validate_logical(path)?;
+    Ok(path.split('/').fold(dir.to_path_buf(), |p, c| p.join(c)))
+}
+
+/// Pack the files of a snapshot that lie in `dir` as `<dir>/<path>` into a
+/// zip of the shape 0.6 wrote its snapshots in (`files/<path>` and
+/// `snapshot.json`).
+pub fn zip_dir(dir: &Path, meta: &SnapshotMeta, zip_path: &Path) -> Result<()> {
+    let file = File::create(zip_path).with_context(|| crate::tr!("无法创建 {}", "Can't create {}", zip_path.display()))?;
+    let mut zw = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for f in &meta.files {
+        let src = resolve_in(dir, &f.path)?;
+        zw.start_file(format!("files/{}", f.path), opts.large_file(f.size >= 0xF000_0000))?;
+        let mut src = File::open(&src).with_context(|| crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", f.path))?;
+        std::io::copy(&mut src, &mut zw)?;
+    }
+    zw.start_file("snapshot.json", opts)?;
+    zw.write_all(&serde_json::to_vec_pretty(meta)?)?;
+    zw.finish()?;
+    Ok(())
+}
+
 /// Read the metadata stored inside a snapshot zip.
 pub fn read_meta(zip_path: &Path) -> Result<SnapshotMeta> {
     let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
@@ -497,6 +663,29 @@ pub fn resolve_logical(roots: &BTreeMap<String, PathBuf>, logical: &str) -> Resu
 /// local save files that are not part of it. Callers must protect the
 /// current saves first (pre-restore snapshot).
 pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<()> {
+    let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
+    apply_with(&meta.files, game, &mut |path, out| {
+        let mut entry = archive
+            .by_name(&format!("files/{path}"))
+            .map_err(|_| anyhow!(crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", path)))?;
+        std::io::copy(&mut entry, out)?;
+        Ok(())
+    })
+}
+
+/// [`apply`], from a folder that holds the snapshot's files as
+/// `<dir>/<path>` (what [`crate::cloud::saves::fetch`] leaves).
+pub fn apply_dir(dir: &Path, files: &[FileEntry], game: &GameEntry) -> Result<()> {
+    apply_with(files, game, &mut |path, out| {
+        let src = resolve_in(dir, path)?;
+        let mut file = File::open(&src).map_err(|_| anyhow!(crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", path)))?;
+        std::io::copy(&mut file, out)?;
+        Ok(())
+    })
+}
+
+/// `content(path, out)` writes the content of the snapshot's file `path`.
+fn apply_with(files: &[FileEntry], game: &GameEntry, content: &mut dyn FnMut(&str, &mut File) -> Result<()>) -> Result<()> {
     let (current, mut roots) = scan(game).unwrap_or_else(|_| {
         let s = spec::effective(game);
         (Vec::new(), spec::resolve_roots(game, &s).unwrap_or_default())
@@ -504,17 +693,16 @@ pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<(
     let adapter = game.adapter.as_deref().and_then(crate::adapters::find);
     if let Some(a) = adapter {
         // Saves an emulator numbers per PC may have to be created first.
-        let mut used: Vec<String> = meta.files.iter().filter_map(|f| f.path.split('/').next().map(str::to_string)).collect();
+        let mut used: Vec<String> = files.iter().filter_map(|f| f.path.split('/').next().map(str::to_string)).collect();
         used.dedup();
         crate::emulators::prepare_restore(a, &mut roots, &used)?;
     }
-    let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
     // Resolve every destination first so nothing is written if a root is missing.
-    let mut plan = Vec::with_capacity(meta.files.len());
-    for fe in &meta.files {
+    let mut plan = Vec::with_capacity(files.len());
+    for fe in files {
         plan.push((fe, resolve_logical(&roots, &fe.path)?));
     }
-    let keep: HashSet<String> = meta.files.iter().map(|f| f.path.to_lowercase()).collect();
+    let keep: HashSet<String> = files.iter().map(|f| f.path.to_lowercase()).collect();
     for (fe, dest) in &plan {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
@@ -525,12 +713,9 @@ pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<(
             dest.file_name().unwrap_or_default().to_string_lossy()
         ));
         {
-            let mut entry = archive
-                .by_name(&format!("files/{}", fe.path))
-                .map_err(|_| anyhow!(crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", fe.path)))?;
             let mut out = File::create(&tmp)
                 .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
-            std::io::copy(&mut entry, &mut out)?;
+            content(&fe.path, &mut out)?;
             out.flush()?;
         }
         std::fs::rename(&tmp, dest).with_context(|| crate::tr!("无法替换 {}", "Can't replace {}", dest.display()))?;

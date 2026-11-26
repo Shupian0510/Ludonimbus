@@ -133,6 +133,8 @@ fn webdav_live() {
         os: "windows".into(),
         app_version: "e0".into(),
         last_seen: chrono::Utc::now(),
+        layout: 0,
+        installs: Vec::new(),
     })
     .unwrap();
     repo.put_device(&DeviceInfo {
@@ -141,6 +143,8 @@ fn webdav_live() {
         os: "windows".into(),
         app_version: "e0".into(),
         last_seen: chrono::Utc::now(),
+        layout: 0,
+        installs: Vec::new(),
     })
     .unwrap();
     let devices = repo.list_devices().unwrap();

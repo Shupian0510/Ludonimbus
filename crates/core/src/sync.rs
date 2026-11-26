@@ -1,32 +1,58 @@
-//! Steam-Cloud-like sync decisions.
+//! Syncing one game: what this device does about what [`cloud::decide`]
+//! says.
 //!
-//! | local since last sync | cloud since last sync | action                         |
-//! |-----------------------|-----------------------|--------------------------------|
-//! | unchanged             | unchanged             | nothing                        |
-//! | unchanged             | new snapshot          | pull (protect local first)     |
-//! | changed               | unchanged             | upload                         |
-//! | changed               | new snapshot          | conflict, keep both            |
-//! | no saves              | has snapshots         | pull (reinstalled game)        |
-//! | unknown (new PC)      | has snapshots         | equal → synced, else conflict  |
-//! | offline               | —                     | continue, queue uploads        |
+//! The decision itself is one table, in [`cloud::decide`]; reading and
+//! writing a save line is [`cloud::saves`]. This module is the part with
+//! side effects on this device: scanning the saves, remembering what was
+//! synced, replacing the saves with a version from the cloud, and the queue
+//! of versions the cloud doesn't have yet.
 //!
-//! Nothing is ever deleted except by retention, which never touches manual,
-//! locked, head or last-synced snapshots. Versions the user deletes go to
-//! 「最近删除」 first and are purged after `cloud::TRASH_DAYS` days.
+//! **The queue.** Every new version is first put on this device's disk,
+//! complete ([`cloud::saves::stage`]), and uploaded from there. When the
+//! cloud can't be reached it simply stays; the next sync uploads what waits
+//! before it does anything else. The device counts as synced to a version
+//! from the moment it is in the queue, so playing on while offline builds
+//! one version on the other.
+//!
+//! **Nothing is lost by a sync.** Before saves on this device are replaced,
+//! they go to the cloud as a snapshot kept beside the history, unless the
+//! cloud already has the same content. Two devices that both played are a
+//! conflict the user settles; the side that loses stays in the cloud.
+//!
+//! Versions the user deletes go to 「最近删除」 first and are purged after
+//! `cloud::TRASH_DAYS` days. What else goes away, and when, is
+//! [`cloud::retention`].
 
-use crate::cloud::{self, CloudGame, CloudProvider};
+use crate::cloud::decide::{self, Action, Local};
+use crate::cloud::line::LineView;
+use crate::cloud::saves::{self, Draft, Place};
+use crate::cloud::v2::{self, FileRef, IndexEntry, Manifest, Origin, Pin};
+use crate::cloud::{self, library, line, packs, retention, Cloud, CloudGame, OpenLine};
 use crate::config::{self, AppConfig, GameEntry};
 use crate::snapshot::{self, LocalState, SnapshotMeta, SnapshotSummary, Trigger};
-use crate::state::{self, ConflictInfo};
-use crate::{logger, paths};
+use crate::state::{self, ConflictInfo, GameState};
+use crate::vv::{self, Vv};
+use crate::{logger, paths, util};
 use anyhow::{anyhow, bail, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+/// Old versions and unused packs of a game are cleaned up this often.
+const CLEAN_EVERY_HOURS: i64 = 24;
+
+/// A device that has not synced a game for this long uploads everything
+/// again instead of building on what it synced last: the cloud no longer
+/// keeps that version for it (docs/plan-v2.md, section 5.4).
+const BASE_DAYS: i64 = 60;
+
+/// The note a snapshot was given when it was made, in its manifest.
+const COMMENT: &str = "comment";
 
 pub struct Ctx {
     pub cfg: AppConfig,
-    cloud: Option<Box<dyn CloudProvider>>,
+    cloud: Option<Cloud>,
     cloud_error: Option<String>,
 }
 
@@ -47,8 +73,13 @@ impl Ctx {
         }
     }
 
-    pub fn cloud(&self) -> Result<&dyn CloudProvider> {
-        if let Some(c) = self.cloud.as_deref() {
+    /// With a cloud the caller opened itself, whatever the config says.
+    pub fn with_cloud(cfg: AppConfig, cloud: Cloud) -> Ctx {
+        Ctx { cfg, cloud: Some(cloud), cloud_error: None }
+    }
+
+    pub fn cloud(&self) -> Result<&Cloud> {
+        if let Some(c) = self.cloud.as_ref() {
             return Ok(c);
         }
         match &self.cloud_error {
@@ -88,6 +119,20 @@ pub enum Status {
     Error,
 }
 
+impl From<decide::Status> for Status {
+    fn from(s: decide::Status) -> Self {
+        match s {
+            decide::Status::Empty => Status::Empty,
+            decide::Status::NotUploaded => Status::NotUploaded,
+            decide::Status::Synced => Status::Synced,
+            decide::Status::LocalChanged => Status::LocalChanged,
+            decide::Status::CloudNewer => Status::CloudNewer,
+            decide::Status::CanRestore => Status::CanRestore,
+            decide::Status::Conflict => Status::Conflict,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusReport {
@@ -108,6 +153,7 @@ pub struct StatusReport {
 pub enum Resolution {
     Auto,
     UseLocal,
+    /// The newest version in the cloud.
     UseCloud,
 }
 
@@ -125,10 +171,16 @@ pub enum Outcome {
     Offline { message: String },
 }
 
-/// Newest snapshot that is part of the main history.
+/// The newest version in a list of a game's versions: the one its save line
+/// says ([`SnapshotSummary::head`]; the last of several when the line has
+/// forked). In a list that doesn't say, such as one a device on 0.6 made,
+/// the newest snapshot that is part of the main history.
 pub fn mainline_head(list: &[SnapshotSummary]) -> Option<SnapshotSummary> {
+    if let Some(head) = list.iter().filter(|s| s.head).max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id))) {
+        return Some(head.clone());
+    }
     list.iter()
-        .filter(|s| s.trigger.is_mainline())
+        .filter(|s| !s.side && s.trigger.is_mainline())
         .max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)))
         .cloned()
 }
@@ -137,47 +189,175 @@ fn log(msg: impl AsRef<str>) {
     logger::log("sync", msg);
 }
 
-fn mark_synced(key: &str, id: &str, hash: &str, device: &str) -> Result<()> {
+/// The cloud can't take what this device wants to write right now, and
+/// will later: it can't be reached, or another device is upgrading it.
+fn must_wait(e: &anyhow::Error) -> bool {
+    cloud::is_unavailable(e) || cloud::upgrade::is_busy(e)
+}
+
+// ------------------------------------------------------------ what was synced
+
+/// Remember that this device is now at snapshot `id`.
+fn mark_synced(key: &str, id: &str, vv: &Vv, hash: &str, device_name: &str, own_device: &str) -> Result<()> {
     state::update_game(key, |g| {
         g.last_synced_id = Some(id.to_string());
         g.last_synced_hash = Some(hash.to_string());
+        g.last_synced_vv = vv.clone();
+        g.counter = g.counter.max(vv.get(own_device));
         g.last_sync_at = Some(Utc::now());
-        g.last_synced_device = Some(device.to_string());
+        g.last_synced_device = Some(device_name.to_string());
         g.conflict = None;
         g.last_error = None;
     })
 }
 
-/// Keep a version on this device until the cloud takes it.
-pub fn queue_pending(meta: &SnapshotMeta, zip: &std::path::Path) -> Result<()> {
-    let dir = paths::pending_dir().join(&meta.game);
-    std::fs::create_dir_all(&dir)?;
-    std::fs::rename(zip, dir.join(format!("{}.zip", meta.id)))
-        .or_else(|_| std::fs::copy(zip, dir.join(format!("{}.zip", meta.id))).map(|_| ()))?;
-    std::fs::write(dir.join(format!("{}.json", meta.id)), serde_json::to_vec_pretty(meta)?)?;
-    state::update_game(&meta.game, |g| {
-        if !g.pending.contains(&meta.id) {
-            g.pending.push(meta.id.clone());
+fn base_file(key: &str) -> PathBuf {
+    paths::data_dir().join("lines").join(format!("{key}.base.json"))
+}
+
+/// Keep the manifest of the snapshot this device is at: the next upload of
+/// a large save sends only what changed since.
+fn remember_base(key: &str, manifest: Option<&Manifest>) {
+    let file = base_file(key);
+    match manifest.and_then(|m| serde_json::to_vec(m).ok()) {
+        Some(bytes) => {
+            if let Some(dir) = file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = util::atomic_write(&file, &bytes);
         }
-    })
+        None => {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+/// The manifest to build an upload of `size` bytes on, when there is a
+/// point: small saves are always uploaded whole.
+fn base_manifest(key: &str, st: &GameState, size: u64) -> Option<Manifest> {
+    if size <= packs::Policy::default().full_below {
+        return None;
+    }
+    if !st.last_sync_at.is_some_and(|t| Utc::now() - t < Duration::days(BASE_DAYS)) {
+        return None;
+    }
+    let manifest: Manifest = serde_json::from_slice(&std::fs::read(base_file(key)).ok()?).ok()?;
+    (Some(&manifest.id) == st.last_synced_id.as_ref()).then_some(manifest)
+}
+
+/// The vector of what this device synced last, as far as it can be known:
+/// what the line says while the snapshot is still there (a snapshot of 0.6
+/// has no other), else what this device remembers.
+fn base_vv(st: &GameState, view: &LineView) -> Vv {
+    st.last_synced_id
+        .as_deref()
+        .and_then(|id| view.get(id))
+        .map(|s| s.vv.clone())
+        .filter(|vv| !vv.is_empty())
+        .unwrap_or_else(|| st.last_synced_vv.clone())
+}
+
+fn local_of(local: &LocalState, st: &GameState) -> Local {
+    Local { content_hash: (!local.is_empty()).then(|| local.hash.clone()), base: st.base() }
+}
+
+/// Where the saves of a game come from, for the manifest's `platform`.
+fn platform(game: &GameEntry) -> String {
+    match game.adapter.as_deref().and_then(crate::adapters::find) {
+        Some(a) if a.is_emulator() => format!("emu:{}", a.key),
+        Some(a) => format!("recomp:{}", a.key),
+        None => "pc".to_string(),
+    }
+}
+
+// ------------------------------------------------------------------ the queue
+
+fn queue_dir(key: &str) -> PathBuf {
+    paths::pending_dir().join(key)
+}
+
+/// A version 0.6 left in the queue, as a manifest of layout 2. Its zip is
+/// the snapshot's own pack as it is; the vector is given when it is
+/// uploaded ([`settle_queued`]).
+fn from_06(meta: SnapshotMeta) -> Manifest {
+    let mut extra = v2::Extra::new();
+    if !meta.roots.is_empty() {
+        extra.insert(snapshot::ROOTS.to_string(), serde_json::json!(meta.roots));
+    }
+    if !meta.comment.trim().is_empty() {
+        extra.insert(COMMENT.to_string(), meta.comment.clone().into());
+    }
+    Manifest {
+        v: v2::LAYOUT,
+        id: meta.id,
+        game: meta.game,
+        line: library::MAIN_LINE.to_string(),
+        vv: Vv::new(),
+        parent: meta.parent,
+        device_id: meta.device_id,
+        device_name: meta.device_name,
+        platform: String::new(),
+        created_at: meta.created_at,
+        trigger: meta.trigger.as_str().to_string(),
+        side: !meta.trigger.is_mainline(),
+        content_hash: meta.content_hash,
+        total_size: meta.total_size,
+        files: meta
+            .files
+            .into_iter()
+            .map(|f| FileRef { path: f.path, size: f.size, hash: f.hash, mtime: f.mtime, pack: None, extra: v2::Extra::new() })
+            .collect(),
+        game_version: meta.game_version,
+        installed_version: meta.installed_version,
+        info: None,
+        origin: None,
+        requires: Vec::new(),
+        app_version: meta.app_version,
+        extra,
+    }
+}
+
+/// The versions of `key` waiting on this device for the cloud, oldest
+/// first. The flag says the file in the queue is one 0.6 wrote.
+fn queued(key: &str) -> Vec<(Manifest, bool)> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(queue_dir(key)) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&p) else { continue };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else { continue };
+        if value.get("v").and_then(|v| v.as_u64()) == Some(u64::from(v2::LAYOUT)) {
+            if let Ok(m) = serde_json::from_value::<Manifest>(value) {
+                out.push((m, false));
+            }
+        } else if let Ok(meta) = serde_json::from_value::<SnapshotMeta>(value) {
+            out.push((from_06(meta), true));
+        }
+    }
+    out.sort_by(|a, b| a.0.created_at.cmp(&b.0.created_at).then_with(|| a.0.id.cmp(&b.0.id)));
+    out
 }
 
 /// Versions of `key` waiting on this device for the cloud, oldest first.
 pub fn pending_metas(key: &str) -> Vec<SnapshotMeta> {
-    let dir = paths::pending_dir().join(key);
-    let mut metas = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "json") {
-                if let Some(m) = std::fs::read(&p).ok().and_then(|b| serde_json::from_slice::<SnapshotMeta>(&b).ok()) {
-                    metas.push(m);
-                }
-            }
-        }
+    queued(key).iter().map(|(m, _)| SnapshotMeta::of(m, key, None)).collect()
+}
+
+/// The zips that hold the files of a version waiting in the queue (each
+/// file as `files/<path>` in one of them). Empty when the version isn't
+/// waiting.
+pub fn pending_zips(key: &str, id: &str) -> Vec<PathBuf> {
+    let Some((m, _)) = queued(key).into_iter().find(|(m, _)| m.id == id) else { return Vec::new() };
+    let dir = queue_dir(key);
+    let zips: Vec<PathBuf> = m.packs().iter().map(|p| dir.join(format!("{p}.zip"))).collect();
+    if zips.iter().all(|z| z.is_file()) {
+        zips
+    } else {
+        Vec::new()
     }
-    metas.sort_by_key(|m| m.created_at);
-    metas
 }
 
 /// The games with versions waiting for the cloud.
@@ -187,35 +367,325 @@ pub fn pending_keys() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Upload one waiting version (nothing when another process did already);
-/// [`drop_pending`] then takes it off the queue.
-pub fn upload_pending(cloud: &dyn CloudProvider, m: &SnapshotMeta) -> Result<()> {
-    let zip = paths::pending_dir().join(&m.game).join(format!("{}.zip", m.id));
-    if zip.is_file() {
-        cloud.upload(m, &zip)?;
-        log(format!("{}: uploaded pending snapshot {}", m.game, m.id));
+/// Add snapshots to a view of their line, as reading the line again would
+/// show them.
+fn add_to_view(view: &mut LineView, entries: impl IntoIterator<Item = IndexEntry>) {
+    let mut all: Vec<(IndexEntry, usize)> = view.snapshots.drain(..).zip(view.places.drain(..)).collect();
+    for e in entries {
+        if !all.iter().any(|(s, _)| s.id == e.id) {
+            all.push((e, 0));
+        }
+    }
+    all.sort_by(|a, b| a.0.created_at.cmp(&b.0.created_at).then_with(|| a.0.id.cmp(&b.0.id)));
+    let (snapshots, places): (Vec<IndexEntry>, Vec<usize>) = all.into_iter().unzip();
+    let heads = {
+        let main: Vec<(usize, &IndexEntry)> = snapshots.iter().enumerate().filter(|(_, s)| !s.is_side()).collect();
+        vv::heads(&main, |(_, s)| &s.vv).into_iter().map(|k| main[k].0).collect()
+    };
+    view.snapshots = snapshots;
+    view.places = places;
+    view.heads = heads;
+}
+
+/// Make a waiting version fit the line it is about to join. Nobody has seen
+/// it yet, so it may still change. Returns whether it did.
+///
+/// - It is labelled with the game and line as they are now (the cloud may
+///   have been upgraded since it was made).
+/// - A version without a vector (0.6 made it, or the line couldn't be read
+///   when it was made) gets one: built on its parent.
+/// - A version whose vector lacks its parent's changes gets them. That is a
+///   version made offline by a device that came from 0.6 and didn't know
+///   the vector of the 0.6 snapshot it was at.
+fn settle_queued(m: &mut Manifest, place: &Place, view: &LineView) -> bool {
+    let before = m.clone();
+    m.game = place.game.clone();
+    m.line = place.line.clone();
+    let parent = m.parent.as_deref().and_then(|p| view.get(p)).map(|s| s.vv.clone()).filter(|vv| !vv.is_empty());
+    if m.is_side() {
+        if m.vv.is_empty() {
+            m.vv = parent.unwrap_or_default();
+        }
+    } else if m.vv.is_empty() {
+        let floor = vv::max_count(view.snapshots.iter().map(|s| &s.vv), &m.device_id);
+        m.vv = Vv::next(parent.iter(), &m.device_id, floor);
+    } else if let Some(parent) = parent {
+        if !m.vv.contains(&parent) {
+            m.vv.join(&parent);
+        }
+    }
+    *m != before
+}
+
+/// The line as it will be once what waits in the queue is uploaded. This
+/// device is at one of those versions, so this is the line it decides by.
+fn with_queue(view: &LineView, place: &Place, key: &str) -> LineView {
+    let mut seen = view.clone();
+    for (mut m, _) in queued(key) {
+        if seen.get(&m.id).is_none() {
+            settle_queued(&mut m, place, &seen);
+            add_to_view(&mut seen, [m.summary()]);
+        }
+    }
+    seen
+}
+
+/// The version "the cloud's" stands for when the user chooses between it
+/// and the saves here: the newest head that isn't those saves.
+fn other_side(view: &LineView, local_hash: &str) -> Option<String> {
+    let heads: Vec<&IndexEntry> = view.head_entries().collect();
+    heads.iter().rev().find(|h| h.content_hash != local_hash).or(heads.last()).map(|h| h.id.clone())
+}
+
+fn unqueue(key: &str, m: &Manifest) -> Result<()> {
+    saves::unstage(&queue_dir(key), m)?;
+    state::update_game(key, |g| g.pending.retain(|x| x != &m.id))
+}
+
+/// Upload one waiting version and make it part of its line. It stays in the
+/// queue ([`unqueue`]).
+fn publish_queued(cloud: &Cloud, line: &mut OpenLine, m: &mut Manifest, from_06: bool) -> Result<()> {
+    let key = line.key.clone();
+    let dir = queue_dir(&key);
+    // Another process of this device may have uploaded it meanwhile.
+    if line.view.get(&m.id).is_none() {
+        if settle_queued(m, &line.place, &line.view) || from_06 {
+            util::atomic_write(&dir.join(format!("{}.json", m.id)), &serde_json::to_vec(m)?)?;
+            // The device counts as synced to this version since it was made.
+            let _ = state::update_game(&key, |g| {
+                if g.last_synced_id.as_deref() == Some(m.id.as_str()) {
+                    g.last_synced_vv = m.vv.clone();
+                }
+            });
+        }
+        saves::publish(cloud.files(), &line.place, &mut line.cache, m, &dir, &[], cloud.device_id())?;
+        // A backup made by hand is a kept save from the start.
+        if m.trigger == Trigger::Manual.as_str() {
+            let name = m.extra.get(COMMENT).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let pin = Pin { name, created_at: Some(m.created_at), device_id: m.device_id.clone(), ..Pin::default() };
+            line::write_pin(cloud.files(), line.place.dir(), &m.id, &pin)?;
+        }
+        add_to_view(&mut line.view, [m.summary()]);
+        log(format!("{key}: uploaded {} ({})", m.id, m.trigger));
     }
     Ok(())
 }
 
-pub fn drop_pending(m: &SnapshotMeta) -> Result<()> {
-    let dir = paths::pending_dir().join(&m.game);
-    let _ = std::fs::remove_file(dir.join(format!("{}.zip", m.id)));
-    let _ = std::fs::remove_file(dir.join(format!("{}.json", m.id)));
-    state::update_game(&m.game, |g| g.pending.retain(|x| x != &m.id))
-}
-
-/// Upload snapshots that were created while offline.
-pub fn flush_pending(cloud: &dyn CloudProvider, key: &str) -> Result<usize> {
-    let metas = pending_metas(key);
-    for m in &metas {
-        upload_pending(cloud, m)?;
-        drop_pending(m)?;
+/// The definition of the game `key`, for the record a game new to the
+/// cloud gets.
+fn definition(key: &str, game: Option<&GameEntry>) -> Option<CloudGame> {
+    if let Some(g) = game {
+        return Some(CloudGame::from(g));
     }
-    Ok(metas.len())
+    let cfg = config::load().ok()?;
+    if let Some(g) = cfg.game(key) {
+        return Some(CloudGame::from(g));
+    }
+    crate::savelib::cached(&cfg).games.into_iter().find(|c| c.key == key)
 }
 
-fn best_effort_housekeeping(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEntry) {
+/// Get the line ready for writing: the cloud is upgraded if it has to be,
+/// the game gets its record if it has none, and the line is read again when
+/// either changed what it looks like.
+fn ready_to_write(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>) -> Result<()> {
+    let upgraded = cloud.is_legacy()?;
+    // Only asked about a game the cloud has no record of: its line was read
+    // where 0.6 would have put it as well.
+    let has_old = !line.view.snapshots.is_empty() || !line.view.unreadable.is_empty();
+    let place = cloud.place_to_write(&line.key, definition(&line.key, game).as_ref(), has_old)?;
+    if upgraded || place.dirs != line.place.dirs {
+        *line = cloud.open_at(&line.key, place)?;
+    } else {
+        line.place = place;
+    }
+    Ok(())
+}
+
+/// Upload everything of this game that waits in the queue.
+fn flush(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>) -> Result<usize> {
+    let waiting = queued(&line.key);
+    if waiting.is_empty() {
+        return Ok(0);
+    }
+    ready_to_write(cloud, line, game)?;
+    let n = waiting.len();
+    for (mut m, old) in waiting {
+        let done = publish_queued(cloud, line, &mut m, old).and_then(|_| unqueue(&line.key, &m));
+        if done.is_err() {
+            line.remember();
+        }
+        done?;
+    }
+    line.remember();
+    Ok(n)
+}
+
+/// Upload one waiting version (nothing when another process did already).
+/// It stays in the queue until [`drop_pending`].
+pub fn upload_pending(cloud: &Cloud, m: &SnapshotMeta) -> Result<()> {
+    let key = m.game.as_str();
+    let Some((mut manifest, old)) = queued(key).into_iter().find(|(q, _)| q.id == m.id) else { return Ok(()) };
+    let mut line = cloud.open(key)?;
+    ready_to_write(cloud, &mut line, None)?;
+    let done = publish_queued(cloud, &mut line, &mut manifest, old);
+    line.remember();
+    done
+}
+
+/// Take a version off the queue without uploading it.
+pub fn drop_pending(m: &SnapshotMeta) -> Result<()> {
+    let key = m.game.as_str();
+    match queued(key).into_iter().find(|(q, _)| q.id == m.id) {
+        Some((manifest, _)) => unqueue(key, &manifest),
+        None => state::update_game(key, |g| g.pending.retain(|x| x != &m.id)),
+    }
+}
+
+/// Upload the versions of `key` that were made while the cloud couldn't be
+/// reached.
+pub fn flush_pending(cloud: &Cloud, key: &str) -> Result<usize> {
+    if queued(key).is_empty() {
+        return Ok(0);
+    }
+    let mut line = cloud.open(key)?;
+    flush(cloud, &mut line, None)
+}
+
+/// What a new snapshot is, beyond its files.
+#[derive(Default)]
+struct Shot {
+    /// The vectors a mainline snapshot is built on ([`decide::next_vv`]).
+    bases: Vec<Vv>,
+    parent: Option<String>,
+    trigger: Option<Trigger>,
+    /// Beside the history: never the newest version.
+    side: bool,
+    comment: String,
+    origin: Option<Origin>,
+    /// The manifest to share unchanged files with (large saves).
+    base: Option<Manifest>,
+}
+
+/// Put a snapshot of `files` into the queue of `key`: complete on this
+/// device, not yet in the cloud.
+#[allow(clippy::too_many_arguments)]
+fn enqueue(key: &str, place: &Place, draft: &Draft, files: &[packs::LocalFile], roots: &BTreeMap<String, String>, comment: &str, base: Option<&Manifest>) -> Result<Manifest> {
+    let mut manifest = saves::draft(place, draft, files, base, &packs::Policy::default());
+    if !roots.is_empty() {
+        manifest.extra.insert(snapshot::ROOTS.to_string(), serde_json::json!(roots));
+    }
+    if !comment.trim().is_empty() {
+        manifest.extra.insert(COMMENT.to_string(), comment.into());
+    }
+    saves::stage(&manifest, files, &queue_dir(key))?;
+    state::update_game(key, |g| {
+        if !g.pending.contains(&manifest.id) {
+            g.pending.push(manifest.id.clone());
+        }
+    })?;
+    Ok(manifest)
+}
+
+/// Queue a snapshot of this device's saves.
+fn stage_local(ctx: &Ctx, game: &GameEntry, place: &Place, view: &LineView, local: &LocalState, shot: &Shot) -> Result<Manifest> {
+    let st = state::game(&game.key);
+    let device = ctx.device();
+    let view = &with_queue(view, place, &game.key);
+    let vv = if shot.side { base_vv(&st, view) } else { decide::next_vv(&shot.bases, view, device.0, st.counter) };
+    let draft = Draft {
+        vv,
+        parent: shot.parent.clone(),
+        side: shot.side,
+        trigger: shot.trigger.unwrap_or(Trigger::SyncNow).as_str().to_string(),
+        platform: platform(game),
+        device_id: device.0.to_string(),
+        device_name: device.1.to_string(),
+        created_at: Utc::now(),
+        game_version: crate::crosssaves::local_version(game, &local.files, &local.roots),
+        installed_version: crate::gamebackup::version::installed(game),
+        info: None,
+        origin: shot.origin.clone(),
+    };
+    let manifest = enqueue(&game.key, place, &draft, &local.pack_files(), &local.used_roots(), &shot.comment, shot.base.as_ref())?;
+    if !shot.side {
+        mark_synced(&game.key, &manifest.id, &manifest.vv, &manifest.content_hash, device.1, device.0)?;
+        remember_base(&game.key, Some(&manifest));
+    }
+    Ok(manifest)
+}
+
+/// Files that are not this device's saves (a Switch's, handed over the
+/// local network; a save converted for a version that is only in the
+/// cloud), to be made a version of the game `key`.
+pub struct Foreign<'a> {
+    pub key: &'a str,
+    /// Canonical path and content of each file.
+    pub files: &'a [(String, Vec<u8>)],
+    pub trigger: Trigger,
+    /// The version the files were made from.
+    pub parent: Option<String>,
+    /// On top of every newest version, not only of `parent`: the user chose
+    /// these files over whatever the cloud has.
+    pub over_all: bool,
+    /// Id and name of the device the files are from.
+    pub device: (&'a str, &'a str),
+    pub platform: &'a str,
+    pub comment: &'a str,
+    pub game_version: Option<String>,
+    pub origin: Option<Origin>,
+}
+
+/// Make a version from files handed to this device and put it in the queue
+/// ([`upload_pending`] uploads it). `line` is the game's line as just read.
+/// A version of a kind that never is the newest (`pre-restore`) goes beside
+/// the history.
+pub fn queue_files(line: &OpenLine, f: &Foreign) -> Result<SnapshotMeta> {
+    let work = paths::staging_dir().join(format!("files-{}", ulid::Ulid::new()));
+    let result = (|| -> Result<Manifest> {
+        let mut files = Vec::with_capacity(f.files.len());
+        for (path, data) in f.files {
+            let dest = snapshot::resolve_in(&work, path)?;
+            if let Some(dir) = dest.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&dest, data)?;
+            files.push(packs::LocalFile::from_disk(path.clone(), dest)?);
+        }
+        let view = with_queue(&line.view, &line.place, f.key);
+        let side = !f.trigger.is_mainline();
+        let parent = f.parent.as_deref().and_then(|p| view.get(p)).map(|s| s.vv.clone()).filter(|vv| !vv.is_empty());
+        let vv = if side {
+            parent.unwrap_or_default()
+        } else {
+            let bases: Vec<Vv> = match f.over_all {
+                true => view.head_entries().map(|h| h.vv.clone()).collect(),
+                false => parent.into_iter().collect(),
+            };
+            decide::next_vv(&bases, &view, f.device.0, 0)
+        };
+        let draft = Draft {
+            vv,
+            parent: f.parent.clone(),
+            side,
+            trigger: f.trigger.as_str().to_string(),
+            platform: f.platform.to_string(),
+            device_id: f.device.0.to_string(),
+            device_name: f.device.1.to_string(),
+            created_at: Utc::now(),
+            game_version: f.game_version.clone(),
+            installed_version: None,
+            info: None,
+            origin: f.origin.clone(),
+        };
+        enqueue(f.key, &line.place, &draft, &files, &BTreeMap::new(), f.comment, None)
+    })();
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(SnapshotMeta::of(&result?, f.key, None))
+}
+
+// ------------------------------------------------------------- housekeeping
+
+fn best_effort_housekeeping(ctx: &Ctx, cloud: &Cloud, game: &GameEntry) {
     let st = state::game(&game.key);
     if !st.cloud_def_uploaded && cloud.put_game(&CloudGame::from(game)).is_ok() {
         let _ = state::update_game(&game.key, |g| g.cloud_def_uploaded = true);
@@ -241,109 +711,273 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEnt
     }
 }
 
-fn upload_local(
-    ctx: &Ctx,
-    cloud: &dyn CloudProvider,
-    game: &GameEntry,
-    local: &LocalState,
-    parent: Option<String>,
-    trigger: Trigger,
-    comment: &str,
-) -> Result<Outcome> {
-    let (meta, zip) = snapshot::build(game, local, trigger, parent, ctx.device(), comment)?;
-    match cloud.upload(&meta, &zip) {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&zip);
-            mark_synced(&game.key, &meta.id, &meta.content_hash, &meta.device_name)?;
-            log(format!("{}: uploaded {} ({:?})", game.key, meta.id, trigger));
-            if let Err(e) = prune(ctx, cloud, game) {
-                log(format!("{}: prune failed: {e:#}", game.key));
+/// What each device synced last on the line in `dir`, this device included.
+fn device_bases(ctx: &Ctx, devices: &[cloud::DeviceInfo], dir: &str, own: Option<&str>) -> Vec<retention::DeviceBase> {
+    let mut out: Vec<retention::DeviceBase> = devices
+        .iter()
+        .filter(|d| d.id != ctx.cfg.device.id)
+        .flat_map(|d| d.installs.iter().filter(move |i| i.dir == dir).filter_map(|i| i.synced.clone()).map(move |s| (d, s)))
+        .map(|(d, snapshot)| retention::DeviceBase { device_id: d.id.clone(), snapshot, seen_at: d.last_seen })
+        .collect();
+    if let Some(id) = own {
+        out.push(retention::DeviceBase { device_id: ctx.cfg.device.id.clone(), snapshot: id.to_string(), seen_at: Utc::now() });
+    }
+    out
+}
+
+/// Let go of old automatic versions, of versions deleted long ago and of
+/// packs nothing uses any more, in every save line of the game.
+fn clean(ctx: &Ctx, cloud: &Cloud, key: &str) -> Result<saves::Cleaned> {
+    if cloud.access()? != v2::Access::ReadWrite {
+        return Ok(saves::Cleaned::default());
+    }
+    let place = cloud.place(key)?;
+    let library = cloud.library()?;
+    let places: Vec<Place> = match library::resolve(&library.records, &place.game) {
+        Some(record) => record.lines.iter().map(|l| Place::of(record, l)).collect(),
+        None => return Ok(saves::Cleaned::default()),
+    };
+    let devices = cloud.list_devices().unwrap_or_default();
+    // This device's own place on each line: the games here that sync it.
+    let state = state::load();
+    let own = |dir: &str| state.games.values().find(|g| g.line.as_ref().is_some_and(|l| l.dir() == dir)).and_then(|g| g.last_synced_id.clone());
+    let mut caches: Vec<cloud::line::LineCache> = places.iter().map(|_| Default::default()).collect();
+    let mut lines: Vec<saves::Open<'_>> = places
+        .iter()
+        .zip(caches.iter_mut())
+        .map(|(place, cache)| saves::Open { place, cache, bases: device_bases(ctx, &devices, place.dir(), own(place.dir()).as_deref()) })
+        .collect();
+    saves::clean(
+        cloud.files(),
+        &mut lines,
+        &retention::Policy::from(&ctx.cfg.retention),
+        Duration::days(packs::GRACE_DAYS),
+        Utc::now(),
+        cloud.device_id(),
+    )
+}
+
+/// [`clean`], about once a day per game. Never fails a sync.
+fn clean_if_due(ctx: &Ctx, cloud: &Cloud, key: &str) {
+    let Some(last) = state::game(key).cleaned_at else {
+        // The day this device first uploads a game there is nothing to let
+        // go of: the first look is a day from now.
+        let _ = state::update_game(key, |g| g.cleaned_at = Some(Utc::now()));
+        return;
+    };
+    if Utc::now() - last < Duration::hours(CLEAN_EVERY_HOURS) {
+        return;
+    }
+    // The same once a day: has a device still on 0.6 uploaded this game
+    // where this device's line doesn't look?
+    match cloud.adopt_old_folder(key) {
+        Ok(true) => log(format!("{key}: a device on 0.6 uploaded saves; its folder is part of the line now")),
+        Ok(false) => {}
+        Err(e) => log(format!("{key}: looking at the folder of 0.6 failed: {e:#}")),
+    }
+    match clean(ctx, cloud, key) {
+        Ok(c) if c.snapshots.is_empty() && c.purged.is_empty() && c.packs.is_empty() => {}
+        Ok(c) => log(format!(
+            "{key}: cleaned up {} old versions, {} deleted long ago, {} unused packs",
+            c.snapshots.len(),
+            c.purged.len(),
+            c.packs.len()
+        )),
+        Err(e) => log(format!("{key}: cleaning up failed: {e:#}")),
+    }
+    let _ = state::update_game(key, |g| g.cleaned_at = Some(Utc::now()));
+}
+
+// ---------------------------------------------------------------- one sync
+
+/// One game's save line, opened for a sync.
+struct Session<'a> {
+    ctx: &'a Ctx,
+    cloud: &'a Cloud,
+    game: &'a GameEntry,
+    line: OpenLine,
+}
+
+impl<'a> Session<'a> {
+    fn open(ctx: &'a Ctx, cloud: &'a Cloud, game: &'a GameEntry) -> Result<Session<'a>> {
+        Ok(Session { ctx, cloud, game, line: cloud.open(&game.key)? })
+    }
+
+    fn key(&self) -> &str {
+        &self.game.key
+    }
+
+    fn summary(&self, id: &str) -> Option<SnapshotSummary> {
+        let i = self.line.view.snapshots.iter().position(|s| s.id == id)?;
+        Some(SnapshotSummary::of(&self.line.view.snapshots[i], self.line.view.heads.contains(&i)))
+    }
+
+    /// Queue a snapshot of the saves here and upload it. Uploading waits
+    /// for later when the cloud can't be reached, and before playing when
+    /// the cloud would have to be upgraded first: that can take a while,
+    /// and nothing is lost by doing it after the game.
+    fn push(&mut self, local: &LocalState, mut shot: Shot, launching: bool) -> Result<Outcome> {
+        if shot.base.is_none() && !shot.side {
+            shot.base = base_manifest(self.key(), &state::game(self.key()), local.total_size);
+        }
+        let manifest = stage_local(self.ctx, self.game, &self.line.place, &self.line.view, local, &shot)?;
+        let id = manifest.id.clone();
+        if launching && self.cloud.is_legacy().unwrap_or(false) {
+            let reason = crate::tr!("云端要先升级到新的格式，这一局结束后再上传", "The cloud has to be upgraded first; this is uploaded after the game");
+            log(format!("{}: queued {id} (the cloud is upgraded after playing)", self.key()));
+            return Ok(Outcome::Queued { id, reason });
+        }
+        match flush(self.cloud, &mut self.line, Some(self.game)) {
+            Ok(_) => Ok(Outcome::Uploaded { id }),
+            Err(e) if must_wait(&e) => {
+                log(format!("{}: queued {id} ({e:#})", self.key()));
+                Ok(Outcome::Queued { id, reason: format!("{e:#}") })
             }
-            Ok(Outcome::Uploaded { id: meta.id })
+            Err(e) => Err(e),
         }
-        Err(e) if cloud::is_unavailable(&e) => {
-            queue_pending(&meta, &zip)?;
-            mark_synced(&game.key, &meta.id, &meta.content_hash, &meta.device_name)?;
-            log(format!("{}: queued {} ({e:#})", game.key, meta.id));
-            Ok(Outcome::Queued {
-                id: meta.id,
-                reason: format!("{e:#}"),
-            })
+    }
+
+    /// Save the saves here beside the history, unless the cloud already has
+    /// the same content. Always a complete copy, and one stays on this
+    /// device too.
+    fn protect(&mut self, local: &LocalState, trigger: Trigger) -> Result<()> {
+        if local.is_empty() || self.line.view.snapshots.iter().any(|s| s.content_hash == local.hash) {
+            return Ok(());
         }
-        Err(e) => Err(e),
+        let shot = Shot { parent: state::game(self.key()).last_synced_id, trigger: Some(trigger), side: true, ..Shot::default() };
+        let manifest = stage_local(self.ctx, self.game, &self.line.place, &self.line.view, local, &shot)?;
+        keep_local_copy(self.key(), &manifest)?;
+        match flush(self.cloud, &mut self.line, Some(self.game)) {
+            Ok(_) => {
+                log(format!("{}: protected local saves as {} ({})", self.key(), manifest.id, manifest.trigger));
+                Ok(())
+            }
+            // It waits in the queue.
+            Err(e) if must_wait(&e) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Replace the saves here with version `id`.
+    fn pull(&mut self, local: &LocalState, id: &str) -> Result<Outcome> {
+        let target = self
+            .line
+            .view
+            .get(id)
+            .cloned()
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
+        if !target.unsupported().is_empty() {
+            bail!(crate::tr!(
+                "这个版本是更新版本的 Ludonimbus 存的，这台设备上的 Ludonimbus 需要先更新",
+                "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
+            ));
+        }
+        self.protect(local, Trigger::PreRestore)?;
+        let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
+        let work = paths::staging_dir().join(format!("pull-{id}"));
+        let _ = std::fs::remove_dir_all(&work);
+        let files = work.join("files");
+        let result = saves::fetch(self.cloud.files(), &self.line.place, &self.line.view, &manifest, None, &files, &work.join("packs"))
+            .and_then(|_| snapshot::apply_dir(&files, &SnapshotMeta::of(&manifest, self.key(), None).files, self.game));
+        let _ = std::fs::remove_dir_all(&work);
+        result?;
+        mark_synced(self.key(), id, &target.vv, &target.content_hash, &target.device_name, self.ctx.device().0)?;
+        remember_base(self.key(), Some(&manifest));
+        log(format!("{}: pulled {id} from {}", self.key(), target.device_name));
+        Ok(Outcome::Pulled {
+            id: id.to_string(),
+            device: target.device_name.clone(),
+            created_at: target.created_at,
+        })
+    }
+
+    /// After [`Session::pull`] of a version that is not the one newest
+    /// version: upload the saves as they are now on top of every head, so
+    /// the line has one newest version again and it is this one.
+    fn make_current(&mut self, from: &str, trigger: Trigger) -> Result<Option<Outcome>> {
+        if self.line.view.head().is_some_and(|h| h.id == from) {
+            return Ok(None);
+        }
+        let local = snapshot::local_state(self.game)?;
+        let loc = local_of(&local, &state::game(self.key()));
+        let Action::Push { bases, .. } = decide::settle(&loc, &self.line.view) else { return Ok(None) };
+        let origin = Origin {
+            game: self.line.place.game.clone(),
+            line: self.line.place.line.clone(),
+            snapshot: from.to_string(),
+            how: "restore".to_string(),
+            extra: v2::Extra::new(),
+        };
+        let shot = Shot { bases, parent: Some(from.to_string()), trigger: Some(trigger), origin: Some(origin), ..Shot::default() };
+        self.push(&local, shot, false).map(Some)
+    }
+
+    fn conflict(&mut self, local: &LocalState, candidates: &[String], local_is_candidate: bool, trigger: Trigger) -> Result<Outcome> {
+        // After playing, make sure the new local saves reach the cloud right
+        // away even though the user still has to choose.
+        if local_is_candidate && matches!(trigger, Trigger::AutoExit | Trigger::Passive) {
+            self.protect(local, Trigger::ConflictKeep)?;
+        }
+        // The one the user is shown against the saves here: when those are
+        // one side of a fork already, the other side.
+        let newest = candidates
+            .iter()
+            .rev()
+            .find(|id| self.line.view.get(id).is_some_and(|s| s.content_hash != local.hash))
+            .or(candidates.last())
+            .and_then(|id| self.summary(id))
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
+        state::update_game(self.key(), |g| {
+            g.conflict = Some(ConflictInfo {
+                cloud_id: newest.id.clone(),
+                cloud_device: newest.device_name.clone(),
+                cloud_created_at: newest.created_at,
+                local_hash: local.hash.clone(),
+                detected_at: Utc::now(),
+                candidates: candidates.to_vec(),
+                local_is_candidate,
+            });
+        })?;
+        log(format!("{}: conflict with {} from {}", self.key(), newest.id, newest.device_name));
+        Ok(Outcome::Conflict {
+            local_files: local.files.len(),
+            local_size: local.total_size,
+            cloud: newest,
+        })
     }
 }
 
-/// Save the local saves as a side snapshot unless the cloud already has them.
-fn protect_local(
-    ctx: &Ctx,
-    cloud: &dyn CloudProvider,
-    game: &GameEntry,
-    local: &LocalState,
-    list: &[SnapshotSummary],
-    trigger: Trigger,
-) -> Result<()> {
-    if local.is_empty() || list.iter().any(|s| s.content_hash == local.hash) {
-        return Ok(());
-    }
-    let parent = state::game(&game.key).last_synced_id;
-    let (meta, zip) = snapshot::build(game, local, trigger, parent, ctx.device(), "")?;
-    snapshot::keep_local_copy(&meta, &zip)?;
-    match cloud.upload(&meta, &zip) {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&zip);
-            log(format!("{}: protected local saves as {} ({:?})", game.key, meta.id, trigger));
+/// Keep a copy of a queued snapshot on this PC (safety net for the saves a
+/// pull is about to replace). The newest 10 of a game stay.
+fn keep_local_copy(key: &str, manifest: &Manifest) -> Result<()> {
+    let dir = paths::local_backups_dir().join(key);
+    std::fs::create_dir_all(&dir)?;
+    let queue = queue_dir(key);
+    for pack in manifest.packs() {
+        let zip = queue.join(format!("{pack}.zip"));
+        if zip.is_file() {
+            std::fs::copy(&zip, dir.join(format!("{pack}.zip")))?;
         }
-        Err(e) if cloud::is_unavailable(&e) => queue_pending(&meta, &zip)?,
-        Err(e) => return Err(e),
+    }
+    std::fs::write(dir.join(format!("{}.json", manifest.id)), serde_json::to_vec_pretty(manifest)?)?;
+    let mut kept: Vec<_> = std::fs::read_dir(&dir)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "json")).collect();
+    kept.sort();
+    while kept.len() > 10 {
+        let json = kept.remove(0);
+        let id = json.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                if e.file_name().to_string_lossy().starts_with(&id) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
     }
     Ok(())
 }
 
-fn pull(
-    ctx: &Ctx,
-    cloud: &dyn CloudProvider,
-    game: &GameEntry,
-    local: &LocalState,
-    list: &[SnapshotSummary],
-    target: &SnapshotSummary,
-) -> Result<Outcome> {
-    protect_local(ctx, cloud, game, local, list, Trigger::PreRestore)?;
-    let dl = paths::staging_dir().join(format!("{}-download.zip", target.id));
-    cloud.download(&game.key, &target.id, &dl)?;
-    let meta = snapshot::read_meta(&dl)?;
-    let result = snapshot::apply(&dl, &meta, game);
-    let _ = std::fs::remove_file(&dl);
-    result?;
-    mark_synced(&game.key, &target.id, &target.content_hash, &target.device_name)?;
-    log(format!("{}: pulled {} from {}", game.key, target.id, target.device_name));
-    Ok(Outcome::Pulled {
-        id: target.id.clone(),
-        device: target.device_name.clone(),
-        created_at: target.created_at,
-    })
-}
-
-fn record_conflict(game: &GameEntry, local: &LocalState, head: &SnapshotSummary) -> Result<Outcome> {
-    state::update_game(&game.key, |g| {
-        g.conflict = Some(ConflictInfo {
-            cloud_id: head.id.clone(),
-            cloud_device: head.device_name.clone(),
-            cloud_created_at: head.created_at,
-            local_hash: local.hash.clone(),
-            detected_at: Utc::now(),
-        });
-    })?;
-    log(format!("{}: conflict with {} from {}", game.key, head.id, head.device_name));
-    Ok(Outcome::Conflict {
-        local_files: local.files.len(),
-        local_size: local.total_size,
-        cloud: head.clone(),
-    })
-}
-
 /// When the cloud is unreachable: after playing, keep the new saves in the
-/// pending queue so they are uploaded later.
+/// queue so they are uploaded later.
 fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) -> Result<Outcome> {
     let message = format!("{err:#}");
     log(format!("{}: offline ({message})", game.key));
@@ -356,10 +990,15 @@ fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) ->
     if local.is_empty() || st.last_synced_hash.as_deref() == Some(local.hash.as_str()) {
         return Ok(Outcome::Offline { message });
     }
-    let (meta, zip) = snapshot::build(game, &local, trigger, st.last_synced_id, ctx.device(), "")?;
-    queue_pending(&meta, &zip)?;
-    mark_synced(&game.key, &meta.id, &meta.content_hash, &meta.device_name)?;
-    Ok(Outcome::Queued { id: meta.id, reason: message })
+    // Built on what this device synced last, and complete: what it would
+    // share files with may be gone by the time this is uploaded.
+    let place = match &st.line {
+        Some(l) => Place { game: l.game.clone(), line: l.line.clone(), folders: l.folders.clone(), dirs: l.dirs.clone() },
+        None => Place::of_key(&game.key),
+    };
+    let shot = Shot { bases: vec![st.last_synced_vv.clone()], parent: st.last_synced_id.clone(), trigger: Some(trigger), ..Shot::default() };
+    let manifest = stage_local(ctx, game, &place, &LineView::default(), &local, &shot)?;
+    Ok(Outcome::Queued { id: manifest.id, reason: message })
 }
 
 /// Sync one game. `trigger` labels a snapshot uploaded by this call.
@@ -369,89 +1008,88 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
         Err(e) if cloud::is_not_configured(&e) => return Ok(Outcome::NoCloud),
         Err(e) => return offline(ctx, game, trigger, e),
     };
-    if let Err(e) = flush_pending(cloud, &game.key) {
-        if cloud::is_unavailable(&e) {
-            return offline(ctx, game, trigger, e);
-        }
-        return Err(e);
-    }
-    let list = match cloud.list_snapshots(&game.key) {
-        Ok(l) => l,
+    let launching = trigger == Trigger::PreLaunch;
+    let mut s = match Session::open(ctx, cloud, game) {
+        Ok(s) => s,
         Err(e) if cloud::is_unavailable(&e) => return offline(ctx, game, trigger, e),
         Err(e) => return Err(e),
     };
-    // Keep launching fast: bookkeeping happens after playing, not before.
-    if trigger != Trigger::PreLaunch {
-        best_effort_housekeeping(ctx, cloud, game);
+    // What waits from earlier comes first: the decision below has to see it.
+    // Before playing it waits on when the cloud needs upgrading first.
+    if !(launching && cloud.is_legacy().unwrap_or(false)) {
+        if let Err(e) = flush(cloud, &mut s.line, Some(game)) {
+            if must_wait(&e) {
+                return offline(ctx, game, trigger, e);
+            }
+            return Err(e);
+        }
     }
-
     let local = snapshot::local_state(game)?;
     let st = state::game(&game.key);
-    let head = mainline_head(&list);
+    let seen = with_queue(&s.line.view, &s.line.place, &game.key);
+    let loc = local_of(&local, &st);
+    let action = decide::decide(&loc, &seen);
+    let device = ctx.device();
 
-    let Some(head) = head else {
-        if local.is_empty() {
-            return Ok(Outcome::NothingToSave);
+    let outcome = match (action, resolution) {
+        (Action::Nothing, _) => {
+            if local.is_empty() {
+                Outcome::NothingToSave
+            } else {
+                Outcome::UpToDate
+            }
         }
-        return upload_local(ctx, cloud, game, &local, None, trigger, "");
-    };
-
-    if local.hash == head.content_hash {
-        mark_synced(&game.key, &head.id, &head.content_hash, &head.device_name)?;
-        return Ok(Outcome::UpToDate);
-    }
-
-    match resolution {
-        Resolution::UseCloud => return pull(ctx, cloud, game, &local, &list, &head),
-        Resolution::UseLocal => {
+        (Action::Adopt { id }, _) => {
+            if let Some(head) = seen.get(&id) {
+                mark_synced(&game.key, &id, &head.vv, &head.content_hash, &head.device_name, device.0)?;
+                // Its manifest isn't on this device; the next upload of a
+                // large save is a complete one.
+                remember_base(&game.key, None);
+            }
+            Outcome::UpToDate
+        }
+        (_, Resolution::UseCloud) => {
+            // The version the user was shown as the cloud's, while it still
+            // is a newest version.
+            let shown = st.conflict.as_ref().map(|c| c.cloud_id.clone()).filter(|id| s.line.view.head_entries().any(|h| &h.id == id));
+            let Some(target) = shown.or_else(|| other_side(&s.line.view, &local.hash)) else {
+                bail!(crate::tr!("云端还没有这个游戏的存档", "The cloud has no saves of this game yet"));
+            };
+            let pulled = s.pull(&local, &target)?;
+            s.make_current(&target, Trigger::Restore)?;
+            pulled
+        }
+        (_, Resolution::UseLocal) => {
             if local.is_empty() {
                 bail!(crate::tr!("本地没有存档，不能以本地为准", "There are no local saves to keep"));
             }
-            return upload_local(ctx, cloud, game, &local, Some(head.id.clone()), Trigger::Manual, &crate::tr!("冲突时选择保留本地存档", "Kept this PC's saves in a conflict"));
+            let Action::Push { bases, parent } = decide::settle(&loc, &seen) else { return Ok(Outcome::NothingToSave) };
+            let comment = crate::tr!("冲突时选择保留本地存档", "Kept this PC's saves in a conflict");
+            s.push(&local, Shot { bases, parent, trigger: Some(Trigger::SyncNow), comment, ..Shot::default() }, launching)?
         }
-        Resolution::Auto => {}
-    }
-
-    if local.is_empty() {
-        return pull(ctx, cloud, game, &local, &list, &head);
-    }
-
-    let known_local = list.iter().any(|s| s.content_hash == local.hash);
-    let synced_hash = st.last_synced_hash.as_deref();
-    let local_changed = synced_hash != Some(local.hash.as_str());
-    let cloud_changed = st.last_synced_id.as_deref() != Some(head.id.as_str())
-        && synced_hash != Some(head.content_hash.as_str());
-
-    if synced_hash.is_none() {
-        if known_local {
-            return pull(ctx, cloud, game, &local, &list, &head);
+        (Action::Pull { id }, Resolution::Auto) => s.pull(&local, &id)?,
+        (Action::Push { bases, parent }, Resolution::Auto) => s.push(&local, Shot { bases, parent, trigger: Some(trigger), ..Shot::default() }, launching)?,
+        (Action::Conflict { candidates, local_is_candidate }, Resolution::Auto) => s.conflict(&local, &candidates, local_is_candidate, trigger)?,
+    };
+    // Keep launching fast: bookkeeping happens after playing, not before.
+    // And after the saves: what this device tells the others about itself
+    // (which version it is at) is then true, and a cloud nobody has used
+    // yet gets its layout before anything else is written to it.
+    if !launching {
+        best_effort_housekeeping(ctx, cloud, game);
+        // An index that didn't cover the line is written again for the next
+        // device (an upload has done that already).
+        if s.line.view.needs_index && !matches!(outcome, Outcome::Uploaded { .. }) && cloud.access().is_ok_and(|a| a == v2::Access::ReadWrite) {
+            let _ = line::write_index(cloud.files(), s.line.place.dir(), &s.line.cache, cloud.device_id());
         }
-        return conflict_with_backup(ctx, cloud, game, &local, &list, &head, trigger);
+        if matches!(outcome, Outcome::Uploaded { .. }) {
+            clean_if_due(ctx, cloud, &game.key);
+        }
+        if let Err(e) = cloud.look_again(&game.key) {
+            log(format!("{}: looking at the game's record failed: {e:#}", game.key));
+        }
     }
-
-    match (local_changed, cloud_changed) {
-        (false, true) => pull(ctx, cloud, game, &local, &list, &head),
-        (true, false) => upload_local(ctx, cloud, game, &local, Some(head.id.clone()), trigger, ""),
-        (true, true) if known_local => pull(ctx, cloud, game, &local, &list, &head),
-        _ => conflict_with_backup(ctx, cloud, game, &local, &list, &head, trigger),
-    }
-}
-
-fn conflict_with_backup(
-    ctx: &Ctx,
-    cloud: &dyn CloudProvider,
-    game: &GameEntry,
-    local: &LocalState,
-    list: &[SnapshotSummary],
-    head: &SnapshotSummary,
-    trigger: Trigger,
-) -> Result<Outcome> {
-    // After playing, make sure the new local saves reach the cloud right away
-    // even though the user still has to choose.
-    if matches!(trigger, Trigger::AutoExit | Trigger::Passive) {
-        protect_local(ctx, cloud, game, local, list, Trigger::ConflictKeep)?;
-    }
-    record_conflict(game, local, head)
+    Ok(outcome)
 }
 
 /// Compare local and cloud without changing anything.
@@ -493,82 +1131,84 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
             return report;
         }
     };
-    let list = match cloud.list_snapshots(&game.key) {
-        Ok(l) => l,
+    let view = match cloud.open(&game.key) {
+        Ok(l) => with_queue(&l.view, &l.place, &game.key),
         Err(e) => {
             report.status = if cloud::is_unavailable(&e) { Status::Offline } else { Status::Error };
             report.message = Some(format!("{e:#}"));
             return report;
         }
     };
-    report.snapshot_count = list.len();
-    let head = mainline_head(&list);
-    report.head = head.clone();
-    report.status = match &head {
-        None if local.is_empty() => Status::Empty,
-        None => Status::NotUploaded,
-        Some(h) if h.content_hash == local.hash => Status::Synced,
-        Some(_) if local.is_empty() => Status::CanRestore,
-        Some(_) if st.conflict.is_some() => Status::Conflict,
-        Some(h) => {
-            let known_local = list.iter().any(|s| s.content_hash == local.hash);
-            let synced = st.last_synced_hash.as_deref();
-            let local_changed = synced != Some(local.hash.as_str());
-            let cloud_changed =
-                st.last_synced_id.as_deref() != Some(h.id.as_str()) && synced != Some(h.content_hash.as_str());
-            match (synced.is_some(), local_changed, cloud_changed) {
-                (false, _, _) if known_local => Status::CloudNewer,
-                (false, _, _) => Status::Conflict,
-                (true, false, true) => Status::CloudNewer,
-                (true, true, false) => Status::LocalChanged,
-                (true, true, true) if known_local => Status::CloudNewer,
-                _ => Status::Conflict,
-            }
-        }
-    };
+    report.snapshot_count = view.snapshots.len();
+    report.head = view.heads.last().and_then(|&i| view.snapshots.get(i)).map(|s| SnapshotSummary::of(s, true));
+    let loc = local_of(&local, &st);
+    let action = decide::decide(&loc, &view);
+    report.status = decide::Status::of(&action, &loc, &view).into();
     report
 }
 
-/// Create a manual snapshot now (kept forever by retention).
+/// Keep the saves as they are now for good, under a name (a kept save).
+///
+/// When the cloud already has a version with this content, that one is
+/// kept. Otherwise a version is uploaded: the newest of the line when the
+/// saves here are what the line would get next anyway, and beside the
+/// history when not (the cloud has something newer, or there is a conflict
+/// to settle), so that keeping a save never decides anything for the user.
 pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome> {
     let local = snapshot::local_state(game)?;
     if local.is_empty() {
         bail!(crate::tr!("没有找到「{}」的存档文件", "No save files of \"{}\" found", game.name));
     }
     let cloud = ctx.cloud()?;
-    let head = match cloud.list_snapshots(&game.key) {
-        Ok(l) => mainline_head(&l).map(|h| h.id),
-        Err(e) if cloud::is_unavailable(&e) => state::game(&game.key).last_synced_id,
+    let mut s = match Session::open(ctx, cloud, game) {
+        Ok(s) => s,
+        Err(e) if cloud::is_unavailable(&e) => {
+            // Not reachable: it waits in the queue, built on what this
+            // device synced last.
+            let st = state::game(&game.key);
+            let place = match &st.line {
+                Some(l) => Place { game: l.game.clone(), line: l.line.clone(), folders: l.folders.clone(), dirs: l.dirs.clone() },
+                None => Place::of_key(&game.key),
+            };
+            let shot = Shot {
+                bases: vec![st.last_synced_vv.clone()],
+                parent: st.last_synced_id.clone(),
+                trigger: Some(Trigger::Manual),
+                comment: comment.to_string(),
+                ..Shot::default()
+            };
+            let manifest = stage_local(ctx, game, &place, &LineView::default(), &local, &shot)?;
+            return Ok(Outcome::Queued { id: manifest.id, reason: format!("{e:#}") });
+        }
         Err(e) => return Err(e),
     };
+    flush(cloud, &mut s.line, Some(game))?;
+    let same = s.line.view.snapshots.iter().rev().find(|x| x.content_hash == local.hash).map(|x| x.id.clone());
+    let outcome = if let Some(id) = same {
+        ready_to_write(cloud, &mut s.line, Some(game))?;
+        saves::keep(cloud.files(), &s.line.place, &s.line.view, &id, comment, cloud.device_id(), Utc::now())?;
+        Outcome::Uploaded { id }
+    } else {
+        let loc = local_of(&local, &state::game(&game.key));
+        let shot = match decide::decide(&loc, &s.line.view) {
+            Action::Push { bases, parent } => Shot { bases, parent, ..Shot::default() },
+            _ => Shot { parent: loc.base.as_ref().map(|b| b.id.clone()), side: true, ..Shot::default() },
+        };
+        s.push(&local, Shot { trigger: Some(Trigger::Manual), comment: comment.to_string(), ..shot }, false)?
+    };
     best_effort_housekeeping(ctx, cloud, game);
-    upload_local(ctx, cloud, game, &local, head, Trigger::Manual, comment)
+    Ok(outcome)
 }
 
 /// Restore a specific snapshot and make it the newest version.
 pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     let cloud = ctx.cloud()?;
-    let list = cloud.list_snapshots(&game.key)?;
-    let target = list
-        .iter()
-        .find(|s| s.id == id)
-        .cloned()
-        .ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
+    let mut s = Session::open(ctx, cloud, game)?;
+    flush(cloud, &mut s.line, Some(game))?;
     let local = snapshot::local_state(game)?;
-    let head = mainline_head(&list);
-    let outcome = pull(ctx, cloud, game, &local, &list, &target)?;
-    if head.as_ref().is_some_and(|h| h.id == target.id) {
-        return Ok(outcome);
-    }
+    let pulled = s.pull(&local, id)?;
     // Make the restored content the head so the next sync keeps it.
-    let restored = snapshot::local_state(game)?;
-    let comment = crate::tr!(
-        "恢复自 {} 在 {} 的版本",
-        "Restored from the version {} saved at {}",
-        target.device_name,
-        target.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
-    );
-    upload_local(ctx, cloud, game, &restored, head.map(|h| h.id), Trigger::Restore, &comment)
+    Ok(s.make_current(id, Trigger::Restore)?.unwrap_or(pulled))
 }
 
 /// Change a game's saves from outside a sync (the save library's "apply
@@ -576,134 +1216,91 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
 /// run `change`, then upload the result as the newest version.
 pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
     let cloud = ctx.cloud()?;
-    let list = cloud.list_snapshots(&game.key)?;
-    let local = snapshot::local_state(game).ok();
-    if let Some(local) = &local {
-        protect_local(ctx, cloud, game, local, &list, Trigger::PreRestore)?;
+    let mut s = Session::open(ctx, cloud, game)?;
+    flush(cloud, &mut s.line, Some(game))?;
+    if let Ok(local) = snapshot::local_state(game) {
+        s.protect(&local, Trigger::PreRestore)?;
     }
     change()?;
     let after = snapshot::local_state(game)?;
     if after.is_empty() {
         bail!(crate::tr!("应用后没有找到「{}」的存档文件", "No save files of \"{}\" found after applying", game.name));
     }
+    let loc = local_of(&after, &state::game(&game.key));
+    let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
+    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), comment: comment.to_string(), ..Shot::default() }, false)?;
     best_effort_housekeeping(ctx, cloud, game);
-    upload_local(ctx, cloud, game, &after, mainline_head(&list).map(|h| h.id), Trigger::Restore, comment)
+    Ok(outcome)
 }
 
-/// Delete old automatic snapshots according to the retention settings.
-pub fn prune(ctx: &Ctx, cloud: &dyn CloudProvider, game: &GameEntry) -> Result<usize> {
-    let list = cloud.list_snapshots(&game.key)?;
-    let st = state::game(&game.key);
-    let mut keep: HashSet<String> = HashSet::new();
-    if let Some(h) = mainline_head(&list) {
-        keep.insert(h.id);
-    }
-    if let Some(id) = st.last_synced_id {
-        keep.insert(id);
-    }
-    let mut sorted = list.clone();
-    sorted.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    for s in &sorted {
-        if s.locked || s.trigger.is_pinned() {
-            keep.insert(s.id.clone());
-        }
-    }
-    let autos: Vec<&SnapshotSummary> = sorted
-        .iter()
-        .filter(|s| !s.locked && !s.trigger.is_pinned())
-        .collect();
-    for s in autos.iter().take(ctx.cfg.retention.keep_recent) {
-        keep.insert(s.id.clone());
-    }
-    let now = Utc::now();
-    let mut days = HashSet::new();
-    for s in &autos {
-        if (now - s.created_at).num_days() < ctx.cfg.retention.keep_daily_days
-            && days.insert(s.created_at.with_timezone(&chrono::Local).date_naive())
-        {
-            keep.insert(s.id.clone());
-        }
-    }
-    let mut deleted = 0;
-    for s in autos {
-        if !keep.contains(&s.id) {
-            cloud.delete(&game.key, &s.id)?;
-            deleted += 1;
-        }
-    }
-    if deleted > 0 {
-        log(format!("{}: retention removed {deleted} snapshots", game.key));
-    }
-    match purge_expired(cloud, game) {
-        Ok(0) => {}
-        Ok(n) => log(format!("{}: purged {n} versions deleted over {} days ago", game.key, cloud::TRASH_DAYS)),
-        Err(e) => log(format!("{}: purging recently deleted failed: {e:#}", game.key)),
-    }
-    Ok(deleted)
-}
-
+/// Keep a version or stop keeping it (`locked`), and name it (`comment`).
+/// A name given to a version that is not kept keeps it.
 pub fn set_snapshot_flags(ctx: &Ctx, game: &GameEntry, id: &str, locked: Option<bool>, comment: Option<String>) -> Result<()> {
     let cloud = ctx.cloud()?;
-    let mut meta = cloud.get_meta(&game.key, id)?;
-    if let Some(l) = locked {
-        meta.locked = l;
+    let mut line = cloud.open(&game.key)?;
+    ready_to_write(cloud, &mut line, Some(game))?;
+    let entry = line.view.get(id).cloned().ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
+    let kept = entry.pin.is_some();
+    if locked == Some(false) {
+        if kept {
+            saves::unkeep(cloud.files(), &line.place, id)?;
+        }
+        return Ok(());
     }
-    if let Some(c) = comment {
-        meta.comment = c;
+    let name = match (&comment, &entry.pin) {
+        (Some(c), _) => c.clone(),
+        (None, Some(pin)) => pin.name.clone(),
+        (None, None) => entry.old_note().unwrap_or_default().to_string(),
+    };
+    let wanted = locked == Some(true) || comment.as_ref().is_some_and(|c| kept || !c.trim().is_empty());
+    if wanted && (!kept || comment.is_some()) {
+        saves::keep(cloud.files(), &line.place, &line.view, id, &name, cloud.device_id(), Utc::now())?;
     }
-    cloud.update_meta(&meta)
+    Ok(())
 }
 
 pub fn delete_snapshot(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<()> {
     let cloud = ctx.cloud()?;
-    let list = cloud.list_snapshots(&game.key)?;
-    let s = list.iter().find(|s| s.id == id).ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
-    if s.locked {
-        bail!(crate::tr!("这个版本已锁定，请先解锁", "This version is locked. Unlock it first"));
-    }
-    if mainline_head(&list).is_some_and(|h| h.id == id) {
-        bail!(crate::tr!("不能删除最新版本", "The latest version can't be deleted"));
-    }
+    let mut line = cloud.open(&game.key)?;
+    ready_to_write(cloud, &mut line, Some(game))?;
     // Into 「最近删除」, restorable for TRASH_DAYS days.
-    cloud.trash(&game.key, id, &ctx.cfg.device.name)
+    saves::trash(cloud.files(), &line.place, &line.view, id, &ctx.cfg.device.name, Utc::now())
 }
 
 /// Versions in 「最近删除」, newest deletion first.
 pub fn deleted_snapshots(ctx: &Ctx, game: &GameEntry) -> Result<Vec<cloud::TrashedSnapshot>> {
-    ctx.cloud()?.list_trash(&game.key)
+    let cloud = ctx.cloud()?;
+    let place = cloud.place(&game.key)?;
+    Ok(saves::trashed(cloud.files(), &place)?
+        .into_iter()
+        .map(|t| cloud::TrashedSnapshot { snapshot: SnapshotSummary::of(&t.snapshot, false), deleted_at: t.deleted_at, deleted_by: t.deleted_by })
+        .collect())
 }
 
 /// Put a version from 「最近删除」 back into the history. An automatic one is
-/// locked too, or retention could delete it again right away. Returns whether
-/// it was locked.
+/// kept too, or retention could delete it again right away. Returns whether
+/// it was.
 pub fn restore_deleted(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<bool> {
     let cloud = ctx.cloud()?;
-    cloud.untrash(&game.key, id)?;
-    let mut meta = cloud.get_meta(&game.key, id)?;
-    if meta.locked || meta.trigger.is_pinned() {
+    let mut line = cloud.open(&game.key)?;
+    ready_to_write(cloud, &mut line, Some(game))?;
+    saves::untrash(cloud.files(), &line.place, id)?;
+    cloud.reopen(&mut line)?;
+    let Some(entry) = line.view.get(id).cloned() else { return Ok(false) };
+    if entry.pin.is_some() {
         return Ok(false);
     }
-    meta.locked = true;
-    cloud.update_meta(&meta)?;
+    let name = entry.old_note().unwrap_or_default().to_string();
+    saves::keep(cloud.files(), &line.place, &line.view, id, &name, cloud.device_id(), Utc::now())?;
     Ok(true)
 }
 
 /// Delete a version in 「最近删除」 for good.
 pub fn purge_deleted(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<()> {
-    ctx.cloud()?.purge(&game.key, id)
-}
-
-/// Delete versions that have been in 「最近删除」 longer than TRASH_DAYS.
-fn purge_expired(cloud: &dyn CloudProvider, game: &GameEntry) -> Result<usize> {
-    let now = Utc::now();
-    let mut purged = 0;
-    for t in cloud.list_trash(&game.key)? {
-        if (now - t.deleted_at).num_days() >= cloud::TRASH_DAYS {
-            cloud.purge(&game.key, &t.snapshot.id)?;
-            purged += 1;
-        }
-    }
-    Ok(purged)
+    let cloud = ctx.cloud()?;
+    let mut line = cloud.open(&game.key)?;
+    ready_to_write(cloud, &mut line, Some(game))?;
+    saves::purge(cloud.files(), &line.place, id)
 }
 
 /// Save a snapshot zip to a user-chosen location.
