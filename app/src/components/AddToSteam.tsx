@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, SteamAccount } from "../api";
 import { msg, useT } from "../i18n";
 import { withSteamClosed } from "./steamAction";
-import { Button, Icon, Spinner, Toggle, useUi } from "./ui";
+import { Button, Hint, Icon, Spinner, Toggle, useUi } from "./ui";
 
 export interface SteamCandidate {
   key: string;
@@ -61,8 +61,8 @@ export function AddToSteam({ games, onDone, onCancel }: { games: SteamCandidate[
 
   return (
     <div className="steam-add">
-      <p className="muted small">
-        {t.addToSteam.intro(games.length)}
+      <p>
+        {t.addToSteam.intro(games.length)} <Hint text={t.addToSteam.introHint} />
       </p>
       {games.length > 1 && (
         <ul className="steam-add-list">
@@ -89,10 +89,9 @@ export function AddToSteam({ games, onDone, onCancel }: { games: SteamCandidate[
           </label>
         )}
         <div className="row space">
-          <div>
-            <b>{t.addToSteam.autoArt}</b>
-            <p className="muted small">{hasKey ? t.addToSteam.autoArtOn : t.addToSteam.autoArtNoKey}</p>
-          </div>
+          <span>
+            {t.addToSteam.autoArt} <Hint text={hasKey ? t.addToSteam.autoArtOn : t.addToSteam.autoArtNoKey} />
+          </span>
           <Toggle checked={hasKey && autoArt} onChange={setAutoArt} disabled={!hasKey} />
         </div>
       </div>

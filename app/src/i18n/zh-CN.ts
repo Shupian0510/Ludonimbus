@@ -538,8 +538,8 @@ export const addToSteam = {
   noAccount: "Steam 里还没有登录过的账号",
   addedOne: (name: string) => `已加入 Steam：${name}`,
   addedMany: (n: number) => `已把 ${n} 个游戏加入 Steam`,
-  intro: (n: number) =>
-    `在 Steam 里创建${n > 1 ? "这些游戏的" : "这个游戏的"}「非 Steam 游戏」快捷方式。从 Steam 启动时会先经过 Ludonimbus：开始前拉取云端存档，退出后上传，Steam 里的游戏时长、截图和手柄设置照常可用。`,
+  intro: (n: number) => `在 Steam 里创建${n > 1 ? `这 ${n} 个游戏` : "这个游戏"}的快捷方式，从 Steam 启动时自动同步存档。`,
+  introHint: "从 Steam 启动时会先经过 Ludonimbus：开始前拉取云端存档，退出后上传。Steam 里的游戏时长、截图和手柄设置照常可用。",
   account: "Steam 账号",
   autoArt: "自动配封面",
   autoArtOn: "从 SteamGridDB 选评分最高的封面、背景、Logo 和图标，已经选过的不会被替换。",
@@ -1016,7 +1016,7 @@ export const onboarding = {
   },
   usage: {
     title: "你想用 Ludonimbus 做什么？",
-    lead: "可以多选，Ludonimbus 会按你的选择推荐设置。这些选择只保存在本机。",
+    lead: "可以多选，只用来推荐设置。",
     items: {
       emulators: { title: "模拟器游戏", text: "Dolphin、Ryujinx、PCSX2、RetroArch 等 19 个模拟器，大部分可以按游戏同步。" },
       recomps: { title: "重编译 / 移植游戏", text: "Ship of Harkinian、Zelda 64: Recompiled 等 140 多个项目，自动认出存档位置。" },
@@ -1026,8 +1026,8 @@ export const onboarding = {
   },
   cloud: {
     title: "连接云盘",
-    lead: "存档会放在你选的云盘里。连接后点「下一步」，以后也可以在设置里更换。",
-    leadMulti: "要在几台设备之间同步，每台设备都要连接同一个云盘。连接后点「下一步」，以后也可以在设置里更换。",
+    lead: "存档放在你自己的云盘里，以后可以在设置里换。",
+    leadMulti: "每台设备都连接同一个云盘，以后可以在设置里换。",
     connected: (name: string) => `已连接 ${name}`,
     other: "改用其他云盘",
     more: "更多云盘…",
@@ -1036,7 +1036,7 @@ export const onboarding = {
   },
   art: {
     title: "封面（可选）",
-    lead: "把游戏加入 Steam 时，Ludonimbus 可以从 SteamGridDB 自动配好封面、背景、Logo 和图标。这需要一个免费的 API Key。",
+    lead: "加入 Steam 时从 SteamGridDB 自动配封面，需要一个免费的 API Key。",
     steps: [
       "打开 SteamGridDB，用 Steam 账号登录。",
       "进入「偏好设置 → API」，点「Generate API Key」。",
@@ -1048,16 +1048,18 @@ export const onboarding = {
   },
   steam: {
     title: "在 Steam 中显示云存档状态（可选）",
+    lead: "Steam 的游戏页面上显示云存档状态，可以一键同步。",
     noSteam: "没有找到 Steam，可以先跳过这一步。装好 Steam 后，在「设置 → 在 Steam 中显示云存档状态」里安装。",
     enabled: "Ludonimbus 插件已启用，Steam 的游戏页面上会显示云存档状态",
     optional: "不装也不影响自动同步，可以跳过。以后可以在设置里安装或移除插件；卸载 Millennium 本身请使用它的官方安装程序。",
   },
   handheld: {
     title: "这是掌机吗？",
-    text: (device: string) => `这台设备看起来是 ${device}。掌机上有几处不一样：游戏启动时的提示用全屏窗口显示，可以用手柄选择；Xbox 全屏体验里没有托盘，可以从 Steam 游戏库打开 Ludonimbus 的手柄界面。`,
+    text: (device: string) => `这台设备看起来是 ${device}。`,
+    hint: "掌机上有几处不一样：游戏启动时的提示用全屏窗口显示，可以用手柄选择；Xbox 全屏体验里没有托盘，可以从 Steam 游戏库打开 Ludonimbus 的手柄界面。",
     yes: "是，按掌机设置",
     no: "不是，或者以后再说",
-    yesText: "已打开全屏提示。再把 Ludonimbus 加到 Steam 游戏库，就能在大屏幕模式和 Xbox 全屏体验里打开它：",
+    yesText: "已打开全屏提示。再把 Ludonimbus 加到 Steam 游戏库：",
     autostart: "让 Ludonimbus 在 Xbox 模式里也开机启动：Windows「设置 → 应用 → 启动」里打开 Ludonimbus。没有它也照样同步存档（从 Steam 启动游戏时由启动包装器同步）。",
   },
   done: {

@@ -1086,6 +1086,11 @@ textarea.input {
 .tabs-tight {
   margin-top: -6px;
 }
+/* What the tab in front is for, at the end of the bar. */
+.tabs > .hint {
+  margin-left: auto;
+  align-self: center;
+}
 
 /* Saves (the game page's tab, docs/plan-v2.md 10.2) ------------------------ */
 .saves {
