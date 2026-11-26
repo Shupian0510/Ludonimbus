@@ -28,7 +28,7 @@ upload the new saves as a new version
 
 Once [Steam auto-sync](../steam/auto-sync.md) is on for a game, its Steam shortcut first starts a small Ludonimbus program, `ludonimbus-run`, which syncs before and after the game. The shortcut's name, icon, artwork and play time stay the same; you keep pressing Play in Steam as usual.
 
-Every upload is a new **version**: an append-only zip snapshot that records the device, the time and the previous version. Any sync can be undone; see [Version history](../sync/versions.md).
+Every upload leaves a **save** in the cloud: once written it is never changed, and it records the device, the time and which save it follows. Any sync can be undone; see [Saves](../sync/versions.md).
 
 When you close the window, Ludonimbus stays in the system tray. If you start a game outside Steam, it notices when the game exits and backs it up. It cannot pull before launch in that case, so start games from Steam to get the newest saves first.
 

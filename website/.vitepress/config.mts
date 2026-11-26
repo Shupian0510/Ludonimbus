@@ -135,6 +135,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '一键加入 Steam', link: '/steam/add-to-steam' },
         { text: '封面与 SteamGridDB', link: '/steam/artwork' },
         { text: '在 Steam 里显示云存档状态', link: '/steam/status-in-steam' },
+        { text: 'Steam 装的游戏', link: '/steam/steam-cloud' },
       ],
     },
     {
@@ -150,7 +151,8 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
       text: '同步与存档',
       items: [
         { text: '同步怎样工作', link: '/sync/how-it-works' },
-        { text: '版本历史', link: '/sync/versions' },
+        { text: '存档', link: '/sync/versions' },
+        { text: '同一个游戏的几个版本', link: '/sync/game-versions' },
         { text: '存档冲突', link: '/sync/conflicts' },
         { text: '离线游玩', link: '/sync/offline' },
         { text: '多台设备', link: '/sync/devices' },
@@ -221,6 +223,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Add to Steam', link: '/en/steam/add-to-steam' },
         { text: 'Artwork and SteamGridDB', link: '/en/steam/artwork' },
         { text: 'Cloud status inside Steam', link: '/en/steam/status-in-steam' },
+        { text: 'Games Steam installed', link: '/en/steam/steam-cloud' },
       ],
     },
     {
@@ -236,7 +239,8 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
       text: 'Sync and saves',
       items: [
         { text: 'How sync works', link: '/en/sync/how-it-works' },
-        { text: 'Version history', link: '/en/sync/versions' },
+        { text: 'Saves', link: '/en/sync/versions' },
+        { text: 'Several versions of one game', link: '/en/sync/game-versions' },
         { text: 'Conflicts', link: '/en/sync/conflicts' },
         { text: 'Playing offline', link: '/en/sync/offline' },
         { text: 'Multiple devices', link: '/en/sync/devices' },

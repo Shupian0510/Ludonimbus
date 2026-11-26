@@ -48,7 +48,7 @@ Games that are not in Steam at all can be added with [one click](../steam/add-to
 
 ## What you get besides sync
 
-- **[Version history](../sync/versions.md)**: every upload is a version with its time, device and trigger. Restore it, export it as a zip, lock it or add a note.
+- **[Version history](../sync/versions.md)**: every upload leaves a save with its time, device and source. Make it current, keep it, name it or export it for a friend.
 - **[Conflicts keep both sides](../sync/conflicts.md)**: if two PCs both changed the saves, you choose which one to use, and the other stays in the history.
 - **[Offline play](../sync/offline.md)**: if the cloud can't be reached, the game starts anyway and uploads later.
 - **[Moved games are found again](../games/moved.md)**: saves are tracked relative to the game folder, so a reinstall, a new folder or a new PC picks them up on the first launch.

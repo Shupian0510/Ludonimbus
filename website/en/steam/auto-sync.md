@@ -2,6 +2,8 @@
 
 For non-Steam games that are already in Steam, turn on "Steam auto-sync" and their saves sync whenever you start them from Steam: newer saves are pulled before the game starts, and new saves are uploaded after it exits.
 
+Games installed from the Steam store don't use this switch, see [Games Steam installed](./steam-cloud.md).
+
 ## Turn it on
 
 1. Open the game in the library and find the "Steam auto-sync" section; switch it on.

@@ -48,12 +48,12 @@ features:
     linkText: 重编译游戏云存档
   - icon: 🕘
     title: 版本历史
-    details: 每个版本都记录时间、设备和来源，可以恢复、导出 zip、锁定、写备注。旧版本自动清理，手动备份永久保留。
+    details: 每一份存档都记着时间、设备和来源，可以设为当前、保留、起名字、导出给朋友。旧的自动存档自动清理，保留的一直留着。
     link: /sync/versions
     linkText: 版本历史
   - icon: 🤝
     title: 冲突时两份都留
-    details: 两台电脑都改过存档时让你选择用哪一份，没选的那份也留在版本历史里。连不上云端也能照常玩。
+    details: 两台设备都改过存档时让你选择用哪一份，没选的那份也留着。连不上云端也能照常玩。
     link: /sync/conflicts
     linkText: 存档冲突
   - icon: 🔍
