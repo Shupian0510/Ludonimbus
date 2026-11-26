@@ -1,13 +1,15 @@
 // The handheld screen (docs/plan-phase5.md §1.1): full screen, large, run
 // with a controller. Shows the save library (one card per game, grey when
-// it isn't on this device), a game's sync status, versions and save
-// versions (restore, apply to another version), and the few settings that
-// make sense without a keyboard. Adding games, signing in to a cloud and
+// it isn't on this device), a game's sync status, its versions and its
+// saves as the desktop's Saves tab arranges them (make one the current one,
+// send it to another version), and the few settings that make sense
+// without a keyboard. Adding games, signing in to a cloud and
 // the save finder stay in the desktop view.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, HandheldInfo, HandheldMode, NewerVersion, Overview, SnapshotSummary, TransferPlan } from "../api";
+import { api, errorText, HandheldInfo, HandheldMode, NewerVersion, Overview, SnapshotList, SnapshotSummary, TransferPlan } from "../api";
 import { cardsOf, type Card } from "../components/Library";
 import { familyOf, variantLabel } from "../components/SaveLibrary";
+import { arrange } from "../components/Saves";
 import { Badge, Spinner, useUi } from "../components/ui";
 import { bytes, dateTime, duration, outcomeText, relTime, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
@@ -210,7 +212,8 @@ function Game({
   const name = game?.name ?? cloud?.name ?? "";
   const art = (game ?? cloud)?.art;
   const members = familyOf(overview, gameKey);
-  const [snapshots, setSnapshots] = useState<SnapshotSummary[] | null>(null);
+  const [data, setData] = useState<SnapshotList | null>(null);
+  const [autoOpen, setAutoOpen] = useState(false);
   const [newer, setNewer] = useState<NewerVersion | null>(null);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<SnapshotSummary | null>(null);
@@ -218,10 +221,7 @@ function Game({
   const conflict = !!game?.conflict || game?.lastCheck?.status === "conflict";
 
   const load = useCallback(() => {
-    api.snapshots(gameKey).then(
-      (d) => setSnapshots(d.snapshots.filter((s) => s.trigger !== "pre-restore" && s.trigger !== "conflict-keep")),
-      () => setSnapshots([]),
-    );
+    api.snapshots(gameKey).then(setData, () => setData({ snapshots: [], headId: null, lastSyncedId: null, platforms: {} }));
   }, [gameKey]);
   useEffect(() => {
     load();
@@ -246,13 +246,14 @@ function Game({
     }
   };
 
-  const restore = async (s: SnapshotSummary) => {
+  const makeCurrent = async (s: SnapshotSummary) => {
     if (!game) return;
     setPicked(null);
     setBusy(true);
     try {
       const o = await api.restore(game.key, s.id);
-      ui.toast(outcomeText(o, game.name));
+      const done = o.kind === "pulled" || o.kind === "uploaded" || o.kind === "queued";
+      ui.toast(done ? msg().saves.madeCurrent : outcomeText(o, game.name));
       await onChanged();
       load();
     } catch (e) {
@@ -260,6 +261,50 @@ function Game({
     } finally {
       setBusy(false);
     }
+  };
+
+  const undo = async () => {
+    if (!game) return;
+    setBusy(true);
+    try {
+      await api.undoReplace(game.key);
+      ui.toast(msg().saves.undone);
+      await onChanged();
+      load();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The same rows, in the same order, as the desktop's Saves tab.
+  const { top, auto, current } = useMemo(() => (data ? arrange(data, [], !game) : { top: [], auto: [], current: null }), [data, game]);
+  const currentHash = data?.snapshots.find((s) => s.id === current)?.contentHash;
+  const isCurrent = (s: SnapshotSummary) => s.id === current || (!!currentHash && s.contentHash === currentHash);
+  const isSide = (s: SnapshotSummary) => s.side ?? (s.trigger === "pre-restore" || s.trigger === "conflict-keep");
+  // Steam Cloud keeps this game's saves too; writing into the Xbox app's containers is experimental.
+  const note = game?.store && game.store.mode !== "managed" ? t.steamCloud.restoreNote : game?.xboxContainers ? t.saves.xboxNote : null;
+  const row = (s: SnapshotSummary) => {
+    const named = s.locked && !!s.comment;
+    return (
+      <button key={s.id} data-nav className="hh-list-row" onClick={() => setPicked(s)}>
+        <b>{named ? s.comment : dateTime(s.createdAt)}</b>
+        {isCurrent(s) ? (
+          <Badge tone="ok">{t.saves.current}</Badge>
+        ) : (s.head ?? s.id === data?.headId) && game ? (
+          <Badge tone="info">{t.saves.newest}</Badge>
+        ) : (
+          isSide(s) && s.trigger !== "shared" && <Badge tone="muted">{t.saves.replaced}</Badge>
+        )}
+        <span className="muted">{s.deviceName}</span>
+        <span className="muted">
+          {named ? `${dateTime(s.createdAt)} · ` : ""}
+          {bytes(s.totalSize)}
+        </span>
+        {!named && s.comment && <span className="muted">“{s.comment}”</span>}
+      </button>
+    );
   };
 
   useButtons({ b: onBack, y: game ? () => sync() : undefined });
@@ -304,6 +349,7 @@ function Game({
             {game && conflict && (
               <div className="hh-banner warn">
                 <p>{h.conflict}</p>
+                {game.xboxContainers && <p className="muted">{t.saves.xboxNote}</p>}
                 <div className="hh-row">
                   <button data-nav data-autofocus onClick={() => sync("cloud")} disabled={busy}>
                     {h.useCloud}
@@ -318,6 +364,14 @@ function Game({
               <div className="hh-row">
                 <button data-nav data-autofocus className="primary" onClick={() => sync()} disabled={busy || game.running}>
                   {busy ? h.syncing : h.syncNow}
+                </button>
+              </div>
+            )}
+            {game?.replaced && (
+              <div className="hh-row">
+                <span className="muted">{t.saves.replacedBy(relTime(game.replaced.at), game.replaced.device)}</span>
+                <button data-nav onClick={undo} disabled={busy || game.running}>
+                  {t.saves.undo}
                 </button>
               </div>
             )}
@@ -339,19 +393,18 @@ function Game({
 
         <section>
           <h2>{h.history}</h2>
-          {snapshots === null && <Spinner />}
-          {snapshots?.length === 0 && <p className="muted">{h.noHistory}</p>}
+          {data === null && <Spinner />}
+          {data?.snapshots.length === 0 && <p className="muted">{t.saves.empty}</p>}
           <div className="hh-list">
-            {snapshots?.map((s) => (
-              <button key={s.id} data-nav className="hh-list-row" onClick={() => setPicked(s)}>
-                <b>{dateTime(s.createdAt)}</b>
-                <span className="muted">{s.deviceName}</span>
+            {top.map((r) => row(r.s))}
+            {auto.length > 0 && (
+              <button data-nav className="hh-list-row" onClick={() => setAutoOpen(!autoOpen)}>
                 <span className="muted">
-                  {t.library.files(s.fileCount)} · {bytes(s.totalSize)}
+                  {autoOpen ? "▾" : "▸"} {t.saves.auto(auto.length)}
                 </span>
-                {s.comment && <span className="muted">“{s.comment}”</span>}
               </button>
-            ))}
+            )}
+            {autoOpen && auto.map((r) => row(r.s))}
           </div>
         </section>
       </main>
@@ -362,12 +415,15 @@ function Game({
           title={h.versionActions(picked.deviceName, dateTime(picked.createdAt))}
           onClose={() => setPicked(null)}
           buttons={[
-            ...(game ? [{ b: "a" as Button, label: h.restore, onPress: () => restore(picked), disabled: game.running }] : []),
-            { b: "x", label: h.applyTo, onPress: () => (setApplying({ source: gameKey, sourceName: name, snapshot: picked }), setPicked(null)) },
+            ...(game && !isCurrent(picked)
+              ? [{ b: "a" as Button, label: t.saves.makeCurrent, onPress: () => makeCurrent(picked), disabled: game.running }]
+              : []),
+            { b: "x", label: t.saves.sendTo, onPress: () => (setApplying({ source: gameKey, sourceName: name, snapshot: picked }), setPicked(null)) },
             { b: "b", label: h.cancel, onPress: () => setPicked(null) },
           ]}
         >
-          {game && <p className="muted">{h.restoreText}</p>}
+          {game && !isCurrent(picked) && <p className="muted">{t.saves.makeCurrentText(game.name, picked.deviceName, dateTime(picked.createdAt))}</p>}
+          {game && !isCurrent(picked) && note && <p className="muted">{note}</p>}
         </Dialog>
       )}
       {applying && (
