@@ -637,6 +637,8 @@ export interface SteamCloudApp {
   syncState: string | null;
   /** Its own Steam Cloud switch. */
   cloudEnabled: boolean;
+  /** Steam Cloud syncs it on this device (false: the game has none). */
+  cloudUsed: boolean;
 }
 
 /** Whether a managed game's launch options still go through the wrapper. */
@@ -648,6 +650,8 @@ export interface SteamCloudStatus {
   /** Steam's last cloud sync of the game left nothing behind (taking over needs it). */
   synchronized: boolean;
   cloudEnabled: boolean;
+  /** Steam Cloud syncs it on this device (false: the game has none). */
+  cloudUsed: boolean;
   /** The account's Steam Cloud switch for every game. */
   globalEnabled: boolean;
   steamRunning: boolean;

@@ -8,6 +8,11 @@
 //! | backup only ([`StoreMode::Backup`]) | Steam Cloud stays on. After the game a version of its saves is stored, and nothing is ever written into them by itself (the rule for [`GameEntry::backup_only`] in [`crate::sync`]) |
 //! | managed ([`StoreMode::Managed`]) | the user turned Steam Cloud off for the game, and it syncs like any other: before playing through its launch options `"<runner>" --game <key> -- %command%`, or in the background for a game that can't start through the wrapper ([`poll`]) |
 //!
+//! A game Steam Cloud doesn't keep at all (Steam has noted no cloud sync of
+//! it on this device, [`steam::AppCloud::used`]) is managed from the moment
+//! it is added: there is nothing to take over from. Should Steam start
+//! syncing it later, it goes back to backup only like any other.
+//!
 //! Ludonimbus never flips a Steam Cloud switch. It takes a game over only
 //! once Steam's files show the switch off and Steam's last sync of the game
 //! complete ([`take_over`]), and goes back to backup only by itself as soon
@@ -101,6 +106,8 @@ pub struct StoreApp {
     pub sync_state: Option<String>,
     /// Its own Steam Cloud switch.
     pub cloud_enabled: bool,
+    /// Steam Cloud syncs it on this device (not: the game has none).
+    pub cloud_used: bool,
 }
 
 /// The games Steam installed, for the account in use, by name.
@@ -111,7 +118,7 @@ pub fn apps(cfg: &AppConfig) -> Vec<StoreApp> {
         .map(|a| {
             let entry = entry_of(cfg, &account, a.appid);
             let cloud = steam::app_cloud(&root, &account, a.appid);
-            StoreApp { appid: a.appid, name: a.name, key: entry.map(|g| g.key.clone()), state: entry.map_or(State::Steam, state), sync_state: cloud.sync_state, cloud_enabled: cloud.enabled }
+            StoreApp { appid: a.appid, name: a.name, key: entry.map(|g| g.key.clone()), state: entry.map_or(State::Steam, state), sync_state: cloud.sync_state, cloud_enabled: cloud.enabled, cloud_used: cloud.used }
         })
         .collect();
     out.sort_by_key(|a| a.name.to_lowercase());
@@ -127,6 +134,8 @@ pub struct StoreStatus {
     /// Steam's last cloud sync of the game left nothing behind.
     pub synchronized: bool,
     pub cloud_enabled: bool,
+    /// Steam Cloud syncs it on this device (not: the game has none).
+    pub cloud_used: bool,
     /// The account's Steam Cloud switch.
     pub global_enabled: bool,
     pub steam_running: bool,
@@ -148,6 +157,7 @@ pub fn status(cfg: &AppConfig, game: &GameEntry) -> Result<StoreStatus> {
         synchronized: cloud.synchronized(),
         sync_state: cloud.sync_state,
         cloud_enabled: cloud.enabled,
+        cloud_used: cloud.used,
         global_enabled: cloud.global,
         steam_running: steam::is_running(),
         wrapper,
@@ -200,25 +210,40 @@ fn installed(root: &std::path::Path, appid: u32) -> Result<InstalledApp> {
     steam::installed_apps(root).into_iter().find(|a| a.appid == appid).ok_or_else(|| not_installed(appid))
 }
 
-/// Add the game `appid` that Steam installed for `account` to the library,
-/// in backup mode. Where its saves are: what the user chose
+/// Add the game `appid` that Steam installed for `account` to the library:
+/// backup only when Steam Cloud keeps it (Steam's files say so, or the
+/// caller knows, `kept_by_steam`: a scan found its saves in Steam's cloud
+/// folder), managed otherwise. Where its saves are: what the user chose
 /// (`choice.saves`), else a built-in rule that knows its program, else
 /// Ludusavi's database (`choice.ludusavi_title`, else by its app id, then
 /// by its name). Fails when none of them knows.
-pub fn add(cfg: &AppConfig, account: &str, appid: u32, choice: FoundChoice) -> Result<GameEntry> {
-    let app = installed(&steam_root(cfg)?, appid)?;
+pub fn add(cfg: &AppConfig, account: &str, appid: u32, choice: FoundChoice, kept_by_steam: bool) -> Result<GameEntry> {
+    let root = steam_root(cfg)?;
+    let app = installed(&root, appid)?;
     let title = match &choice.ludusavi_title {
         Some(t) => Some(t.clone()),
         None if choice.saves.is_empty() => titles(&[&app]).remove(&appid),
         None => None,
     };
-    insert(account, &app, title, choice)
+    insert(account, &app, title, choice, mode_for(&root, account, appid, kept_by_steam))
+}
+
+/// The state a game Steam installed is added in: Steam Cloud keeps its
+/// saves unless Steam has noted no cloud sync of it and nothing else says
+/// so. Then there is nothing to take over from, and it syncs like any game
+/// that isn't Steam's.
+fn mode_for(root: &std::path::Path, account: &str, appid: u32, kept_by_steam: bool) -> StoreMode {
+    if kept_by_steam || steam::app_cloud(root, account, appid).used {
+        StoreMode::Backup
+    } else {
+        StoreMode::Managed
+    }
 }
 
 /// Make the library entry for a game Steam installed and put it in the
 /// configuration. Its program is the one in its folder that looks most like
 /// the game: the background knows it is running by its name.
-fn insert(account: &str, app: &InstalledApp, title: Option<String>, choice: FoundChoice) -> Result<GameEntry> {
+fn insert(account: &str, app: &InstalledApp, title: Option<String>, choice: FoundChoice, mode: StoreMode) -> Result<GameEntry> {
     let name = Some(choice.name.trim()).filter(|n| !n.is_empty()).map(str::to_string).unwrap_or_else(|| app.name.clone());
     let exe = choice.exe.clone().or_else(|| discover::pick_exe(&app.install_dir));
     let rec = exe.as_deref().filter(|_| choice.saves.is_empty()).and_then(|e| games::recognize(e, "", None));
@@ -248,18 +273,19 @@ fn insert(account: &str, app: &InstalledApp, title: Option<String>, choice: Foun
             },
             saves: saves.clone(),
             ludusavi_title: title.clone(),
-            store: Some(StoreLink { account: account.to_string(), appid: app.appid, ..StoreLink::default() }),
+            store: Some(StoreLink { account: account.to_string(), appid: app.appid, mode, ..StoreLink::default() }),
             auto_sync: true,
             ..Default::default()
         };
         cfg.games.push(entry.clone());
-        log(format!("{}: added the Steam game {} ({}), backup only", entry.key, app.appid, entry.name));
+        let how = if mode == StoreMode::Managed { "managed (Steam Cloud doesn't keep it)" } else { "backup only" };
+        log(format!("{}: added the Steam game {} ({}), {how}", entry.key, app.appid, entry.name));
         Ok(entry)
     })
 }
 
-/// Add several games Steam installed for the account in use, in backup
-/// mode, with one look at Ludusavi's database for all of them.
+/// Add several games Steam installed for the account in use (as [`add`]
+/// does), with one look at Ludusavi's database for all of them.
 pub fn add_many(cfg: &AppConfig, appids: &[u32]) -> Vec<Done> {
     let (root, account) = match steam_account(cfg) {
         Ok(x) => x,
@@ -272,7 +298,7 @@ pub fn add_many(cfg: &AppConfig, appids: &[u32]) -> Vec<Done> {
         .iter()
         .map(|&appid| {
             let result = match all.iter().find(|a| a.appid == appid) {
-                Some(app) => insert(&account, app, titles.remove(&appid), FoundChoice::default()),
+                Some(app) => insert(&account, app, titles.remove(&appid), FoundChoice::default(), mode_for(&root, &account, appid, false)),
                 None => Err(not_installed(appid)),
             };
             Done::of(appid, None, result)
@@ -280,9 +306,10 @@ pub fn add_many(cfg: &AppConfig, appids: &[u32]) -> Vec<Done> {
         .collect()
 }
 
-/// Every game Steam installed that isn't in the library yet, in backup mode
-/// ("all backup only": nothing can go wrong with it). The ones whose save
-/// location isn't known are reported.
+/// Every game Steam installed that isn't in the library yet ("all backup
+/// only": nothing can go wrong with it; the ones Steam Cloud doesn't keep
+/// are managed, as in [`add`]). The ones whose save location isn't known
+/// are reported.
 pub fn backup_all(cfg: &AppConfig) -> Vec<Done> {
     let Ok((root, account)) = steam_account(cfg) else { return Vec::new() };
     let new: Vec<u32> = steam::installed_apps(&root).iter().filter(|a| entry_of(cfg, &account, a.appid).is_none()).map(|a| a.appid).collect();
@@ -330,7 +357,7 @@ fn keep_before(ctx: &Ctx, game: &GameEntry) -> Result<()> {
 ///    running and isn't being synced.
 /// 2. Steam's last cloud sync of the game is complete
 ///    (`STEAM_NOT_SYNCED:`): otherwise this device may not have the
-///    newest saves yet.
+///    newest saves yet. Not asked of a game Steam Cloud doesn't keep.
 /// 3. Steam Cloud is off for the game, by its own switch or the account's
 ///    (`STEAM_CLOUD_ON:`). Ludonimbus never flips it.
 /// 4. The saves as they are now are a kept version in the cloud ("before
@@ -350,7 +377,7 @@ pub fn take_over(ctx: &Ctx, key: &str, wrapper: bool) -> Result<GameEntry> {
         bail!(reason);
     }
     let cloud = steam::app_cloud(&root, &link.account, link.appid);
-    if !cloud.synchronized() {
+    if cloud.used && !cloud.synchronized() {
         bail!(crate::tr!(
             "STEAM_NOT_SYNCED: Steam 上次没有和云端同步完「{}」。请打开 Steam 等它同步完成（必要时启动一次游戏再退出），然后再接管",
             "STEAM_NOT_SYNCED: Steam didn't finish syncing \"{}\" with Steam Cloud last time. Start Steam and let it finish (start the game once and quit if needed), then take it over",

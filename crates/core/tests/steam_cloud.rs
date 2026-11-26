@@ -23,9 +23,10 @@ const ACCOUNT: &str = "111111111";
 /// The game the tests play.
 const APPID: u32 = 1000;
 const KEY: &str = "fake-game";
-/// Installed too; nothing knows where it keeps its saves.
+/// Installed too; nothing knows where it keeps its saves, and Steam has
+/// noted no cloud sync of it: Steam Cloud doesn't keep it.
 const OTHER: u32 = 2000;
-/// Installed too; Ludusavi's manifest knows it.
+/// Installed too; Ludusavi's manifest knows it, and Steam Cloud keeps it.
 const KNOWN: u32 = 3000;
 
 /// What the user had in the launch options, as Steam writes it in the file.
@@ -65,6 +66,13 @@ const LOCALCONFIG: &str = r#""UserLocalConfigStore"
 						{
 							"lastlaunch"		"1700000000"
 							"lastexit"		"1700000100"
+						}
+					}
+					"3000"
+					{
+						"cloud"
+						{
+							"last_sync_state"		"changesincloud"
 						}
 					}
 				}
@@ -256,7 +264,7 @@ impl Device {
     /// folder.
     fn add(&self) -> GameEntry {
         let choice = FoundChoice { saves: vec![format!("{{steamuser}}/{APPID}/remote/**")], ..Default::default() };
-        steamcloud::add(&self.cfg(), ACCOUNT, APPID, choice).unwrap()
+        steamcloud::add(&self.cfg(), ACCOUNT, APPID, choice, false).unwrap()
     }
 
     fn sync_with(&self, resolution: Resolution) -> Outcome {
@@ -319,6 +327,7 @@ fn games_installed_through_steam() {
     launch_options_change_alone(root);
     backup_only(root);
     taking_over(root, &runner);
+    without_steam_cloud(root, &runner);
     batches(root);
 }
 
@@ -376,7 +385,7 @@ fn backup_only(root: &Path) {
     assert!(entry.backup_only() && entry.auto_sync);
     assert!(entry.exe.as_ref().unwrap().ends_with("FakeGame.exe"));
     assert_eq!(entry.install.as_deref(), Some(a.steam.root.join("steamapps").join("common").join("Fake Game").as_path()));
-    assert!(steamcloud::add(&a.cfg(), ACCOUNT, APPID, FoundChoice { saves: vec!["{steamuser}/x/**".into()], ..Default::default() }).is_err());
+    assert!(steamcloud::add(&a.cfg(), ACCOUNT, APPID, FoundChoice { saves: vec!["{steamuser}/x/**".into()], ..Default::default() }, false).is_err());
     let apps = steamcloud::apps(&a.cfg());
     assert_eq!(apps.iter().map(|x| x.appid).collect::<Vec<_>>(), [APPID, KNOWN, OTHER]);
     assert_eq!((apps[0].key.as_deref(), apps[0].state, apps[0].sync_state.as_deref(), apps[0].cloud_enabled), (Some(KEY), State::Backup, Some("changesincloud"), true));
@@ -557,6 +566,63 @@ fn taking_over(root: &Path, runner: &Path) {
     t.steam.set_shared("");
     assert!(matches!(steamcloud::poll(&t.ctx(), &t.entry()).unwrap(), Polled::Demoted(_)));
     assert_eq!(t.mode(), StoreMode::Backup);
+}
+
+/// A game Steam Cloud doesn't keep (Steam has noted no cloud sync of it) is
+/// managed from the start: nothing to take over from, no switch to turn
+/// off. When Steam starts syncing it, it is backup only like any other.
+fn without_steam_cloud(root: &Path, runner: &Path) {
+    let store = Logged::default();
+    let n = Device::new(root, &store, "N");
+    let choice = || FoundChoice { saves: vec!["{install}/save/**".to_string()], ..Default::default() };
+    let entry = steamcloud::add(&n.cfg(), ACCOUNT, OTHER, choice(), false).unwrap();
+    let key = entry.key.clone();
+    assert_eq!(entry.store.as_ref().unwrap().mode, StoreMode::Managed);
+    let status = steamcloud::status(&n.cfg(), &entry).unwrap();
+    assert_eq!((status.mode, status.cloud_used, status.sync_state.as_deref()), (State::Managed, false, None));
+    let app = steamcloud::apps(&n.cfg()).into_iter().find(|a| a.appid == OTHER).unwrap();
+    assert_eq!((app.state, app.cloud_used), (State::Managed, false));
+    // It syncs both ways like a game that isn't Steam's.
+    let save = n.steam.root.join("steamapps").join("common").join("Other Game").join("save").join("slot1.sav");
+    write(&save, "n1");
+    let sync = |d: &Device| {
+        let ctx = d.ctx();
+        sync::sync(&ctx, &ctx.game(&key).unwrap(), Resolution::Auto, Trigger::Passive).unwrap()
+    };
+    let first = uploaded(sync(&n));
+    let m = Device::new(root, &store, "M");
+    steamcloud::add(&m.cfg(), ACCOUNT, OTHER, choice(), false).unwrap();
+    match sync(&m) {
+        Outcome::Pulled { id, .. } => assert_eq!(id, first),
+        other => panic!("expected a pull, got {other:?}"),
+    }
+    let theirs = m.steam.root.join("steamapps").join("common").join("Other Game").join("save").join("slot1.sav");
+    assert_eq!(fs::read_to_string(&theirs).unwrap(), "n1");
+    // What something else knows counts: a scan that found its saves in
+    // Steam's cloud folder adds it backup only.
+    games::remove(&key).unwrap();
+    let kept = steamcloud::add(&m.cfg(), ACCOUNT, OTHER, choice(), true).unwrap();
+    assert_eq!(kept.store.unwrap().mode, StoreMode::Backup);
+
+    // Through the wrapper, without a switch to turn off or a sync of
+    // Steam's to wait for.
+    n.activate();
+    let entry = steamcloud::take_over(&n.ctx(), &key, true).unwrap();
+    let link = entry.store.clone().unwrap();
+    assert_eq!((link.mode, link.wrapper, link.original_options), (StoreMode::Managed, true, None));
+    let options = steam::launch_options(&n.steam.root, ACCOUNT, OTHER).unwrap().unwrap();
+    assert_eq!(steam::wrapper_health(Some(&options), &key, runner), WrapperHealth::Ok);
+    assert!(steamcloud::recheck(&n.cfg(), &entry).unwrap().is_none());
+    // Steam notes a cloud sync of it (the game got Steam Cloud): backup only
+    // from the next look on.
+    let path: Vec<&str> = ["UserLocalConfigStore", "Software", "Valve", "Steam", "apps", "2000", "cloud", "last_sync_state"].to_vec();
+    let noted = vdf::set_text_value(&n.steam.local(), &path, Some("synchronized")).unwrap();
+    write(&steam::localconfig_path(&n.steam.root, ACCOUNT), &noted);
+    let demoted = steamcloud::recheck(&n.cfg(), &entry).unwrap().expect("backup only again");
+    assert_eq!(demoted.store.unwrap().mode, StoreMode::Backup);
+    // Handed back: no launch options again, as before the wrapper.
+    steamcloud::hand_back(&n.ctx(), &key).unwrap();
+    assert_eq!(steam::launch_options(&n.steam.root, ACCOUNT, OTHER).unwrap(), None);
 }
 
 /// All backup only; all taken over (only with Steam Cloud off for every

@@ -813,6 +813,11 @@ pub struct AppCloud {
     /// How the last sync went (`last_sync_state`: `synchronized`,
     /// `changesincloud`, …); `None` when Steam has noted nothing.
     pub sync_state: Option<String>,
+    /// Steam has synced the game with Steam Cloud on this device: its
+    /// settings have a `cloud` block for the game, or it keeps the list of
+    /// the game's files in the cloud (`remotecache.vdf`). A game without
+    /// Steam Cloud has neither. Assumed when Steam's settings can't be read.
+    pub used: bool,
     /// The game's own switch ("Keep game saves in the Steam Cloud").
     pub enabled: bool,
     /// The account's switch for every game.
@@ -822,7 +827,7 @@ pub struct AppCloud {
 impl Default for AppCloud {
     /// What is assumed without proof: Steam Cloud is on.
     fn default() -> Self {
-        AppCloud { sync_state: None, enabled: true, global: true }
+        AppCloud { sync_state: None, used: true, enabled: true, global: true }
     }
 }
 
@@ -834,22 +839,23 @@ impl AppCloud {
 
     /// Steam Cloud syncs the game's saves.
     pub fn on(&self) -> bool {
-        self.enabled && self.global
+        self.used && self.enabled && self.global
     }
 }
 
 /// Steam Cloud and the game `appid`, as Steam's files say. A switch counts
 /// as off only when it is written down as off: a missing file or key is on.
+/// A game counts as one Steam Cloud doesn't keep only when the account's
+/// settings were read and say nothing of a cloud sync of it.
 pub fn app_cloud(root: &Path, account: &str, appid: u32) -> AppCloud {
     let id = appid.to_string();
     let local = read_text(&localconfig_path(root, account));
-    let sync_state = local.as_ref().and_then(|d| {
-        let path: Vec<&str> = LOCAL_APPS.iter().copied().chain([id.as_str(), "cloud", "last_sync_state"]).collect();
-        vdf::text_value(d, &path).map(str::to_string)
-    });
+    let block = local.as_ref().and_then(|d| LOCAL_APPS.iter().copied().chain([id.as_str(), "cloud"]).try_fold(d, |t, k| t.get(k)));
+    let sync_state = block.and_then(|c| c.get("last_sync_state")).and_then(vdf::Text::as_str).map(str::to_string);
+    let used = local.is_none() || block.is_some() || root.join("userdata").join(account).join(&id).join("remotecache.vdf").is_file();
     let shared = read_text(&sharedconfig_path(root, account));
     let steam = shared.as_ref().and_then(|d| SHARED_STEAM.iter().try_fold(d, |t, k| t.get(k)));
-    AppCloud { sync_state, enabled: !game_cloud_off(steam, appid), global: !global_cloud_off(steam) }
+    AppCloud { sync_state, used, enabled: !game_cloud_off(steam, appid), global: !global_cloud_off(steam) }
 }
 
 /// Whether Steam Cloud is on for the account as a whole (its switch for
@@ -1069,11 +1075,20 @@ mod tests {
         // No sharedconfig.vdf: on.
         let (_t, root) = steam_files(&local_app(app, "\r\n"), None);
         let c = app_cloud(&root, "111111111", 1000);
-        assert_eq!(c, AppCloud { sync_state: Some("changesincloud".into()), enabled: true, global: true });
+        assert_eq!(c, AppCloud { sync_state: Some("changesincloud".into()), used: true, enabled: true, global: true });
         assert!(!c.synchronized() && c.on());
-        // Another game, another account, no Steam at all: on, nothing known.
-        assert_eq!(app_cloud(&root, "111111111", 2000), AppCloud::default());
+        // A game Steam's settings say nothing of a cloud sync of: Steam
+        // Cloud doesn't keep it. Until Steam keeps its list of cloud files.
+        let other = app_cloud(&root, "111111111", 2000);
+        assert_eq!(other, AppCloud { sync_state: None, used: false, enabled: true, global: true });
+        assert!(!other.on());
+        let cache = root.join("userdata").join("111111111").join("2000").join("remotecache.vdf");
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::fs::write(&cache, "\"2000\"\n{\n}\n").unwrap();
+        assert!(app_cloud(&root, "111111111", 2000).on());
+        // Another account, no Steam at all: on, nothing known.
         assert_eq!(app_cloud(&root, "222222222", 1000), AppCloud::default());
+        assert!(AppCloud::default().on());
 
         let shared = |steam: &str| format!("\"UserRoamingConfigStore\"\n{{\n\t\"software\"\n\t{{\n\t\t\"valve\"\n\t\t{{\n\t\t\t\"Steam\"\n\t\t\t{{\n{steam}\t\t\t}}\n\t\t}}\n\t}}\n}}\n");
         let synced = app.replace("changesincloud", "synchronized");
@@ -1084,7 +1099,7 @@ mod tests {
         let (_t, root) = steam_files(&local_app(&synced, "\n"), Some(&shared("\t\t\t\t\"CloudEnabled\"\t\t\"1\"\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"1000\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"cloudenabled\"\t\t\"0\"\n\t\t\t\t\t}\n\t\t\t\t}\n")));
         let c = app_cloud(&root, "111111111", 1000);
         assert!(!c.enabled && c.global && !c.on());
-        assert!(app_cloud(&root, "111111111", 2000).on());
+        assert!(!app_cloud(&root, "111111111", 2000).used);
     }
 
     #[test]

@@ -195,7 +195,13 @@ fn steam_cloud(cmd: SteamCloudCmd) -> Result<()> {
                     a.name,
                     format!("{:?}", a.state),
                     a.sync_state.unwrap_or_else(|| "-".into()),
-                    if a.cloud_enabled { "" } else { "[Steam 云已关] " },
+                    if !a.cloud_used {
+                        "[没有 Steam 云] "
+                    } else if a.cloud_enabled {
+                        ""
+                    } else {
+                        "[Steam 云已关] "
+                    },
                     a.key.map(|k| format!("[已添加: {k}]")).unwrap_or_default()
                 );
             }

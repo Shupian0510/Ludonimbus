@@ -584,11 +584,11 @@ pub struct FoundChoice {
 pub fn add_found(f: &Found, c: FoundChoice) -> Result<GameEntry> {
     let name = if c.name.trim().is_empty() { f.name.clone() } else { c.name.trim().to_string() };
     let title = c.ludusavi_title.clone().or_else(|| f.ludusavi_title.clone());
-    // Installed through Steam: Steam Cloud keeps it, Ludonimbus backs it up.
+    // Installed through Steam: backed up while Steam Cloud keeps it.
     if let Some(appid) = f.store_appid {
         let cfg = config::load()?;
         let (_, account) = crate::steamcloud::steam_account(&cfg)?;
-        return crate::steamcloud::add(&cfg, &account, appid, FoundChoice { name, ludusavi_title: title, ..c });
+        return crate::steamcloud::add(&cfg, &account, appid, FoundChoice { name, ludusavi_title: title, ..c }, f.steam_cloud);
     }
     if let (Some(account), Some(appid)) = (&f.steam_account, f.steam_appid) {
         return add_from_shortcut(
