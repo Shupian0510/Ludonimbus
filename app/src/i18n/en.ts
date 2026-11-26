@@ -531,8 +531,8 @@ export const addToSteam: typeof Zh.addToSteam = {
   noAccount: "No account has signed in to Steam yet",
   addedOne: (name) => `Added to Steam: ${name}`,
   addedMany: (n) => `Added ${n} ${plural(n, "game", "games")} to Steam`,
-  intro: (n) =>
-    `Creates a "non-Steam game" shortcut for ${n > 1 ? "these games" : "this game"} in Steam. Starting from Steam goes through Ludonimbus: cloud saves are pulled before the game starts and uploaded after it exits. Playtime, screenshots and controller settings work in Steam as usual.`,
+  intro: (n) => `Creates a shortcut in Steam for ${n > 1 ? `these ${n} games` : "this game"}; started from Steam, saves sync by themselves.`,
+  introHint: "Starting from Steam goes through Ludonimbus: cloud saves are pulled before the game starts and uploaded after it exits. Playtime, screenshots and controller settings work in Steam as usual.",
   account: "Steam account",
   autoArt: "Pick artwork automatically",
   autoArtOn: "Uses the top-rated cover, background, logo and icon from SteamGridDB. Artwork you already picked is kept.",
@@ -1009,7 +1009,7 @@ export const onboarding: typeof Zh.onboarding = {
   },
   usage: {
     title: "What do you want to use Ludonimbus for?",
-    lead: "Pick any that apply; Ludonimbus suggests settings to match. Your answers stay on this PC.",
+    lead: "Pick any that apply; they only shape the suggested settings.",
     items: {
       emulators: { title: "Emulator games", text: "19 emulators such as Dolphin, Ryujinx, PCSX2 and RetroArch; most can sync each game on its own." },
       recomps: { title: "Recomps and ports", text: "140+ projects such as Ship of Harkinian and Zelda 64: Recompiled, with their save locations built in." },
@@ -1019,8 +1019,8 @@ export const onboarding: typeof Zh.onboarding = {
   },
   cloud: {
     title: "Connect a cloud",
-    lead: "Your saves go to the cloud you choose. Click Next once it's connected; you can change it in Settings later.",
-    leadMulti: "To sync across devices, connect every device to the same cloud. Click Next once it's connected; you can change it in Settings later.",
+    lead: "Your saves go to your own cloud; you can change it in Settings later.",
+    leadMulti: "Connect every device to the same cloud; you can change it in Settings later.",
     connected: (name) => `Connected to ${name}`,
     other: "Use a different cloud",
     more: "More clouds…",
@@ -1029,7 +1029,7 @@ export const onboarding: typeof Zh.onboarding = {
   },
   art: {
     title: "Artwork (optional)",
-    lead: "When you add games to Steam, Ludonimbus can pick the cover, background, logo and icon from SteamGridDB. This needs a free API key.",
+    lead: "Artwork from SteamGridDB when a game is added to Steam; it needs a free API key.",
     steps: [
       "Open SteamGridDB and sign in with your Steam account.",
       "Go to Preferences → API and click \"Generate API Key\".",
@@ -1041,16 +1041,18 @@ export const onboarding: typeof Zh.onboarding = {
   },
   steam: {
     title: "Show cloud save status in Steam (optional)",
+    lead: "Game pages in Steam show the cloud save status, with one click to sync.",
     noSteam: "Steam wasn't found, so skip this step for now. Once Steam is installed, turn it on in Settings → Show cloud save status in Steam.",
     enabled: "The Ludonimbus plugin is enabled; game pages in Steam show the cloud save status",
     optional: "Auto-sync works without it, so you can skip this. You can install or remove the plugin in Settings later; to uninstall Millennium itself, use its official installer.",
   },
   handheld: {
     title: "Is this a handheld?",
-    text: (device) => `This looks like a ${device}. A few things work differently on a handheld: questions when a game starts show in a full-screen window you can answer with the controller, and since the Xbox full screen experience has no tray, Ludonimbus's controller view can be opened from the Steam library.`,
+    text: (device) => `This looks like a ${device}.`,
+    hint: "A few things work differently on a handheld: questions when a game starts show in a full-screen window you can answer with the controller, and since the Xbox full screen experience has no tray, Ludonimbus's controller view can be opened from the Steam library.",
     yes: "Yes, set it up for a handheld",
     no: "No, or later",
-    yesText: "Full-screen questions are on. Add Ludonimbus to the Steam library to open it in Big Picture and the Xbox full screen experience:",
+    yesText: "Full-screen questions are on. Add Ludonimbus to the Steam library too:",
     autostart: "To start Ludonimbus with Windows in Xbox mode too, turn it on in Windows Settings → Apps → Startup. Saves sync without it as well (the launch wrapper syncs when games start from Steam).",
   },
   done: {

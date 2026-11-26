@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, SaveCandidate } from "../api";
 import { bytes, relTime } from "../format";
 import { msg, useT } from "../i18n";
-import { Button, Icon, PathField, Spinner, useUi } from "./ui";
+import { Button, Hint, Icon, PathField, Spinner, useUi } from "./ui";
 
 export interface FinderGame {
   name: string;
@@ -164,8 +164,9 @@ export function SaveFinder({
       </div>
 
       <section className="finder-section">
-        <h4>{f.s1Title}</h4>
-        <p className="muted small">{f.s1Text}</p>
+        <h4>
+          {f.s1Title} <Hint text={f.s1Text} />
+        </h4>
         <div className="row">
           <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
           <Button small icon="search" onClick={search}>
@@ -188,14 +189,16 @@ export function SaveFinder({
       </section>
 
       <section className="finder-section">
-        <h4>{f.s2Title}</h4>
-        <p className="muted small">{f.s2Text}</p>
+        <h4>
+          {f.s2Title} <Hint text={f.s2Text} />
+        </h4>
         {!suggestions ? <Spinner /> : suggestions.length === 0 ? <p className="muted small">{f.s2None}</p> : candidateList(suggestions)}
       </section>
 
       <section className="finder-section">
-        <h4>{f.s3Title}</h4>
-        <p className="muted small">{f.s3Text(!!game.exe)}</p>
+        <h4>
+          {f.s3Title} <Hint text={f.s3Text(!!game.exe)} />
+        </h4>
         {watching ? (
           <div className="banner banner-info">
             <span className="spinner" />

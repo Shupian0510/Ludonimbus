@@ -6,7 +6,7 @@ import { scene, SCENE_ADD, sceneIs } from "../scene";
 import { AddToSteam, SteamCandidate } from "./AddToSteam";
 import { PlatformFolders } from "./PlatformFolders";
 import { FinderGame, SaveFinder } from "./SaveFinder";
-import { Badge, Button, Empty, Icon, Modal, PathField, Spinner, useUi } from "./ui";
+import { Badge, Button, Empty, Hint, Icon, Modal, PathField, Spinner, useUi } from "./ui";
 
 type Tab = "scan" | "cloud" | "ludusavi" | "manual";
 
@@ -41,6 +41,8 @@ export function AddGame({
         <button className={tab === "manual" ? "on" : ""} onClick={() => setTab("manual")}>
           <Icon name="edit" size={16} /> {a.tabManual}
         </button>
+        {/* What the tab in front is for. */}
+        <Hint text={{ scan: a.scanIntro, cloud: a.cloudIntro, ludusavi: a.ludusaviIntro, manual: a.manualIntro }[tab]} />
       </div>
       {tab === "scan" && <ScanLocal overview={overview} onChanged={onChanged} onOpen={onAdded} />}
       {tab === "cloud" && <FromCloud overview={overview} onAdded={onAdded} />}
@@ -166,7 +168,6 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
 
   return (
     <div className="add-list">
-      <p className="muted small">{a.cloudIntro}</p>
       {games.map((g) => (
         <div key={g.key} className="add-item">
           <div className="add-cover fallback">{g.name.slice(0, 1)}</div>
@@ -228,7 +229,6 @@ function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
 
   return (
     <div className="add-list">
-      <p className="muted small">{a.ludusaviIntro}</p>
       <div className="row">
         <input className="input" placeholder={a.ludusaviPlaceholder} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
         <Button kind="primary" icon="search" onClick={search}>
@@ -547,13 +547,10 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
 
   return (
     <div className="add-list scan">
-      <div className="row space">
-        <p className="muted small">{a.scanIntro}</p>
-        <div className="row">
-          <Button small icon="folder" onClick={scanFolder}>
-            {a.scanFolder}
-          </Button>
-        </div>
+      <div className="row">
+        <Button small icon="folder" onClick={scanFolder}>
+          {a.scanFolder}
+        </Button>
       </div>
 
       {pendingSteam.length > 0 && (
@@ -601,20 +598,22 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
           {groups.ready.length > 0 && (
             <section className="scan-group">
               <div className="row space">
-                <h4>{a.groupReady(groups.ready.length)}</h4>
+                <h4>
+                  {a.groupReady(groups.ready.length)} <Hint text={a.groupReadyHint} />
+                </h4>
                 <button className="link small" onClick={() => setSelected(allReady ? new Set() : new Set([...selected, ...readyIds]))}>
                   {allReady ? a.selectNone : a.selectAll}
                 </button>
               </div>
-              <p className="muted small">{a.groupReadyHint}</p>
               {groups.ready.map((f) => row(f, "check"))}
             </section>
           )}
 
           {groups.needs.length > 0 && (
             <section className="scan-group">
-              <h4>{a.groupNeeds(groups.needs.length)}</h4>
-              <p className="muted small">{a.groupNeedsHint}</p>
+              <h4>
+                {a.groupNeeds(groups.needs.length)} <Hint text={a.groupNeedsHint} />
+              </h4>
               {groups.needs.map((f) => row(f, "finder"))}
             </section>
           )}
@@ -622,8 +621,7 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
           {groups.cloud.length > 0 && (
             <details className="scan-group">
               <summary>
-                {a.groupCloud(groups.cloud.length)}
-                <span className="muted small"> — {a.groupCloudHint}</span>
+                {a.groupCloud(groups.cloud.length)} <Hint text={a.groupCloudHint} />
               </summary>
               {groups.cloud.map((f) => row(f, "check", "cloud"))}
             </details>
@@ -632,8 +630,7 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
           {groups.registry.length > 0 && (
             <details className="scan-group">
               <summary>
-                {a.groupRegistry(groups.registry.length)}
-                <span className="muted small"> — {a.groupRegistryHint}</span>
+                {a.groupRegistry(groups.registry.length)} <Hint text={a.groupRegistryHint} />
               </summary>
               {groups.registry.map((f) => row(f, "none"))}
             </details>
@@ -703,7 +700,6 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
   if (!game) {
     return (
       <div className="form">
-        <p className="muted small">{a.manualIntro}</p>
         <div className="row">
           <Button kind="primary" icon="folder" onClick={pick}>
             {a.pickProgram}

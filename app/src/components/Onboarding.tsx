@@ -4,9 +4,9 @@ import { LANGS, msg, useI18n } from "../i18n";
 import { DISCORD_URL, docsUrl, GITHUB_URL } from "../links";
 import { SgdbKeyForm } from "./ArtPicker";
 import { CloudOptions } from "./CloudForms";
-import { MILLENNIUM_URL, SteamPluginRows, useSteamPlugin } from "./SteamPlugin";
+import { SteamPluginRows, useSteamPlugin } from "./SteamPlugin";
 import { withSteamClosed } from "./steamAction";
-import { Button, Icon, Spinner, useUi } from "./ui";
+import { Button, Hint, Icon, Spinner, useUi } from "./ui";
 
 export type Usage = "emulators" | "recomps" | "steamThirdParty" | "multiDevice";
 const USAGES: { id: Usage; icon: string }[] = [
@@ -170,7 +170,9 @@ export function Onboarding({
 
           {step === "cloud" && (
             <div>
-              <h2>{o.cloud.title}</h2>
+              <h2>
+                {o.cloud.title} <Hint text={o.cloud.privacy} />
+              </h2>
               <p className="muted">{has("multiDevice") ? o.cloud.leadMulti : o.cloud.lead}</p>
               {!settings ? (
                 <Spinner />
@@ -185,13 +187,14 @@ export function Onboarding({
               ) : (
                 <CloudOptions settings={settings} done={cloudDone} guide={{ multiDevice: has("multiDevice") }} />
               )}
-              <p className="muted small">{o.cloud.privacy}</p>
             </div>
           )}
 
           {step === "art" && (
             <div>
-              <h2>{o.art.title}</h2>
+              <h2>
+                {o.art.title} <Hint text={o.art.optional} />
+              </h2>
               <p className="muted">{o.art.lead}</p>
               {!sgdb ? (
                 <Spinner />
@@ -215,20 +218,17 @@ export function Onboarding({
                   <SgdbKeyForm keyPage={sgdb.keyPage} onSaved={loadSgdb} />
                 </>
               )}
-              <p className="muted small">{o.art.optional}</p>
             </div>
           )}
 
           {step === "steam" && (
             <div>
-              <h2>{o.steam.title}</h2>
-              <p className="muted">
-                {p.introBefore}{" "}
-                <button className="link" onClick={() => api.openPath(MILLENNIUM_URL)}>
-                  Millennium
-                </button>{" "}
-                {p.introAfter}
-              </p>
+              <h2>
+                {o.steam.title} <Hint text={`${p.introBefore} Millennium ${p.introAfter}
+
+${o.steam.optional}`} />
+              </h2>
+              <p className="muted">{o.steam.lead}</p>
               {!plugin.loaded ? (
                 <Spinner />
               ) : !plugin.st?.steamRoot ? (
@@ -271,13 +271,14 @@ export function Onboarding({
                   )}
                 </>
               )}
-              {!plugin.ready && <p className="muted small">{o.steam.optional}</p>}
             </div>
           )}
 
           {step === "handheld" && (
             <div>
-              <h2>{o.handheld.title}</h2>
+              <h2>
+                {o.handheld.title} <Hint text={o.handheld.hint} />
+              </h2>
               <p className="muted">{o.handheld.text(hh?.device ?? "")}</p>
               <div className="row">
                 <Button
@@ -302,8 +303,11 @@ export function Onboarding({
               </div>
               {isHandheld && (
                 <>
-                  <p>{o.handheld.yesText}</p>
                   <div className="row">
+                    <span>{o.handheld.yesText}</span>
+                    <Hint text={`${t.handheld.xboxHow}
+
+${o.handheld.autostart}`} />
                     {hh?.inSteam ? (
                       <span className="muted">{t.handheld.steamIn}</span>
                     ) : (
@@ -326,8 +330,6 @@ export function Onboarding({
                       </Button>
                     )}
                   </div>
-                  <p className="muted small">{t.handheld.xboxHow}</p>
-                  <p className="muted small">{o.handheld.autostart}</p>
                 </>
               )}
             </div>
