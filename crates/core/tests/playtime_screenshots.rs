@@ -3,6 +3,7 @@
 //! PC end up in the other PC's Steam folder of the same shortcut.
 
 use chrono::{Duration, Utc};
+use ludonimbus_core::cloud::gamedata::Folders;
 use ludonimbus_core::cloud::local::LocalFolder;
 use ludonimbus_core::cloud::store::Store;
 use ludonimbus_core::config::{AppConfig, GameEntry, ScreenshotMode, SteamLink};
@@ -82,7 +83,7 @@ fn playtime_and_screenshots_across_devices() {
     // Too short to count, and the same session twice is ignored.
     assert!(!playtime::record(&a.cfg, &a.game, t0, t0 + Duration::seconds(3), Via::Steam).unwrap());
     assert!(!playtime::record(&a.cfg, &a.game, t0, t0 + Duration::seconds(600), Via::Steam).unwrap());
-    let sum = playtime::sync(store, &a.cfg, KEY).unwrap();
+    let sum = playtime::sync(store, &a.cfg, &Folders::of_key(KEY)).unwrap();
     assert_eq!(sum.total_secs, 3600 + 600);
 
     a.take_screenshot("20261120161819_1.jpg");
@@ -95,7 +96,7 @@ fn playtime_and_screenshots_across_devices() {
     b.activate();
     let t1 = Utc::now() - Duration::hours(1);
     assert!(playtime::record(&b.cfg, &b.game, t1, t1 + Duration::seconds(1200), Via::Direct).unwrap());
-    let sum = playtime::sync(store, &b.cfg, KEY).unwrap();
+    let sum = playtime::sync(store, &b.cfg, &Folders::of_key(KEY)).unwrap();
     assert_eq!(sum.total_secs, 3600 + 600 + 1200);
     assert_eq!(sum.devices.len(), 2);
     assert!(sum.devices[0].this_device);
@@ -118,8 +119,8 @@ fn playtime_and_screenshots_across_devices() {
     a.activate();
     let r = screenshots::sync(store, &a.cfg, &a.game, &quiet).unwrap();
     assert_eq!((r.uploaded, r.downloaded), (0, 1));
-    assert_eq!(playtime::sync(store, &a.cfg, KEY).unwrap().total_secs, 3600 + 600 + 1200);
-    let shots = screenshots::gallery(Some(store), &a.cfg, &a.game).unwrap();
+    assert_eq!(playtime::sync(store, &a.cfg, &Folders::of_key(KEY)).unwrap().total_secs, 3600 + 600 + 1200);
+    let shots = screenshots::gallery(Some(store), &a.cfg, &Folders::of_key(KEY), &a.game).unwrap();
     assert_eq!(shots.len(), 3);
     assert!(shots.iter().all(|s| s.on_this_pc && s.in_cloud));
     assert_eq!(shots[0].device, "d-b");
@@ -131,7 +132,7 @@ fn playtime_and_screenshots_across_devices() {
 
     // A lost its local playtime file: the cloud copy brings it back.
     fs::remove_file(a.home.join("playtime").join(format!("{KEY}.json"))).unwrap();
-    assert_eq!(playtime::sync(store, &a.cfg, KEY).unwrap().total_secs, 3600 + 600 + 1200);
+    assert_eq!(playtime::sync(store, &a.cfg, &Folders::of_key(KEY)).unwrap().total_secs, 3600 + 600 + 1200);
     assert_eq!(playtime::load_local(KEY).unwrap().sessions.len(), 1);
 
     // "Upload only" never downloads.

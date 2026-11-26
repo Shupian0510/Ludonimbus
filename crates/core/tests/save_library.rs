@@ -6,6 +6,7 @@
 //! (save slots replaced the way the Xbox app writes them), and the Xbox
 //! version's saves are read back out into the GOG version.
 
+use ludonimbus_core::cloud::gamedata::Folders;
 use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry};
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Outcome};
@@ -127,7 +128,7 @@ fn save_library_across_devices_and_platforms() {
     let listed = savelib::refresh(&cfg, ctx.cloud().unwrap()).unwrap();
     assert!(listed.games.iter().any(|g| g.key == "celeste" && g.ids.contains(&"name:pc:celeste".to_string())));
     assert_eq!(savelib::cached(&cfg).games.len(), 1);
-    assert!(artsync::pull(ctx.cloud().unwrap().files(), &cfg, "celeste", None).unwrap());
+    assert!(artsync::pull(ctx.cloud().unwrap().files(), &cfg, &Folders::of(ctx.cloud().unwrap(), "celeste").unwrap(), None).unwrap());
     assert_eq!(fs::read(localart::file("celeste", "cover").unwrap()).unwrap(), b"PNG cover");
 
     // B's GOG version keeps its saves one folder deeper, and has an old one.
