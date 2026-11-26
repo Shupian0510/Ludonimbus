@@ -293,6 +293,107 @@ p {
   opacity: 0.3;
   cursor: default;
 }
+/* A "?" beside a title; its text shows on hover or focus. */
+.hint {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #44586e;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-style: normal;
+  line-height: 1;
+  cursor: help;
+  flex: none;
+  vertical-align: 1px;
+  user-select: none;
+}
+.hint:hover,
+.hint:focus-visible {
+  color: var(--text);
+  border-color: var(--accent-2);
+  outline: none;
+}
+.tip {
+  position: fixed;
+  z-index: 90;
+  width: max-content;
+  max-width: 340px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: #121821;
+  border: 1px solid #34485f;
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+/* A short list of actions under the button that opens it. */
+.menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  max-width: 320px;
+  padding: 5px;
+  border-radius: 9px;
+  background: #22303f;
+  border: 1px solid #34485f;
+  box-shadow: var(--shadow);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: #2c3e53;
+  outline: none;
+}
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.menu-item.danger:not(:disabled) {
+  color: var(--bad);
+}
+.menu-item.divider {
+  position: relative;
+  margin-top: 9px;
+}
+.menu-item.divider::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: -5px;
+  border-top: 1px solid var(--line);
+}
+.menu-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  flex: none;
+  color: var(--text-2);
+}
 .input {
   width: 100%;
   background: #121821;
@@ -948,61 +1049,131 @@ textarea.input {
   margin-top: -6px;
 }
 
-/* Versions ---------------------------------------------------------------- */
-.versions {
+/* Saves (the game page's tab, docs/plan-v2.md 10.2) ------------------------ */
+.saves {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
-.version {
+.save {
   background: rgba(32, 45, 60, 0.7);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  overflow: hidden;
 }
-.version.side {
+/* Kept beside the history, or deleted. */
+.save.side {
   background: rgba(32, 45, 60, 0.4);
   border-style: dashed;
 }
-.version-row {
+.save-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px 0 0;
+  padding-right: 8px;
 }
-.version-main {
+.save-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 14px 140px minmax(170px, 1.4fr) minmax(110px, 1fr) minmax(120px, 1fr) auto;
+  grid-template-columns: 118px minmax(200px, 2fr) minmax(100px, 1fr) 76px;
   align-items: center;
   gap: 12px;
-  padding: 11px 14px;
+  padding: 10px 14px;
   border: 0;
+  border-radius: var(--radius);
   background: transparent;
+  color: inherit;
   text-align: left;
-  cursor: pointer;
   min-width: 0;
 }
-.version-main:hover {
+button.save-main:not(:disabled) {
+  cursor: pointer;
+}
+button.save-main:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.02);
 }
-.version-time {
+.save-when {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
 }
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #4d6680;
+.save-when b {
+  font-weight: 600;
 }
-.dot[data-tone="head"] {
-  background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(102, 192, 244, 0.18);
+.save-when > b,
+.save-when > .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.dot[data-tone="side"] {
-  background: transparent;
-  border: 2px solid #6d8399;
+.save-when > .badge {
+  flex: none;
+}
+.save-size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* The same three places in every row (the action, keep, more), so the
+   columns before them line up. */
+.save-actions {
+  display: grid;
+  grid-template-columns: 108px 30px 30px;
+  align-items: center;
+  justify-items: end;
+  gap: 2px;
+  flex: none;
+}
+.save-actions > .badge,
+.save-actions > .btn {
+  grid-column: 1;
+  margin-right: 6px;
+}
+.save-actions > .star {
+  grid-column: 2;
+}
+.save-actions > .icon-btn:not(.star) {
+  grid-column: 3;
+}
+.save-files {
+  border-top: 1px solid #243344;
+  padding: 10px 14px 12px;
+  max-height: 280px;
+  overflow: auto;
+}
+.saves-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 2px;
+  min-height: 22px;
+}
+.saves-foot .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.saves-foot .saves-trash {
+  margin-left: auto;
+  color: var(--text-2);
+}
+/* What a save was made on: the program's own logo and its name. */
+.platform-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.icon-btn.star.on {
+  color: var(--warn);
+}
+.icon-btn.star.on svg {
+  fill: currentColor;
 }
 .device {
   display: inline-flex;
@@ -1020,35 +1191,6 @@ textarea.input {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-}
-.version-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.versions-trash {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-.versions-trash > .link {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.versions-trash p {
-  margin: 0;
-}
-.version.deleted .version-main {
-  cursor: default;
-}
-.version.deleted .version-main:hover {
-  background: transparent;
-}
-.version-deleted {
-  padding: 0 14px 10px 40px;
 }
 details.revoke-help {
   margin-top: 4px;
@@ -1069,17 +1211,6 @@ details.revoke-help ol {
   flex-direction: column;
   gap: 4px;
   line-height: 1.5;
-}
-.version-comment {
-  padding: 0 14px 10px 40px;
-  color: var(--text-2);
-  font-style: italic;
-}
-.version-files {
-  border-top: 1px solid #243344;
-  padding: 10px 14px 12px 40px;
-  max-height: 280px;
-  overflow: auto;
 }
 table.files {
   width: 100%;
@@ -1134,6 +1265,11 @@ table.files td:not(:first-child) {
 .form .field > span:first-child {
   padding-top: 8px;
   color: var(--text-2);
+}
+/* A switch alone in its row sits level with the row's title. */
+.form label > .row,
+.form .field > .row {
+  min-height: 34px;
 }
 .form.compact label,
 .form.compact .field {
@@ -1526,6 +1662,12 @@ table.files td:not(:first-child) {
 .toast svg {
   flex: none;
   margin-top: 2px;
+}
+.toast-action {
+  flex: none;
+  margin-left: 6px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .toast-ok svg {
   color: var(--ok);
@@ -2219,6 +2361,56 @@ html.toast-window, html.toast-window body, html.toast-window #root { background:
 }
 .version-bar .chips {
   margin: 0;
+}
+/* Who is on a save line: the ones joined in one outline share one progress;
+   a dashed outline is a line a device keeps to itself. */
+.line-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(102, 192, 244, 0.06);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.line-group.own {
+  border-style: dashed;
+  background: transparent;
+}
+.member {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+}
+.member:not(:first-child),
+.line-name {
+  border-left: 1px solid var(--line);
+}
+button.member {
+  color: var(--text);
+  border-radius: 999px 0 0 999px;
+  cursor: pointer;
+}
+button.member:only-child {
+  border-radius: 999px;
+}
+button.member:hover {
+  background: rgba(102, 192, 244, 0.14);
+}
+.line-name {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px 3px 8px;
+  color: var(--muted);
+}
+.banner.join-row {
+  padding: 8px 14px;
 }
 .version-bar-actions {
   display: flex;

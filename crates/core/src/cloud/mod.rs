@@ -128,6 +128,10 @@ pub struct DeviceInstall {
     pub synced: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub synced_at: Option<DateTime<Utc>>,
+    /// What the game runs on there ([`crate::sync::platform`]), so other
+    /// devices can show who is on a line with what.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub platform: String,
 }
 
 /// Game definition stored in the cloud so other devices can recognise it.
@@ -643,6 +647,7 @@ pub fn device_info(cfg: &AppConfig) -> DeviceInfo {
                 dir: line.dir().to_string(),
                 synced: st.last_synced_id.clone(),
                 synced_at: st.last_sync_at,
+                platform: crate::sync::platform(g),
             })
         })
         .collect();

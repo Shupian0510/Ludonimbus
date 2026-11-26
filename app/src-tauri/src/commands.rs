@@ -90,6 +90,9 @@ pub struct GameView {
     family: String,
     /// The user's "same game" link (`solo:…` = kept apart).
     link: Option<String>,
+    /// It shares the save line of another version through matched folders
+    /// (`join`), which the user can take back.
+    joined: bool,
 }
 
 fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMap<String, String>) -> GameView {
@@ -157,6 +160,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         },
         family: families.get(&g.key).cloned().unwrap_or_else(|| g.key.clone()),
         link: g.game.clone(),
+        joined: !g.bind.is_empty(),
     }
 }
 
@@ -392,12 +396,114 @@ pub async fn join_answer(key: String, answer: String, suggestion: Option<join::S
     .await
 }
 
+/// How a version's platform ([`sync::platform`]) is shown: a name, and the
+/// logo of the program when a game of this device runs on the same thing
+/// (logos come from the programs installed here, never from Ludonimbus).
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformMark {
+    label: String,
+    logo: Option<String>,
+}
+
+fn platform_mark(cfg: &config::AppConfig, platform: &str) -> PlatformMark {
+    let (kind, rule) = platform.split_once(':').unwrap_or((platform, ""));
+    let label = match (kind, rule) {
+        ("emu" | "recomp", r) => adapters::find(r).map(|a| a.name.clone()).unwrap_or_else(|| r.to_string()),
+        ("console", "switch") => "Switch".to_string(),
+        ("pc", "xbox") => "Xbox".to_string(),
+        ("pc", "steam") => "Steam".to_string(),
+        ("pc", _) => "PC".to_string(),
+        _ => platform.to_string(),
+    };
+    let logo = cfg
+        .games
+        .iter()
+        .filter(|g| sync::platform(g) == platform)
+        .find_map(|g| logos::for_game(g, g.adapter.as_deref().and_then(adapters::find)))
+        .and_then(|f| art::logo_url(&f));
+    PlatformMark { label, logo }
+}
+
+fn platform_marks<'a>(cfg: &config::AppConfig, platforms: impl IntoIterator<Item = &'a str>) -> BTreeMap<String, PlatformMark> {
+    let mut out = BTreeMap::new();
+    for p in platforms {
+        if !p.is_empty() && !out.contains_key(p) {
+            out.insert(p.to_string(), platform_mark(cfg, p));
+        }
+    }
+    out
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotList {
     snapshots: Vec<SnapshotSummary>,
     head_id: Option<String>,
     last_synced_id: Option<String>,
+    /// How to show each platform the versions name.
+    platforms: BTreeMap<String, PlatformMark>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineList {
+    lines: Vec<sync::LineInfo>,
+    platforms: BTreeMap<String, PlatformMark>,
+}
+
+/// The game's save lines, who is on each with what, and how to show that.
+#[tauri::command]
+pub async fn game_line_members(key: String) -> CmdResult<LineList> {
+    blocking(move || {
+        with_game(&key, |ctx, g| {
+            let lines = sync::lines(ctx, g)?;
+            let platforms = platform_marks(&ctx.cfg, lines.iter().flat_map(|l| l.members.iter().map(|m| m.platform.as_str())));
+            Ok(LineList { lines, platforms })
+        })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtherSaves {
+    saves: Vec<sync::OtherSave>,
+    platforms: BTreeMap<String, PlatformMark>,
+}
+
+/// The newest version of each save line of the game this device doesn't
+/// follow.
+#[tauri::command]
+pub async fn other_saves(key: String) -> CmdResult<OtherSaves> {
+    blocking(move || {
+        with_game(&key, |ctx, g| {
+            let saves = sync::other_saves(ctx, g)?;
+            let platforms = platform_marks(&ctx.cfg, saves.iter().map(|s| s.snapshot.platform.as_str()));
+            Ok(OtherSaves { saves, platforms })
+        })
+    })
+    .await
+}
+
+/// Make a version of another save line of the game the progress here.
+#[tauri::command]
+pub async fn take_save(key: String, line: String, id: String) -> CmdResult<Outcome> {
+    blocking(move || {
+        if watcher::runner_active(&key) {
+            bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
+        }
+        let Some(_busy) = busy::begin(&key) else {
+            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
+        };
+        with_game(&key, |ctx, g| {
+            if process::is_running(&watcher::watch_names(g)) {
+                bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
+            }
+            sync::take_from(ctx, g, &line, &id)
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -408,10 +514,12 @@ pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
         let mut list = ctx.cloud()?.list_snapshots(&key)?;
         let head = sync::mainline_head(&list).map(|h| h.id);
         list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        let platforms = platform_marks(&ctx.cfg, list.iter().map(|s| s.platform.as_str()));
         Ok(SnapshotList {
             snapshots: list,
             head_id: head,
             last_synced_id: state::game(&key).last_synced_id,
+            platforms,
         })
     })
     .await

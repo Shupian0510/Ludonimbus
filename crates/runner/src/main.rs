@@ -217,8 +217,8 @@ enum Choice {
 
 fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &ludonimbus_core::snapshot::SnapshotSummary) -> Choice {
     let text = ludonimbus_core::tr!(
-        "「{}」的存档在本机和云端都有新的改动。\n\n云端：{} 于 {} 保存（{} 个文件，{}）\n本机：{} 个文件，{}\n\n请选择这次要使用哪一份。没选的那份也会保存在版本历史里，随时可以恢复。",
-        "Both this PC and the cloud have new changes to the saves of \"{}\".\n\nCloud: saved by {} at {} ({} files, {})\nThis PC: {} files, {}\n\nChoose which one to use this time. The other one is kept in the version history and can be restored at any time.",
+        "「{}」的存档在本机和云端都有新的改动。\n\n云端：{} 于 {} 保存（{} 个文件，{}）\n本机：{} 个文件，{}\n\n请选择这次要使用哪一份。没选的那份也会留在「存档」里，随时可以设回去。",
+        "Both this PC and the cloud have new changes to the saves of \"{}\".\n\nCloud: saved by {} at {} ({} files, {})\nThis PC: {} files, {}\n\nChoose which one to use this time. The other one stays under Saves and can be made current again at any time.",
         game.name,
         cloud.device_name,
         cloud.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M"),

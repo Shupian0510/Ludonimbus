@@ -56,6 +56,42 @@ export interface SnapshotSummary {
   gameVersion?: string | null;
   /** The game version installed on the device that saved. */
   installedVersion?: string | null;
+  /** What it was made on (`pc`, `pc:xbox`, `emu:<rule>`…); absent when not known. */
+  platform?: string;
+  /** The newest version of its save line. */
+  head?: boolean;
+  /** Kept beside the history (the saves a restore replaced). */
+  side?: boolean;
+}
+
+/** How a platform is shown: its name, and the program's own logo when it is on this PC. */
+export interface PlatformMark {
+  label: string;
+  logo: string | null;
+}
+
+export type PlatformMarks = Record<string, PlatformMark>;
+
+export interface SnapshotList {
+  snapshots: SnapshotSummary[];
+  headId: string | null;
+  lastSyncedId: string | null;
+  platforms: PlatformMarks;
+}
+
+/** One version of a game on one device, on a save line. */
+export interface LineMember {
+  device: string;
+  platform: string;
+  here: boolean;
+}
+
+/** The newest version of a save line this device doesn't follow. */
+export interface OtherSave {
+  line: string;
+  name: string;
+  shared: boolean;
+  snapshot: SnapshotSummary;
 }
 
 export interface FileEntry {
@@ -146,6 +182,8 @@ export interface GameView {
   family: string;
   /** The user's "same game" link (`solo:…` = kept apart); null = detected. */
   link: string | null;
+  /** It shares the save line of another version through matched folders. */
+  joined: boolean;
 }
 
 /** A game the cloud has but this PC doesn't: grey in the library. */
@@ -543,6 +581,8 @@ export interface SaveLine {
   current: boolean;
   /** Names of the devices on it. */
   devices: string[];
+  /** The same, one for each version of the game a device has on it. */
+  members: LineMember[];
 }
 
 /** One folder of a save line and the folder of this version that holds the same files. */
@@ -622,6 +662,10 @@ export const api = {
     invoke<Outcome>("sync_game", { key, resolution }),
   backup: (key: string, comment: string) => invoke<Outcome>("backup_game", { key, comment }),
   lines: (key: string) => invoke<SaveLine[]>("game_lines", { key }),
+  lineMembers: (key: string) => invoke<{ lines: SaveLine[]; platforms: PlatformMarks }>("game_line_members", { key }),
+  otherSaves: (key: string) => invoke<{ saves: OtherSave[]; platforms: PlatformMarks }>("other_saves", { key }),
+  /** Make a version of another save line the progress here. */
+  takeSave: (key: string, line: string, id: string) => invoke<Outcome>("take_save", { key, line, id }),
   /** The line this version could share with one that keeps the same saves elsewhere; null when there is none. */
   joinSuggestion: (key: string) => invoke<JoinSuggestion | null>("join_suggestion", { key }),
   /** Share the suggested line (then sync with it), never suggest it again, or stop sharing. */
@@ -635,11 +679,7 @@ export const api = {
       line: choice.kind === "follow" ? choice.line : null,
       name: choice.kind === "independent" ? (choice.name ?? null) : null,
     }),
-  snapshots: (key: string) =>
-    invoke<{ snapshots: SnapshotSummary[]; headId: string | null; lastSyncedId: string | null }>(
-      "list_snapshots",
-      { key },
-    ),
+  snapshots: (key: string) => invoke<SnapshotList>("list_snapshots", { key }),
   snapshot: (key: string, id: string) => invoke<SnapshotMeta>("get_snapshot", { key, id }),
   restore: (key: string, id: string) => invoke<Outcome>("restore_snapshot", { key, id }),
   setSnapshot: (key: string, id: string, patch: { locked?: boolean; comment?: string }) =>

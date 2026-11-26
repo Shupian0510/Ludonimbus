@@ -290,10 +290,14 @@ fn local_of(local: &LocalState, st: &GameState) -> Local {
 }
 
 /// Where the saves of a game come from, for the manifest's `platform`.
-pub(crate) fn platform(game: &GameEntry) -> String {
+/// A PC game says which store's version it is where that is known
+/// (`pc:xbox`): versions of several stores can share one line, and the
+/// app shows which one each version was played on.
+pub fn platform(game: &GameEntry) -> String {
     match game.adapter.as_deref().and_then(crate::adapters::find) {
         Some(a) if a.is_emulator() => format!("emu:{}", a.key),
         Some(a) => format!("recomp:{}", a.key),
+        None if crate::games::source(game).kind == crate::games::SourceKind::Xbox => "pc:xbox".to_string(),
         None => "pc".to_string(),
     }
 }
@@ -1834,6 +1838,20 @@ pub struct LineInfo {
     pub current: bool,
     /// The devices on it, by name, as far as each has told the cloud.
     pub devices: Vec<String>,
+    /// The same, one for each version of the game a device has on it.
+    pub members: Vec<LineMember>,
+}
+
+/// One version of a game on one device, on a save line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineMember {
+    pub device: String,
+    /// [`platform`]; empty when the device hasn't said (a record written
+    /// before it did).
+    pub platform: String,
+    /// It is this device.
+    pub here: bool,
 }
 
 /// Which save line a game follows on this device (docs/plan-v2.md,
@@ -1858,30 +1876,124 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
     let known = cloud.lines_of(&game.key)?;
     let devices = cloud.list_devices().unwrap_or_default();
     let (own_id, own_name) = ctx.device();
+    let me = || LineMember { device: own_name.to_string(), platform: platform(game), here: true };
+    // A device with two versions of the game on one line is named once.
+    let names = |members: &[LineMember]| {
+        let mut out: Vec<String> = Vec::new();
+        for m in members {
+            if !out.contains(&m.device) {
+                out.push(m.device.clone());
+            }
+        }
+        out
+    };
     let mut out: Vec<LineInfo> = known
         .iter()
         .map(|l| {
             let current = l.path == here.dir();
             // This device's own record may be hours old: it is where the
             // game says it is.
-            let mut on: Vec<String> =
-                devices.iter().filter(|d| d.id != own_id && d.installs.iter().any(|i| i.dir == l.path)).map(|d| d.name.clone()).collect();
+            let mut members: Vec<LineMember> = devices
+                .iter()
+                .filter(|d| d.id != own_id)
+                .flat_map(|d| d.installs.iter().filter(|i| i.dir == l.path).map(|i| LineMember { device: d.name.clone(), platform: i.platform.clone(), here: false }))
+                .collect();
             if current {
-                on.push(own_name.to_string());
+                members.push(me());
             }
-            LineInfo { id: l.id.clone(), name: l.name.clone().unwrap_or_default(), shared: l.scope != v2::SCOPE_INDEPENDENT, current, devices: on }
+            members.dedup();
+            LineInfo { id: l.id.clone(), name: l.name.clone().unwrap_or_default(), shared: l.scope != v2::SCOPE_INDEPENDENT, current, devices: names(&members), members }
         })
         .collect();
     out.sort_by_key(|l| !l.shared);
     if !out.iter().any(|l| l.shared) {
         let current = here.line == library::MAIN_LINE && !out.iter().any(|l| l.current);
-        let devices = if current { vec![own_name.to_string()] } else { Vec::new() };
-        out.insert(0, LineInfo { id: library::MAIN_LINE.to_string(), name: String::new(), shared: true, current, devices });
+        let members = if current { vec![me()] } else { Vec::new() };
+        out.insert(0, LineInfo { id: library::MAIN_LINE.to_string(), name: String::new(), shared: true, current, devices: names(&members), members });
     }
     if !out.iter().any(|l| l.current) {
-        out.push(LineInfo { id: here.line.clone(), name: own_name.to_string(), shared: false, current: true, devices: vec![own_name.to_string()] });
+        out.push(LineInfo { id: here.line.clone(), name: own_name.to_string(), shared: false, current: true, devices: vec![own_name.to_string()], members: vec![me()] });
     }
     Ok(out)
+}
+
+/// The newest version of a save line of the game that this device does
+/// not follow.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtherSave {
+    /// [`LineInfo::id`].
+    pub line: String,
+    /// What a device called the line it keeps to itself; empty for the
+    /// shared line.
+    pub name: String,
+    pub shared: bool,
+    pub snapshot: SnapshotSummary,
+}
+
+/// The newest version of every other save line the game could follow
+/// ([`lines`]): the shared one when this device keeps its saves to itself,
+/// and the lines other devices keep. What [`take_from`] can bring here.
+/// Each line costs what opening a line costs (a listing, and its index
+/// when the listing is new to this device). A line that has forked, or has
+/// nothing yet, is left out.
+pub fn other_saves(ctx: &Ctx, game: &GameEntry) -> Result<Vec<OtherSave>> {
+    let cloud = ctx.cloud()?;
+    let mut out = Vec::new();
+    for (line, place) in cloud.other_lines(&game.key)? {
+        let view = cloud.peek(&place)?;
+        let Some(head) = view.head() else { continue };
+        out.push(OtherSave {
+            line: line.id.clone(),
+            name: line.name.clone().unwrap_or_default(),
+            shared: line.scope != v2::SCOPE_INDEPENDENT,
+            snapshot: SnapshotSummary::of(head, true),
+        });
+    }
+    Ok(out)
+}
+
+/// Make a version of another save line of the game the progress here
+/// (docs/plan-v2.md, section 9: "copy"). The saves here are kept beside the
+/// history first, then replaced by that version, and the result is the
+/// newest version of the line this device follows; the line it came from
+/// stays as it is. The new version says where it came from.
+pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
+    let cloud = ctx.cloud()?;
+    let mut s = Session::open(ctx, cloud, game)?;
+    flush(cloud, &mut s.line, Some(game))?;
+    let Some((_, place)) = cloud.other_lines(&game.key)?.into_iter().find(|(l, _)| l.id == line) else {
+        bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
+    };
+    let view = cloud.peek(&place)?;
+    let target = view.get(id).cloned().ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
+    if !target.unsupported().is_empty() {
+        bail!(crate::tr!(
+            "这个版本是更新版本的 Ludonimbus 存的，这台设备上的 Ludonimbus 需要先更新",
+            "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
+        ));
+    }
+    let local = snapshot::local_state(game)?;
+    s.protect(&local, Trigger::PreRestore)?;
+    let manifest = saves::manifest(cloud.files(), &place, &view, id)?;
+    let files = SnapshotMeta::of(&manifest, &game.key, None).files;
+    crate::join::no_place(game, &files)?;
+    let work = paths::staging_dir().join(format!("take-{id}"));
+    let _ = std::fs::remove_dir_all(&work);
+    let dir = work.join("files");
+    let result = saves::fetch(cloud.files(), &place, &view, &manifest, None, &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
+    let _ = std::fs::remove_dir_all(&work);
+    result?;
+    log(format!("{}: took {id} of the line {line} ({})", game.key, target.device_name));
+    let after = snapshot::local_state(game)?;
+    let loc = local_of(&after, &state::game(&game.key));
+    let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
+    let origin = Origin { game: place.game.clone(), line: place.line.clone(), snapshot: id.to_string(), how: "copy".to_string(), extra: v2::Extra::new() };
+    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), origin: Some(origin), ..Shot::default() }, false)?;
+    best_effort_housekeeping(ctx, cloud, game);
+    Ok(outcome)
 }
 
 fn set_line(key: &str, line: &str) -> Result<()> {

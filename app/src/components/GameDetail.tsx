@@ -13,8 +13,8 @@ import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
-import { Versions } from "./Versions";
-import { ApplyDialog, familyOf, VersionBar } from "./SaveLibrary";
+import { Saves } from "./Saves";
+import { ApplyDialog, familyOf, JoinRow, VersionBar } from "./SaveLibrary";
 import { GameAchievements } from "./Achievements";
 
 type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
@@ -347,7 +347,18 @@ export function GameDetail({
           />
         )}
 
-        <VersionBar overview={overview} current={game.key} onOpen={onOpen} onChanged={onChanged} />
+        <VersionBar
+          overview={overview}
+          current={game.key}
+          disabled={game.running}
+          onOpen={onOpen}
+          onChanged={() => after()}
+          onEditSaves={() => {
+            setTab("config");
+            setTimeout(() => document.querySelector(".detail-body .tabs")?.scrollIntoView({ block: "start" }), 0);
+          }}
+        />
+        {overview.cloud.kind !== "none" && !game.joined && <JoinRow key={game.key} gameKey={game.key} name={game.name} disabled={game.running} onChanged={() => after()} />}
 
         <div className="cards2">
           <section className="panel">
@@ -469,7 +480,7 @@ export function GameDetail({
         </div>
 
         {tab === "versions" && (
-          <Versions key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} onApplied={async (k) => onOpen(k)} />
+          <Saves key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} onApplied={async (k) => onOpen(k)} />
         )}
         {tab === "files" && <Files game={game} />}
         {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
@@ -519,7 +530,7 @@ function Files({ game }: { game: GameView }) {
     api.localFiles(game.key).then(setData, (e) => setError(errorText(e)));
   }, [game.key]);
   if (error) return <div className="banner banner-bad">{error}</div>;
-  if (!data) return <div className="muted pad">{t.versions.reading}</div>;
+  if (!data) return <div className="muted pad">{t.saves.reading}</div>;
   return (
     <div className="panel">
       <div className="roots">
