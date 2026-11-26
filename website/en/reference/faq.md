@@ -46,9 +46,9 @@ Only the non-Steam shortcuts you turned auto-sync on for, or that it added to St
 
 Turn off "Steam auto-sync" on each game's page so its Steam shortcut goes back to how it was. Your saves and versions stay in the cloud. See [Download and install → Uninstall](../guide/install.md#uninstall).
 
-### Does it support macOS or Linux?
+### Does it support macOS, Linux or the Steam Deck?
 
-Only Windows for now.
+Windows 10 / 11 is the main platform. Since 1.0 there is a Linux and Steam Deck version (preview), see [Linux and Steam Deck](../platforms/linux.md). macOS isn't supported yet.
 
 ## Troubleshooting
 

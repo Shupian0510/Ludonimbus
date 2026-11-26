@@ -84,7 +84,7 @@ Ludonimbus 没有服务器，也不用注册账号。存档放在你选的地方
 只改开启了自动同步的游戏，而且只改它启动的程序。关闭自动同步就会恢复原来的快捷方式。
 
 **支持 macOS、Linux 或 Steam Deck 吗？**
-暂时不支持，Ludonimbus 目前只能在 Windows 10 和 11 上运行。
+Windows 10 和 11 是主要平台。从 1.0 开始有 [Linux 和 Steam Deck 版](../platforms/linux.md)（预览）。macOS 暂时不支持。
 
 **收费吗？**
 免费。Ludonimbus 以 MIT 许可开源，只需要你已有的云盘或存储。

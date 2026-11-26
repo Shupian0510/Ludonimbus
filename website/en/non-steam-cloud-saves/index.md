@@ -84,7 +84,7 @@ Starting from Steam is what lets Ludonimbus pull the newest saves first. If you 
 Only the shortcuts of games you turn auto-sync on for, and only what they start. Turning auto-sync off restores the original shortcut.
 
 **Does it work on macOS, Linux or the Steam Deck?**
-Not yet. Ludonimbus runs on Windows 10 and 11.
+Windows 10 and 11 are the main platform. Since 1.0 there is a [Linux and Steam Deck version](../platforms/linux.md) (preview). macOS isn't supported yet.
 
 **Is it free?**
 Yes. Ludonimbus is open source under the MIT license, and you only need storage you already have.
