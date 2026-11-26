@@ -7,6 +7,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use ludonimbus_core::cloud::decide::{decide, next_vv, settle, Action, Base, Local};
+use ludonimbus_core::cloud::library;
 use ludonimbus_core::cloud::line::{self, LineCache, LineView};
 use ludonimbus_core::cloud::memory::{Counts, Memory};
 use ludonimbus_core::cloud::packs::{self, LocalFile, Policy};
@@ -14,6 +15,7 @@ use ludonimbus_core::cloud::repo::Repo;
 use ludonimbus_core::cloud::retention::{self, DeviceBase};
 use ludonimbus_core::cloud::saves::{self, Draft, Open, Place};
 use ludonimbus_core::cloud::store::{Entry, Store};
+use ludonimbus_core::cloud::upgrade;
 use ludonimbus_core::cloud::v2::{self, GameRecord, Line, LineIndex, Manifest, Pin};
 use ludonimbus_core::cloud::{CloudProvider, TRASH_DAYS};
 use ludonimbus_core::vv::Vv;
@@ -547,6 +549,37 @@ fn a_place_is_where_the_record_says_and_a_0_6_key_is_what_the_upgrade_makes_of_i
         }
     );
     assert_eq!(old.dir(), v2::line_dir("stardew", "main"));
+}
+
+#[test]
+fn a_line_read_before_the_upgrade_is_the_line_it_makes() {
+    let store = sample();
+    let expected = expected();
+    let keys: Vec<&String> = expected.as_object().unwrap().keys().collect();
+    let mut before = BTreeMap::new();
+    for key in &keys {
+        // The record the upgrade writes for the key.
+        let r = upgrade::record_for(key, None, None);
+        assert_eq!(Place::of(&r, &r.lines[0]), Place::of_key(key), "{key}");
+        let view = saves::open(&store, &Place::of_key(key), &mut LineCache::default()).unwrap();
+        before.insert(key.to_string(), view);
+    }
+
+    upgrade::run(&store, "d-u", "Upgrader", Utc::now(), &mut |_| {}).unwrap();
+    for key in &keys {
+        let r = library::read(&store, key).unwrap().unwrap();
+        let place = Place::of(&r, &r.lines[0]);
+        let old = Place::of_key(key);
+        // A record that another one was merged into reads the other's folder
+        // too; it writes where the key's line wrote.
+        assert_eq!((&place.game, &place.line, &place.dirs, &place.folders[0]), (&old.game, &old.line, &old.dirs, &old.folders[0]), "{key}");
+        let view = saves::open(&store, &place, &mut LineCache::default()).unwrap();
+        let was = &before[key.as_str()];
+        let ids = |v: &LineView| v.snapshots.iter().map(|s| (s.id.clone(), s.vv.clone())).collect::<Vec<_>>();
+        assert_eq!(ids(&view), ids(was), "{key}");
+        assert_eq!(view.heads, was.heads, "{key}");
+        assert_eq!(view.places, was.places, "{key}");
+    }
 }
 
 #[test]
