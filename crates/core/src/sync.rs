@@ -1279,6 +1279,9 @@ impl<'a> Session<'a> {
         self.gate.check()?;
         let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
         self.gate.check()?;
+        // A version that shares the line through bindings needs a folder
+        // for every file.
+        crate::join::no_place(self.game, &SnapshotMeta::of(&manifest, self.key(), None).files)?;
         let mut packs: BTreeMap<String, u64> = BTreeMap::new();
         for f in &manifest.files {
             *packs.entry(f.pack.clone().unwrap_or_else(|| manifest.id.clone())).or_default() += f.size;
@@ -1445,12 +1448,35 @@ pub fn sync_with(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: T
     }
 }
 
+/// The game as it is settled now. Which record it belongs to and through
+/// which folders it reads that record's line ([`GameEntry::record`],
+/// [`GameEntry::bind`]) may have changed since `game` was read: by an
+/// earlier sync in this process (the launch wrapper reads the game once,
+/// before the first), or by another process. Scanning or writing saves with
+/// what was true before would put one version's files into the line of
+/// another, so everything that does either starts here. The configuration
+/// on this device is what counts.
+fn fresh(ctx: &Ctx, game: &GameEntry) -> GameEntry {
+    let now = config::load().ok().and_then(|c| c.game(&game.key).cloned());
+    let Some(now) = now else { return game.clone() };
+    let game = GameEntry { record: now.record, bind: now.bind, declined: now.declined, ..game.clone() };
+    if let Ok(cloud) = ctx.cloud() {
+        cloud.know(&game);
+    }
+    game
+}
+
 fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
+    let game = &fresh(ctx, game);
     let cloud = match ctx.cloud() {
         Ok(c) => c,
         Err(e) if cloud::is_not_configured(&e) => return Ok(Outcome::NoCloud),
         Err(e) => return offline(ctx, game, trigger, e),
     };
+    // A game new to this device may share a line through folders a user
+    // confirmed on another device. Settled before anything is scanned.
+    let joined = crate::join::auto(cloud, game);
+    let game = joined.as_ref().unwrap_or(game);
     let launching = trigger == Trigger::PreLaunch;
     let mut s = match Session::open(ctx, cloud, game) {
         Ok(s) => s,
@@ -1608,6 +1634,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
 /// to settle), so that keeping a save never decides anything for the user.
 pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome> {
     let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let local = snapshot::local_state(game)?;
     if local.is_empty() {
         bail!(crate::tr!("没有找到「{}」的存档文件", "No save files of \"{}\" found", game.name));
@@ -1656,6 +1683,7 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
 /// Restore a specific snapshot and make it the newest version.
 pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
@@ -1670,6 +1698,7 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
 /// run `change`, then upload the result as the newest version.
 pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
     let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
@@ -1765,6 +1794,32 @@ pub fn export_snapshot(ctx: &Ctx, game: &GameEntry, id: &str, dest: &std::path::
 
 // ----------------------------------------------------------------- save lines
 
+/// Upload what waits for the cloud to the line the game follows now: the
+/// first step of following another one.
+pub(crate) fn flush_queue(cloud: &Cloud, game: &GameEntry) -> Result<()> {
+    let mut line = cloud.open(&game.key)?;
+    flush(cloud, &mut line, Some(game))?;
+    Ok(())
+}
+
+/// Forget what this device synced of the game: on the line it follows from
+/// here on it has synced nothing yet.
+pub(crate) fn start_over(key: &str) -> Result<()> {
+    state::update_game(key, |g| {
+        g.last_synced_id = None;
+        g.last_synced_hash = None;
+        g.last_synced_vv = Vv::new();
+        g.last_synced_device = None;
+        g.last_sync_at = None;
+        g.counter = 0;
+        g.line = None;
+        g.conflict = None;
+        g.last_error = None;
+    })?;
+    remember_base(key, None);
+    Ok(())
+}
+
 /// A save line a game on this device can follow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1859,6 +1914,7 @@ fn set_line(key: &str, line: &str) -> Result<()> {
 /// no longer applies to this game.
 pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outcome> {
     let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let key = game.key.as_str();
     let from = cloud.following(key);
@@ -1891,18 +1947,7 @@ pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outco
     cloud.follow(key, &to);
     if !staying {
         // On the other line this device has synced nothing yet.
-        state::update_game(key, |g| {
-            g.last_synced_id = None;
-            g.last_synced_hash = None;
-            g.last_synced_vv = Vv::new();
-            g.last_synced_device = None;
-            g.last_sync_at = None;
-            g.counter = 0;
-            g.line = None;
-            g.conflict = None;
-            g.last_error = None;
-        })?;
-        remember_base(key, None);
+        start_over(key)?;
         log(format!("{key}: follows the save line {to} now (was {from})"));
     }
     let game = &GameEntry { line: Some(to), ..game.clone() };

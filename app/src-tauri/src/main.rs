@@ -142,6 +142,8 @@ fn main() {
             commands::sync_game,
             commands::game_lines,
             commands::use_game_line,
+            commands::join_suggestion,
+            commands::join_answer,
             commands::backup_game,
             commands::list_snapshots,
             commands::screenshot_gallery,

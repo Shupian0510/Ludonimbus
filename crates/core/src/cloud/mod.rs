@@ -521,7 +521,7 @@ pub fn switch_to(new: CloudConfig, secret: Option<&str>) -> Result<()> {
         let old = std::mem::replace(&mut c.cloud, new.clone());
         // Which record a game belongs to is about the cloud that was left.
         if old != new {
-            c.games.iter_mut().for_each(|g| g.record = None);
+            c.games.iter_mut().for_each(GameEntry::forget_cloud);
         }
         // Google Drive and Baidu keep one sign-in each: switching accounts
         // replaces it, so there is nothing to copy from.
@@ -565,7 +565,7 @@ pub fn disconnect() -> Result<()> {
     config::update(|c| {
         c.cloud = CloudConfig::None;
         c.previous_cloud = None;
-        c.games.iter_mut().for_each(|g| g.record = None);
+        c.games.iter_mut().for_each(GameEntry::forget_cloud);
         Ok(())
     })?;
     reset_markers()

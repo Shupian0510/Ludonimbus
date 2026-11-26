@@ -545,6 +545,36 @@ export interface SaveLine {
   devices: string[];
 }
 
+/** One folder of a save line and the folder of this version that holds the same files. */
+export interface SaveBind {
+  canon: string;
+  local: string;
+}
+
+/** A save line this version could share although it keeps its saves in other folders. */
+export interface JoinSuggestion {
+  /** The game record to belong to. */
+  record: string;
+  /** Which files the line holds (what a decline remembers). */
+  def: string;
+  /** The line's newest version: who made it, on what, when. */
+  device: string;
+  platform: string;
+  createdAt: string;
+  /** Confirmed on another device already. */
+  confirmed: boolean;
+  /** ready: can be shared. needsSaves: play once on this device first. noMatch: the files don't correspond. */
+  fit: "ready" | "needsSaves" | "noMatch";
+  binds: SaveBind[];
+  matched: number;
+  onlyInLine: number;
+  onlyHere: number;
+  /** Files of the line with no folder here. */
+  uncovered: string[];
+  /** Files here that stay outside and are no longer uploaded once shared. */
+  outside: string[];
+}
+
 export interface DeviceInfo {
   id: string;
   name: string;
@@ -592,6 +622,11 @@ export const api = {
     invoke<Outcome>("sync_game", { key, resolution }),
   backup: (key: string, comment: string) => invoke<Outcome>("backup_game", { key, comment }),
   lines: (key: string) => invoke<SaveLine[]>("game_lines", { key }),
+  /** The line this version could share with one that keeps the same saves elsewhere; null when there is none. */
+  joinSuggestion: (key: string) => invoke<JoinSuggestion | null>("join_suggestion", { key }),
+  /** Share the suggested line (then sync with it), never suggest it again, or stop sharing. */
+  joinAnswer: (key: string, answer: "accept" | "decline" | "leave", suggestion?: JoinSuggestion) =>
+    invoke<Outcome | null>("join_answer", { key, answer, suggestion: suggestion ?? null }),
   /** Follow another save line: the shared one, one of this device's own, or the one another device keeps. */
   useLine: (key: string, choice: { kind: "shared" } | { kind: "independent"; name?: string } | { kind: "follow"; line: string }) =>
     invoke<Outcome>("use_game_line", {

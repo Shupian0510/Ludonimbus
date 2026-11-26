@@ -395,6 +395,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       );
     case "use_game_line":
       return delay<Outcome>({ kind: "upToDate" }, 500);
+    case "join_suggestion":
+      return delay(null, 200);
+    case "join_answer":
+      return delay<Outcome | null>(args.answer === "decline" ? null : { kind: "upToDate" }, 500);
     case "screenshot_gallery":
       return delay(mockGallery(key), 300);
     case "screenshot_fetch":

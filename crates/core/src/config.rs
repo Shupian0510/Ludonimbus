@@ -276,6 +276,17 @@ pub struct GameEntry {
     /// record named like its key. Forgotten when another cloud is connected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record: Option<String>,
+    /// Which folder of the save line it shares is which folder of this
+    /// version, when it keeps the same saves elsewhere than the version the
+    /// line began with ([`crate::bind`]). Empty: its files are the line's
+    /// as they are. Goes with `record`, and is forgotten with it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bind: Vec<crate::bind::Bind>,
+    /// Save lines of the game the user chose not to share with this
+    /// version, by the files they hold ([`crate::cloud::v2::Line::def`]):
+    /// not suggested again.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declined: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -304,6 +315,16 @@ pub struct OriginalShortcut {
     pub start_dir: String,
     pub launch_options: String,
     pub icon: String,
+}
+
+impl GameEntry {
+    /// Forget what was settled about this game in the cloud that is
+    /// connected: another cloud knows nothing of it.
+    pub fn forget_cloud(&mut self) {
+        self.record = None;
+        self.bind.clear();
+        self.declined.clear();
+    }
 }
 
 impl AppConfig {
