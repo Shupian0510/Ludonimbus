@@ -383,6 +383,21 @@ export const steamCloud = {
   repaired: "启动选项已修复",
   beforeLaunch: "启动前同步",
   restoreNote: "Steam 云也在同步这个游戏：它下次同步时可能问保留哪一份，选本机的。",
+  all: "Steam 装的游戏",
+  allHint: "「全部只备份」把还没加入的都加进来：Steam 云照旧同步，Ludonimbus 另存每一份的版本，不改本机存档。Steam 云不管的游戏直接由 Ludonimbus 同步。不知道存档位置的会跳过，可以在「添加游戏」里单独加。\n「全部接管」把只备份的都改成由 Ludonimbus 同步，要先在 Steam 里对所有游戏关掉 Steam 云。",
+  allCount: (added: number, fresh: number) => (fresh > 0 ? `${added} 个已加入 · ${fresh} 个还没加入` : `${added} 个已加入`),
+  backupAll: "全部只备份",
+  allAdding: "正在加入…",
+  allAdded: (n: number) => (n > 0 ? `已加入 ${n} 个` : "没有能加入的"),
+  allLeft: (n: number) => `${n} 个没处理`,
+  takeOverAll: "全部接管…",
+  takeOverAllNone: "没有只备份的游戏",
+  takeOverAllTitle: (n: number) => `由 Ludonimbus 同步 ${n} 个 Steam 游戏`,
+  allTaking: "正在接管…",
+  allTaken: (n: number) => (n > 0 ? `已接管 ${n} 个` : "一个也没接管"),
+  stepAllOff: "Steam 云已对所有游戏关掉",
+  stepAllOffTodo: "先对所有游戏关掉 Steam 云",
+  stepAllOffHint: "在 Steam 里：设置 → 云 → 关掉「启用 Steam 云」。Ludonimbus 不会替你改这个开关。Steam 上次没同步完的游戏会跳过，保持只备份。",
 };
 
 export const steamAction = {

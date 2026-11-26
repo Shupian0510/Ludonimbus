@@ -377,6 +377,21 @@ export const steamCloud: typeof Zh.steamCloud = {
   repaired: "Launch options repaired",
   beforeLaunch: "Sync before it starts",
   restoreNote: "Steam Cloud syncs this game too: next time it may ask which saves to keep. Pick this PC's.",
+  all: "Games Steam installed",
+  allHint: "\"Back up all\" adds the ones that aren't in the library yet: Steam Cloud keeps syncing them, Ludonimbus stores versions of each save and never changes the saves on this PC. Games Steam Cloud doesn't keep are synced by Ludonimbus right away. The ones whose save location isn't known are skipped; add those one by one under \"Add game\".\n\"Take over all\" lets Ludonimbus sync every backed-up game; turn Steam Cloud off for all games in Steam first.",
+  allCount: (added, fresh) => (fresh > 0 ? `${added} in the library · ${fresh} not yet` : `${added} in the library`),
+  backupAll: "Back up all",
+  allAdding: "Adding…",
+  allAdded: (n) => (n > 0 ? `Added ${n}` : "Nothing could be added"),
+  allLeft: (n) => `${n} left as they were`,
+  takeOverAll: "Take over all…",
+  takeOverAllNone: "No game is backup only",
+  takeOverAllTitle: (n) => `Let Ludonimbus sync ${n} Steam ${n === 1 ? "game" : "games"}`,
+  allTaking: "Taking over…",
+  allTaken: (n) => (n > 0 ? `Took over ${n}` : "None was taken over"),
+  stepAllOff: "Steam Cloud is off for all games",
+  stepAllOffTodo: "Turn Steam Cloud off for all games first",
+  stepAllOffHint: "In Steam: Settings → Cloud → turn off \"Enable Steam Cloud\". Ludonimbus never flips this switch for you. Games whose last Steam sync wasn't complete are skipped and stay backup only.",
 };
 
 export const steamAction: typeof Zh.steamAction = {

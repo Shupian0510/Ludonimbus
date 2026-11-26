@@ -3,6 +3,7 @@ import { AccountInfo, api, CloudKind, errorText, ScreenshotMode, Settings, Steam
 import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
 import { BaiduRevokeHelp, CloudOptions, MigrateBanner } from "./CloudForms";
+import { StoreGamesRow } from "./SteamCloud";
 import { SteamPluginPanel } from "./SteamPlugin";
 import { HandheldPanel } from "./HandheldPanel";
 import { NxPanel } from "./NxPanel";
@@ -251,6 +252,7 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
           <h3>Steam</h3>
         </div>
         <SteamRootField settings={s} done={done} />
+        <StoreGamesRow key={`${s.steamRoot ?? ""}/${s.steamAccount ?? ""}`} onChanged={onChanged} />
         {steamAccounts.length > 0 && (
           <label>
             <span>{t.addToSteam.account}</span>
