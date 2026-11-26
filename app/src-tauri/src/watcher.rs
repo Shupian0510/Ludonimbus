@@ -334,18 +334,23 @@ fn backlog_pass(app: &AppHandle, cfg: &config::AppConfig, owed: &[String], pendi
 const UNWRAPPED_EVERY: Duration = Duration::from_secs(5 * 60);
 /// The longest pause while the cloud can't be reached.
 const UNWRAPPED_MAX: Duration = Duration::from_secs(30 * 60);
+/// With many such games a look takes one request each: never more than
+/// one a minute on average.
+const UNWRAPPED_EACH: Duration = Duration::from_secs(60);
 
 /// Steam games Ludonimbus manages that don't start through the wrapper
 /// (docs/plan-v2.md, section 8.3): nothing syncs before they are played, so
 /// every few minutes, while one isn't running or being synced, a newer
 /// version in the cloud is pulled ([`steamcloud::poll`], which checks that
 /// Steam Cloud is still off first). One listing per game when there is
-/// nothing to do; less often while the cloud can't be reached, as in
-/// [`Backlog`]. After the game, the usual sync of a game that ran outside
-/// the wrapper.
+/// nothing to do; less often with many such games and while the cloud
+/// can't be reached, as in [`Backlog`]. After the game, the usual sync of a
+/// game that ran outside the wrapper.
 struct Unwrapped {
     next: Instant,
     pause: Duration,
+    /// The pause the number of games asks for at least.
+    floor: Duration,
     running: Arc<AtomicBool>,
     last: Arc<Mutex<Option<bool>>>,
 }
@@ -355,6 +360,7 @@ impl Unwrapped {
         Unwrapped {
             next: Instant::now() + BACKLOG_FIRST,
             pause: UNWRAPPED_EVERY,
+            floor: UNWRAPPED_EVERY,
             running: Arc::new(AtomicBool::new(false)),
             last: Arc::new(Mutex::new(None)),
         }
@@ -367,7 +373,7 @@ impl Unwrapped {
         }
         if let Some(ok) = self.last.lock().ok().and_then(|mut l| l.take()) {
             self.pause = if ok { UNWRAPPED_EVERY } else { (self.pause * 2).clamp(UNWRAPPED_EVERY, UNWRAPPED_MAX) };
-            self.next = Instant::now() + self.pause;
+            self.next = Instant::now() + self.pause.max(self.floor);
         }
         if Instant::now() < self.next {
             return;
@@ -386,6 +392,8 @@ impl Unwrapped {
         if games.is_empty() {
             return;
         }
+        self.floor = UNWRAPPED_EVERY.max(UNWRAPPED_EACH * games.len() as u32);
+        self.next = Instant::now() + self.pause.max(self.floor);
         self.running.store(true, Ordering::SeqCst);
         let (app, cfg, running, last) = (app.clone(), cfg.clone(), self.running.clone(), self.last.clone());
         std::thread::spawn(move || {
