@@ -335,6 +335,13 @@ impl Manifest {
 
     /// The manifest without its file list, as kept in a line's index.
     pub fn summary(&self) -> IndexEntry {
+        // The one field of a 0.6 snapshot that has to follow it into the
+        // index: a locked snapshot has no pin until the migration writes
+        // one, and retention must not take it for an automatic snapshot.
+        let mut extra = Extra::new();
+        if self.extra.get("locked").and_then(|v| v.as_bool()) == Some(true) {
+            extra.insert("locked".to_string(), true.into());
+        }
         IndexEntry {
             id: self.id.clone(),
             vv: self.vv.clone(),
@@ -355,7 +362,7 @@ impl Manifest {
             origin: self.origin.clone(),
             requires: self.requires.clone(),
             pin: None,
-            extra: Extra::new(),
+            extra,
         }
     }
 }
