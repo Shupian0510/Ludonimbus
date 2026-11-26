@@ -334,6 +334,11 @@ fn cloud(cfg: &AppConfig) -> Result<Arc<Cloud>> {
     let scope = scope_of(cfg);
     let mut slot = CLOUD.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(c) = slot.as_ref().filter(|c| c.scope == scope && c.opened.elapsed() < CLOUD_REUSE_FOR) {
+        // A game may have joined another version's line since the cloud
+        // was opened ([`crate::join`]).
+        for g in &cfg.games {
+            c.cloud.know(g);
+        }
         return Ok(c.cloud.clone());
     }
     let opened = crate::cloud::open(cfg)?.ok_or_else(|| anyhow!("no cloud is connected on the PC"))?;
@@ -615,16 +620,25 @@ fn jobs() -> std::sync::MutexGuard<'static, HashMap<String, Job>> {
     jobs
 }
 
+/// The bindings of this PC's game `key` (an emulator's version of the
+/// title): through them the line it shares holds the Switch's files under
+/// that line's paths ([`crate::join`]). Empty when the game's files are the
+/// line's as they are, or the game is only in the cloud.
+fn binds_of(cfg: &AppConfig, key: &str) -> Vec<crate::bind::Bind> {
+    cfg.game(key).map(|g| g.bind.clone()).unwrap_or_default()
+}
+
 /// One version's files of the Switch game, as a zip for the Switch: from
 /// this PC's queue when it's still there, else from the cloud.
 fn fetch_for_switch(cfg: &AppConfig, key: &str, id: &str, title: u64, job: &str) -> Result<std::path::PathBuf> {
+    let binds = binds_of(cfg, key);
     let queued = sync::pending_zips(key, id);
-    let local = if queued.is_empty() { None } else { repack_for_switch(&queued, title).ok() };
+    let local = if queued.is_empty() { None } else { repack_for_switch(&queued, title, &binds).ok() };
     let body = match local {
         Some(b) => b,
         None => {
             let tmp = paths::staging_dir().join(format!("nx-{job}.zip"));
-            let got = cloud(cfg).and_then(|c| c.download(key, id, &tmp)).and_then(|_| repack_for_switch(std::slice::from_ref(&tmp), title));
+            let got = cloud(cfg).and_then(|c| c.download(key, id, &tmp)).and_then(|_| repack_for_switch(std::slice::from_ref(&tmp), title, &binds));
             let _ = std::fs::remove_file(&tmp);
             got?
         }
@@ -895,12 +909,37 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             let (id, name) = device_tuple(device);
             // The game version that wrote the saves, for games whose rule says how.
             let version = crate::crosssaves::files_version(&[format!("nx:{title:016X}")], "switch", &files, &Default::default());
+            // The title is a game of this PC that shares another version's
+            // line through bindings: the Switch's files go there under that
+            // line's paths, the ones the bindings don't name stay out, and
+            // that line's other platform's files go along from the version
+            // these files were made from (crate::join).
+            let (files, carried) = match cfg.game(&key).filter(|g| !g.bind.is_empty()) {
+                None => (files, Vec::new()),
+                Some(g) => {
+                    let mut mapped: Vec<(String, Vec<u8>)> = files.into_iter().filter_map(|(p, d)| crate::bind::to_canon(&g.bind, &p).map(|c| (c, d))).collect();
+                    if mapped.is_empty() {
+                        return Ok(err(400, "no save files"));
+                    }
+                    let (refs, content) = sync::carried_for(&cloud, g, &line, parent.as_deref())?;
+                    mapped.extend(content);
+                    (mapped, refs)
+                }
+            };
             // A backup the cloud already holds isn't stored twice.
-            let hash = snapshot::files_hash(&files);
+            let hash = match carried.is_empty() {
+                true => snapshot::files_hash(&files),
+                false => {
+                    let mut entries: Vec<snapshot::FileEntry> =
+                        files.iter().map(|(path, data)| snapshot::FileEntry { path: path.clone(), size: data.len() as u64, hash: blake3::hash(data).to_hex().to_string(), mtime: 0 }).collect();
+                    entries.extend(carried.iter().map(|f| snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }));
+                    snapshot::content_hash(&entries)
+                }
+            };
             if let Some(same) = all.iter().find(|s| backup && s.content_hash == hash) {
                 return Ok(ok_json(json!({ "id": same.id, "key": key, "existing": true })));
             }
-            let meta = sync::queue_files(
+            let meta = sync::queue_files_carrying(
                 &line,
                 &sync::Foreign {
                     key: &key,
@@ -914,6 +953,7 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
                     game_version: version,
                     origin: None,
                 },
+                &carried,
             )?;
             upload_in_background();
             Ok(ok_json(json!({ "id": meta.id, "key": key, "pending": true })))
@@ -929,8 +969,10 @@ fn is_switch_path(path: &str, title: u64) -> bool {
 }
 
 /// The Switch game's files out of the zips of a version (each file as
-/// `files/<path>` in one of them), as one zip for the Switch.
-fn repack_for_switch(zips: &[std::path::PathBuf], title: u64) -> Result<Vec<u8>> {
+/// `files/<path>` in one of them), as one zip for the Switch. `binds`: the
+/// bindings of the game the title is on this PC; the line's files are then
+/// under its paths, and go to the Switch under the Switch's.
+fn repack_for_switch(zips: &[std::path::PathBuf], title: u64, binds: &[crate::bind::Bind]) -> Result<Vec<u8>> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for zip in zips {
@@ -938,6 +980,13 @@ fn repack_for_switch(zips: &[std::path::PathBuf], title: u64) -> Result<Vec<u8>>
         for i in 0..src.len() {
             let mut e = src.by_index(i)?;
             let Some(path) = e.name().strip_prefix("files/").map(str::to_string) else { continue };
+            let path = match binds.is_empty() {
+                true => path,
+                false => match crate::bind::to_local(binds, &path) {
+                    Some(own) => own,
+                    None => continue,
+                },
+            };
             if e.is_dir() || !is_switch_path(&path, title) {
                 continue;
             }

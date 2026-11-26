@@ -24,6 +24,12 @@
 //! files in it are the containers' files under the names the game's other
 //! versions use ([`crate::xboxsaves::named`]); [`crate::snapshot`] reads and
 //! writes them.
+//!
+//! A binding can be narrower than its folder ([`Bind::files`]): only the
+//! files a wildcard names (relative to the folder) belong to it, the way a
+//! cross-platform rule names which files in its folder are saves
+//! (`adapters/cross-saves.yaml`). The other files in the folder are outside
+//! every binding, like files in another folder.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -82,12 +88,32 @@ pub struct Bind {
     /// and then not written, so bindings of plain files read as before.
     #[serde(default, skip_serializing_if = "Codec::is_files")]
     pub codec: Codec,
+    /// Which files in the folder belong to the binding: a wildcard relative
+    /// to it, matched as a cross-platform rule's `files` are (any letter
+    /// case, `*` doesn't cross `/`). None = every file in it, and then not
+    /// written, so bindings without one read and write as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<String>,
 }
 
 impl Bind {
     /// A binding of plain files.
     pub fn files(canon: impl Into<String>, local: impl Into<String>) -> Bind {
-        Bind { canon: canon.into(), local: local.into(), codec: Codec::Files }
+        Bind { canon: canon.into(), local: local.into(), codec: Codec::Files, files: None }
+    }
+
+    /// A binding of the plain files in the folders that `files` names.
+    pub fn some(canon: impl Into<String>, local: impl Into<String>, files: impl Into<String>) -> Bind {
+        Bind { files: Some(files.into()), ..Bind::files(canon, local) }
+    }
+
+    /// Whether a file at `rest` below the bound folder (what follows the
+    /// folder, with its leading `/`) belongs to the binding.
+    fn holds(&self, rest: &str) -> bool {
+        match self.files.as_deref() {
+            None => true,
+            Some(pattern) => rest.strip_prefix('/').is_some_and(|rel| crate::crosssaves::matches(pattern, rel)),
+        }
     }
 }
 
@@ -110,10 +136,15 @@ fn below<'a>(dir: &str, path: &'a str) -> Option<&'a str> {
     (same(head, dir) && (rest.is_empty() || rest.starts_with('/'))).then_some(rest)
 }
 
+/// The bindings whose folder on the side `from` holds `path`, with what
+/// follows the folder; a binding that names its files only when it names
+/// this one.
+fn holding<'a, 'p>(binds: &'a [Bind], path: &'p str, from: impl Fn(&Bind) -> &str) -> impl Iterator<Item = (&'a Bind, &'p str)> {
+    binds.iter().filter_map(move |b| below(from(b), path).filter(|rest| b.holds(rest)).map(|rest| (b, rest)))
+}
+
 fn mapped(binds: &[Bind], path: &str, from: impl Fn(&Bind) -> &str, to: impl Fn(&Bind) -> &str) -> Option<String> {
-    binds
-        .iter()
-        .filter_map(|b| below(from(b), path).map(|rest| (b, rest)))
+    holding(binds, path, &from)
         // The deepest folder that holds it.
         .max_by_key(|(b, _)| from(b).len())
         .map(|(b, rest)| format!("{}{rest}", to(b)))
@@ -140,9 +171,7 @@ pub fn to_canon_as(binds: &[Bind], local: &str, codec: &Codec) -> Option<String>
 
 /// [`to_local`], with the codec of the binding it goes through.
 pub fn to_local_with(binds: &[Bind], canon: &str) -> Option<(String, Codec)> {
-    binds
-        .iter()
-        .filter_map(|b| below(&b.canon, canon).map(|rest| (b, rest)))
+    holding(binds, canon, |b| &b.canon)
         .max_by_key(|(b, _)| b.canon.len())
         .map(|(b, rest)| (format!("{}{rest}", b.local), b.codec.clone()))
 }
@@ -360,6 +389,61 @@ mod tests {
         assert!(serde_json::to_string(&newer).unwrap().contains(r#""codec":"nx""#));
         assert!(!known(&[newer.clone()]) && known(&[x.clone(), old.clone()]));
         assert!(has_wgs(&[old.clone(), x]) && !has_wgs(&[old, newer]));
+    }
+
+    #[test]
+    fn the_files_of_a_binding_are_written_only_when_it_names_them() {
+        // As before there was a wildcard: not written, read back the same.
+        let old: Bind = serde_json::from_str(r#"{"canon":"appdata/Game","local":"documents/Game"}"#).unwrap();
+        assert_eq!(old.files, None);
+        assert_eq!(serde_json::to_string(&old).unwrap(), r#"{"canon":"appdata/Game","local":"documents/Game"}"#);
+        let some = Bind::some("nxsave-0100e65002bb8000", "appdata/StardewValley/Saves", "*/*");
+        let text = serde_json::to_string(&some).unwrap();
+        assert_eq!(text, r#"{"canon":"nxsave-0100e65002bb8000","local":"appdata/StardewValley/Saves","files":"*/*"}"#);
+        assert_eq!(serde_json::from_str::<Bind>(&text).unwrap(), some);
+    }
+
+    #[test]
+    fn only_the_files_a_binding_names_belong_to_it() {
+        let binds = [Bind::some("nxsave-0100e65002bb8000", "appdata/StardewValley/Saves", "*/*")];
+        // A farm's files, both ways, in any letter case.
+        assert_eq!(to_canon(&binds, "appdata/StardewValley/Saves/Farm_1/Farm_1").as_deref(), Some("nxsave-0100e65002bb8000/Farm_1/Farm_1"));
+        assert_eq!(to_canon(&binds, "AppData/stardewvalley/saves/Farm_1/SaveGameInfo").as_deref(), Some("nxsave-0100e65002bb8000/Farm_1/SaveGameInfo"));
+        assert_eq!(to_local(&binds, "NXSAVE-0100E65002BB8000/farm_2/FARM_2").as_deref(), Some("appdata/StardewValley/Saves/farm_2/FARM_2"));
+        assert_eq!(to_local_with(&binds, "nxsave-0100e65002bb8000/Farm_1/Farm_1").map(|(_, c)| c), Some(Codec::Files));
+        // A file in the folder itself, or deeper than the wildcard goes: in
+        // the folder, but not the binding's.
+        assert_eq!(to_local(&binds, "nxsave-0100e65002bb8000/startup_preferences"), None);
+        assert_eq!(to_canon(&binds, "appdata/StardewValley/Saves/Farm_1/ErrorLogs/log.txt"), None);
+        assert_eq!(to_canon(&binds, "appdata/StardewValley/Saves"), None);
+        // Another root altogether, as ever.
+        assert_eq!(to_local(&binds, "nxdevice-0100e65002bb8000/x/y"), None);
+        assert_eq!(
+            uncovered(&binds, ["nxsave-0100e65002bb8000/Farm_1/Farm_1", "nxsave-0100e65002bb8000/startup_preferences", "nxdevice-0100e65002bb8000/a/b"]),
+            v(&["nxsave-0100e65002bb8000/startup_preferences", "nxdevice-0100e65002bb8000/a/b"])
+        );
+        // By codec too.
+        assert_eq!(to_canon_as(&binds, "appdata/StardewValley/Saves/Farm_1/Farm_1", &Codec::Files).as_deref(), Some("nxsave-0100e65002bb8000/Farm_1/Farm_1"));
+        assert_eq!(to_canon_as(&binds, "appdata/StardewValley/Saves/default_options", &Codec::Files), None);
+
+        // What it does with two sides' files: the line's other files are
+        // uncovered, the version's other files outside.
+        let line = v(&["nxsave-0100e65002bb8000/Farm_1/Farm_1", "nxsave-0100e65002bb8000/Farm_1/SaveGameInfo", "nxsave-0100e65002bb8000/startup_preferences"]);
+        let here = v(&["appdata/StardewValley/Saves/Farm_1/Farm_1", "appdata/StardewValley/Saves/Farm_2/Farm_2", "appdata/StardewValley/default_options"]);
+        let p = measure(&binds, &line, &here);
+        assert_eq!((p.matched, p.only_in_line, p.only_here), (1, 1, 1));
+        assert_eq!(p.uncovered, v(&["nxsave-0100e65002bb8000/startup_preferences"]));
+        assert_eq!(p.outside, v(&["appdata/StardewValley/default_options"]));
+
+        // A narrower binding in a wider one: a file goes through the deepest
+        // folder that holds it and names it.
+        let both = [b("appdata/Game", "documents/Game"), Bind::some("appdata/Game/saves", "documents/Game/slots", "*.sav")];
+        assert_eq!(to_canon(&both, "documents/Game/slots/a.sav").as_deref(), Some("appdata/Game/saves/a.sav"));
+        assert_eq!(to_canon(&both, "documents/Game/slots/a.ini").as_deref(), Some("appdata/Game/slots/a.ini"));
+        // Kept by the moves for other accounts' containers.
+        let w = "localappdata/Packages/G/SystemAppData/wgs/0009_00AB";
+        let narrow = [Bind { codec: Codec::Wgs, ..Bind::some("appdata/Game", w, "*.sav") }];
+        assert_eq!(rebase(&narrow, &["localappdata/Packages/G/SystemAppData/wgs/0007_00AB".to_string()])[0].files.as_deref(), Some("*.sav"));
     }
 
     #[test]

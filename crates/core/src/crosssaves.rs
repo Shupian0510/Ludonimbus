@@ -107,6 +107,56 @@ fn glob(pattern: &str) -> Option<GlobMatcher> {
     GlobBuilder::new(pattern).case_insensitive(true).literal_separator(true).build().ok().map(|g| g.compile_matcher())
 }
 
+/// Whether the wildcard `pattern` names the path `rel`, the way a rule's
+/// `files` do: any letter case, `*` doesn't cross `/`. A pattern that isn't
+/// one names nothing. What [`crate::bind::Bind::files`] goes by; compiled
+/// once per pattern and thread.
+pub fn matches(pattern: &str, rel: &str) -> bool {
+    thread_local! {
+        static SEEN: std::cell::RefCell<std::collections::HashMap<String, Option<GlobMatcher>>> = Default::default();
+    }
+    SEEN.with(|seen| seen.borrow_mut().entry(pattern.to_string()).or_insert_with(|| glob(pattern)).as_ref().is_some_and(|m| m.is_match(rel)))
+}
+
+/// Whether `dir` (a folder among a snapshot's paths, `root/rest`) is the
+/// rule's folder for `scope`, as a version of that platform writes it: for
+/// a Switch game's save data its `nxsave-…` root itself, else a folder whose
+/// path ends with the rule's folder.
+pub fn is_folder(rule: &Rule, scope: &str, dir: &str) -> bool {
+    let Some(folder) = rule.folders.get(scope) else { return false };
+    if folder == NXSAVE {
+        return !dir.contains('/') && matches!(switch::parse_root(&dir.to_lowercase()), Some((SaveKind::Account, _)));
+    }
+    // Not a Switch game's save data, whatever it is called.
+    if switch::parse_root(&dir.split('/').next().unwrap_or_default().to_lowercase()).is_some() {
+        return false;
+    }
+    after_folder(&format!("{dir}/x"), folder).as_deref() == Some("x")
+}
+
+/// Whether the rule's two platforms `a` and `b` are known to keep the very
+/// same files, so that versions on them would share one save line without
+/// asking (docs/plan-v2.md, sections 6 and 11: "直接共用").
+///
+/// No pair is yet: `checked` is free text, not a verdict, and every pair a
+/// rule gives is asked once ([`crate::join::suggestion`]). This is the one
+/// place where a verified pair would plug in: [`crate::join::auto`] would
+/// take the rule's bindings for such a version when no device has
+/// confirmed any.
+pub fn verified(_rule: &Rule, _a: &str, _b: &str) -> bool {
+    false
+}
+
+/// `found` is a newer game version than `here` and the rule says an older
+/// game can't load what a newer one saved: a save written by `found` may
+/// not load here. Unknown or uncomparable versions are never that.
+pub fn too_new(rule: &Rule, found: Option<&str>, here: Option<&str>) -> bool {
+    match (found, here) {
+        (Some(found), Some(here)) => rule.newer_only && compare(found, here) == Some(Ordering::Greater),
+        _ => false,
+    }
+}
+
 fn lower_parts(folder: &str) -> Vec<String> {
     folder.split(['/', '\\']).filter(|c| !c.is_empty()).map(str::to_lowercase).collect()
 }
@@ -253,12 +303,23 @@ pub fn newest_version<T>(rule: &Rule, files: &[(String, T)], read: impl Fn(&T) -
 }
 
 /// The game version that wrote a version's saves on this device (`files`
-/// and `roots` as [`crate::snapshot::scan`] gives them).
+/// and `roots` as [`crate::snapshot::scan`] gives them). A version that
+/// shares the line of another platform through the rule's bindings
+/// ([`crate::join::by_rule`]) has them under that platform's paths there:
+/// they are looked at under the version's own.
 pub fn local_version(g: &GameEntry, files: &[LocalFile], roots: &BTreeMap<String, PathBuf>) -> Option<String> {
     let rule = rule_for(g)?;
     rule.version.as_ref()?;
     let roots: BTreeMap<String, String> = roots.iter().map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned())).collect();
-    let saves = saves_of(rule, &savelib::save_scope(g), files.iter().map(|f| (f.logical.as_str(), f.abs.as_path())), &roots);
+    let bound = crate::join::by_rule(g).is_some();
+    let own: Vec<(String, &Path)> = files
+        .iter()
+        .filter_map(|f| match bound {
+            false => Some((f.logical.clone(), f.abs.as_path())),
+            true => crate::bind::to_local(&g.bind, &f.logical).map(|own| (own, f.abs.as_path())),
+        })
+        .collect();
+    let saves = saves_of(rule, &savelib::save_scope(g), own.iter().map(|(p, abs)| (p.as_str(), *abs)), &roots);
     newest_version(rule, &saves, |p| std::fs::read(p).ok())
 }
 

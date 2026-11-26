@@ -331,11 +331,12 @@ impl Cloud {
     }
 
     /// What says which game `key` is and which files it keeps: its ids,
-    /// the format of its saves, and the fingerprint of where they are.
-    fn identity(&self, key: &str) -> Option<(Vec<String>, String, String)> {
+    /// the format of its saves, the fingerprint of where they are, and the
+    /// cross-platform rule its saves follow.
+    fn identity(&self, key: &str) -> Option<(Vec<String>, String, String, Option<&'static crate::crosssaves::Rule>)> {
         let entry = self.games.lock().unwrap().get(key).and_then(|g| g.entry.clone())?;
         let def = CloudGame::from(&entry);
-        Some((upgrade::record_ids(&def), upgrade::line_format(&def), upgrade::line_def(&def)))
+        Some((upgrade::record_ids(&def), upgrade::line_format(&def), upgrade::line_def(&def), crate::crosssaves::rule_for(&entry)))
     }
 
     /// The record whose shared line the game `key` can share through
@@ -346,27 +347,28 @@ impl Cloud {
         if self.access()? == Access::Legacy {
             return Ok(None);
         }
-        let Some((ids, format, def)) = self.identity(key) else { return Ok(None) };
+        let Some((ids, format, def, rule)) = self.identity(key) else { return Ok(None) };
         let library = self.library()?;
         // A game with a record of its own has a history of its own.
         if library::get(&library.records, key).is_some() {
             return Ok(None);
         }
-        Ok(library::bound_line(&library.records, &ids, &format, &def).map(|(r, map)| (r.id.clone(), map.to_vec())))
+        Ok(library::bound_line(&library.records, &ids, &format, &def, rule).map(|(r, map)| (r.id.clone(), map.to_vec())))
     }
 
     /// The shared lines the game `key` might share although it keeps its
     /// saves elsewhere ([`library::lines_to_ask`]): the record to belong to,
     /// the line, where it is, and the bindings another device confirmed for
-    /// versions like this one.
+    /// versions like this one. A line of another format than the game's is
+    /// one its cross-platform rule pairs it with.
     pub fn lines_to_ask(&self, key: &str) -> Result<Vec<(String, v2::Line, Place, Option<Vec<crate::bind::Bind>>)>> {
         if self.access()? == Access::Legacy {
             return Ok(Vec::new());
         }
-        let Some((ids, format, def)) = self.identity(key) else { return Ok(Vec::new()) };
+        let Some((ids, format, def, rule)) = self.identity(key) else { return Ok(Vec::new()) };
         let library = self.library()?;
         let mut out = Vec::new();
-        for (record, line) in library::lines_to_ask(&library.records, &ids, &format, &def) {
+        for (record, line) in library::lines_to_ask(&library.records, &ids, &format, &def, rule) {
             let Some((card, _)) = library::resolve_line(&library.records, &record.id, library::MAIN_LINE) else { continue };
             let confirmed = library::binds_for(line, &def).map(<[_]>::to_vec);
             out.push((record.id.clone(), line.clone(), Place::of(card, line), confirmed));

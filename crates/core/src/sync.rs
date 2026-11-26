@@ -166,6 +166,12 @@ pub struct StatusReport {
     pub last_sync_at: Option<DateTime<Utc>>,
     pub pending: usize,
     pub checked_at: DateTime<Utc>,
+    /// The game version that saved `head` on another platform, when that is
+    /// newer than the one that wrote the saves here and the game's rule says
+    /// an older game can't load it ([`too_new`]): a sync nobody chose
+    /// doesn't take it, and the app says so before the user does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub too_new: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +314,200 @@ pub fn platform(game: &GameEntry) -> String {
         None if crate::games::source(game).kind == crate::games::SourceKind::Xbox => "pc:xbox".to_string(),
         None => "pc".to_string(),
     }
+}
+
+// ------------------------------------------ another platform's files on a line
+
+/// The manifest of the version this device is at on the game's line, when
+/// this device kept it ([`remember_base`]).
+fn known_base(key: &str, st: &GameState) -> Option<Manifest> {
+    let manifest: Manifest = serde_json::from_slice(&std::fs::read(base_file(key)).ok()?).ok()?;
+    (Some(&manifest.id) == st.last_synced_id.as_ref()).then_some(manifest)
+}
+
+/// The version of the line a version that shares another platform's line
+/// carries that platform's files over from: the one this device is at, else
+/// the line's newest. At most one read (a manifest is read once and then
+/// kept), none when this device kept the one it is at.
+fn carry_source(cloud: Option<&Cloud>, game: &GameEntry, st: &GameState, line: Option<(&Place, &LineView)>) -> Result<Option<Manifest>> {
+    if let Some(m) = known_base(&game.key, st) {
+        return Ok(Some(m));
+    }
+    let (Some(cloud), Some((place, view))) = (cloud, line) else { return Ok(None) };
+    let at = st.last_synced_id.as_deref().filter(|id| view.get(id).is_some());
+    let Some(id) = at.or_else(|| view.head_entries().last().map(|h| h.id.as_str())) else { return Ok(None) };
+    let manifest = saves::manifest(cloud.files(), place, view, id)?;
+    if at.is_some() {
+        remember_base(&game.key, Some(&manifest));
+    }
+    Ok(Some(manifest))
+}
+
+fn carried_dir(key: &str) -> PathBuf {
+    paths::data_dir().join("carried").join(key)
+}
+
+/// The files of `from` (a version of the line) that a version sharing
+/// another platform's line through a rule has no place for, as a new version
+/// of it carries them over: by reference to the pack that holds each
+/// ([`FileRef::pack`]), and nothing of them uploaded.
+///
+/// A version of the layout of 0.6 keeps its files in a zip beside its
+/// manifest, which no new version may point into (0.6 deletes those by its
+/// own rules). Its files are fetched once (`fetch`; one download) and kept on
+/// this device, and a new version packs them anew. Without them at hand they
+/// are named without a pack: enough to compare, and a version made of them
+/// can't be put together (the error says which file is missing) rather than
+/// leave them out.
+fn carry(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, from: &Manifest, fetch: bool) -> Result<(Vec<FileRef>, Vec<packs::LocalFile>)> {
+    let theirs: Vec<&FileRef> = from.files.iter().filter(|f| crate::bind::to_local(&game.bind, &f.path).is_none()).collect();
+    if theirs.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    if from.v >= v2::LAYOUT && from.unsupported().is_empty() {
+        let refs = theirs.into_iter().map(|f| FileRef { pack: Some(f.pack.clone().unwrap_or_else(|| from.id.clone())), ..f.clone() }).collect();
+        return Ok((refs, Vec::new()));
+    }
+    let dir = carried_dir(&game.key).join(&from.id);
+    let kept = |f: &FileRef| {
+        let at = snapshot::resolve_in(&dir, &f.path).ok()?;
+        packs::LocalFile::from_disk(f.path.clone(), at).ok().filter(|l| l.size == f.size && (f.hash.is_empty() || l.hash == f.hash))
+    };
+    let mut have: Vec<packs::LocalFile> = theirs.iter().filter_map(|f| kept(f)).collect();
+    if have.len() < theirs.len() && fetch {
+        if let (Some(cloud), Some((place, view))) = (cloud, line.filter(|(_, v)| v.get(&from.id).is_some())) {
+            let work = paths::staging_dir().join(format!("carry-{}", ulid::Ulid::new()));
+            let only: Vec<String> = theirs.iter().map(|f| f.path.clone()).collect();
+            let got = saves::fetch(cloud.files(), place, view, from, Some(&only), &work.join("files"), &work.join("packs")).and_then(|_| {
+                // Only the version at hand is kept.
+                let _ = std::fs::remove_dir_all(carried_dir(&game.key));
+                std::fs::create_dir_all(carried_dir(&game.key))?;
+                std::fs::rename(work.join("files"), &dir)?;
+                Ok(())
+            });
+            let _ = std::fs::remove_dir_all(&work);
+            got?;
+            log(format!("{}: fetched {} file(s) of the line's other platform from {} to carry over", game.key, theirs.len(), from.id));
+            have = theirs.iter().filter_map(|f| kept(f)).collect();
+        }
+    }
+    let refs = theirs
+        .into_iter()
+        .filter(|f| !have.iter().any(|h| h.path == f.path))
+        .map(|f| FileRef { pack: None, ..f.clone() })
+        .collect();
+    Ok((refs, have))
+}
+
+/// The saves of `game` on this device as the line compares them
+/// ([`LocalState::hash`]). For a version that shares another platform's line
+/// through a rule ([`crate::join::by_rule`]) that is its files and the other
+/// platform's files of the version it is based on ([`carry`]), as a version
+/// it uploads holds them: saves that differ from a version of the line only
+/// in that platform's files are the same saves. Every other game: its files,
+/// and no request.
+///
+/// `line` is the game's line as just read, `fetch` whether files of a
+/// version of 0.6 may be downloaded to carry them over.
+fn local_here(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, fetch: bool) -> Result<LocalState> {
+    with_carried(cloud, game, line, fetch, snapshot::local_state(game)?)
+}
+
+/// [`local_here`], for saves scanned already.
+fn with_carried(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, fetch: bool, local: LocalState) -> Result<LocalState> {
+    if crate::join::by_rule(game).is_none() {
+        return Ok(local);
+    }
+    let st = state::game(&game.key);
+    let Some(from) = carry_source(cloud, game, &st, line)? else { return Ok(local) };
+    let (refs, files) = carry(cloud, game, line, &from, fetch)?;
+    Ok(local.carrying(refs, files))
+}
+
+/// What a sync nobody chose ([`Resolution::Auto`]) does with a version
+/// written on another platform by a newer game than the one that wrote the
+/// saves here, when the game's rule says an older game can't load it
+/// ([`too_new`]): it is left in the cloud, as [`not_into_containers`] leaves
+/// what would go into the Xbox app's containers. Nothing is written, the
+/// game shows that the cloud has newer saves ([`check`]), and the user can
+/// still make it current; the app says first that this game may not load
+/// it. Versions whose game versions aren't known are pulled as ever.
+fn not_too_new(game: &GameEntry, action: Action, view: &LineView, local: &LocalState) -> Action {
+    let Action::Pull { id } = &action else { return action };
+    let Some(target) = view.get(id) else { return action };
+    let Some(rule) = crate::crosssaves::rule_for(game).filter(|r| r.newer_only) else { return action };
+    if target.game_version.is_none() || scope_of_platform(&target.platform).is_none_or(|s| s == crate::savelib::save_scope(game)) {
+        return action;
+    }
+    let here = crate::crosssaves::local_version(game, &local.files, &local.roots);
+    if !crate::crosssaves::too_new(rule, target.game_version.as_deref(), here.as_deref()) {
+        return action;
+    }
+    log(format!(
+        "{}: {id} in the cloud was saved by {} {}, newer than the saves here ({}); taken only when the user says so",
+        game.key,
+        target.platform,
+        target.game_version.as_deref().unwrap_or_default(),
+        here.as_deref().unwrap_or_default()
+    ));
+    Action::Nothing
+}
+
+/// For files handed to this device for a version of `game` that shares
+/// another platform's line through a rule (a Switch's, over the local
+/// network): the other platform's files of version `from` of the line (its
+/// newest when `from` is none or not there) that a version of these files
+/// takes over. By reference ([`queue_files_carrying`]), and as content where
+/// they have to be packed anew ([`carry`]). Nothing for any other game.
+pub fn carried_for(cloud: &Cloud, game: &GameEntry, line: &OpenLine, from: Option<&str>) -> Result<(Vec<FileRef>, Vec<(String, Vec<u8>)>)> {
+    if crate::join::by_rule(game).is_none() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let view = &line.view;
+    let Some(id) = from.filter(|id| view.get(id).is_some()).or_else(|| view.head_entries().last().map(|h| h.id.as_str())) else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let manifest = saves::manifest(cloud.files(), &line.place, view, id)?;
+    let (refs, files) = carry(Some(cloud), game, Some((&line.place, view)), &manifest, true)?;
+    let mut content = Vec::with_capacity(files.len());
+    for f in files {
+        content.push((f.path.clone(), std::fs::read(&f.source)?));
+    }
+    Ok((refs, content))
+}
+
+/// The save scope ([`crate::savelib::save_scope`]) of what a version says it
+/// was made on ([`platform`]); `None` when it doesn't say.
+fn scope_of_platform(platform: &str) -> Option<String> {
+    let (kind, rest) = platform.split_once(':').unwrap_or((platform, ""));
+    match kind {
+        "pc" => Some("pc".to_string()),
+        "console" if !rest.is_empty() => Some(rest.to_string()),
+        "emu" | "recomp" => crate::adapters::find(rest).map(|_| crate::savelib::save_scope(&GameEntry { adapter: Some(rest.to_string()), ..Default::default() })),
+        _ => None,
+    }
+}
+
+/// The game version that wrote the saves of `game` on this device, when its
+/// cross-platform rule says an older game can't load a save a newer one
+/// wrote (`newerOnly`). `None` otherwise, or when it can't be read.
+pub fn saves_version(game: &GameEntry) -> Option<String> {
+    crate::crosssaves::rule_for(game).filter(|r| r.newer_only)?;
+    let local = snapshot::local_state(game).ok()?;
+    crate::crosssaves::local_version(game, &local.files, &local.roots)
+}
+
+/// Whether a version of the line (made on `platform` by game version
+/// `version`) was saved on another platform by a newer game than the one
+/// that wrote the saves here (`here`, [`saves_version`]), and the game's rule
+/// says an older game can't load it. Unknown versions or platforms never
+/// are. Versions of the same platform are not compared: they get the game's
+/// updates the same way (a store updates them), and the saves here may be
+/// older than the game installed.
+pub fn too_new(game: &GameEntry, here: Option<&str>, platform: &str, version: Option<&str>) -> bool {
+    let Some(rule) = crate::crosssaves::rule_for(game) else { return false };
+    let other = scope_of_platform(platform).is_some_and(|s| s != crate::savelib::save_scope(game));
+    other && crate::crosssaves::too_new(rule, version, here)
 }
 
 // ------------------------------------------------------------------ the queue
@@ -609,10 +809,20 @@ struct Shot {
 }
 
 /// Put a snapshot of `files` into the queue of `key`: complete on this
-/// device, not yet in the cloud.
+/// device, not yet in the cloud. `carried`: files it takes over from an
+/// earlier version without having them ([`saves::draft_with`]).
 #[allow(clippy::too_many_arguments)]
-fn enqueue(key: &str, place: &Place, draft: &Draft, files: &[packs::LocalFile], roots: &BTreeMap<String, String>, comment: &str, base: Option<&Manifest>) -> Result<Manifest> {
-    let mut manifest = saves::draft(place, draft, files, base, &packs::Policy::default());
+fn enqueue(
+    key: &str,
+    place: &Place,
+    draft: &Draft,
+    files: &[packs::LocalFile],
+    carried: &[FileRef],
+    roots: &BTreeMap<String, String>,
+    comment: &str,
+    base: Option<&Manifest>,
+) -> Result<Manifest> {
+    let mut manifest = saves::draft_with(place, draft, files, carried, base, &packs::Policy::default());
     if !roots.is_empty() {
         manifest.extra.insert(snapshot::ROOTS.to_string(), serde_json::json!(roots));
     }
@@ -671,7 +881,7 @@ fn stage_local(ctx: &Ctx, game: &GameEntry, place: &Place, view: &LineView, loca
         info: None,
         origin: shot.origin.clone(),
     };
-    let manifest = enqueue(&game.key, place, &draft, &local.pack_files(), &local.used_roots(), &shot.comment, shot.base.as_ref())?;
+    let manifest = enqueue(&game.key, place, &draft, &local.pack_files(), &local.carried, &local.used_roots(), &shot.comment, shot.base.as_ref())?;
     if !shot.side {
         mark_synced(&game.key, &manifest.id, &manifest.vv, &manifest.content_hash, device.1, device.0)?;
         remember_base(&game.key, Some(&manifest));
@@ -705,6 +915,13 @@ pub struct Foreign<'a> {
 /// A version of a kind that never is the newest (`pre-restore`) goes beside
 /// the history.
 pub fn queue_files(line: &OpenLine, f: &Foreign) -> Result<SnapshotMeta> {
+    queue_files_carrying(line, f, &[])
+}
+
+/// [`queue_files`] for files of a version that shares another platform's
+/// line through a rule: `carried` are that platform's files the version
+/// takes over ([`carried_for`]).
+pub fn queue_files_carrying(line: &OpenLine, f: &Foreign, carried: &[FileRef]) -> Result<SnapshotMeta> {
     let work = paths::staging_dir().join(format!("files-{}", ulid::Ulid::new()));
     let result = (|| -> Result<Manifest> {
         let mut files = Vec::with_capacity(f.files.len());
@@ -742,7 +959,7 @@ pub fn queue_files(line: &OpenLine, f: &Foreign) -> Result<SnapshotMeta> {
             info: None,
             origin: f.origin.clone(),
         };
-        enqueue(f.key, &line.place, &draft, &files, &BTreeMap::new(), f.comment, None)
+        enqueue(f.key, &line.place, &draft, &files, carried, &BTreeMap::new(), f.comment, None)
     })();
     let _ = std::fs::remove_dir_all(&work);
     Ok(SnapshotMeta::of(&result?, f.key, None))
@@ -1243,6 +1460,25 @@ impl<'a> Session<'a> {
         &self.game.key
     }
 
+    /// The saves here as the line compares them ([`local_here`]).
+    fn local(&self) -> Result<LocalState> {
+        local_here(Some(self.cloud), self.game, Some((&self.line.place, &self.line.view)), true)
+    }
+
+    /// The saves here, about to become the newest version over every head
+    /// (the user chose them in a conflict): another platform's files go
+    /// along from the newest version, not from the one this device was at.
+    fn over_all(&self, local: LocalState) -> Result<LocalState> {
+        if crate::join::by_rule(self.game).is_none() {
+            return Ok(local);
+        }
+        let Some(head) = self.line.view.head_entries().last() else { return Ok(local) };
+        let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, &head.id)?;
+        let (refs, files) = carry(Some(self.cloud), self.game, Some((&self.line.place, &self.line.view)), &manifest, true)?;
+        // In place of what went along before.
+        Ok(local.carrying(refs, files))
+    }
+
     fn summary(&self, id: &str) -> Option<SnapshotSummary> {
         let i = self.line.view.snapshots.iter().position(|s| s.id == id)?;
         Some(SnapshotSummary::of(&self.line.view.snapshots[i], self.line.view.heads.contains(&i)))
@@ -1330,10 +1566,15 @@ impl<'a> Session<'a> {
         let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
         self.gate.check()?;
         // A version that shares the line through bindings needs a folder
-        // for every file.
-        crate::join::no_place(self.game, &SnapshotMeta::of(&manifest, self.key(), None).files)?;
+        // for every file; one that shares another platform's line through a
+        // rule gets the files its bindings name, the rest are that
+        // platform's.
+        let all = SnapshotMeta::of(&manifest, self.key(), None).files;
+        crate::join::no_place(self.game, &all)?;
+        let wanted = crate::join::held(self.game, &all);
+        let only: Option<Vec<String>> = (wanted.len() != all.len()).then(|| wanted.iter().map(|f| f.path.clone()).collect());
         let mut packs: BTreeMap<String, u64> = BTreeMap::new();
-        for f in &manifest.files {
+        for f in manifest.files.iter().filter(|f| only.as_ref().is_none_or(|o| o.contains(&f.path))) {
             *packs.entry(f.pack.clone().unwrap_or_else(|| manifest.id.clone())).or_default() += f.size;
         }
         self.gate.set_phase(Phase::Downloading { done: 0, total: packs.values().sum() });
@@ -1341,10 +1582,10 @@ impl<'a> Session<'a> {
         let work = paths::staging_dir().join(format!("pull-{id}"));
         let _ = std::fs::remove_dir_all(&work);
         let files = work.join("files");
-        let result = saves::fetch(&store, &self.line.place, &self.line.view, &manifest, None, &files, &work.join("packs"))
+        let result = saves::fetch(&store, &self.line.place, &self.line.view, &manifest, only.as_deref(), &files, &work.join("packs"))
             // Whoever waited may have stopped while it downloaded.
             .and_then(|_| if self.gate.start_applying() { Ok(()) } else { Err(GaveUp.into()) })
-            .and_then(|_| snapshot::apply_dir(&files, &SnapshotMeta::of(&manifest, self.key(), None).files, self.game));
+            .and_then(|_| snapshot::apply_dir(&files, &wanted, self.game));
         let _ = std::fs::remove_dir_all(&work);
         result?;
         mark_synced(self.key(), id, &target.vv, &target.content_hash, &target.device_name, self.ctx.device().0)?;
@@ -1367,7 +1608,7 @@ impl<'a> Session<'a> {
         if self.line.view.head().is_some_and(|h| h.id == from) {
             return Ok(None);
         }
-        let local = snapshot::local_state(self.game)?;
+        let local = self.local()?;
         let loc = local_of(&local, &state::game(self.key()));
         let Action::Push { bases, .. } = decide::settle(&loc, &self.line.view) else { return Ok(None) };
         let origin = Origin {
@@ -1462,7 +1703,7 @@ fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) ->
     if matches!(trigger, Trigger::PreLaunch) {
         return Ok(Outcome::Offline { message });
     }
-    let local = snapshot::local_state(game)?;
+    let local = local_here(None, game, None, false)?;
     let st = state::game(&game.key);
     if local.is_empty() || st.last_synced_hash.as_deref() == Some(local.hash.as_str()) {
         return Ok(Outcome::Offline { message });
@@ -1563,7 +1804,7 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
         gate.check()?;
         gate.set_phase(Phase::Checking);
     }
-    let local = snapshot::local_state(game)?;
+    let local = s.local()?;
     let st = state::game(&game.key);
     let seen = with_queue(&s.line.view, &s.line.place, &game.key);
     let loc = local_of(&local, &st);
@@ -1573,6 +1814,9 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
     }
     if crate::bind::has_wgs(&game.bind) && resolution == Resolution::Auto {
         action = not_into_containers(&game.key, action);
+    }
+    if resolution == Resolution::Auto {
+        action = not_too_new(game, action, &seen, &local);
     }
     let device = ctx.device();
 
@@ -1610,6 +1854,7 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
             }
             let Action::Push { bases, parent } = decide::settle(&loc, &seen) else { return Ok(Outcome::NothingToSave) };
             let comment = crate::tr!("冲突时选择保留本地存档", "Kept this PC's saves in a conflict");
+            let local = s.over_all(local)?;
             s.push(&local, Shot { bases, parent, trigger: Some(Trigger::SyncNow), comment, ..Shot::default() }, launching)?
         }
         (Action::Pull { id }, Resolution::Auto) => s.pull(&local, &id)?,
@@ -1703,6 +1948,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
         last_sync_at: st.last_sync_at,
         pending: st.pending.len(),
         checked_at: Utc::now(),
+        too_new: None,
     };
     let local = match snapshot::local_state(game) {
         Ok(l) => l,
@@ -1727,16 +1973,38 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
             return report;
         }
     };
-    let view = match cloud.open(&game.key) {
-        Ok(l) => with_queue(&l.view, &l.place, &game.key),
+    let (line, view) = match cloud.open(&game.key) {
+        Ok(l) => {
+            let view = with_queue(&l.view, &l.place, &game.key);
+            (l, view)
+        }
         Err(e) => {
             report.status = if cloud::is_unavailable(&e) { Status::Offline } else { Status::Error };
             report.message = Some(format!("{e:#}"));
             return report;
         }
     };
+    // Another platform's files that go with the saves here, for a version
+    // that shares that platform's line through a rule. Nothing is fetched
+    // for a check.
+    let local = match with_carried(Some(cloud), game, Some((&line.place, &line.view)), false, local) {
+        Ok(l) => l,
+        Err(e) => {
+            report.status = if cloud::is_unavailable(&e) { Status::Offline } else { Status::Error };
+            report.message = Some(format!("{e:#}"));
+            return report;
+        }
+    };
+    report.local_hash = Some(local.hash.clone());
     report.snapshot_count = view.snapshots.len();
     report.head = view.heads.last().and_then(|&i| view.snapshots.get(i)).map(|s| SnapshotSummary::of(s, true));
+    if let Some(head) = &report.head {
+        // Only read when the rule says an older game can't load a newer save.
+        let here = crate::crosssaves::rule_for(game).filter(|r| r.newer_only).and_then(|_| crate::crosssaves::local_version(game, &local.files, &local.roots));
+        if too_new(game, here.as_deref(), &head.platform, head.game_version.as_deref()) {
+            report.too_new = head.game_version.clone();
+        }
+    }
     let loc = local_of(&local, &st);
     let action = decide::decide(&loc, &view);
     report.status = decide::Status::of(&action, &loc, &view).into();
@@ -1763,6 +2031,7 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
         Err(e) if cloud::is_unavailable(&e) => {
             // Not reachable: it waits in the queue, built on what this
             // device synced last.
+            let local = with_carried(None, game, None, false, local)?;
             let st = state::game(&game.key);
             let place = match &st.line {
                 Some(l) => Place { game: l.game.clone(), line: l.line.clone(), folders: l.folders.clone(), dirs: l.dirs.clone() },
@@ -1781,6 +2050,7 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
         Err(e) => return Err(e),
     };
     flush(cloud, &mut s.line, Some(game))?;
+    let local = with_carried(Some(cloud), game, Some((&s.line.place, &s.line.view)), true, local)?;
     let same = s.line.view.snapshots.iter().rev().find(|x| x.content_hash == local.hash).map(|x| x.id.clone());
     let outcome = if let Some(id) = same {
         ready_to_write(cloud, &mut s.line, Some(game))?;
@@ -1805,7 +2075,7 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
-    let local = snapshot::local_state(game)?;
+    let local = s.local()?;
     let pulled = s.pull(&local, id)?;
     // Make the restored content the head so the next sync keeps it.
     Ok(s.make_current(id, Trigger::Restore, false)?.unwrap_or(pulled))
@@ -1839,11 +2109,11 @@ pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl F
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
-    if let Ok(local) = snapshot::local_state(game) {
+    if let Ok(local) = s.local() {
         s.protect(&local, Trigger::PreRestore)?;
     }
     change()?;
-    let after = snapshot::local_state(game)?;
+    let after = s.local()?;
     if after.is_empty() {
         bail!(crate::tr!("应用后没有找到「{}」的存档文件", "No save files of \"{}\" found after applying", game.name));
     }
@@ -2109,19 +2379,21 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
             "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
         ));
     }
-    let local = snapshot::local_state(game)?;
+    let local = s.local()?;
     let back = s.protect(&local, Trigger::PreRestore)?;
     let manifest = saves::manifest(cloud.files(), &place, &view, id)?;
-    let files = SnapshotMeta::of(&manifest, &game.key, None).files;
-    crate::join::no_place(game, &files)?;
+    let all = SnapshotMeta::of(&manifest, &game.key, None).files;
+    crate::join::no_place(game, &all)?;
+    let files = crate::join::held(game, &all);
+    let only: Option<Vec<String>> = (files.len() != all.len()).then(|| files.iter().map(|f| f.path.clone()).collect());
     let work = paths::staging_dir().join(format!("take-{id}"));
     let _ = std::fs::remove_dir_all(&work);
     let dir = work.join("files");
-    let result = saves::fetch(cloud.files(), &place, &view, &manifest, None, &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
+    let result = saves::fetch(cloud.files(), &place, &view, &manifest, only.as_deref(), &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
     let _ = std::fs::remove_dir_all(&work);
     result?;
     log(format!("{}: took {id} of the line {line} ({})", game.key, target.device_name));
-    let after = snapshot::local_state(game)?;
+    let after = s.local()?;
     let loc = local_of(&after, &state::game(&game.key));
     let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
     let origin = Origin { game: place.game.clone(), line: place.line.clone(), snapshot: id.to_string(), how: "copy".to_string(), extra: v2::Extra::new() };
@@ -2173,12 +2445,14 @@ pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outco
         LineChoice::Follow { line } => line.clone(),
     };
     let staying = to == from;
-    let local = snapshot::local_state(game)?;
+    let mut local = snapshot::local_state(game)?;
     // Where the saves here come from, and what they can share content with.
     let mut carried: (Option<Origin>, Option<Manifest>) = (None, None);
     if !staying {
         let mut old = cloud.open(key)?;
         flush(cloud, &mut old, Some(game))?;
+        // Another platform's files go along to the line it continues on.
+        local = with_carried(Some(cloud), game, Some((&old.place, &old.view)), true, local)?;
         if to != library::MAIN_LINE && !matches!(choice, LineChoice::Independent { .. }) && !cloud.lines_of(key)?.iter().any(|l| l.id == to) {
             bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
         }

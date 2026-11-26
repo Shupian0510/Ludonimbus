@@ -249,12 +249,32 @@ pub fn content_hash(files: &[LocalFile]) -> String {
 /// as none ([`packs::plan`] sees to that): packs in a folder of 0.6 are
 /// never referred to, because 0.6 deletes them by its own rules.
 pub fn draft(place: &Place, draft: &Draft, files: &[LocalFile], base: Option<&Manifest>, policy: &packs::Policy) -> Manifest {
+    draft_with(place, draft, files, &[], base, policy)
+}
+
+/// [`draft`], with files the snapshot carries over from an earlier one of
+/// the line without having them on this device (`carried`): each names the
+/// pack that holds it already, and nothing of it is packed or uploaded. A
+/// version of a game that shares another platform's line keeps that
+/// platform's files in the line this way (docs/plan-v2.md, section 6). They
+/// count in the content hash and the size like any file.
+pub fn draft_with(place: &Place, draft: &Draft, files: &[LocalFile], carried: &[v2::FileRef], base: Option<&Manifest>, policy: &packs::Policy) -> Manifest {
     let id = ulid::Ulid::from_datetime(std::time::SystemTime::from(draft.created_at)).to_string();
-    let plan = packs::plan(&id, files, base, policy);
+    let mut plan = packs::plan(&id, files, base, policy);
     let mut extra = v2::Extra::new();
     if !plan.sizes.is_empty() {
         extra.insert(packs::PACK_SIZES.to_string(), serde_json::json!(plan.sizes));
     }
+    let (content_hash, total_size) = match carried.is_empty() {
+        true => (content_hash(files), files.iter().fold(0u64, |sum, f| sum.saturating_add(f.size))),
+        false => {
+            plan.files.extend(carried.iter().cloned());
+            plan.files.sort_by(|a, b| a.path.cmp(&b.path));
+            let entries: Vec<crate::snapshot::FileEntry> =
+                plan.files.iter().map(|f| crate::snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }).collect();
+            (crate::snapshot::content_hash(&entries), plan.files.iter().fold(0u64, |sum, f| sum.saturating_add(f.size)))
+        }
+    };
     Manifest {
         v: v2::LAYOUT,
         id,
@@ -268,8 +288,8 @@ pub fn draft(place: &Place, draft: &Draft, files: &[LocalFile], base: Option<&Ma
         created_at: draft.created_at,
         trigger: draft.trigger.clone(),
         side: draft.side,
-        content_hash: content_hash(files),
-        total_size: files.iter().fold(0u64, |sum, f| sum.saturating_add(f.size)),
+        content_hash,
+        total_size,
         files: plan.files,
         game_version: draft.game_version.clone(),
         installed_version: draft.installed_version.clone(),
