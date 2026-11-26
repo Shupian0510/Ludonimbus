@@ -329,6 +329,34 @@ pub async fn backup_game(key: String, comment: String) -> CmdResult<Outcome> {
     blocking(move || with_game(&key, |ctx, g| sync::backup_now(ctx, g, comment.trim()))).await
 }
 
+/// The save lines the game can follow on this device.
+#[tauri::command]
+pub async fn game_lines(key: String) -> CmdResult<Vec<sync::LineInfo>> {
+    blocking(move || with_game(&key, sync::lines)).await
+}
+
+/// Make the game follow another save line on this device: `kind` is
+/// `shared`, `independent` (with a `name` for the line, or none) or `follow`
+/// (with the `line` another device keeps).
+#[tauri::command]
+pub async fn use_game_line(key: String, kind: String, line: Option<String>, name: Option<String>) -> CmdResult<Outcome> {
+    blocking(move || {
+        if watcher::runner_active(&key) {
+            bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit"));
+        }
+        let Some(_busy) = busy::begin(&key) else {
+            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
+        };
+        let choice = match (kind.as_str(), line) {
+            ("independent", _) => sync::LineChoice::Independent { name },
+            ("follow", Some(line)) => sync::LineChoice::Follow { line },
+            _ => sync::LineChoice::Shared,
+        };
+        with_game(&key, |ctx, g| sync::use_line(ctx, g, choice))
+    })
+    .await
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotList {
@@ -807,6 +835,8 @@ pub struct SettingsView {
     ludusavi: Option<String>,
     version: String,
     screenshots: config::ScreenshotMode,
+    /// Games new to this device keep their saves to themselves.
+    independent_saves: bool,
 }
 
 #[derive(Serialize)]
@@ -857,6 +887,7 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             ludusavi: ludusavi::version(),
             version: ludonimbus_core::APP_VERSION.to_string(),
             screenshots: cfg.screenshots,
+            independent_saves: cfg.independent_saves,
         })
     })
     .await
@@ -871,6 +902,7 @@ pub struct SettingsPatch {
     network_timeout_secs: Option<u64>,
     steam_account: Option<String>,
     screenshots: Option<config::ScreenshotMode>,
+    independent_saves: Option<bool>,
 }
 
 /// First-run guide state.
@@ -939,6 +971,9 @@ pub async fn save_settings(patch: SettingsPatch) -> CmdResult<()> {
             }
             if let Some(m) = patch.screenshots {
                 c.screenshots = m;
+            }
+            if let Some(v) = patch.independent_saves {
+                c.independent_saves = v;
             }
             Ok(())
         })?;

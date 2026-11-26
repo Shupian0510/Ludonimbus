@@ -52,6 +52,11 @@ pub struct LineRef {
     /// Id of the game record.
     pub game: String,
     pub line: String,
+    /// The line the game on this device asked for when this was worked out
+    /// (empty: the shared one). It can differ from `line`, which is the
+    /// line's id on the card it is on now.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub asked: String,
     /// The game's folders under `games/`.
     pub folders: Vec<String>,
     /// The line's folders: the one written to first.

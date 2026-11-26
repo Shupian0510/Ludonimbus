@@ -42,6 +42,23 @@ enum Cmd {
     Snapshots { key: String },
     /// Restore a snapshot (current saves are protected first)
     Restore { key: String, id: String },
+    /// Show the save lines of a game, or make it follow another one on this
+    /// device
+    Lines {
+        key: String,
+        /// Share saves with the game's other devices
+        #[arg(long, conflicts_with_all = ["own", "follow"])]
+        shared: bool,
+        /// Keep this device's saves to itself
+        #[arg(long, conflicts_with = "follow")]
+        own: bool,
+        /// Follow the line another device keeps to itself (its id)
+        #[arg(long)]
+        follow: Option<String>,
+        /// A name for this device's own line
+        #[arg(long, requires = "own")]
+        name: Option<String>,
+    },
     /// Steam integration
     #[command(subcommand)]
     Steam(SteamCmd),
@@ -293,6 +310,30 @@ fn run(cli: Cli) -> Result<()> {
             let ctx = Ctx::load()?;
             let g = ctx.game(&key)?;
             println!("{}", serde_json::to_string_pretty(&sync::restore(&ctx, &g, &id)?)?);
+        }
+        Cmd::Lines { key, shared, own, follow, name } => {
+            let choice = match (shared, own, follow) {
+                (true, _, _) => Some(sync::LineChoice::Shared),
+                (_, true, _) => Some(sync::LineChoice::Independent { name }),
+                (_, _, Some(line)) => Some(sync::LineChoice::Follow { line }),
+                _ => None,
+            };
+            if let Some(choice) = choice {
+                let ctx = Ctx::load()?;
+                let g = ctx.game(&key)?;
+                println!("{}", serde_json::to_string_pretty(&sync::use_line(&ctx, &g, choice)?)?);
+            }
+            let ctx = Ctx::load()?;
+            let g = ctx.game(&key)?;
+            for l in sync::lines(&ctx, &g)? {
+                println!(
+                    "{} {:<10} {:<20} {}",
+                    if l.current { "*" } else { " " },
+                    l.id,
+                    if l.shared { "共用".to_string() } else { l.name },
+                    l.devices.join(", ")
+                );
+            }
         }
         Cmd::Steam(cmd) => match cmd {
             SteamCmd::Accounts => {

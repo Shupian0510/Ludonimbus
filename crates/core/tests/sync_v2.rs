@@ -1,17 +1,18 @@
 //! The sync flow on layout 2: what a sync costs in requests, versions made
-//! on two devices while one was offline, a device that comes from 0.6, and
-//! managing versions. One test, because the data directory is chosen through
-//! an environment variable.
+//! on two devices while one was offline, a device that comes from 0.6,
+//! managing versions, and devices that keep a game's saves to themselves.
+//! One test, because the data directory is chosen through an environment
+//! variable.
 
 use anyhow::Result;
 use ludonimbus_core::cloud::local::LocalFolder;
 use ludonimbus_core::cloud::memory::Memory;
 use ludonimbus_core::cloud::repo::Repo;
 use ludonimbus_core::cloud::store::{Entry, Store};
-use ludonimbus_core::cloud::{Cloud, CloudGame, CloudProvider};
+use ludonimbus_core::cloud::{own_line_id, Cloud, CloudGame, CloudProvider};
 use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry};
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
-use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, Status};
+use ludonimbus_core::sync::{self, Ctx, LineChoice, Outcome, Resolution, Status};
 use ludonimbus_core::{paths, state};
 use std::fs;
 use std::io::Read;
@@ -178,6 +179,30 @@ fn versions() -> Vec<SnapshotSummary> {
     Ctx::load().unwrap().cloud().unwrap().list_snapshots(KEY).unwrap()
 }
 
+fn ids(list: &[SnapshotSummary]) -> Vec<String> {
+    list.iter().map(|s| s.id.clone()).collect()
+}
+
+/// Make the game on the active device follow another save line.
+fn use_line(choice: LineChoice) -> Result<Outcome> {
+    let ctx = Ctx::load().unwrap();
+    let game = ctx.game(KEY).unwrap();
+    sync::use_line(&ctx, &game, choice)
+}
+
+/// The game's save lines as the active device lists them: name, shared,
+/// the one it follows, the devices on it.
+fn lines() -> Vec<(String, bool, bool, Vec<String>)> {
+    let ctx = Ctx::load().unwrap();
+    let game = ctx.game(KEY).unwrap();
+    sync::lines(&ctx, &game).unwrap().into_iter().map(|l| (l.name, l.shared, l.current, l.devices)).collect()
+}
+
+/// The line the game follows on the active device, as its entry says.
+fn chosen() -> Option<String> {
+    config::load().unwrap().game(KEY).unwrap().line.clone()
+}
+
 fn heads() -> Vec<String> {
     versions().into_iter().filter(|s| s.head).map(|s| s.id).collect()
 }
@@ -227,6 +252,7 @@ fn sync_on_layout_2() {
     offline_fork(root);
     from_06(root);
     managing_versions(root);
+    own_lines(root);
 }
 
 /// What a sync asks of the cloud: the number of requests is what a slow
@@ -349,6 +375,35 @@ fn requests(root: &Path) {
     assert_eq!(state::game("other-game").line.unwrap().dirs, vec!["games/other-game/saves/main".to_string()]);
     assert_eq!(sync::check(&ctx(), &game).status, Status::Synced);
     assert_eq!(store.take(), vec!["list games/other-game/saves/main".to_string()]);
+
+    // A line of the device's own: the game's record is written once, when
+    // the line begins, and a check costs what it costs on the shared line.
+    b.write("v3");
+    let on_b = ctx();
+    let game = on_b.game(KEY).unwrap();
+    let fourth = uploaded(sync::use_line(&on_b, &game, LineChoice::Independent { name: None }).unwrap());
+    let own = format!("games/{KEY}/saves/{}", own_line_id(&on_b.cfg.device.id, KEY));
+    let log = store.take();
+    eprintln!("a line of its own: {log:#?}");
+    // The game's record is read from what this device kept of it: the
+    // listing says it hasn't changed.
+    let record = format!("library/{KEY}.json");
+    assert_eq!(
+        log.iter().filter(|l| l.contains("/saves/") || l.contains("/packs/") || *l == "list library" || l.contains(&record)).collect::<Vec<_>>(),
+        vec![
+            &format!("list {LINE}"),
+            "list library",
+            &format!("write library/{KEY}.json"),
+            &format!("upload games/{KEY}/packs/{fourth}.zip"),
+            &format!("write {own}/{fourth}.json"),
+            &format!("write {own}/index.json"),
+        ],
+        "{log:#?}"
+    );
+    assert_eq!(status_with(&ctx()), Status::Synced);
+    assert_eq!(store.take(), vec![format!("list {own}")]);
+    assert!(matches!(sync_with(&ctx(), Resolution::Auto, Trigger::PreLaunch), Outcome::UpToDate));
+    assert_eq!(store.take(), vec![format!("list {own}")]);
 }
 
 /// Two devices each make a version without seeing the other's: the line has
@@ -630,4 +685,157 @@ fn managing_versions(root: &Path) {
     assert_eq!(state::game(KEY).line.unwrap().dirs, vec![LINE.to_string(), OLD.to_string()]);
     assert_eq!(status(), Status::Synced);
     assert_eq!(n.read(), "m4");
+}
+
+/// Devices that keep a game's saves to themselves: a line of a device's
+/// own, another device that follows it, the way back to the shared line,
+/// and a device where that is the default (docs/plan-v2.md, section 7).
+fn own_lines(root: &Path) {
+    let cloud = root.join("lines-cloud");
+    fs::create_dir_all(&cloud).unwrap();
+    let folder = || CloudConfig::LocalFolder { path: cloud.clone() };
+    let dad = Device::new(root, "DAD-PC", folder());
+    let kid = Device::new(root, "KID-PC", folder());
+
+    // Both share the game.
+    dad.activate();
+    dad.write("d1");
+    let d1 = uploaded(run(Trigger::AutoExit));
+    kid.activate();
+    assert_eq!(pulled(run(Trigger::PreLaunch)), d1);
+    kid.write("k1");
+
+    // The kid's PC gets a line of its own. It begins with the saves that
+    // are there, and says which version of the shared line they were.
+    let k1 = uploaded(use_line(LineChoice::Independent { name: Some("Kid".into()) }).unwrap());
+    let own = own_line_id(&config::load().unwrap().device.id, KEY);
+    let solo = format!("games/{KEY}/saves/{own}");
+    assert_eq!(chosen(), Some(own.clone()));
+    assert_eq!(state::game(KEY).line.unwrap().dirs, vec![solo.clone()]);
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(cloud.join(&solo).join(format!("{k1}.json"))).unwrap()).unwrap();
+    assert_eq!(manifest["line"], own.as_str());
+    assert_eq!(manifest["origin"]["how"], "copy");
+    assert_eq!(manifest["origin"]["line"], "main");
+    assert_eq!(manifest["origin"]["snapshot"], d1.as_str());
+    let list = versions();
+    assert_eq!(ids(&list), vec![k1.clone()]);
+    assert!(list[0].head && !list[0].comment.is_empty(), "{list:#?}");
+    assert_eq!(status(), Status::Synced);
+    assert_eq!(kid.read(), "k1");
+
+    // The shared line is as it was, and from here on nothing crosses.
+    dad.activate();
+    assert_eq!(ids(&versions()), vec![d1.clone()]);
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    dad.write("d2");
+    let d2 = uploaded(run(Trigger::AutoExit));
+    kid.activate();
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    assert_eq!(kid.read(), "k1");
+    kid.write("k2");
+    let k2 = uploaded(run(Trigger::AutoExit));
+    dad.activate();
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    assert_eq!(dad.read(), "d2");
+
+    // Every device sees both lines, and who is on which.
+    let shared = |current: bool| (String::new(), true, current, vec!["DAD-PC".to_string()]);
+    assert_eq!(lines(), vec![shared(true), ("Kid".to_string(), false, false, vec!["KID-PC".to_string()])]);
+    kid.activate();
+    assert_eq!(lines(), vec![shared(false), ("Kid".to_string(), false, true, vec!["KID-PC".to_string()])]);
+
+    // A third device follows the kid's line: it gets what is there, and
+    // what it plays goes there.
+    let deck = Device::new(root, "DECK", folder());
+    assert!(use_line(LineChoice::Follow { line: "solo-none".into() }).is_err());
+    assert_eq!(chosen(), None);
+    assert_eq!(pulled(use_line(LineChoice::Follow { line: own.clone() }).unwrap()), k2);
+    assert_eq!(chosen(), Some(own.clone()));
+    assert_eq!(deck.read(), "k2");
+    deck.write("k3");
+    let k3 = uploaded(run(Trigger::AutoExit));
+    kid.activate();
+    assert_eq!(pulled(run(Trigger::PreLaunch)), k3);
+    assert_eq!(lines()[1], ("Kid".to_string(), false, true, vec!["DECK".to_string(), "KID-PC".to_string()]));
+
+    // Back to the shared line, whose newest version is another: the user
+    // is asked, as on a device that joins. Taking the shared one keeps the
+    // saves that were here beside its history.
+    assert_eq!(conflict(use_line(LineChoice::Shared).unwrap()).id, d2);
+    assert_eq!(chosen().as_deref(), Some("main"));
+    assert_eq!(kid.read(), "k3");
+    assert_eq!(status(), Status::Conflict);
+    assert_eq!(pulled(sync_with(&Ctx::load().unwrap(), Resolution::UseCloud, Trigger::Manual)), d2);
+    assert_eq!(kid.read(), "d2");
+    let list = versions();
+    assert_eq!(heads(), vec![d2.clone()]);
+    assert!(list.iter().any(|s| s.side && s.trigger == Trigger::PreRestore && s.device_name == "KID-PC"), "{list:#?}");
+    assert_eq!(status(), Status::Synced);
+    // The line it left is as it was, for the device that still follows it.
+    deck.activate();
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    assert_eq!(ids(&versions()), vec![k1.clone(), k2.clone(), k3.clone()]);
+    assert_eq!(lines()[1], ("Kid".to_string(), false, true, vec!["DECK".to_string()]));
+
+    // And to its own line again, which is the one it had: the line goes on
+    // with the saves that are on the kid's PC now, under the name it has.
+    kid.activate();
+    kid.write("d3");
+    let k4 = uploaded(use_line(LineChoice::Independent { name: None }).unwrap());
+    assert_eq!(chosen(), Some(own.clone()));
+    assert_eq!(ids(&versions()), vec![k1.clone(), k2.clone(), k3.clone(), k4.clone()]);
+    assert_eq!(heads(), vec![k4.clone()]);
+    assert_eq!(lines()[1].0, "Kid");
+    // Choosing it again changes nothing, except the name when one is given.
+    assert!(matches!(use_line(LineChoice::Independent { name: Some("Kid's PC".into()) }).unwrap(), Outcome::UpToDate));
+    assert_eq!(heads(), vec![k4.clone()]);
+    assert_eq!(lines()[1].0, "Kid's PC");
+    deck.activate();
+    assert_eq!(pulled(run(Trigger::PreLaunch)), k4);
+    assert_eq!(deck.read(), "d3");
+    dad.activate();
+    assert_eq!(heads(), vec![d2.clone()]);
+
+    // A device that keeps its games to itself by default takes nothing of
+    // the shared line, and the game's first version here begins its line.
+    let guest = Device::new(root, "GUEST", folder());
+    config::update(|c| {
+        c.independent_saves = true;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(status(), Status::Empty);
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::NothingToSave));
+    assert_eq!(guest.read(), "");
+    assert_eq!(chosen(), None);
+    guest.write("g1");
+    assert_eq!(status(), Status::NotUploaded);
+    let g1 = uploaded(run(Trigger::AutoExit));
+    let guests = own_line_id(&config::load().unwrap().device.id, KEY);
+    assert_ne!(guests, own);
+    assert_eq!(chosen(), Some(guests.clone()));
+    assert_eq!(ids(&versions()), vec![g1.clone()]);
+    assert_eq!(lines().iter().map(|l| l.0.as_str()).collect::<Vec<_>>(), vec!["", "Kid's PC", "GUEST"]);
+    // The default is for games that are new to the device: this one stays
+    // on its line when the default changes,
+    config::update(|c| {
+        c.independent_saves = false;
+        Ok(())
+    })
+    .unwrap();
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    assert_eq!(status(), Status::Synced);
+    // and a game that shares already goes on sharing when it is turned on.
+    dad.activate();
+    config::update(|c| {
+        c.independent_saves = true;
+        Ok(())
+    })
+    .unwrap();
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    dad.write("d4");
+    let d4 = uploaded(run(Trigger::AutoExit));
+    assert_eq!(chosen(), None);
+    assert!(cloud.join(LINE).join(format!("{d4}.json")).is_file());
+    assert_eq!(heads(), vec![d4]);
 }
