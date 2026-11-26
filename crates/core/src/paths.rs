@@ -57,6 +57,11 @@ pub fn steam_backups_dir() -> PathBuf {
 pub fn ludusavi_config_dir() -> PathBuf {
     ensure(data_dir().join("ludusavi"))
 }
+/// Save files read out of an Xbox app game's containers, while a sync reads
+/// them (see `snapshot::scan`).
+pub fn decoded_dir() -> PathBuf {
+    ensure(data_dir().join("decoded"))
+}
 
 /// Directory of the running executable (where sidecars live).
 pub fn exe_dir() -> PathBuf {

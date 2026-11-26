@@ -3,9 +3,17 @@
 //! Per-game rules are in `adapters/xbox-saves.yaml`, ported from
 //! XGP-save-extractor (MIT, © 2021 Mark Mäkinen); the handlers below follow
 //! its `main.py`.
+//!
+//! A file can be written back when it is exactly one container file
+//! ([`Named::origin`]): the containers' file is replaced with it
+//! ([`crate::wgs::begin`]). Files put together from several container files
+//! or made up are read only.
 
-use crate::wgs::Container;
+use crate::wgs::{self, Container};
+use anyhow::Result;
 use serde::Deserialize;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -45,6 +53,35 @@ pub struct Named {
 
 fn one(path: String, container: &str, file: &str, data: &[u8]) -> Named {
     Named { path, origin: Some((container.to_string(), file.to_string())), data: data.to_vec() }
+}
+
+/// The files in the containers of the wgs user folder `dir` ([`named`]),
+/// with the folder's index.
+pub fn read_dir(dir: &Path) -> Result<(wgs::Index, Vec<Named>)> {
+    let (idx, containers) = wgs::read_dir(dir)?;
+    let files = named(&idx.package, &containers);
+    Ok((idx, files))
+}
+
+static SPOIL_READ_BACK: AtomicBool = AtomicBool::new(false);
+
+/// Tests: the next [`read_back`] finds its first file changed, as if
+/// something else had written into the containers in between.
+#[doc(hidden)]
+pub fn spoil_next_read_back() {
+    SPOIL_READ_BACK.store(true, Ordering::SeqCst);
+}
+
+/// [`read_dir`] right after writing into the containers: what the write is
+/// checked against.
+pub fn read_back(dir: &Path) -> Result<Vec<Named>> {
+    let (_, mut files) = read_dir(dir)?;
+    if SPOIL_READ_BACK.swap(false, Ordering::SeqCst) {
+        if let Some(f) = files.first_mut() {
+            f.data.push(0);
+        }
+    }
+    Ok(files)
 }
 
 /// The handler a package's containers are read with.

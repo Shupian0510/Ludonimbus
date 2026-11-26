@@ -150,34 +150,10 @@ fn read_files(zip: &Path, meta: &SnapshotMeta) -> Result<BTreeMap<String, Vec<u8
     Ok(out)
 }
 
-/// Whether a path (either slash) is an Xbox container index: a
-/// `containers.index` under `wgs`, or in a `<user id>_<title id>` folder.
-fn is_wgs_index(path: &str) -> bool {
-    let l = path.replace('\\', "/").to_lowercase();
-    let Some(dir) = l.strip_suffix(&format!("/{}", wgs::INDEX)) else { return false };
-    let folder = dir.rsplit('/').next().unwrap_or("");
-    let hex = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit());
-    folder.split_once('_').is_some_and(|(a, b)| hex(a) && hex(b)) || l.contains("/wgs/")
-}
-
 /// Where a version's Xbox save containers are (the wgs user folder) among
-/// its file paths (either slash): a container index by its place, or one
-/// next to `<GUID>/container.N` files.
+/// its file paths (either slash): the first of [`wgs::user_dirs`].
 fn wgs_dir<'a>(paths: impl Iterator<Item = &'a str>) -> Option<String> {
-    let all: Vec<String> = paths.map(|p| p.replace('\\', "/")).collect();
-    let lower: Vec<String> = all.iter().map(|p| p.to_lowercase()).collect();
-    let suffix = format!("/{}", wgs::INDEX);
-    all.iter().zip(&lower).find_map(|(p, l)| {
-        let dir = l.strip_suffix(&suffix)?;
-        let beside = || {
-            lower.iter().any(|q| {
-                let rest = q.strip_prefix(dir).and_then(|r| r.strip_prefix('/'));
-                rest.and_then(|r| r.split_once('/'))
-                    .is_some_and(|(folder, file)| folder.len() == 32 && folder.chars().all(|c| c.is_ascii_hexdigit()) && file.starts_with("container."))
-            })
-        };
-        (is_wgs_index(p) || beside()).then(|| p[..p.len() - suffix.len()].to_string())
-    })
+    wgs::user_dirs(paths).into_iter().next()
 }
 
 /// Paths relative to the folder they all share.
@@ -644,7 +620,7 @@ mod tests {
         let p = ["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index", "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1"];
         assert_eq!(wgs_dir(p.iter().copied()).as_deref(), Some("{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB"));
         assert_eq!(wgs_dir(["{appdata}/Game/containers.index"].iter().copied()), None);
-        assert!(is_wgs_index("{pk}/000901F2A1B2C3D4_000000000000000000000000646E3F8B/containers.index"));
-        assert!(is_wgs_index(r"C:\Users\me\AppData\Local\Packages\X_y\SystemAppData\wgs\t\containers.index"));
+        let windows = r"C:\Users\me\AppData\Local\Packages\X_y\SystemAppData\wgs\t\containers.index";
+        assert_eq!(wgs_dir([windows].iter().copied()).as_deref(), Some("C:/Users/me/AppData/Local/Packages/X_y/SystemAppData/wgs/t"));
     }
 }

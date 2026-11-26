@@ -1571,6 +1571,9 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
     if game.backup_only() && resolution == Resolution::Auto {
         action = backup_only(&game.key, action, &loc, &seen);
     }
+    if crate::bind::has_wgs(&game.bind) && resolution == Resolution::Auto {
+        action = not_into_containers(&game.key, action);
+    }
     let device = ctx.device();
 
     let outcome = match (action, resolution) {
@@ -1657,6 +1660,29 @@ fn backup_only(key: &str, action: Action, local: &Local, view: &LineView) -> Act
         Action::Conflict { .. } => {
             log(format!("{key}: these saves differ from the cloud's; Steam Cloud decided they are current, so they are uploaded"));
             decide::settle(local, view)
+        }
+        other => other,
+    }
+}
+
+/// What a sync that nobody chose for does with a version that keeps its
+/// saves in the Xbox app's containers ([`crate::bind::Codec::Wgs`],
+/// docs/plan-v2.md, section 6): writing into them is experimental (the Xbox
+/// app's own cloud sync may put its saves back), so it never happens by
+/// itself.
+///
+/// - A newer version in the cloud is left there; the game shows that the
+///   cloud has newer saves ([`check`]), and the user makes it current.
+/// - Everything else as for any game: an upload goes ahead, and saves here
+///   that went another way than the cloud's are a conflict the user settles.
+///
+/// What the user asks for (a version from the cloud, a restore, another
+/// line's save) is written; that is not decided here.
+fn not_into_containers(key: &str, action: Action) -> Action {
+    match action {
+        Action::Pull { id } => {
+            log(format!("{key}: {id} in the cloud is newer; it goes into the Xbox app's containers only when the user says so"));
+            Action::Nothing
         }
         other => other,
     }

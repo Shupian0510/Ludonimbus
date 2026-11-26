@@ -218,7 +218,7 @@ enum Choice {
 }
 
 fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &ludonimbus_core::snapshot::SnapshotSummary) -> Choice {
-    let text = ludonimbus_core::tr!(
+    let mut text = ludonimbus_core::tr!(
         "「{}」的存档在本机和云端都有新的改动。\n\n云端：{} 于 {} 保存（{} 个文件，{}）\n本机：{} 个文件，{}\n\n请选择这次要使用哪一份。没选的那份也会留在「存档」里，随时可以设回去。",
         "Both this PC and the cloud have new changes to the saves of \"{}\".\n\nCloud: saved by {} at {} ({} files, {})\nThis PC: {} files, {}\n\nChoose which one to use this time. The other one stays under Saves and can be made current again at any time.",
         game.name,
@@ -229,6 +229,16 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
         local_files,
         human(local_size),
     );
+    // The cloud's go into the Xbox app's containers: experimental, so said
+    // before the user chooses. The sync before may have just bound the game.
+    let containers = ludonimbus_core::config::load().ok().and_then(|c| c.game(&game.key).map(|g| ludonimbus_core::bind::has_wgs(&g.bind)));
+    if containers.unwrap_or_else(|| ludonimbus_core::bind::has_wgs(&game.bind)) {
+        text.push_str("\n\n");
+        text.push_str(&tr!(
+            "使用云端存档会写入 Xbox 版，这是实验性的（Xbox 应用的云同步可能把存档换回去），本机现在的存档会先保留一份。",
+            "Using the cloud saves writes into the Xbox version, which is experimental (the Xbox app's own cloud sync may put its saves back); the saves on this PC are kept first."
+        ));
+    }
     let req = Request::new(tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"), text, "warn")
         .button("cloud", tr!("使用云端存档", "Use cloud saves"), "a")
         .button("local", tr!("使用本机存档", "Use this PC's saves"), "x")

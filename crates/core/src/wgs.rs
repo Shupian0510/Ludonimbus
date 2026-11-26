@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const INDEX: &str = "containers.index";
 
@@ -265,23 +265,97 @@ pub fn filetime_now() -> i64 {
     ms * 10_000 + 116_444_736_000_000_000
 }
 
+/// Seconds since 1970 of a FILETIME (0 for one before 1970).
+pub fn unix_secs(filetime: i64) -> i64 {
+    ((filetime - 116_444_736_000_000_000) / 10_000_000).max(0)
+}
+
+/// Whether a path (either slash) is a container index: a
+/// `containers.index` under `wgs`, or in a `<user id>_<title id>` folder.
+fn is_user_index(path: &str) -> bool {
+    let l = path.replace('\\', "/").to_lowercase();
+    let Some(dir) = l.strip_suffix(&format!("/{INDEX}")) else { return false };
+    let folder = dir.rsplit('/').next().unwrap_or("");
+    let hex = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit());
+    folder.split_once('_').is_some_and(|(a, b)| hex(a) && hex(b)) || l.contains("/wgs/")
+}
+
+/// The wgs user folders (the folders that hold a [`INDEX`]) among the paths
+/// of a game's files (either slash, as they are written): a container
+/// index known by its place, or one next to `<GUID>/container.N` files.
+pub fn user_dirs<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let all: Vec<String> = paths.map(|p| p.replace('\\', "/")).collect();
+    let lower: Vec<String> = all.iter().map(|p| p.to_lowercase()).collect();
+    let suffix = format!("/{INDEX}");
+    all.iter()
+        .zip(&lower)
+        .filter_map(|(p, l)| {
+            let dir = l.strip_suffix(&suffix)?;
+            let beside = || {
+                lower.iter().any(|q| {
+                    let rest = q.strip_prefix(dir).and_then(|r| r.strip_prefix('/'));
+                    rest.and_then(|r| r.split_once('/'))
+                        .is_some_and(|(folder, file)| folder.len() == 32 && folder.chars().all(|c| c.is_ascii_hexdigit()) && file.starts_with("container."))
+                })
+            };
+            (is_user_index(p) || beside()).then(|| p[..p.len() - suffix.len()].to_string())
+        })
+        .collect()
+}
+
 fn write_new(path: &Path, data: &[u8]) -> Result<()> {
     crate::util::atomic_write(path, data)
 }
 
-/// Replace the contents of existing files in the wgs user folder `dir`
-/// (`(container, file, data)`), the way the Xbox app writes them: a new data
-/// file, `container.(N+1)` pointing at it, the index entry updated (number,
-/// size, time, state) and the index time moved forward with "uploaded"
-/// cleared, so Xbox's sync sees a local change; then the old manifest and
-/// data files are deleted. Only existing containers and files are touched.
-/// Returns the number of files replaced.
-pub fn replace(dir: &Path, changes: &[(String, String, Vec<u8>)]) -> Result<usize> {
+/// Files of a wgs user folder replaced by [`begin`], with what they replaced
+/// still there: [`Replacement::keep`] makes it final, [`Replacement::undo`]
+/// puts the folder back as it was.
+///
+/// The index is what says which manifest and which data files are the
+/// containers' content, and it is written last, in one piece: until then
+/// the folder reads as before, from then on as after. A write cut short
+/// leaves either, plus files nothing points at.
+#[must_use = "keep or undo the replacement"]
+pub struct Replacement {
+    dir: PathBuf,
+    /// The index as it was, byte for byte.
+    old_index: Vec<u8>,
+    /// The data files and manifests written.
+    written: Vec<PathBuf>,
+    /// The ones the new index no longer points at.
+    dropped: Vec<PathBuf>,
+    /// How many files were replaced.
+    pub replaced: usize,
+}
+
+/// Start replacing the contents of existing files in the wgs user folder
+/// `dir` (`(container, file, data)`), the way the Xbox app writes them: a
+/// new data file, `container.(N+1)` pointing at it, the index entry updated
+/// (number, size, time, state) and the index time moved forward with
+/// "uploaded" cleared, so Xbox's sync sees a local change. The old manifest
+/// and data files stay until [`Replacement::keep`]. Only existing containers
+/// and files are touched; nothing is written when none of them is named.
+/// When a step fails, what was written is removed again and the folder is
+/// as it was.
+pub fn begin(dir: &Path, changes: &[(String, String, Vec<u8>)]) -> Result<Replacement> {
     let index_path = dir.join(INDEX);
-    let mut idx = parse_index(&std::fs::read(&index_path).with_context(|| index_path.display().to_string())?)?;
+    let old_index = std::fs::read(&index_path).with_context(|| index_path.display().to_string())?;
+    let mut r = Replacement { dir: dir.to_path_buf(), old_index, written: Vec::new(), dropped: Vec::new(), replaced: 0 };
+    match stage(&mut r, changes) {
+        Ok(()) => Ok(r),
+        Err(e) => {
+            for f in &r.written {
+                let _ = std::fs::remove_file(f);
+            }
+            Err(e)
+        }
+    }
+}
+
+fn stage(r: &mut Replacement, changes: &[(String, String, Vec<u8>)]) -> Result<()> {
+    let dir = r.dir.clone();
+    let mut idx = parse_index(&r.old_index)?;
     let now = filetime_now();
-    let mut old_files = Vec::new();
-    let mut replaced = 0;
     let names: HashSet<&str> = changes.iter().map(|(c, _, _)| c.as_str()).collect();
     for e in idx.entries.iter_mut().filter(|e| e.state != STATE_DELETED && names.contains(e.name.as_str())) {
         let folder = dir.join(hex(&e.guid));
@@ -292,20 +366,24 @@ pub fn replace(dir: &Path, changes: &[(String, String, Vec<u8>)]) -> Result<usiz
         for f in m.files.iter_mut() {
             let Some((_, _, data)) = changes.iter().find(|(c, n, _)| c == &e.name && n == &f.name) else { continue };
             let g = new_guid();
-            write_new(&folder.join(hex(&g)), data)?;
+            let blob = folder.join(hex(&g));
+            r.written.push(blob.clone());
+            write_new(&blob, data)?;
             for old in [f.local, f.cloud] {
-                old_files.push(folder.join(hex(&old)));
+                r.dropped.push(folder.join(hex(&old)));
             }
             f.local = g;
             f.cloud = g;
             touched = true;
-            replaced += 1;
+            r.replaced += 1;
         }
         if !touched {
             continue;
         }
-        write_new(&folder.join(format!("container.{next}")), &write_manifest(&m)?)?;
-        old_files.push(old_manifest);
+        let manifest = folder.join(format!("container.{next}"));
+        r.written.push(manifest.clone());
+        write_new(&manifest, &write_manifest(&m)?)?;
+        r.dropped.push(old_manifest);
         let mut size = 0i64;
         for f in &m.files {
             if let Some(h) = blob_of(f, |h| folder.join(h).is_file()) {
@@ -317,39 +395,94 @@ pub fn replace(dir: &Path, changes: &[(String, String, Vec<u8>)]) -> Result<usiz
         e.filetime = now;
         e.state = if e.etag.is_empty() { STATE_CREATED } else { STATE_MODIFIED };
     }
-    if replaced == 0 {
-        return Ok(0);
+    if r.replaced == 0 {
+        return Ok(());
     }
     idx.filetime = now.max(idx.filetime + 1);
     idx.flags &= !FLAG_UPLOADED;
-    write_new(&index_path, &write_index(&idx))?;
-    // Data files the remaining manifests still point at stay.
-    let dropping: HashSet<&Path> = old_files.iter().map(|p| p.as_path()).collect();
-    let in_use: HashSet<String> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|d| d.path().is_dir())
-        .flat_map(|d| {
-            let folder = d.path();
-            std::fs::read_dir(&folder)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .filter(|f| f.file_name().to_string_lossy().starts_with("container.") && !dropping.contains(f.path().as_path()))
-                .filter_map(|f| std::fs::read(f.path()).ok().and_then(|b| parse_manifest(&b).ok()))
-                .flat_map(|m| m.files.into_iter().flat_map(|f| [hex(&f.local), hex(&f.cloud)]))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    for f in old_files {
-        let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if !name.starts_with("container.") && in_use.contains(&name) {
-            continue;
+    write_new(&dir.join(INDEX), &write_index(&idx))
+}
+
+impl Replacement {
+    /// Make it final: what was replaced is deleted, except data files a
+    /// manifest still in use points at.
+    pub fn keep(self) {
+        if self.replaced == 0 {
+            return;
         }
-        let _ = std::fs::remove_file(f);
+        let dropping: HashSet<&Path> = self.dropped.iter().map(|p| p.as_path()).collect();
+        let in_use: HashSet<String> = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|d| d.path().is_dir())
+            .flat_map(|d| {
+                let folder = d.path();
+                std::fs::read_dir(&folder)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|f| f.file_name().to_string_lossy().starts_with("container.") && !dropping.contains(f.path().as_path()))
+                    .filter_map(|f| std::fs::read(f.path()).ok().and_then(|b| parse_manifest(&b).ok()))
+                    .flat_map(|m| m.files.into_iter().flat_map(|f| [hex(&f.local), hex(&f.cloud)]))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for f in &self.dropped {
+            let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            if !name.starts_with("container.") && in_use.contains(&name) {
+                continue;
+            }
+            let _ = std::fs::remove_file(f);
+        }
     }
-    Ok(replaced)
+
+    /// Put the folder back as it was: the old index, byte for byte, and
+    /// without the files written. When the index can't be written, the new
+    /// content stays complete and readable, and the error says so.
+    pub fn undo(self) -> Result<()> {
+        if self.replaced == 0 {
+            return Ok(());
+        }
+        write_new(&self.dir.join(INDEX), &self.old_index)?;
+        for f in &self.written {
+            let _ = std::fs::remove_file(f);
+        }
+        Ok(())
+    }
+}
+
+/// Replace the contents of existing files in the wgs user folder `dir`
+/// (`(container, file, data)`) the way the Xbox app does ([`begin`]), read
+/// them back, and only then delete what they replaced. A file that doesn't
+/// read back as given puts the folder back as it was. Returns the number of
+/// files replaced.
+pub fn replace(dir: &Path, changes: &[(String, String, Vec<u8>)]) -> Result<usize> {
+    let r = begin(dir, changes)?;
+    let check = (|| -> Result<()> {
+        if r.replaced == 0 {
+            return Ok(());
+        }
+        let (_, list) = read_dir(dir)?;
+        for (c, f, data) in changes {
+            let Some(container) = list.iter().find(|x| &x.name == c) else { continue };
+            if container.files.iter().any(|(n, d)| n == f && d != data) {
+                bail!("{c} / {f} read back differently after it was written");
+            }
+        }
+        Ok(())
+    })();
+    match check {
+        Ok(()) => {
+            let n = r.replaced;
+            r.keep();
+            Ok(n)
+        }
+        Err(e) => match r.undo() {
+            Ok(()) => Err(e),
+            Err(u) => Err(e.context(format!("the folder couldn't be put back as it was ({u:#}); it has the new content"))),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -440,5 +573,57 @@ pub mod tests {
         names.sort();
         assert_eq!(names.len(), 3);
         assert!(names.contains(&"container.3".to_string()));
+    }
+
+    /// Every file below `dir` with its content.
+    pub fn tree(dir: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut out: Vec<(String, Vec<u8>)> = walkdir::WalkDir::new(dir)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_file())
+            .map(|e| (e.path().strip_prefix(dir).unwrap().to_string_lossy().replace('\\', "/"), std::fs::read(e.path()).unwrap()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn a_replacement_is_undone_byte_for_byte_and_kept_only_when_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("0009_00AB");
+        make(&dir, "Some.Game_x", &[("Slot1", &[("Data", b"one")]), ("Slot2", &[("Data", b"two")])]);
+        let before = tree(&dir);
+        let r = begin(&dir, &[("Slot1".into(), "Data".into(), b"ONE".to_vec())]).unwrap();
+        assert_eq!(r.replaced, 1);
+        // The new content is what the folder reads as, the old one is still there.
+        let (_, list) = read_dir(&dir).unwrap();
+        assert_eq!(list[0].files[0].1, b"ONE");
+        assert_eq!(tree(&dir).len(), before.len() + 2);
+        r.undo().unwrap();
+        assert_eq!(tree(&dir), before);
+        // Kept: what it replaced is gone.
+        let r = begin(&dir, &[("Slot1".into(), "Data".into(), b"ONE".to_vec())]).unwrap();
+        r.keep();
+        assert_eq!(tree(&dir).len(), before.len());
+        assert_eq!(read_dir(&dir).unwrap().1[0].files[0].1, b"ONE");
+        // Nothing named that the folder has: nothing written.
+        let after = tree(&dir);
+        let r = begin(&dir, &[("Nope".into(), "Data".into(), b"x".to_vec())]).unwrap();
+        assert_eq!(r.replaced, 0);
+        r.undo().unwrap();
+        assert_eq!(tree(&dir), after);
+    }
+
+    #[test]
+    fn finds_container_folders() {
+        let p = ["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index", "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1"];
+        assert_eq!(user_dirs(p.iter().copied()), vec!["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB".to_string()]);
+        assert!(user_dirs(["{appdata}/Game/containers.index"].iter().copied()).is_empty());
+        // Next to its containers, wherever it is.
+        let p = ["data/containers.index", "data/0123456789ABCDEF0123456789ABCDEF/container.3", "data/other.txt"];
+        assert_eq!(user_dirs(p.iter().copied()), vec!["data".to_string()]);
+        assert!(is_user_index("{pk}/000901F2A1B2C3D4_000000000000000000000000646E3F8B/containers.index"));
+        assert!(is_user_index(r"C:\Users\me\AppData\Local\Packages\X_y\SystemAppData\wgs\t\containers.index"));
+        assert_eq!(unix_secs(116_444_736_000_000_000 + 10_000_000 * 60), 60);
     }
 }

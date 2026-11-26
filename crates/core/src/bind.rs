@@ -17,9 +17,57 @@
 //! have no place on the device; a version only joins a line all of whose
 //! files it has a folder for ([`Proposal::usable`]), and stops when that is
 //! no longer so ([`uncovered`]).
+//!
+//! A binding also says how the version keeps the files ([`Codec`]): as
+//! they are, or inside the Xbox app's save containers. With the containers
+//! the folder `local` is the container folder (or one below it), and the
+//! files in it are the containers' files under the names the game's other
+//! versions use ([`crate::xboxsaves::named`]); [`crate::snapshot`] reads and
+//! writes them.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+
+/// How a version keeps the files of a binding.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum Codec {
+    /// Plain files, under the bound folder as they are.
+    #[default]
+    Files,
+    /// The Xbox app's save containers ([`crate::wgs`]): the bound folder is
+    /// the container folder or one below it, and its files are the
+    /// containers' files as the other versions name them.
+    Wgs,
+    /// A codec a newer Ludonimbus knows: kept as it is, never used here.
+    Other(String),
+}
+
+impl Codec {
+    pub fn is_files(&self) -> bool {
+        *self == Codec::Files
+    }
+}
+
+impl From<String> for Codec {
+    fn from(s: String) -> Codec {
+        match s.as_str() {
+            "files" => Codec::Files,
+            "wgs" => Codec::Wgs,
+            _ => Codec::Other(s),
+        }
+    }
+}
+
+impl From<Codec> for String {
+    fn from(c: Codec) -> String {
+        match c {
+            Codec::Files => "files".to_string(),
+            Codec::Wgs => "wgs".to_string(),
+            Codec::Other(s) => s,
+        }
+    }
+}
 
 /// One folder of a save line, and the folder that holds the same files in
 /// a version of the game.
@@ -30,6 +78,28 @@ pub struct Bind {
     pub canon: String,
     /// The folder in the version's own files.
     pub local: String,
+    /// How the version keeps them. Plain files unless it says otherwise,
+    /// and then not written, so bindings of plain files read as before.
+    #[serde(default, skip_serializing_if = "Codec::is_files")]
+    pub codec: Codec,
+}
+
+impl Bind {
+    /// A binding of plain files.
+    pub fn files(canon: impl Into<String>, local: impl Into<String>) -> Bind {
+        Bind { canon: canon.into(), local: local.into(), codec: Codec::Files }
+    }
+}
+
+/// Some binding reads its files out of the Xbox app's containers.
+pub fn has_wgs(binds: &[Bind]) -> bool {
+    binds.iter().any(|b| b.codec == Codec::Wgs)
+}
+
+/// Bindings this build can use: none with a codec only a newer Ludonimbus
+/// knows.
+pub fn known(binds: &[Bind]) -> bool {
+    binds.iter().all(|b| !matches!(b.codec, Codec::Other(_)))
 }
 
 /// `path` below the folder `dir` (or `dir` itself): what follows `dir`,
@@ -59,6 +129,71 @@ pub fn to_canon(binds: &[Bind], local: &str) -> Option<String> {
 /// version has no folder for.
 pub fn to_local(binds: &[Bind], canon: &str) -> Option<String> {
     mapped(binds, canon, |b| &b.canon, |b| &b.local)
+}
+
+/// The line's path of the version's file `local` that it keeps the way
+/// `codec` says: only bindings of that codec count.
+pub fn to_canon_as(binds: &[Bind], local: &str, codec: &Codec) -> Option<String> {
+    let of: Vec<Bind> = binds.iter().filter(|b| &b.codec == codec).cloned().collect();
+    to_canon(&of, local)
+}
+
+/// [`to_local`], with the codec of the binding it goes through.
+pub fn to_local_with(binds: &[Bind], canon: &str) -> Option<(String, Codec)> {
+    binds
+        .iter()
+        .filter_map(|b| below(&b.canon, canon).map(|rest| (b, rest)))
+        .max_by_key(|(b, _)| b.canon.len())
+        .map(|(b, rest)| (format!("{}{rest}", b.local), b.codec.clone()))
+}
+
+/// Whether `path` is the folder `dir` or below it.
+pub fn is_within(dir: &str, path: &str) -> bool {
+    below(dir, path).is_some()
+}
+
+/// Bindings worked out from files among which the folders `containers`
+/// hold the Xbox app's containers (as their files under the other
+/// versions' names): a binding in such a folder reads them out of the
+/// containers. `None` when a binding holds a container folder together with
+/// other files: those can't be read one way.
+pub fn with_containers(binds: &[Bind], containers: &[String]) -> Option<Vec<Bind>> {
+    let mut out = Vec::with_capacity(binds.len());
+    for b in binds {
+        if containers.iter().any(|c| is_within(c, &b.local)) {
+            out.push(Bind { codec: Codec::Wgs, ..b.clone() });
+        } else if containers.iter().any(|c| is_within(&b.local, c)) {
+            return None;
+        } else {
+            out.push(b.clone());
+        }
+    }
+    Some(out)
+}
+
+/// Bindings into the Xbox app's containers made where the containers are in
+/// another folder, used with the container folders of this device.
+///
+/// The container folder is named after the Xbox account
+/// (`…/wgs/<user>_<title>`): another device, or another account here, has
+/// another one next to it. A binding whose folder is no container folder
+/// here is moved into the one here when there is exactly one, beside where
+/// it was. Everything else stays as it is.
+pub fn rebase(binds: &[Bind], containers: &[String]) -> Vec<Bind> {
+    binds
+        .iter()
+        .map(|b| {
+            if b.codec != Codec::Wgs || containers.iter().any(|c| is_within(c, &b.local)) {
+                return b.clone();
+            }
+            let [here] = containers else { return b.clone() };
+            let Some((parent, _)) = here.rsplit_once('/') else { return b.clone() };
+            // `/<their folder>` and what is below it.
+            let Some(rest) = below(parent, &b.local).and_then(|r| r.strip_prefix('/')) else { return b.clone() };
+            let under = rest.split_once('/').map(|(_, r)| format!("/{r}")).unwrap_or_default();
+            Bind { local: format!("{here}{under}"), ..b.clone() }
+        })
+        .collect()
 }
 
 /// The files of a line (`paths`) the version has no folder for.
@@ -188,7 +323,7 @@ pub fn propose(canon: &[String], local: &[String]) -> Proposal {
         let Some((_, (_, cd, ld))) = best else { break };
         canon_left.retain(|c| below(&cd, c).is_none());
         local_left.retain(|l| below(&ld, l).is_none());
-        binds.push(Bind { canon: cd, local: ld });
+        binds.push(Bind::files(cd, ld));
     }
     measure(&binds, canon, local)
 }
@@ -202,7 +337,64 @@ mod tests {
     }
 
     fn b(canon: &str, local: &str) -> Bind {
-        Bind { canon: canon.into(), local: local.into() }
+        Bind::files(canon, local)
+    }
+
+    fn wgs(canon: &str, local: &str) -> Bind {
+        Bind { codec: Codec::Wgs, ..b(canon, local) }
+    }
+
+    #[test]
+    fn the_codec_is_written_only_when_it_is_not_plain_files() {
+        // As written before there were codecs: plain files.
+        let old: Bind = serde_json::from_str(r#"{"canon":"appdata/Game","local":"documents/Game"}"#).unwrap();
+        assert_eq!(old, b("appdata/Game", "documents/Game"));
+        assert_eq!(serde_json::to_string(&old).unwrap(), r#"{"canon":"appdata/Game","local":"documents/Game"}"#);
+        let x = wgs("appdata/Game", "data");
+        let text = serde_json::to_string(&x).unwrap();
+        assert_eq!(text, r#"{"canon":"appdata/Game","local":"data","codec":"wgs"}"#);
+        assert_eq!(serde_json::from_str::<Bind>(&text).unwrap(), x);
+        // One a newer version knows is kept as it is, and not used.
+        let newer: Bind = serde_json::from_str(r#"{"canon":"a","local":"b","codec":"nx"}"#).unwrap();
+        assert_eq!(newer.codec, Codec::Other("nx".into()));
+        assert!(serde_json::to_string(&newer).unwrap().contains(r#""codec":"nx""#));
+        assert!(!known(&[newer.clone()]) && known(&[x.clone(), old.clone()]));
+        assert!(has_wgs(&[old.clone(), x]) && !has_wgs(&[old, newer]));
+    }
+
+    #[test]
+    fn bindings_in_container_folders_read_the_containers() {
+        let w = "localappdata/Packages/G/SystemAppData/wgs/0009_00AB";
+        let binds = [b("appdata/Game/Saves", w), b("appdata/Game/cfg", "documents/Game")];
+        assert_eq!(with_containers(&binds, &[w.to_string()]), Some(vec![wgs("appdata/Game/Saves", w), b("appdata/Game/cfg", "documents/Game")]));
+        // Deeper in the container folder too.
+        let deeper = [b("appdata/Game/Saves/world1", &format!("{w}/world1"))];
+        assert_eq!(with_containers(&deeper, &[w.to_string()]).unwrap()[0].codec, Codec::Wgs);
+        // A folder that holds the containers and other files: no way to read it.
+        assert_eq!(with_containers(&[b("appdata", "localappdata/Packages/G")], &[w.to_string()]), None);
+        // Mapping goes by codec one way, by the deepest folder the other.
+        let both = [wgs("appdata/Game/Saves", w), b("appdata/Game/Saves/cfg", "documents/Game")];
+        assert_eq!(to_canon_as(&both, &format!("{w}/0.sav"), &Codec::Wgs).as_deref(), Some("appdata/Game/Saves/0.sav"));
+        assert_eq!(to_canon_as(&both, &format!("{w}/0.sav"), &Codec::Files), None);
+        assert_eq!(to_local_with(&both, "appdata/Game/Saves/0.sav"), Some((format!("{w}/0.sav"), Codec::Wgs)));
+        assert_eq!(to_local_with(&both, "appdata/Game/Saves/cfg/a.ini"), Some(("documents/Game/a.ini".to_string(), Codec::Files)));
+        assert_eq!(to_local_with(&both, "appdata/Other/x"), None);
+    }
+
+    #[test]
+    fn container_folders_of_another_account_are_moved_to_the_one_here() {
+        let theirs = "localappdata/Packages/G/SystemAppData/wgs/0009_00AB";
+        let mine = "localappdata/Packages/G/SystemAppData/wgs/0007_00AB".to_string();
+        let binds = [wgs("appdata/Game/Saves", theirs), wgs("appdata/Game/Worlds/1", &format!("{theirs}/1")), b("appdata/Game/cfg", "documents/Game")];
+        assert_eq!(
+            rebase(&binds, std::slice::from_ref(&mine)),
+            vec![wgs("appdata/Game/Saves", &mine), wgs("appdata/Game/Worlds/1", &format!("{mine}/1")), b("appdata/Game/cfg", "documents/Game")]
+        );
+        // The folder is here: as it is. Two here, or none: as it is.
+        assert_eq!(rebase(&binds, &[theirs.to_string(), mine.clone()]), binds.to_vec());
+        assert_eq!(rebase(&binds, &[]), binds.to_vec());
+        // Not beside it: another game's folder.
+        assert_eq!(rebase(&binds, &["localappdata/Packages/H/SystemAppData/wgs/0007_00AB".to_string()]), binds.to_vec());
     }
 
     #[test]
