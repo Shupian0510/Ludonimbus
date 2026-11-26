@@ -167,28 +167,59 @@ fn two_devices_full_flow() {
     assert!(matches!(run(Trigger::PreLaunch), Outcome::Pulled { .. }));
     assert_eq!(read_save(&game_b, "slot1.sav"), "v4-offline");
 
-    // 9. Retention keeps manual snapshots and trims automatic ones.
+    // 9. Keeping the saves as they are: the cloud has this content already
+    // (B just pulled it), so that version is kept under the name; nothing
+    // new is uploaded.
     config::update(|c| {
         c.retention.keep_recent = 2;
         c.retention.keep_daily_days = 0;
         Ok(())
     })
     .unwrap();
-    {
+    let count = || Ctx::load().unwrap().cloud().unwrap().list_snapshots("test-game").unwrap().len();
+    let before = count();
+    let kept = {
         let ctx = Ctx::load().unwrap();
         let game = ctx.game("test-game").unwrap();
-        sync::backup_now(&ctx, &game, "before boss").unwrap();
-    }
+        let Outcome::Uploaded { id } = sync::backup_now(&ctx, &game, "before boss").unwrap() else { panic!("kept") };
+        id
+    };
+    assert_eq!(count(), before);
+    assert_eq!(status(), Status::Synced);
+
+    // Changed saves kept by hand are a new version, the newest, and kept
+    // from the start.
+    write_save(&game_b, "slot1.sav", "v5-by-hand");
+    let by_hand = {
+        let ctx = Ctx::load().unwrap();
+        let game = ctx.game("test-game").unwrap();
+        let Outcome::Uploaded { id } = sync::backup_now(&ctx, &game, "by hand").unwrap() else { panic!("uploaded") };
+        id
+    };
+    assert_eq!(count(), before + 1);
+    assert_eq!(status(), Status::Synced);
+
+    // Old automatic versions are let go about once a day; kept ones stay.
     for i in 0..4 {
         write_save(&game_b, "slot1.sav", &format!("v5-{i}"));
         assert!(matches!(run(Trigger::AutoExit), Outcome::Uploaded { .. }));
     }
+    state::update_game("test-game", |g| g.cleaned_at = Some(chrono::Utc::now() - chrono::Duration::days(2))).unwrap();
+    write_save(&game_b, "slot1.sav", "v6");
+    assert!(matches!(run(Trigger::AutoExit), Outcome::Uploaded { .. }));
     let ctx = Ctx::load().unwrap();
     let list = ctx.cloud().unwrap().list_snapshots("test-game").unwrap();
-    assert!(list.iter().any(|s| s.trigger == Trigger::Manual && s.comment == "before boss"));
-    let autos = list
-        .iter()
-        .filter(|s| matches!(s.trigger, Trigger::AutoExit | Trigger::PreLaunch | Trigger::PreRestore | Trigger::ConflictKeep | Trigger::Restore))
-        .count();
-    assert!(autos <= 3, "retention should trim automatic snapshots, got {autos}");
+    let named = |id: &str| list.iter().find(|s| s.id == id).map(|s| (s.locked, s.comment.clone(), s.trigger));
+    assert_eq!(named(&kept), Some((true, "before boss".to_string(), Trigger::AutoExit)));
+    assert_eq!(named(&by_hand), Some((true, "by hand".to_string(), Trigger::Manual)));
+    let autos = list.iter().filter(|s| !s.locked).count();
+    assert_eq!(autos, 2, "the newest two automatic versions stay: {list:#?}");
+    assert!(list.last().is_some_and(|s| s.head && !s.locked));
+
+    // A is still at the version it uploaded offline, which B kept: it pulls
+    // the newest without being asked anything.
+    a.activate();
+    assert_eq!(status(), Status::CloudNewer);
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::Pulled { .. }));
+    assert_eq!(read_save(&game_a2, "slot1.sav"), "v6");
 }

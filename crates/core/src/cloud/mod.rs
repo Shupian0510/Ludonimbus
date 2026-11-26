@@ -1,26 +1,30 @@
-//! Cloud storage providers.
+//! Cloud storage.
 //!
-//! Layout (same for every provider):
+//! Layout 2 (docs/plan-v2.md, section 3; same for every kind of cloud):
 //! ```text
+//! <root>/format.json
+//! <root>/library/<game id>.json                    game records
 //! <root>/devices/<device-id>.json
-//! <root>/games/<game-key>/game.json
-//! <root>/games/<game-key>/snapshots/<ULID>.zip   (+ <ULID>.json metadata)
-//! <root>/games/<game-key>/trash/<ULID>.json      (「最近删除」)
-//! <root>/games/<game-key>/playtime/<device-id>.json
-//! <root>/games/<game-key>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
+//! <root>/games/<folder>/saves/<line>/<ULID>.json   manifests (+ pins, index.json, trash/)
+//! <root>/games/<folder>/packs/<pack>.zip           their content
+//! <root>/games/<folder>/game.json                  the save rules, as 0.6 wrote them
+//! <root>/games/<folder>/snapshots/<ULID>.zip       (+ .json) what 0.6 wrote, left where it is
+//! <root>/games/<folder>/playtime/<device-id>.json
+//! <root>/games/<folder>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
 //! ```
-//! Snapshots are immutable and append-only; there is no mutable "head"
-//! pointer, the newest mainline snapshot is the head.
 //!
 //! Every backend, Google Drive included, only implements the small
-//! path-based [`store::Store`] trait. [`repo::Repo`] builds the layout on
-//! top of it and is the only [`CloudProvider`], so a change to the layout is
-//! written once. Data that is not a save snapshot (playtime,
-//! screenshots, ...) goes through [`CloudProvider::files`], the same folder
-//! seen as a path-based [`store::Store`], so it works on every backend.
+//! path-based [`store::Store`] trait. [`Cloud`] is what the program talks
+//! to: the store, the layout on top of it ([`saves`], [`library`],
+//! [`upgrade`]) and what this device remembers of it. Data that is not a
+//! save snapshot (playtime, screenshots, ...) goes through [`Cloud::files`].
+//!
+//! [`repo::Repo`] and [`CloudProvider`] are the layout of 0.6, kept as it
+//! was: tests use them to act as a device that has not been updated.
 
 pub mod baidu;
 pub mod cached;
+pub mod client;
 pub mod decide;
 pub mod gdrive;
 pub mod library;
@@ -51,6 +55,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 use store::Store;
+
+pub use client::{Cloud, OpenLine};
 
 /// The cloud cannot be reached right now (offline, timeout, folder missing).
 #[derive(Debug)]
@@ -90,6 +96,34 @@ pub struct DeviceInfo {
     pub os: String,
     pub app_version: String,
     pub last_seen: DateTime<Utc>,
+    /// The newest cloud layout this device's Ludonimbus knows; 0 in a record
+    /// written by 0.6.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub layout: u32,
+    /// The save lines this device syncs, and where it is on each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installs: Vec<DeviceInstall>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// One game on a device, as other devices need to know it: retention keeps
+/// the snapshot each device synced last ([`retention::DeviceBase`]).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DeviceInstall {
+    /// Id of the game record.
+    pub game: String,
+    pub line: String,
+    /// The folder the line is written to: what names the line for good.
+    pub dir: String,
+    /// The snapshot this device synced last, and when.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub synced_at: Option<DateTime<Utc>>,
 }
 
 /// Game definition stored in the cloud so other devices can recognise it.
@@ -201,17 +235,21 @@ pub fn timeout(cfg: &AppConfig) -> Duration {
     Duration::from_secs(cfg.network_timeout_secs.max(3))
 }
 
-/// Open the configured provider. `Ok(None)` when no cloud is configured.
-pub fn open(cfg: &AppConfig) -> Result<Option<Box<dyn CloudProvider>>> {
-    open_config(&cfg.cloud, timeout(cfg))
+/// Open the configured cloud. `Ok(None)` when no cloud is configured.
+pub fn open(cfg: &AppConfig) -> Result<Option<Cloud>> {
+    match &cfg.cloud {
+        CloudConfig::None => Ok(None),
+        other => Ok(Some(Cloud::new(build_store(other, None, timeout(cfg))?, &cfg.device.id, &cfg.device.name))),
+    }
 }
 
-/// Open any cloud configuration with its saved credentials: its
-/// [`Store`] with the layout of [`repo::Repo`] on top.
-pub fn open_config(cloud: &CloudConfig, timeout: Duration) -> Result<Option<Box<dyn CloudProvider>>> {
-    match cloud {
-        CloudConfig::None => Ok(None),
-        other => Ok(Some(Box::new(repo::Repo::new(build_store(other, None, timeout)?)))),
+/// Bring the connected cloud to the current layout if 0.6 wrote it, without
+/// waiting for the first sync to do it. Does nothing when there is no cloud
+/// or it is up to date; the app calls this in the background when it starts.
+pub fn upgrade_if_needed(cfg: &AppConfig) -> Result<()> {
+    match open(cfg)? {
+        Some(cloud) => cloud.writable(),
+        None => Ok(()),
     }
 }
 
@@ -459,6 +497,7 @@ pub fn move_secrets_out_of_config() -> Result<()> {
 
 fn reset_markers() -> Result<()> {
     crate::savelib::forget();
+    client::forget();
     state::update(|s| {
         for g in s.games.values_mut() {
             g.cloud_def_uploaded = false;
@@ -543,10 +582,12 @@ pub fn dismiss_previous() -> Result<()> {
 pub fn migrate_previous(progress: impl FnMut(&migrate::Progress)) -> Result<migrate::Report> {
     let cfg = config::load()?;
     let prev = cfg.previous_cloud.clone().ok_or_else(|| anyhow!(crate::tr!("没有需要复制的旧云盘", "There's no old cloud to copy from")))?;
-    let from = open_config(&prev, timeout(&cfg))?.ok_or_else(|| anyhow!(crate::tr!("没有需要复制的旧云盘", "There's no old cloud to copy from")))?;
-    let to = open(&cfg)?.ok_or_else(|| anyhow!(NotConfigured))?;
-    let keys: Vec<String> = cfg.games.iter().map(|g| g.key.clone()).collect();
-    let report = migrate::copy_all(from.as_ref(), to.as_ref(), &keys, progress)?;
+    if prev == CloudConfig::None || cfg.cloud == CloudConfig::None {
+        bail!(crate::tr!("没有需要复制的旧云盘", "There's no old cloud to copy from"));
+    }
+    let from = build_store(&prev, None, timeout(&cfg))?;
+    let to = build_store(&cfg.cloud, None, timeout(&cfg))?;
+    let report = migrate::copy_all(from.as_ref(), to.as_ref(), (&cfg.device.id, &cfg.device.name), progress)?;
     dismiss_previous()?;
     reset_markers()?;
     Ok(report)
@@ -580,11 +621,29 @@ pub fn kind_name(cloud: &CloudConfig) -> &'static str {
 }
 
 pub fn device_info(cfg: &AppConfig) -> DeviceInfo {
+    let state = state::load();
+    let installs = cfg
+        .games
+        .iter()
+        .filter_map(|g| {
+            let st = state.games.get(&g.key)?;
+            let line = st.line.as_ref()?;
+            Some(DeviceInstall {
+                game: line.game.clone(),
+                line: line.line.clone(),
+                dir: line.dir().to_string(),
+                synced: st.last_synced_id.clone(),
+                synced_at: st.last_sync_at,
+            })
+        })
+        .collect();
     DeviceInfo {
         id: cfg.device.id.clone(),
         name: cfg.device.name.clone(),
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         app_version: crate::APP_VERSION.to_string(),
         last_seen: Utc::now(),
+        layout: v2::LAYOUT,
+        installs,
     }
 }

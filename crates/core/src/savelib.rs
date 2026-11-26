@@ -9,7 +9,7 @@
 //! cloud has but this device doesn't come from a local copy of the cloud's
 //! game list ([`cached`]), so the library can show them offline too.
 
-use crate::cloud::{CloudGame, CloudProvider};
+use crate::cloud::{Cloud, CloudGame};
 use crate::config::{self, AppConfig, CloudConfig, GameEntry};
 use crate::{adapters, crosssaves, discover, games, paths, state, util, xbox};
 use anyhow::{anyhow, Result};
@@ -244,7 +244,7 @@ pub fn forget() {
 /// Fetch the cloud's game list and keep a copy. Links the user made on
 /// another device ([`GameEntry::game`]) are taken over for games on this
 /// device that have none.
-pub fn refresh(cfg: &AppConfig, cloud: &dyn CloudProvider) -> Result<Cached> {
+pub fn refresh(cfg: &AppConfig, cloud: &Cloud) -> Result<Cached> {
     let games = cloud.list_games()?;
     let c = Cached { fetched_at: Some(Utc::now()), scope: scope(&cfg.cloud), games };
     save_cache(&c)?;
@@ -372,7 +372,7 @@ pub fn dismiss_newer(key: &str, snapshot_id: &str) -> Result<()> {
 // Linking versions by hand
 
 /// Write a game's definition to the cloud now (after its link changed).
-fn push_def(cloud: Option<&dyn CloudProvider>, g: &GameEntry) {
+fn push_def(cloud: Option<&Cloud>, g: &GameEntry) {
     let _ = state::update_game(&g.key, |s| s.cloud_def_uploaded = false);
     if let Some(c) = cloud {
         if c.put_game(&CloudGame::from(g)).is_ok() {
@@ -383,7 +383,7 @@ fn push_def(cloud: Option<&dyn CloudProvider>, g: &GameEntry) {
 
 /// Set the link of `keys` (games on this device or only in the cloud) to
 /// `value`, on this device and in the cloud.
-fn set_links(cloud: Option<&dyn CloudProvider>, keys: &[String], value: &str) -> Result<()> {
+fn set_links(cloud: Option<&Cloud>, keys: &[String], value: &str) -> Result<()> {
     let changed = config::update(|cfg| {
         let mut out = Vec::new();
         for k in keys {
@@ -413,7 +413,7 @@ fn set_links(cloud: Option<&dyn CloudProvider>, keys: &[String], value: &str) ->
 
 /// Mark `keys` as versions of one game. Keeps the link one of them already
 /// has, so a game linked on another device stays one game.
-pub fn link(cloud: Option<&dyn CloudProvider>, keys: &[String]) -> Result<String> {
+pub fn link(cloud: Option<&Cloud>, keys: &[String]) -> Result<String> {
     let cfg = config::load()?;
     let cached = cached(&cfg);
     let existing = keys.iter().find_map(|k| {
@@ -427,7 +427,7 @@ pub fn link(cloud: Option<&dyn CloudProvider>, keys: &[String]) -> Result<String
 }
 
 /// Keep `key` apart from the other games it was shown with.
-pub fn unlink(cloud: Option<&dyn CloudProvider>, key: &str) -> Result<()> {
+pub fn unlink(cloud: Option<&Cloud>, key: &str) -> Result<()> {
     set_links(cloud, &[key.to_string()], &format!("{SOLO}{key}"))
 }
 

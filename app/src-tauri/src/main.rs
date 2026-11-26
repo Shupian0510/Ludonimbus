@@ -112,10 +112,16 @@ fn main() {
             });
             let handle = app.handle().clone();
             std::thread::spawn(move || steam_plugin::refresh_installed(&handle));
-            // Start OpenList early when the cloud is Quark, so the first sync doesn't wait for it.
             std::thread::spawn(|| {
-                if matches!(config::load().map(|c| c.cloud), Ok(config::CloudConfig::Quark { .. })) {
+                let Ok(cfg) = config::load() else { return };
+                // Start OpenList early when the cloud is Quark, so the first sync doesn't wait for it.
+                if matches!(cfg.cloud, config::CloudConfig::Quark { .. }) {
                     let _ = ludonimbus_core::openlist::ensure_running();
+                }
+                // A cloud that 0.6 wrote is brought to the current layout
+                // now, so the first upload after playing doesn't wait for it.
+                if let Err(e) = ludonimbus_core::cloud::upgrade_if_needed(&cfg) {
+                    ludonimbus_core::logger::log("cloud", format!("the cloud was not upgraded: {e:#}"));
                 }
             });
             Ok(())

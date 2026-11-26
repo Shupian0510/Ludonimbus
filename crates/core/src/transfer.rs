@@ -529,9 +529,34 @@ fn apply_to_cloud(ctx: &Ctx, def: &CloudGame, meta: &SnapshotMeta, zip: &Path, f
     }
     let list: Vec<(String, Vec<u8>)> = work.files.into_iter().collect();
     let device = (ctx.cfg.device.id.as_str(), ctx.cfg.device.name.as_str());
-    let (new, new_zip) = snapshot::build_from_files(target, &list, Trigger::Restore, work.parent, device, &applied_comment(def, meta), work.version)?;
-    let uploaded = ctx.cloud()?.upload(&new, &new_zip);
-    let _ = std::fs::remove_file(&new_zip);
+    let cloud = ctx.cloud()?;
+    let line = cloud.open(target)?;
+    let origin = cloud.place(&def.key).ok().map(|from| crate::cloud::v2::Origin {
+        game: from.game,
+        line: from.line,
+        snapshot: meta.id.clone(),
+        how: "copy".to_string(),
+        extra: Default::default(),
+    });
+    let new = sync::queue_files(
+        &line,
+        &sync::Foreign {
+            key: target,
+            files: &list,
+            trigger: Trigger::Restore,
+            parent: work.parent,
+            over_all: true,
+            device,
+            platform: "",
+            comment: &applied_comment(def, meta),
+            game_version: work.version,
+            origin,
+        },
+    )?;
+    // Nothing uploads this game's queue later (it isn't on this PC), so it
+    // is now or not at all.
+    let uploaded = sync::upload_pending(cloud, &new);
+    let _ = sync::drop_pending(&new);
     uploaded?;
     let _ = std::fs::remove_file(zip);
     if let Some(z) = work.head_zip {

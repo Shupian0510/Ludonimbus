@@ -24,8 +24,12 @@
 //!      or from the clock (`updatedAt` and `updatedBy`, which
 //!      [`library::save`] sets, are the exception).
 //!    - one line: `id` `main`, shared, `path` `games/<key>/saves/main`,
-//!      `also` `[games/<key>/snapshots]` ([`v2::legacy_dir`]), `format` from
-//!      the save rules of the game ([`line_format`]).
+//!      `format` from the save rules of the game ([`line_format`]), and
+//!      `also` `[games/<key>/snapshots]` ([`v2::legacy_dir`]) when that
+//!      folder has snapshots. A line reads every folder it names each time
+//!      it is looked at, and a game nobody uploaded saves of has nothing
+//!      there. Should a device still on 0.6 upload there later, a device on
+//!      layout 2 adds the folder ([`super::Cloud::adopt_old_folder`]).
 //!    - `ids` from the game's definition ([`record_ids`]), `rule` when a
 //!      cross-platform rule covers it.
 //!
@@ -87,7 +91,7 @@ use super::store::{join, Store};
 use super::v2::{self, Access, FormatFile, GameRecord, Line, Pin, PinRef, SCOPE_SHARED};
 use super::CloudGame;
 use crate::{adapters, savelib};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -105,6 +109,22 @@ const REFRESH_EVERY: Duration = Duration::from_secs(10 * 60);
 /// The trigger of a backup the user made by hand.
 const MANUAL: &str = "manual";
 const LINK: &str = "link:";
+
+/// Another device is upgrading the cloud right now. Nothing is wrong: what
+/// this device wanted to write waits until that has finished.
+#[derive(Debug)]
+pub struct Busy(pub String);
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for Busy {}
+
+pub fn is_busy(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<Busy>().is_some())
+}
 
 /// How far the upgrade is, for a progress bar.
 #[derive(Debug, Clone, Serialize)]
@@ -211,11 +231,11 @@ pub fn line_format(game: &CloudGame) -> String {
 /// The record the upgrade writes for one key (before [`library::save`] and
 /// before records are merged). `game` is `None` for a folder without a
 /// `game.json`; `oldest` is when the oldest snapshot in its old folder was
-/// made.
+/// made; `old` says that folder has snapshots, and the line reads it.
 ///
 /// A folder without a `game.json` gets no ids and a line of format `pc`,
 /// what 0.6 takes a game with no rule and no Switch saves for.
-pub fn record_for(key: &str, game: Option<&CloudGame>, oldest: Option<DateTime<Utc>>) -> GameRecord {
+pub fn record_for(key: &str, game: Option<&CloudGame>, oldest: Option<DateTime<Utc>>, old: bool) -> GameRecord {
     GameRecord {
         id: key.to_string(),
         name: name_of(key, game),
@@ -227,7 +247,7 @@ pub fn record_for(key: &str, game: Option<&CloudGame>, oldest: Option<DateTime<U
             format: game.map(line_format).unwrap_or_else(|| "pc".to_string()),
             scope: SCOPE_SHARED.to_string(),
             path: v2::line_dir(key, MAIN_LINE),
-            also: vec![v2::legacy_dir(key)],
+            also: if old { vec![v2::legacy_dir(key)] } else { Vec::new() },
             ..Default::default()
         }],
         created_at: oldest,
@@ -247,8 +267,8 @@ fn name_of(key: &str, game: Option<&CloudGame>) -> String {
 /// - A `format.json` that can't be understood: an error; nothing is
 ///   written.
 /// - Another device holds the lock and it hasn't expired: an error that
-///   says which and since when; nothing is written. An expired lock, or one
-///   this device left behind, is taken over.
+///   says which and since when ([`Busy`]); nothing is written. An expired
+///   lock, or one this device left behind, is taken over.
 /// - Otherwise the steps of the module documentation, `format.json` last.
 ///   An error on the way (no connection) leaves a cloud that is still of
 ///   layout 1 and that the next run finishes.
@@ -297,7 +317,7 @@ pub fn run(
 
     // One card per game. Every device that does this arrives at the same
     // records, so writing them again changes nothing.
-    let records: Vec<GameRecord> = found.iter().map(|f| record_for(&f.key, f.game.as_ref(), f.oldest)).collect();
+    let records: Vec<GameRecord> = found.iter().map(|f| record_for(&f.key, f.game.as_ref(), f.oldest, f.old)).collect();
     let duplicates = library::dedupe_with(&records, &|_, _| false);
     let mut order: Vec<&GameRecord> = Vec::with_capacity(records.len());
     let mut grouped: HashSet<&str> = HashSet::new();
@@ -331,6 +351,8 @@ struct Found {
     key: String,
     game: Option<CloudGame>,
     oldest: Option<DateTime<Utc>>,
+    /// The old folder has snapshots (some may be unreadable).
+    old: bool,
 }
 
 /// `games/<key>/game.json`, when 0.6 can read it.
@@ -391,7 +413,8 @@ fn upgrade_line(store: &dyn Store, key: &str, game: Option<CloudGame>, device_id
     }
 
     let oldest = snapshots.iter().map(|s| s.created_at).min();
-    Ok(Some(Found { key: key.to_string(), game, oldest }))
+    let old = !snapshots.is_empty() || !view.unreadable.is_empty();
+    Ok(Some(Found { key: key.to_string(), game, oldest, old }))
 }
 
 fn write_format(store: &dyn Store, device_id: &str, now: DateTime<Utc>) -> Result<()> {
@@ -445,12 +468,12 @@ fn read_lock(store: &dyn Store) -> Result<Option<LockInfo>> {
 impl<'a> Lock<'a> {
     fn take(store: &'a dyn Store, device_id: &str, device_name: &str, now: DateTime<Utc>) -> Result<Lock<'a>> {
         if let Some(l) = read_lock(store)?.filter(|l| l.expires > now && l.device_id != device_id) {
-            bail!(crate::tr!(
+            return Err(anyhow!(Busy(crate::tr!(
                 "「{}」正在升级云端的存储格式（从 {} 开始），请等它完成再试",
                 "\"{}\" is upgrading the cloud's storage layout (since {}). Try again when it has finished",
                 l.device_name,
                 l.since.with_timezone(&chrono::Local).format("%H:%M")
-            ));
+            ))));
         }
         let info = LockInfo {
             device_id: device_id.to_string(),
@@ -464,10 +487,10 @@ impl<'a> Lock<'a> {
         // Two devices writing at once: the last write wins, the other backs
         // off.
         if read_lock(store)?.map(|l| l.token) != Some(info.token.clone()) {
-            bail!(crate::tr!(
+            return Err(anyhow!(Busy(crate::tr!(
                 "另一台设备刚开始升级云端，请稍后再试",
                 "Another device just started upgrading the cloud. Try again later"
-            ));
+            ))));
         }
         let at = Instant::now();
         Ok(Lock { store, info, now, taken: at, written: at, released: false })
@@ -573,9 +596,9 @@ mod tests {
         let switch = CloudGame { saves: strings(&["{nxsave-0100e65002bb8000}/**"]), ..game("nx-sdv", "星露谷物语") };
         assert_eq!(record_ids(&switch), strings(&["nx:0100E65002BB8000", "name:星露谷物语", "rule:stardew-valley"]));
         // The two are one game through the rule, not through a name.
-        assert_eq!(record_for("sdv", Some(&steam), None).rule.as_deref(), Some("stardew-valley"));
-        assert_eq!(record_for("nx-sdv", Some(&switch), None).rule.as_deref(), Some("stardew-valley"));
-        assert_eq!(record_for("hades", Some(&game("hades", "Hades")), None).rule, None);
+        assert_eq!(record_for("sdv", Some(&steam), None, true).rule.as_deref(), Some("stardew-valley"));
+        assert_eq!(record_for("nx-sdv", Some(&switch), None, true).rule.as_deref(), Some("stardew-valley"));
+        assert_eq!(record_for("hades", Some(&game("hades", "Hades")), None, true).rule, None);
     }
 
     #[test]
@@ -635,7 +658,7 @@ mod tests {
     fn the_record_of_one_key() {
         let oldest = Utc.timestamp_opt(1_780_000_000, 0).unwrap();
         let fe = with_adapter("fe-fortunes-weave", " 火焰纹章：万缕千丝 ", "fe-fortunes-weave", &[]);
-        let r = record_for("fe-fortunes-weave", Some(&fe), Some(oldest));
+        let r = record_for("fe-fortunes-weave", Some(&fe), Some(oldest), true);
         let expected = GameRecord {
             id: "fe-fortunes-weave".into(),
             name: "火焰纹章：万缕千丝".into(),
@@ -657,12 +680,14 @@ mod tests {
         assert_eq!((r.rev, r.updated_at, r.updated_by.as_str(), r.merged_into.clone()), (0, None, "", None));
 
         // No `game.json`: the key for a name, no ids, a `pc` line.
-        let bare = record_for("old-game", None, None);
+        let bare = record_for("old-game", None, None, true);
         assert_eq!(bare.name, "old-game");
         assert!(bare.ids.is_empty() && bare.rule.is_none() && bare.created_at.is_none());
         assert_eq!(bare.lines[0].format, "pc");
         assert_eq!(bare.lines[0].also, strings(&["games/old-game/snapshots"]));
         // A name that is only spaces is none.
-        assert_eq!(record_for("k", Some(&game("k", "  ")), None).name, "k");
+        assert_eq!(record_for("k", Some(&game("k", "  ")), None, true).name, "k");
+        // Nothing in the old folder: the line doesn't read it.
+        assert!(record_for("new-game", None, None, false).lines[0].also.is_empty());
     }
 }
