@@ -22,7 +22,7 @@ use super::store::Store;
 use super::v2::{self, IndexEntry, LineIndex, Manifest, Pin, PinRef};
 use crate::vv::{self, Vv};
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -52,7 +52,7 @@ impl LineCache {
 #[derive(Debug, Clone, Default)]
 pub struct LineView {
     /// Every snapshot, oldest first. Snapshots of the 0.6 layout carry the
-    /// vector `{legacy: n}` here (they have none in the cloud).
+    /// vector [`legacy_vv`] gives them (they have none in the cloud).
     pub snapshots: Vec<IndexEntry>,
     /// Positions in `snapshots` of the versions nothing else contains: one
     /// normally, several when the line has forked, none when it is empty.
@@ -93,6 +93,18 @@ impl LineView {
         let i = self.snapshots.iter().position(|s| s.id == id)?;
         self.places.get(i).copied()
     }
+}
+
+/// The vector a snapshot of the 0.6 layout counts as having (it has none in
+/// the cloud): `{legacy: <when it was made, in milliseconds>}`.
+///
+/// That is the order 0.6 itself goes by, so the newest stays the newest.
+/// And it is a number that never changes: a place in the list would move
+/// when 0.6 cleans up an older snapshot, and what a device still on 0.6
+/// uploads afterwards could then get a number a newer version already
+/// "contains" without ever having seen it.
+pub fn legacy_vv(created_at: DateTime<Utc>) -> Vv {
+    Vv::legacy(u64::try_from(created_at.timestamp_millis()).unwrap_or(0).max(1))
 }
 
 /// Read the line in `dir`, using and updating `cache`.
@@ -225,12 +237,9 @@ pub fn load_all(store: &dyn Store, dirs: &[&str], cache: &mut LineCache) -> Resu
 
     let mut snapshots: Vec<IndexEntry> = cache.snapshots.values().cloned().collect();
     snapshots.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
-    // Snapshots of the 0.6 layout: numbered in the order they were made.
-    let mut legacy = 0;
     for s in snapshots.iter_mut() {
         if s.vv.is_empty() && !s.is_side() {
-            legacy += 1;
-            s.vv = Vv::legacy(legacy);
+            s.vv = legacy_vv(s.created_at);
         }
     }
     let heads = {

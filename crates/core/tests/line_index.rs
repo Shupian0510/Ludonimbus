@@ -313,7 +313,7 @@ fn snapshots_of_the_old_layout_keep_their_order() {
     let (view, _) = read(&store, &mut cache);
     let head = view.head().unwrap().clone();
     assert_eq!(head.id, id(3));
-    assert_eq!(head.vv, Vv::legacy(2));
+    assert_eq!(head.vv, line::legacy_vv(head.created_at));
 
     // The first snapshot of the new kind is made from it and becomes the
     // newest.
@@ -353,7 +353,7 @@ fn a_migrated_line_reads_the_old_folder_too() {
     assert_eq!(view.snapshots.len(), 3);
     assert_eq!(view.places, [1, 1, 1]);
     let head = view.head().unwrap().clone();
-    assert_eq!((head.id.as_str(), &head.vv), (id(3).as_str(), &Vv::legacy(3)));
+    assert_eq!((head.id.as_str(), &head.vv), (id(3).as_str(), &line::legacy_vv(head.created_at)));
     assert!(view.needs_index);
 
     // The first snapshot of the new kind goes to the new folder, built on

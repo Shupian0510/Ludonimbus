@@ -229,14 +229,10 @@ pub fn next_vv(bases: &[Vv], line: &LineView, device: &str, counter: u64) -> Vv 
 /// The base's vector, as far as it can be known.
 fn base_vv(base: &Base, line: &LineView) -> Vv {
     // Still in the line: what the line says. A snapshot of the 0.6 layout
-    // has no other vector than its place in this view.
+    // has no vector in the cloud, only the one the view gives it, and a
+    // device upgraded from 0.6 remembers none.
     if let Some(found) = line.get(&base.id).filter(|s| !s.vv.is_empty()) {
         return found.vv.clone();
-    }
-    // Gone. A remembered `{legacy: n}` was a place in an earlier view and
-    // says nothing about this one.
-    if base.vv.iter().all(|(device, _)| device == vv::LEGACY) {
-        return Vv::new();
     }
     base.vv.clone()
 }
