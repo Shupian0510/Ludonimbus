@@ -770,8 +770,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":
       return delay([
-        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(1) },
-        { id: "d-laptop", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(300) },
+        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(1), layout: 2 },
+        { id: "d-laptop", name: "LAPTOP", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(300), layout: 2 },
+        // Still on 0.6: its record says no layout.
+        { id: "d-handheld", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.6.2", lastSeen: ago(60 * 26) },
       ]);
     case "nx_status":
     case "nx_set_enabled":

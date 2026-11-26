@@ -690,6 +690,8 @@ export interface DeviceInfo {
   os: string;
   appVersion: string;
   lastSeen: string;
+  /** The newest cloud layout its Ludonimbus knows; missing for a version before 1.0. */
+  layout?: number;
 }
 
 export interface UpdateInfo {

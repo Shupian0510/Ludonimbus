@@ -325,6 +325,8 @@ export const devices: typeof Zh.devices = {
   noCloud: "No cloud connected yet",
   thisDevice: "This PC",
   lastSeen: (rel, at) => `Last seen ${rel} (${at})`,
+  outdated: "Needs an update",
+  outdatedHint: "Ludonimbus on this device is an older version: it can't see the saves newer versions store. The saves it uploads still arrive here, and when both sides have new progress you are asked which to keep. Update Ludonimbus on that device.",
 };
 
 export const pathField: typeof Zh.pathField = {

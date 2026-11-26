@@ -331,6 +331,8 @@ export const devices = {
   noCloud: "还没有连接云盘",
   thisDevice: "本机",
   lastSeen: (rel: string, at: string) => `最后在线 ${rel}（${at}）`,
+  outdated: "需要更新",
+  outdatedHint: "这台设备上的 Ludonimbus 是旧版本：它看不到新版本存下的存档。它传上来的存档这里照常能收到，两边都有新进度时会问留哪一份。在那台设备上更新 Ludonimbus 就好了。",
 };
 
 export const pathField = {
