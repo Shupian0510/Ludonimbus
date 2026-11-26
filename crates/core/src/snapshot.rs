@@ -33,6 +33,8 @@ pub enum Trigger {
     PreRestore,
     /// The side that lost a conflict.
     ConflictKeep,
+    /// A save someone shared, taken in beside the history ([`crate::share`]).
+    Shared,
     /// A kind of snapshot a newer Ludonimbus makes.
     #[serde(other)]
     Unknown,
@@ -50,6 +52,7 @@ impl Trigger {
             Trigger::Restore => "restore",
             Trigger::PreRestore => "pre-restore",
             Trigger::ConflictKeep => "conflict-keep",
+            Trigger::Shared => "shared",
             Trigger::Unknown => "unknown",
         }
     }
@@ -64,13 +67,14 @@ impl Trigger {
             "restore" => Trigger::Restore,
             "pre-restore" => Trigger::PreRestore,
             "conflict-keep" => Trigger::ConflictKeep,
+            "shared" => Trigger::Shared,
             _ => Trigger::Unknown,
         }
     }
 
     /// Mainline snapshots form the history; side snapshots never become head.
     pub fn is_mainline(self) -> bool {
-        !matches!(self, Trigger::PreRestore | Trigger::ConflictKeep)
+        !matches!(self, Trigger::PreRestore | Trigger::ConflictKeep | Trigger::Shared)
     }
     /// Kept forever by retention.
     pub fn is_pinned(self) -> bool {

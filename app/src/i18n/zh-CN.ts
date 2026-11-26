@@ -29,6 +29,7 @@ export const format = {
     restore: "恢复旧版本",
     "pre-restore": "恢复前保护",
     "conflict-keep": "冲突时保留",
+    shared: "别人分享的",
   } as Record<string, string>,
   status: {
     synced: "已同步",
@@ -480,6 +481,9 @@ export const saves = {
   deleted: "已移到「最近删除」",
   auto: (n: number) => `自动存档 ${n}`,
   autoHint: "每次玩完自动存的。只留最近的一些，另外每天留一份（数量在设置里改）。想一直留着的，点星标保留。",
+  import: "导入…",
+  importHint: "「导出」存出来的是一个 .lnsave 文件，可以发给别人。别人把它导入到同一个游戏里：只是多出一份保留的存档，不改本机的存档，要用时点「设为当前」。文件里没有你的设备名和文件夹。",
+  imported: "已导入，在保留的存档里",
   trash: "最近删除",
   trashCount: (n: number) => `最近删除 ${n}`,
   trashEmpty: "没有最近删除的存档",

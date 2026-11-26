@@ -1191,9 +1191,17 @@ button.save-main:hover:not(:disabled) {
   gap: 4px;
   font-size: 13px;
 }
-.saves-foot .saves-trash {
+.saves-foot .saves-more {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.saves-foot .saves-more .link {
   color: var(--text-2);
+}
+.saves-foot .saves-more .hint {
+  margin-right: 8px;
 }
 /* What a save was made on: the program's own logo and its name. */
 .platform-tag {

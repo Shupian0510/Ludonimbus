@@ -56,6 +56,7 @@ pub mod relocate;
 pub mod savelib;
 pub mod savefind;
 pub mod screenshots;
+pub mod share;
 pub mod snapshot;
 pub mod spec;
 pub mod state;
