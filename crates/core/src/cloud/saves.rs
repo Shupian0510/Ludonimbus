@@ -86,8 +86,8 @@ use crate::vv::Vv;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 fn not_found() -> anyhow::Error {
     anyhow!(crate::tr!("找不到这个版本", "This version wasn't found"))
@@ -112,6 +112,12 @@ fn check_id(id: &str) -> Result<()> {
         bail!(crate::tr!("无效的版本编号：{id}", "Invalid version id: {id}"));
     }
     Ok(())
+}
+
+/// Beside a staged pack once [`publish`] got it into the cloud: an upload
+/// of several packs that broke off goes on with the ones still missing.
+fn sent_mark(dir: &Path, pack: &str) -> PathBuf {
+    dir.join(format!("{pack}.sent"))
 }
 
 /// The packs `manifest` brings itself (`<id>`, `<id>-2`, ...), in the order
@@ -245,6 +251,10 @@ pub fn content_hash(files: &[LocalFile]) -> String {
 pub fn draft(place: &Place, draft: &Draft, files: &[LocalFile], base: Option<&Manifest>, policy: &packs::Policy) -> Manifest {
     let id = ulid::Ulid::from_datetime(std::time::SystemTime::from(draft.created_at)).to_string();
     let plan = packs::plan(&id, files, base, policy);
+    let mut extra = v2::Extra::new();
+    if !plan.sizes.is_empty() {
+        extra.insert(packs::PACK_SIZES.to_string(), serde_json::json!(plan.sizes));
+    }
     Manifest {
         v: v2::LAYOUT,
         id,
@@ -267,7 +277,7 @@ pub fn draft(place: &Place, draft: &Draft, files: &[LocalFile], base: Option<&Ma
         origin: draft.origin.clone(),
         requires: Vec::new(),
         app_version: crate::APP_VERSION.to_string(),
-        extra: v2::Extra::new(),
+        extra,
     }
 }
 
@@ -289,6 +299,8 @@ pub fn stage(manifest: &Manifest, files: &[LocalFile], dir: &Path) -> Result<()>
     remove_local(&json)?;
     let mut built = Vec::new();
     for pack in own_packs(manifest) {
+        // Built anew: what an earlier upload sent is not this zip.
+        let _ = std::fs::remove_file(sent_mark(dir, &pack));
         match packs::build(manifest, &pack, files, dir) {
             Ok(zip) => built.push(zip),
             Err(e) => {
@@ -336,6 +348,7 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
     let _ = std::fs::remove_file(dir.join(format!("{}.json.lntmp", manifest.id)));
     for pack in own_packs(manifest) {
         remove_local(&dir.join(format!("{pack}.zip")))?;
+        let _ = std::fs::remove_file(sent_mark(dir, &pack));
     }
     Ok(())
 }
@@ -345,7 +358,10 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
 /// In this order, each step only when the one before succeeded:
 ///
 /// 1. upload the snapshot's own packs from `dir` into the game's first
-///    folder, `<id>` first, then `<id>-2`, ...;
+///    folder, `<id>` first, then `<id>-2`, ...; of several packs, the ones
+///    an earlier call got through before it broke off are not sent again
+///    (one listing of the packs then, to see that they are still there and
+///    whole);
 /// 2. write the manifest into [`Place::dir`]: from here on the snapshot
 ///    exists;
 /// 3. [`packs::verify`] with `files`: a pack this manifest borrows that
@@ -377,7 +393,8 @@ pub fn publish(
         bail!(crate::tr!("这个游戏在云端没有文件夹", "This game has no folder in the cloud"));
     };
     // What `stage` built, not the save files: they may have changed since.
-    for pack in own_packs(manifest) {
+    let own = own_packs(manifest);
+    for pack in &own {
         let zip = dir.join(format!("{pack}.zip"));
         if !zip.is_file() {
             bail!(crate::tr!(
@@ -386,7 +403,25 @@ pub fn publish(
                 zip.display()
             ));
         }
-        store.upload(&v2::pack_path(folder, &pack), &zip)?;
+    }
+    // What an earlier call sent. The note of it is on this device, so the
+    // cloud is asked whether it still has those packs, as large as they
+    // are here: packs without a manifest are cleaned up once they look old,
+    // and the cloud may be another one by now.
+    let arrived: BTreeMap<String, u64> = match own.iter().any(|p| sent_mark(dir, p).is_file()) {
+        true => store.list(&v2::packs_dir(folder))?.into_iter().filter(|e| !e.is_dir).map(|e| (e.name, e.size)).collect(),
+        false => BTreeMap::new(),
+    };
+    for pack in &own {
+        let zip = dir.join(format!("{pack}.zip"));
+        let size = std::fs::metadata(&zip).map(|m| m.len()).ok();
+        if sent_mark(dir, pack).is_file() && size.is_some() && arrived.get(&format!("{pack}.zip")).copied() == size {
+            continue;
+        }
+        store.upload(&v2::pack_path(folder, pack), &zip)?;
+        if own.len() > 1 {
+            let _ = std::fs::write(sent_mark(dir, pack), b"");
+        }
     }
     line::write_manifest(store, home, manifest)?;
     // A folder of its own: a pack put back is built under its own name, which
