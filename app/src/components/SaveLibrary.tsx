@@ -360,7 +360,9 @@ function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overvi
 
   return (
     <Modal title={s.linkTitle} onClose={onClose}>
-      <p className="muted">{s.linkText(current.name)}</p>
+      <p className="muted">
+        {s.linkShort(current.name)} <Hint text={s.linkText(current.name)} />
+      </p>
       <div className="search">
         <Icon name="search" size={16} />
         <input autoFocus placeholder={s.linkSearch} value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -507,9 +509,21 @@ export function ApplyDialog({
                         : s.modeFiles}
               </p>
               {plan.fromXbox && plan.toXbox && <p>{s.modeFromXbox(plan.xboxRule)}</p>}
-              {plan.toXbox && <div className="banner banner-warn">{s.xboxSteps}</div>}
-              {plan.crossPlatform && <div className="banner banner-warn">{s.crossPlatform}</div>}
-              {plan.cloudTarget && <div className="banner banner-info">{s.cloudTarget}</div>}
+              {plan.toXbox && (
+                <div className="banner banner-warn">
+                  {s.xboxShort} <Hint text={s.xboxSteps} />
+                </div>
+              )}
+              {plan.crossPlatform && (
+                <div className="banner banner-warn">
+                  {s.crossShort} <Hint text={s.crossPlatform} />
+                </div>
+              )}
+              {plan.cloudTarget && (
+                <div className="banner banner-info">
+                  {s.cloudTargetShort} <Hint text={s.cloudTarget} />
+                </div>
+              )}
               {plan.tooNew ? (
                 <div className="banner banner-warn">{s.tooNew(plan.sourceVersion ?? "", plan.targetVersion ?? "")}</div>
               ) : (
