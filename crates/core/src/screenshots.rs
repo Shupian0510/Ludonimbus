@@ -4,8 +4,8 @@
 //! Steam:  userdata/<account>/760/remote/<gameid>/screenshots/<name>.jpg
 //!                                                 screenshots/thumbnails/<name>.jpg
 //!         <gameid> = (appid << 32) | 0x02000000 for non-Steam shortcuts
-//! Cloud:  games/<key>/screenshots/<device-id>/<name>.jpg
-//!         games/<key>/screenshots/<device-id>/thumbnails/<name>.jpg
+//! Cloud:  games/<folder>/screenshots/<device-id>/<name>.jpg
+//!         games/<folder>/screenshots/<device-id>/thumbnails/<name>.jpg
 //! ```
 //! A device uploads only the screenshots taken on it; screenshots of other
 //! devices are downloaded into this PC's folder of the same shortcut (its app
@@ -14,9 +14,16 @@
 //! Steam is not downloaded again and a downloaded one is not uploaded back
 //! as this device's.
 //!
+//! A game's gallery is what every folder of the game holds; an install
+//! uploads into one, in a folder per device named as
+//! [`crate::cloud::gamedata`] says (`<device-id>~<key>` for an install that
+//! joined a game recorded under another key). A screenshot's `device` is the
+//! name of the folder it is in.
+//!
 //! Steam owns `760/screenshots.vdf` and rewrites it while it runs, so only
 //! the files are placed; Steam picks them up when it scans the folder.
 
+use crate::cloud::gamedata::{self, Folders};
 use crate::cloud::store::{join, Store};
 use crate::config::{AppConfig, GameEntry, ScreenshotMode};
 use crate::{paths, steam, util};
@@ -25,6 +32,9 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// The folder of a game's screenshots.
+const KIND: &str = "screenshots";
 
 /// Steam's game id of a non-Steam shortcut (also used in `steam://rungameid/`).
 pub fn shortcut_gameid(appid: u32) -> u64 {
@@ -98,10 +108,6 @@ pub fn cache_file(key: &str, device: &str, name: &str, thumb: bool) -> PathBuf {
     }
 }
 
-fn cloud_dir(key: &str) -> String {
-    join(&["games", key, "screenshots"])
-}
-
 // ---------------------------------------------------------------------------
 // Sync
 
@@ -127,6 +133,19 @@ fn local_names(dir: &Path) -> Vec<String> {
     names
 }
 
+/// The folder of each device (each install) with screenshots of the game
+/// `at`, in every folder of the game: its path and its name. One listing per
+/// folder of the game.
+fn device_dirs(store: &dyn Store, at: &Folders) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    for (_, base) in at.read_dirs(KIND) {
+        for e in store.list(&base)?.into_iter().filter(|e| e.is_dir) {
+            out.push((join(&[&base, &e.name]), e.name));
+        }
+    }
+    Ok(out)
+}
+
 /// Download to a temporary name first so Steam never sees half a file.
 fn download_to(store: &dyn Store, path: &str, dest: &Path) -> Result<()> {
     if let Some(parent) = dest.parent() {
@@ -141,9 +160,16 @@ fn download_to(store: &dyn Store, path: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Upload this PC's new screenshots and, in [`ScreenshotMode::Sync`],
-/// download the other devices' into this PC's Steam folder.
+/// [`sync_at`] in the game's folders this device last learnt
+/// ([`Folders::remembered`]), for a caller that has only the store.
 pub fn sync(store: &dyn Store, cfg: &AppConfig, game: &GameEntry, log: &dyn Fn(String)) -> Result<Report> {
+    sync_at(store, cfg, &Folders::remembered(game), game, log)
+}
+
+/// Upload this PC's new screenshots and, in [`ScreenshotMode::Sync`],
+/// download the other devices' into this PC's Steam folder, from every
+/// folder of the game `at`.
+pub fn sync_at(store: &dyn Store, cfg: &AppConfig, at: &Folders, game: &GameEntry, log: &dyn Fn(String)) -> Result<Report> {
     let mut report = Report::default();
     if cfg.screenshots == ScreenshotMode::Off {
         return Ok(report);
@@ -156,7 +182,7 @@ pub fn sync(store: &dyn Store, cfg: &AppConfig, game: &GameEntry, log: &dyn Fn(S
     let mut record = load_record(key);
 
     // Upload what was taken here.
-    let own_dir = join(&[&cloud_dir(key), own]);
+    let own_dir = join(&[&at.write_dir(KIND), &at.own_name(own)]);
     let in_cloud: BTreeSet<String> = store
         .list(&own_dir)?
         .into_iter()
@@ -204,10 +230,10 @@ pub fn sync(store: &dyn Store, cfg: &AppConfig, game: &GameEntry, log: &dyn Fn(S
         return Ok(report);
     }
 
-    // Download the other devices' screenshots this PC has never had.
+    // Download the other devices' screenshots this PC has never had. Those
+    // of this device's other installs of the game are on this PC already.
     let local: BTreeSet<String> = local_names(&dir).into_iter().collect();
-    for dev in store.list(&cloud_dir(key))?.into_iter().filter(|e| e.is_dir && &e.name != own) {
-        let dev_dir = join(&[&cloud_dir(key), &dev.name]);
+    for (dev_dir, dev) in device_dirs(store, at)?.into_iter().filter(|(_, d)| gamedata::device_of(d) != own.as_str()) {
         let entries = store.list(&dev_dir)?;
         let has_thumbs = entries.iter().any(|e| e.is_dir && e.name == "thumbnails");
         let thumbs: BTreeSet<String> = if has_thumbs {
@@ -220,7 +246,7 @@ pub fn sync(store: &dyn Store, cfg: &AppConfig, game: &GameEntry, log: &dyn Fn(S
             BTreeSet::new()
         };
         for e in entries.iter().filter(|e| !e.is_dir && safe_name(&e.name)) {
-            let id = format!("{}/{}", dev.name, e.name);
+            let id = format!("{dev}/{}", e.name);
             if record.downloaded.contains(&id) {
                 continue;
             }
@@ -267,7 +293,9 @@ pub fn sync(store: &dyn Store, cfg: &AppConfig, game: &GameEntry, log: &dyn Fn(S
 #[serde(rename_all = "camelCase")]
 pub struct Shot {
     pub name: String,
-    /// Device that took it.
+    /// Device that took it: the name of its folder in the cloud, which is
+    /// `<device-id>~<key>` for some installs ([`gamedata::device_of`] gives
+    /// the device's id).
     pub device: String,
     pub device_name: Option<String>,
     pub size: u64,
@@ -279,10 +307,12 @@ pub struct Shot {
     pub has_thumb: bool,
 }
 
-/// Screenshots on this PC and in the cloud (when reachable), newest first.
-pub fn gallery(store: Option<&dyn Store>, cfg: &AppConfig, game: &GameEntry) -> Result<Vec<Shot>> {
+/// Screenshots on this PC and in the cloud (when reachable: in every folder
+/// of the game `at`), newest first.
+pub fn gallery(store: Option<&dyn Store>, cfg: &AppConfig, at: &Folders, game: &GameEntry) -> Result<Vec<Shot>> {
     let key = &game.key;
-    let own = cfg.device.id.clone();
+    // The folder this install uploads into.
+    let own = at.own_name(&cfg.device.id);
     let record = load_record(key);
     let dir = steam_dir(cfg, game);
     let mut shots: Vec<Shot> = Vec::new();
@@ -307,8 +337,7 @@ pub fn gallery(store: Option<&dyn Store>, cfg: &AppConfig, game: &GameEntry) -> 
         }
     }
     if let Some(store) = store {
-        for dev in store.list(&cloud_dir(key))?.into_iter().filter(|e| e.is_dir) {
-            let dev_dir = join(&[&cloud_dir(key), &dev.name]);
+        for (dev_dir, dev) in device_dirs(store, at)? {
             let entries = store.list(&dev_dir)?;
             let thumbs: BTreeSet<String> = if entries.iter().any(|e| e.is_dir && e.name == "thumbnails") {
                 store
@@ -320,7 +349,7 @@ pub fn gallery(store: Option<&dyn Store>, cfg: &AppConfig, game: &GameEntry) -> 
                 BTreeSet::new()
             };
             for e in entries.into_iter().filter(|e| !e.is_dir && safe_name(&e.name)) {
-                if let Some(s) = shots.iter_mut().find(|s| s.name == e.name && s.device == dev.name) {
+                if let Some(s) = shots.iter_mut().find(|s| s.name == e.name && s.device == dev) {
                     s.in_cloud = true;
                     continue;
                 }
@@ -328,8 +357,8 @@ pub fn gallery(store: Option<&dyn Store>, cfg: &AppConfig, game: &GameEntry) -> 
                     taken_at: taken_at(&e.name),
                     on_this_pc: false,
                     in_cloud: true,
-                    has_thumb: thumbs.contains(&e.name) || cache_file(key, &dev.name, &e.name, true).is_file(),
-                    device: dev.name.clone(),
+                    has_thumb: thumbs.contains(&e.name) || cache_file(key, &dev, &e.name, true).is_file(),
+                    device: dev.clone(),
                     device_name: None,
                     size: e.size,
                     name: e.name,
@@ -352,31 +381,41 @@ pub fn local_file(cfg: &AppConfig, game: &GameEntry, device: &str, name: &str, t
         .or_else(|| Some(cache_file(&game.key, device, name, thumb)).filter(|p| p.is_file()))
 }
 
-/// Download a cloud screenshot (or its thumbnail) into the cache. Falls back
-/// to the full image when the device uploaded no thumbnail.
-pub fn fetch(store: &dyn Store, cfg: &AppConfig, game: &GameEntry, device: &str, name: &str, thumb: bool) -> Result<PathBuf> {
+/// Download a cloud screenshot (or its thumbnail) of the game `at` into the
+/// cache. Falls back to the full image when the device uploaded no
+/// thumbnail. The device's folder is looked for in the game's folders in
+/// order: one download more per folder before the one that has it.
+pub fn fetch(store: &dyn Store, cfg: &AppConfig, at: &Folders, game: &GameEntry, device: &str, name: &str, thumb: bool) -> Result<PathBuf> {
     if let Some(p) = local_file(cfg, game, device, name, thumb) {
         return Ok(p);
     }
     anyhow::ensure!(safe_name(name) && !device.contains(['/', '\\', '.']), "bad screenshot name");
-    let dev_dir = join(&[&cloud_dir(&game.key), device]);
     let dest = cache_file(&game.key, device, name, thumb);
     if thumb {
-        if download_to(store, &join(&[&dev_dir, "thumbnails", name]), &dest).is_ok() {
-            return Ok(dest);
+        for (_, base) in at.read_dirs(KIND) {
+            match download_to(store, &join(&[&base, device, "thumbnails", name]), &dest) {
+                Ok(()) => return Ok(dest),
+                Err(e) if crate::cloud::is_unavailable(&e) => break,
+                Err(_) => {}
+            }
         }
-        let full = fetch(store, cfg, game, device, name, false)?;
-        return Ok(full);
+        return fetch(store, cfg, at, game, device, name, false);
     }
-    download_to(store, &join(&[&dev_dir, name]), &dest)?;
-    Ok(dest)
+    let mut failed = None;
+    for (_, base) in at.read_dirs(KIND) {
+        match download_to(store, &join(&[&base, device, name]), &dest) {
+            Ok(()) => return Ok(dest),
+            Err(e) if crate::cloud::is_unavailable(&e) => return Err(e),
+            Err(e) => failed = Some(e),
+        }
+    }
+    Err(failed.unwrap_or_else(|| anyhow::anyhow!(crate::tr!("云端没有这张截图", "This screenshot isn't in the cloud"))))
 }
 
-/// Space the game's screenshots use in the cloud.
-pub fn cloud_usage(store: &dyn Store, key: &str) -> Result<u64> {
+/// Space the game's screenshots use in the cloud, in all its folders.
+pub fn cloud_usage(store: &dyn Store, at: &Folders) -> Result<u64> {
     let mut total = 0;
-    for dev in store.list(&cloud_dir(key))?.into_iter().filter(|e| e.is_dir) {
-        let dev_dir = join(&[&cloud_dir(key), &dev.name]);
+    for (dev_dir, _) in device_dirs(store, at)? {
         for e in store.list(&dev_dir)? {
             if e.is_dir {
                 total += store.list(&join(&[&dev_dir, &e.name]))?.iter().map(|x| x.size).sum::<u64>();

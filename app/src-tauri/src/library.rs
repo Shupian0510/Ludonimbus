@@ -198,7 +198,9 @@ fn push_art(key: &str) {
         let Ok(cfg) = config::load() else { return };
         let Some(g) = cfg.game(&key).cloned() else { return };
         if let Ok(Some(cloud)) = ludonimbus_core::cloud::open(&cfg) {
-            if let Err(e) = ludonimbus_core::artsync::push(cloud.files(), &cfg, &g) {
+            let result = ludonimbus_core::cloud::gamedata::Folders::of(&cloud, &key)
+                .and_then(|at| ludonimbus_core::artsync::push(cloud.files(), &cfg, &at, &g));
+            if let Err(e) = result {
                 ludonimbus_core::logger::log("app", format!("{key}: artwork upload failed: {e:#}"));
             }
         }

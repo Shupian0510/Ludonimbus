@@ -290,7 +290,7 @@ fn local_of(local: &LocalState, st: &GameState) -> Local {
 }
 
 /// Where the saves of a game come from, for the manifest's `platform`.
-fn platform(game: &GameEntry) -> String {
+pub(crate) fn platform(game: &GameEntry) -> String {
     match game.adapter.as_deref().and_then(crate::adapters::find) {
         Some(a) if a.is_emulator() => format!("emu:{}", a.key),
         Some(a) => format!("recomp:{}", a.key),
@@ -749,16 +749,25 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &Cloud, game: &GameEntry) {
     if due && cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
         let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
     }
+    // Playtime and artwork are the game's: in its record's folders. Known
+    // without a request once the game has synced.
+    let at = match cloud::gamedata::Folders::of(cloud, &game.key) {
+        Ok(at) => at,
+        Err(e) => {
+            logger::log("sync", format!("{}: the game's folders are unknown: {e:#}", game.key));
+            return;
+        }
+    };
     // Upload this device's playtime, fetch the other devices'.
-    if let Err(e) = crate::playtime::sync(cloud.files(), &ctx.cfg, &game.key) {
+    if let Err(e) = crate::playtime::sync(cloud.files(), &ctx.cfg, &at) {
         logger::log("sync", format!("{}: playtime sync failed: {e:#}", game.key));
     }
     // Artwork: send what this device shows, fetch what it has none of.
-    if let Err(e) = crate::artsync::push(cloud.files(), &ctx.cfg, game) {
+    if let Err(e) = crate::artsync::push(cloud.files(), &ctx.cfg, &at, game) {
         logger::log("sync", format!("{}: artwork upload failed: {e:#}", game.key));
     }
     if crate::artsync::KINDS.iter().any(|k| crate::artsync::shown(&ctx.cfg, game, k).is_none()) {
-        if let Err(e) = crate::artsync::pull(cloud.files(), &ctx.cfg, &game.key, Some(game)) {
+        if let Err(e) = crate::artsync::pull(cloud.files(), &ctx.cfg, &at, Some(game)) {
             logger::log("sync", format!("{}: artwork download failed: {e:#}", game.key));
         }
     }

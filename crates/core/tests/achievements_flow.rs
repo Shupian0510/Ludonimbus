@@ -4,6 +4,7 @@
 //! through an environment variable.
 
 use ludonimbus_core::achievements::{self, cloud, Binding, SourceKind};
+use ludonimbus_core::cloud::gamedata::Folders;
 use ludonimbus_core::cloud::local::LocalFolder;
 use ludonimbus_core::cloud::store::Store;
 use ludonimbus_core::config::{AppConfig, GameEntry};
@@ -91,8 +92,8 @@ fn two_devices() {
     assert!(v.items[0].has_icon);
     assert!(achievements::icon_data_url(&achievements::icon_path("demo", "2").unwrap()).unwrap().starts_with("data:image/png;base64,"));
 
-    assert!(cloud::push(&repo, "demo", "dev-a", "Desktop").unwrap());
-    assert!(!cloud::push(&repo, "demo", "dev-a", "Desktop").unwrap(), "unchanged: nothing written");
+    assert!(cloud::push(&repo, &Folders::of_key("demo"), "dev-a", "Desktop").unwrap());
+    assert!(!cloud::push(&repo, &Folders::of_key("demo"), "dev-a", "Desktop").unwrap(), "unchanged: nothing written");
     let files: Vec<String> = repo.list("games/demo/achievements").unwrap().into_iter().map(|e| e.name).collect();
     assert!(files.contains(&"dev-a.json".to_string()) && files.contains(&"schema.json".to_string()));
     let schema = String::from_utf8(repo.read("games/demo/achievements/schema.json").unwrap().unwrap()).unwrap();
@@ -100,7 +101,7 @@ fn two_devices() {
 
     // --- Device B: no source of its own yet; sees A's records.
     let cfg_b = device(&tmp.path().join("home-b"), "dev-b", "Laptop");
-    assert_eq!(cloud::pull(&repo, "demo", "dev-b").unwrap(), 2);
+    assert_eq!(cloud::pull(&repo, &Folders::of_key("demo"), "dev-b").unwrap(), 2);
     let v = achievements::view("demo");
     assert_eq!((v.total, v.unlocked), (3, 2));
     assert_eq!(v.items[0].device_name.as_deref(), Some("Desktop"));
@@ -111,13 +112,13 @@ fn two_devices() {
     fs::write(set_b.join("TROPCONF.SFM"), CONF).unwrap();
     fs::write(set_b.join("TROPUSR.DAT"), tropusr(&[(0, 1_763_950_000), (1, 1_763_700_000)])).unwrap();
     achievements::link(&cfg_b, &game, Binding { source: SourceKind::Rpcs3, source_id: "NPWR00001_00".into(), path: Some(set_b), popup: None }).unwrap();
-    cloud::sync(&repo, "demo", "dev-b", "Laptop").unwrap();
+    cloud::sync(&repo, &Folders::of_key("demo"), "dev-b", "Laptop").unwrap();
     let v = achievements::view("demo");
     assert_eq!(v.unlocked, 3);
 
     // --- Back on A: merge B's records; trophy 1 now belongs to B (earlier).
     std::env::set_var("LUDONIMBUS_HOME", tmp.path().join("home-a"));
-    cloud::pull(&repo, "demo", "dev-a").unwrap();
+    cloud::pull(&repo, &Folders::of_key("demo"), "dev-a").unwrap();
     let v = achievements::view("demo");
     assert_eq!(v.unlocked, 3);
     let first = v.items.iter().find(|i| i.id == "1").unwrap();
@@ -130,7 +131,7 @@ fn two_devices() {
     achievements::link(&cfg_a, &game, Binding { source: SourceKind::Rpcs3, source_id: "NPWR00001_00".into(), path: Some(set_a.clone()), popup: None }).unwrap();
     fs::write(set_a.join("TROPUSR.DAT"), tropusr(&[(0, 1_764_000_000)])).unwrap();
     achievements::refresh(&cfg_a, &game, true).unwrap();
-    cloud::push(&repo, "demo", "dev-a", "Desktop").unwrap();
+    cloud::push(&repo, &Folders::of_key("demo"), "dev-a", "Desktop").unwrap();
     let file: cloud::DeviceFile = serde_json::from_slice(&repo.read("games/demo/achievements/dev-a.json").unwrap().unwrap()).unwrap();
     let mut ids: Vec<&str> = file.unlocks.iter().map(|u| u.id.as_str()).collect();
     ids.sort();

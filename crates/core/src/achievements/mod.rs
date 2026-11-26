@@ -5,9 +5,12 @@
 //! ```text
 //! %APPDATA%\Ludonimbus\achievements\settings.json    RA user, per-game sources, popup settings
 //! %APPDATA%\Ludonimbus\achievements\<key>.json       cached definitions + merged unlocks
-//! cloud: games/<key>/achievements/<device-id>.json   this device's unlocks (append-only)
-//!        games/<key>/achievements/schema.json        definitions (icons stay local)
+//! cloud: games/<folder>/achievements/<device-id>.json   this device's unlocks (append-only)
+//!        games/<folder>/achievements/schema.json        definitions (icons stay local)
 //! ```
+//!
+//! `<folder>`: every folder of the game's record is read, one is written
+//! to ([`crate::cloud::gamedata`]).
 //!
 //! - [`retro`]  RetroAchievements Web API (read-only, user's own key)
 //! - [`trophy`] PS trophy files: shadPS4, Lantern Engine, RPCS3
@@ -456,7 +459,9 @@ pub fn after_exit(ctx: &crate::sync::Ctx, game: &GameEntry) {
 /// Merge other devices' records and upload this device's. Errors are logged.
 pub fn sync_cloud(ctx: &crate::sync::Ctx, key: &str) {
     let Ok(cloud) = ctx.cloud() else { return };
-    if let Err(e) = cloud::sync(cloud.files(), key, &ctx.cfg.device.id, &ctx.cfg.device.name) {
+    let result = crate::cloud::gamedata::Folders::of(cloud, key)
+        .and_then(|at| cloud::sync(cloud.files(), &at, &ctx.cfg.device.id, &ctx.cfg.device.name));
+    if let Err(e) = result {
         log(format!("{key}: achievement cloud sync failed: {e:#}"));
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::{art, busy, watcher};
 use anyhow::{anyhow, bail, Result};
+use ludonimbus_core::cloud::gamedata::{self, Folders};
 use ludonimbus_core::cloud::{self, oauth, AccountInfo, CloudGame, DeviceInfo};
 use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention};
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
@@ -1335,9 +1336,12 @@ pub async fn screenshot_gallery(key: String) -> CmdResult<GalleryView> {
         let ctx = Ctx::load()?;
         let g = ctx.game(&key)?;
         let cloud = ctx.cloud().ok();
-        let (mut shots, cloud_error) = match screenshots::gallery(cloud.map(|c| c.files()), &ctx.cfg, &g) {
+        // Every folder of the game in the cloud: what this device last learnt
+        // when the cloud can't be asked.
+        let at = cloud.and_then(|c| Folders::of(c, &key).ok()).unwrap_or_else(|| Folders::remembered(&g));
+        let (mut shots, cloud_error) = match screenshots::gallery(cloud.map(|c| c.files()), &ctx.cfg, &at, &g) {
             Ok(s) => (s, None),
-            Err(e) => (screenshots::gallery(None, &ctx.cfg, &g)?, Some(format!("{e:#}"))),
+            Err(e) => (screenshots::gallery(None, &ctx.cfg, &at, &g)?, Some(format!("{e:#}"))),
         };
         let mut names: BTreeMap<String, String> = cloud
             .and_then(|c| c.list_devices().ok())
@@ -1347,7 +1351,7 @@ pub async fn screenshot_gallery(key: String) -> CmdResult<GalleryView> {
             .collect();
         names.insert(ctx.cfg.device.id.clone(), ctx.cfg.device.name.clone());
         for s in &mut shots {
-            s.device_name = names.get(&s.device).cloned();
+            s.device_name = names.get(gamedata::device_of(&s.device)).cloned();
         }
         let cloud_bytes = shots.iter().filter(|s| s.in_cloud).map(|s| s.size).sum();
         Ok(GalleryView {
@@ -1378,7 +1382,10 @@ pub async fn screenshot_fetch(key: String, device: String, name: String, thumb: 
         let g = ctx.game(&key)?;
         let file = match screenshots::local_file(&ctx.cfg, &g, &device, &name, thumb) {
             Some(f) => f,
-            None => screenshots::fetch(ctx.cloud()?.files(), &ctx.cfg, &g, &device, &name, thumb)?,
+            None => {
+                let cloud = ctx.cloud()?;
+                screenshots::fetch(cloud.files(), &ctx.cfg, &Folders::of(cloud, &key)?, &g, &device, &name, thumb)?
+            }
         };
         Ok(art::shot_url(&key, &device, &name, thumb, &file))
     })

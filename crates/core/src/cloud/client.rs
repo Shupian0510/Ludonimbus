@@ -722,6 +722,13 @@ impl Cloud {
         Ok(true)
     }
 
+    /// The folders under `games/` of the game `key` is an install of: those
+    /// of its record, where its playtime, achievements, screenshots and
+    /// artwork are ([`super::gamedata`]). What [`Cloud::place`] costs.
+    pub fn game_folders(&self, key: &str) -> Result<Vec<String>> {
+        Ok(self.place(key)?.folders)
+    }
+
     fn kept_cache(key: &str, place: &Place) -> LineCache {
         std::fs::read(line_file(key))
             .ok()

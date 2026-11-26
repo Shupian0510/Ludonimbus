@@ -5,6 +5,7 @@
 use crate::commands::{blocking, cloud_only_views, CloudOnlyView, CmdResult};
 use crate::{busy, watcher};
 use anyhow::bail;
+use ludonimbus_core::cloud::gamedata::Folders;
 use ludonimbus_core::gamebackup::{self, remote};
 use ludonimbus_core::sync::{Ctx, Outcome};
 use ludonimbus_core::{artsync, config, logger, playtime, process, savelib, tr, transfer};
@@ -33,10 +34,11 @@ pub async fn refresh_cloud_library() -> CmdResult<CloudLibrary> {
         if ctx.has_cloud() {
             match ctx.cloud().and_then(|c| savelib::refresh(&ctx.cfg, c)) {
                 Ok(list) => {
-                    let store = ctx.cloud()?.files();
+                    let cloud = ctx.cloud()?;
                     for cg in list.games.iter().filter(|c| ctx.cfg.game(&c.key).is_none()) {
                         if ludonimbus_core::localart::file(&cg.key, "cover").is_none() {
-                            if let Err(e) = artsync::pull(store, &ctx.cfg, &cg.key, None) {
+                            let result = Folders::of(cloud, &cg.key).and_then(|at| artsync::pull(cloud.files(), &ctx.cfg, &at, None));
+                            if let Err(e) = result {
                                 logger::log("app", format!("{}: artwork download failed: {e:#}", cg.key));
                             }
                         }
@@ -81,9 +83,13 @@ pub struct CloudGameInfo {
 pub async fn cloud_game_info(key: String) -> CmdResult<CloudGameInfo> {
     blocking(move || {
         let ctx = Ctx::load()?;
-        let store = ctx.cloud()?.files();
-        let playtime = playtime::sync(store, &ctx.cfg, &key).unwrap_or_else(|_| playtime::summary(&ctx.cfg, &key));
-        let _ = artsync::pull(store, &ctx.cfg, &key, None);
+        let cloud = ctx.cloud()?;
+        let store = cloud.files();
+        // The game's folders; its key's own when the cloud can't say (a game
+        // only the cloud has).
+        let at = Folders::of(cloud, &key).unwrap_or_else(|_| Folders::of_key(&key));
+        let playtime = playtime::sync(store, &ctx.cfg, &at).unwrap_or_else(|_| playtime::summary(&ctx.cfg, &key));
+        let _ = artsync::pull(store, &ctx.cfg, &at, None);
         let game_backup = gamebackup::open(&ctx.cfg)
             .and_then(|p| remote::list_versions(p.files(), &key))
             .ok()

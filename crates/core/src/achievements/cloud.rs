@@ -1,24 +1,30 @@
 //! Achievements in the cloud, append-only like `devices/`:
 //!
 //! ```text
-//! games/<key>/achievements/<device-id>.json   this device's unlocks; only this device writes it
-//! games/<key>/achievements/schema.json        definitions, without local icon paths
+//! games/<folder>/achievements/<device-id>.json   this install's unlocks; only it writes the file
+//! games/<folder>/achievements/schema.json        definitions, without local icon paths
 //! ```
 //!
 //! A device file only ever gains entries, so resetting trophies on one PC
-//! never erases another's records. All device files are merged; the
-//! earliest unlock of an achievement wins. Same style as playtime
-//! (`games/<key>/playtime/<device-id>.json`). Everything goes through the
-//! cloud's path-based [`Store`] (`CloudProvider::files()`); other devices'
-//! files are only downloaded again when their change tag moved.
+//! never erases another's records. All device files of every folder of the
+//! game are merged; the earliest unlock of an achievement wins. Which
+//! folder an install writes to, and under which name, is
+//! [`crate::cloud::gamedata`], as for playtime. The definitions are one copy
+//! per game: read from the first folder that has them. Everything goes
+//! through the cloud's path-based [`Store`] ([`crate::cloud::Cloud::files`]);
+//! other devices' files are only downloaded again when their change tag
+//! moved.
 
 use super::{GameDb, Schema, Unlock};
+use crate::cloud::gamedata::{self, Folders};
 use crate::cloud::store::{join, Store};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 const SCHEMA: &str = "schema.json";
+/// The folder of a game's achievement files.
+const KIND: &str = "achievements";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -27,10 +33,6 @@ pub struct DeviceFile {
     pub device_name: String,
     pub updated_at: Option<DateTime<Utc>>,
     pub unlocks: Vec<Unlock>,
-}
-
-fn dir(key: &str) -> String {
-    join(&["games", key, "achievements"])
 }
 
 fn hash(bytes: &[u8]) -> String {
@@ -48,36 +50,56 @@ fn portable(schema: &Schema) -> Schema {
     s
 }
 
-/// Read the other devices' files and merge them into the local database.
-/// Returns how many unlocks were added or moved earlier.
-pub fn pull(files: &dyn Store, key: &str, device: &str) -> Result<usize> {
-    let d = dir(key);
-    let entries = files.list(&d)?;
-    let known = super::load_db(key).remote_tags;
+/// Read the other installs' files, in every folder of the game `at`, and
+/// merge them into the local database. Returns how many unlocks were added
+/// or moved earlier.
+pub fn pull(files: &dyn Store, at: &Folders, device: &str) -> Result<usize> {
+    let key = at.key();
+    let db = super::load_db(key);
     let mut read = Vec::new();
     let mut tags = Vec::new();
-    for e in entries.iter().filter(|e| !e.is_dir && e.name.ends_with(".json") && e.name != SCHEMA) {
-        if e.name.trim_end_matches(".json") == device {
-            continue;
+    // The definitions of the first folder that has them.
+    let mut schema_at: Option<(&str, String)> = None;
+    for (folder, d) in at.read_dirs(KIND) {
+        let entries = files.list(&d)?;
+        if schema_at.is_none() && entries.iter().any(|e| !e.is_dir && e.name == SCHEMA) {
+            schema_at = Some((folder, join(&[&d, SCHEMA])));
         }
-        if !e.tag.is_empty() && known.get(&e.name) == Some(&e.tag) {
-            continue;
-        }
-        if let Some(bytes) = files.read(&join(&[&d, &e.name]))? {
-            if let Ok(f) = serde_json::from_slice::<DeviceFile>(&bytes) {
-                read.push(f);
-                tags.push((e.name.clone(), e.tag.clone()));
+        for e in entries.iter().filter(|e| !e.is_dir && e.name != SCHEMA) {
+            let Some(stem) = e.name.strip_suffix(".json") else { continue };
+            if at.is_own(folder, stem, device) {
+                continue;
+            }
+            let name = at.local_name(folder, &e.name);
+            if !e.tag.is_empty() && db.remote_tags.get(&name) == Some(&e.tag) {
+                continue;
+            }
+            if let Some(bytes) = files.read(&join(&[&d, &e.name]))? {
+                if let Ok(mut f) = serde_json::from_slice::<DeviceFile>(&bytes) {
+                    if f.device.is_empty() {
+                        f.device = gamedata::device_of(stem).to_string();
+                    }
+                    read.push(f);
+                    tags.push((name, e.tag.clone()));
+                }
             }
         }
     }
-    let need_schema = super::load_db(key).schema.is_none() && entries.iter().any(|e| e.name == SCHEMA);
-    let schema = if need_schema {
-        files.read(&join(&[&d, SCHEMA]))?.and_then(|b| serde_json::from_slice::<Schema>(&b).ok())
-    } else {
-        None
+    let (schema, from) = match schema_at.filter(|_| db.schema.is_none()) {
+        Some((folder, path)) => (files.read(&path)?.and_then(|b| serde_json::from_slice::<Schema>(&b).ok()), folder),
+        None => (None, at.own()),
+    };
+    // Definitions read from another of the game's folders count as uploaded:
+    // pushing them would copy them into this install's folder.
+    let copied = match schema.as_ref().filter(|_| from != at.own()) {
+        Some(s) => Some(hash(&serde_json::to_vec_pretty(&portable(s))?)),
+        None => None,
     };
     super::update_db(key, |db| {
         db.remote_tags.extend(tags);
+        if db.schema.is_none() && copied.is_some() {
+            db.uploaded_schema = copied;
+        }
         merge_files(db, &read, schema)
     })
 }
@@ -97,8 +119,11 @@ fn merge_files(db: &mut GameDb, files: &[DeviceFile], schema: Option<Schema>) ->
     changed
 }
 
-/// Upload this device's unlocks (and the definitions) when they changed.
-pub fn push(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Result<bool> {
+/// Upload this install's unlocks (and the definitions) when they changed,
+/// into the folder of the game `at` it writes to.
+pub fn push(files: &dyn Store, at: &Folders, device: &str, device_name: &str) -> Result<bool> {
+    let key = at.key();
+    let dir = at.write_dir(KIND);
     let db = super::load_db(key);
     let mut wrote = false;
     if !db.mine.is_empty() {
@@ -112,7 +137,7 @@ pub fn push(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Re
         if db.uploaded.as_deref() != Some(h.as_str()) {
             // Never drop entries another run of this device uploaded before
             // (e.g. after the local database was deleted).
-            let path = join(&[&dir(key), &format!("{device}.json")]);
+            let path = join(&[&dir, &format!("{}.json", at.own_name(device))]);
             let mut out = file;
             if let Some(old) = files.read(&path)?.and_then(|b| serde_json::from_slice::<DeviceFile>(&b).ok()) {
                 for u in old.unlocks {
@@ -131,7 +156,7 @@ pub fn push(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Re
         let body = serde_json::to_vec_pretty(&portable(schema))?;
         let h = hash(&body);
         if db.uploaded_schema.as_deref() != Some(h.as_str()) {
-            files.write(&join(&[&dir(key), SCHEMA]), &body)?;
+            files.write(&join(&[&dir, SCHEMA]), &body)?;
             super::update_db(key, |db| db.uploaded_schema = Some(h))?;
             wrote = true;
         }
@@ -140,9 +165,9 @@ pub fn push(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Re
 }
 
 /// Pull, then push.
-pub fn sync(files: &dyn Store, key: &str, device: &str, device_name: &str) -> Result<()> {
-    pull(files, key, device)?;
-    push(files, key, device, device_name)?;
+pub fn sync(files: &dyn Store, at: &Folders, device: &str, device_name: &str) -> Result<()> {
+    pull(files, at, device)?;
+    push(files, at, device, device_name)?;
     Ok(())
 }
 

@@ -10,14 +10,17 @@
 //! <root>/games/<folder>/game.json                  the save rules, as 0.6 wrote them
 //! <root>/games/<folder>/snapshots/<ULID>.zip       (+ .json) what 0.6 wrote, left where it is
 //! <root>/games/<folder>/playtime/<device-id>.json
+//! <root>/games/<folder>/achievements/<device-id>.json (+ schema.json)
 //! <root>/games/<folder>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
+//! <root>/games/<folder>/art/art.json               (+ the images)
 //! ```
 //!
 //! Every backend, Google Drive included, only implements the small
 //! path-based [`store::Store`] trait. [`Cloud`] is what the program talks
 //! to: the store, the layout on top of it ([`saves`], [`library`],
 //! [`upgrade`]) and what this device remembers of it. Data that is not a
-//! save snapshot (playtime, screenshots, ...) goes through [`Cloud::files`].
+//! save snapshot (playtime, screenshots, ...) goes through [`Cloud::files`],
+//! in the folders [`gamedata`] says: all of the game's to read, one to write.
 //!
 //! [`repo::Repo`] and [`CloudProvider`] are the layout of 0.6, kept as it
 //! was: tests use them to act as a device that has not been updated.
@@ -26,6 +29,7 @@ pub mod baidu;
 pub mod cached;
 pub mod client;
 pub mod decide;
+pub mod gamedata;
 pub mod gdrive;
 pub mod library;
 pub mod line;
