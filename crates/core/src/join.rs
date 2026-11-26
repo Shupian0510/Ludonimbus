@@ -25,6 +25,12 @@
 //! are no longer uploaded; the suggestion lists them. A line that has a file
 //! this version has no folder for is not joined, and a version that meets
 //! one later stops before anything is written ([`NoPlace`]).
+//!
+//! The Xbox app's version takes part the same way through its save
+//! containers: its files are the containers' files under the names the
+//! other versions use, and its bindings say so ([`bind::Codec::Wgs`]).
+//! Writing into the containers is experimental and only done when the user
+//! asks for it (`sync`'s rule for syncs nobody chose).
 
 use crate::bind::{self, Bind, Proposal};
 use crate::cloud::saves;
@@ -32,7 +38,7 @@ use crate::cloud::{library, upgrade, Cloud, CloudGame};
 use crate::config::{self, GameEntry};
 use crate::snapshot::{self, Trigger};
 use crate::sync::{self, Ctx, Gate, Outcome, Resolution};
-use crate::{logger, state};
+use crate::{logger, state, wgs};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -147,12 +153,19 @@ fn suggest(s: Proposal, record: &str, def: &str, head: &crate::cloud::v2::IndexE
 /// looked at, with why not. Costs the game records (one listing, when not
 /// read within the last minute) and, for each line looked at, its listing
 /// and the manifest of its newest version.
+///
+/// An Xbox app version is compared by the files in its containers, under
+/// the names the game's other versions use; the bindings into its container
+/// folder read and write the containers ([`bind::Codec::Wgs`]). A line that
+/// holds an Xbox app version's containers as they are (one that began with
+/// such a version) is not suggested: those files are one PC's containers,
+/// and no other version has them.
 pub fn suggestion(ctx: &Ctx, game: &GameEntry) -> Result<Option<Suggestion>> {
     if !game.bind.is_empty() {
         return Ok(None);
     }
     let cloud = ctx.cloud()?;
-    let here: Vec<String> = snapshot::scan_own(game).map(|(files, _)| files.into_iter().map(|f| f.logical).collect()).unwrap_or_default();
+    let (here, containers) = snapshot::scan_named(game).unwrap_or_default();
     let mut first: Option<Suggestion> = None;
     for (record, line, place, confirmed) in cloud.lines_to_ask(&game.key)? {
         let Some(def) = line.def.clone().filter(|d| !game.declined.contains(d)) else { continue };
@@ -160,6 +173,12 @@ pub fn suggestion(ctx: &Ctx, game: &GameEntry) -> Result<Option<Suggestion>> {
         let Some(head) = view.head_entries().last().cloned() else { continue };
         let manifest = saves::manifest(cloud.files(), &place, &view, &head.id)?;
         let canon: Vec<String> = manifest.files.iter().map(|f| f.path.clone()).collect();
+        if !wgs::user_dirs(canon.iter().map(String::as_str)).is_empty() {
+            continue;
+        }
+        // Bindings confirmed elsewhere that this build can use, with the
+        // container folders of this device.
+        let confirmed = confirmed.filter(|map| bind::known(map)).map(|map| bind::rebase(&map, &containers));
         let s = match &confirmed {
             Some(map) => {
                 let p = bind::measure(map, &canon, &here);
@@ -167,12 +186,16 @@ pub fn suggestion(ctx: &Ctx, game: &GameEntry) -> Result<Option<Suggestion>> {
                 suggest(p, &record, &def, &head, true, fit)
             }
             None => {
-                let p = bind::propose(&canon, &here);
-                let fit = match (here.is_empty(), p.usable()) {
-                    (true, _) => Fit::NeedsSaves,
-                    (false, true) => Fit::Ready,
-                    (false, false) => Fit::NoMatch,
+                let mut p = bind::propose(&canon, &here);
+                let read = bind::with_containers(&p.binds, &containers);
+                let fit = match (here.is_empty(), p.usable(), &read) {
+                    (true, _, _) => Fit::NeedsSaves,
+                    (false, true, Some(_)) => Fit::Ready,
+                    _ => Fit::NoMatch,
                 };
+                if let Some(binds) = read {
+                    p.binds = binds;
+                }
                 suggest(p, &record, &def, &head, false, fit)
             }
         };
@@ -315,6 +338,10 @@ pub(crate) fn auto(cloud: &Cloud, game: &GameEntry) -> Option<GameEntry> {
         return None;
     }
     let (record, binds) = cloud.bound_line(key).ok()??;
+    // A newer Ludonimbus confirmed them: this one can't use them.
+    if !bind::known(&binds) {
+        return None;
+    }
     let entry = change(key, |g| {
         g.record = Some(record.clone());
         g.bind = binds.clone();

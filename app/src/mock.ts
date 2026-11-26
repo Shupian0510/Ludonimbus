@@ -193,6 +193,7 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     family: key,
     link: null,
     joined: false,
+    xboxContainers: false,
     replaced: null,
     store: null,
     ...extra,
@@ -609,7 +610,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         createdAt: ago(60 * 5),
         confirmed: false,
         fit: "ready",
-        binds: [{ canon: "saves", local: "C:\\Users\\me\\Saved Games\\id Software\\DOOMEternal\\base\\savegame" }],
+        // Through its save containers: the files in them under the other version's names.
+        binds: [{ canon: "home/Saved Games/id Software/DOOMEternal/base/savegame", local: "localappdata/Packages/BethesdaSoftworks.DOOMEternal-PC_3275kfvn8vcwc/SystemAppData/wgs/0009_00AB", codec: "wgs" }],
         matched: 6,
         onlyInLine: 0,
         onlyHere: 1,
@@ -621,7 +623,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "join_answer": {
       joinAnswered.add(key);
       const g = overview.games.find((x) => x.key === key);
-      if (g) g.joined = args.answer === "accept";
+      if (g) {
+        g.joined = args.answer === "accept";
+        g.xboxContainers = g.joined && !!(args.suggestion as JoinSuggestion | undefined)?.binds.some((b) => b.codec === "wgs");
+      }
       return delay<Outcome | null>(args.answer === "decline" ? null : { kind: "upToDate" }, 500);
     }
     case "screenshot_gallery":

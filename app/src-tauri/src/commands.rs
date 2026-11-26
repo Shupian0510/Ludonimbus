@@ -93,6 +93,10 @@ pub struct GameView {
     /// It shares the save line of another version through matched folders
     /// (`join`), which the user can take back.
     joined: bool,
+    /// It reads and writes that line through the Xbox app's save containers
+    /// (`bind::Codec::Wgs`): writing into them is experimental, and the app
+    /// says so before it does.
+    xbox_containers: bool,
     /// The last time saves of the cloud replaced the ones here, while that
     /// can still be undone (`sync::undo`).
     replaced: Option<ReplacedView>,
@@ -188,6 +192,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         family: families.get(&g.key).cloned().unwrap_or_else(|| g.key.clone()),
         link: g.game.clone(),
         joined: !g.bind.is_empty(),
+        xbox_containers: ludonimbus_core::bind::has_wgs(&g.bind),
         store: g.store.as_ref().map(|s| StoreView { appid: s.appid, mode: steamcloud::state(g), wrapper: s.wrapper }),
     }
 }

@@ -186,6 +186,8 @@ export interface GameView {
   link: string | null;
   /** It shares the save line of another version through matched folders. */
   joined: boolean;
+  /** It reads and writes that line through the Xbox app's save containers: writing into them is experimental. */
+  xboxContainers: boolean;
   /** The last time saves of the cloud replaced the ones here, while that can still be undone. */
   replaced: { device: string; at: string } | null;
   /** For a game Steam installed: who keeps its saves, and whether its launch options go through the wrapper. */
@@ -597,6 +599,8 @@ export interface SaveLine {
 export interface SaveBind {
   canon: string;
   local: string;
+  /** How this version keeps them: plain files when absent, "wgs" in the Xbox app's save containers. */
+  codec?: string;
 }
 
 /** A save line this version could share although it keeps its saves in other folders. */

@@ -113,6 +113,12 @@ export function GameDetail({
 
   const syncNow = (res: "auto" | "local" | "cloud" = "auto") => run(() => api.sync(game.key, res), after);
 
+  /** The cloud's saves replace the ones here: into the Xbox app's containers only once the user has read that it is experimental. */
+  const takeCloud = async () => {
+    if (game.xboxContainers && !(await ui.confirm({ title: g.useCloud, text: t.saves.xboxNote, confirm: g.useCloud }))) return;
+    await syncNow("cloud");
+  };
+
   const backupNow = async () => {
     const comment = await ui.prompt({
       title: g.backupTitle,
@@ -275,7 +281,7 @@ export function GameDetail({
               </p>
             </div>
             <div className="conflict-actions">
-              <Button kind="primary" onClick={() => syncNow("cloud")}>
+              <Button kind="primary" onClick={takeCloud}>
                 {g.useCloud}
               </Button>
               <Button onClick={() => syncNow("local")}>{g.useLocal}</Button>

@@ -211,7 +211,7 @@ fn strings(items: &[&str]) -> Vec<String> {
 }
 
 fn bind(canon: &str, local: &str) -> Bind {
-    Bind { canon: canon.into(), local: local.into() }
+    Bind::files(canon, local)
 }
 
 #[test]

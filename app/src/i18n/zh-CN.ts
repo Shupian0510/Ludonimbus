@@ -455,6 +455,7 @@ export const saves = {
   makeCurrent: "设为当前",
   makeCurrentTitle: "设为当前？",
   makeCurrentText: (name: string, device: string, at: string) => `「${name}」在这台设备上的存档会换成 ${device} 在 ${at} 的这一份，现在的会先保留。`,
+  xboxNote: "写入 Xbox 版是实验性的（Xbox 应用的云同步可能把存档换回去），这里现在的存档会先保留一份。",
   madeCurrent: "已设为当前",
   undo: "撤销",
   undone: "已撤销",

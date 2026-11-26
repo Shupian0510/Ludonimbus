@@ -449,6 +449,7 @@ export const saves: typeof Zh.saves = {
   makeCurrent: "Make current",
   makeCurrentTitle: "Make this the current save?",
   makeCurrentText: (name, device, at) => `The saves of ${name} on this device are replaced by the ones ${device} saved at ${at}; the ones here are kept first.`,
+  xboxNote: "Writing into the Xbox version is experimental (the Xbox app's own cloud sync may put its saves back); the saves here are kept first.",
   madeCurrent: "Now the current save",
   undo: "Undo",
   undone: "Undone",

@@ -76,7 +76,8 @@ export function Saves({
   onChanged,
   onApplied,
 }: {
-  game: { key: string; name: string; store?: GameView["store"] };
+  /** `xboxContainers`: its saves are written into the Xbox app's containers, which is experimental. */
+  game: { key: string; name: string; store?: GameView["store"]; xboxContainers?: boolean };
   overview: Overview;
   /** The game is running: nothing that changes its saves. */
   disabled: boolean;
@@ -167,12 +168,14 @@ export function Saves({
     const text = v.makeCurrentText(game.name, s.deviceName, dateTime(s.createdAt));
     // Steam Cloud keeps this game's saves too, and will notice they changed.
     const steamToo = !!game.store && game.store.mode !== "managed";
+    // Writing into the Xbox app's containers is experimental.
+    const note = steamToo ? t.steamCloud.restoreNote : game.xboxContainers ? v.xboxNote : null;
     const ok = await ui.confirm({
       title: v.makeCurrentTitle,
-      text: steamToo ? (
+      text: note ? (
         <>
           <p>{text}</p>
-          <p className="muted">{t.steamCloud.restoreNote}</p>
+          <p className="muted">{note}</p>
         </>
       ) : (
         text
