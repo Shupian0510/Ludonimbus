@@ -22,6 +22,10 @@
 //! Versions the user deletes go to 「最近删除」 first and are purged after
 //! `cloud::TRASH_DAYS` days. What else goes away, and when, is
 //! [`cloud::retention`].
+//!
+//! **Which line.** A game syncs with the save line it follows on this
+//! device: the one its devices share, or one a device keeps to itself
+//! ([`lines`], [`use_line`]). Everything above is about that line.
 
 use crate::cloud::decide::{self, Action, Local};
 use crate::cloud::line::LineView;
@@ -75,6 +79,7 @@ impl Ctx {
 
     /// With a cloud the caller opened itself, whatever the config says.
     pub fn with_cloud(cfg: AppConfig, cloud: Cloud) -> Ctx {
+        let cloud = cloud.for_config(&cfg);
         Ctx { cfg, cloud: Some(cloud), cloud_error: None }
     }
 
@@ -586,9 +591,32 @@ fn enqueue(key: &str, place: &Place, draft: &Draft, files: &[packs::LocalFile], 
     Ok(manifest)
 }
 
+/// A game that follows a line of this device's own because that is the
+/// device's default ([`cloud::wanted_line`]) gets that written into its
+/// entry before its first version is made: from then on the choice is the
+/// game's, and the default no longer decides.
+fn note_line(ctx: &Ctx, game: &GameEntry, st: &GameState) -> Result<()> {
+    if game.line.is_some() {
+        return Ok(());
+    }
+    let line = cloud::wanted_line(&ctx.cfg, game, Some(st));
+    if line == library::MAIN_LINE {
+        return Ok(());
+    }
+    config::update(|c| {
+        if let Some(g) = c.games.iter_mut().find(|g| g.key == game.key) {
+            if g.line.is_none() {
+                g.line = Some(line.clone());
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Queue a snapshot of this device's saves.
 fn stage_local(ctx: &Ctx, game: &GameEntry, place: &Place, view: &LineView, local: &LocalState, shot: &Shot) -> Result<Manifest> {
     let st = state::game(&game.key);
+    note_line(ctx, game, &st)?;
     let device = ctx.device();
     let view = &with_queue(view, place, &game.key);
     let vv = if shot.side { base_vv(&st, view) } else { decide::next_vv(&shot.bases, view, device.0, st.counter) };
@@ -1306,4 +1334,179 @@ pub fn purge_deleted(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<()> {
 /// Save a snapshot zip to a user-chosen location.
 pub fn export_snapshot(ctx: &Ctx, game: &GameEntry, id: &str, dest: &std::path::Path) -> Result<()> {
     ctx.cloud()?.download(&game.key, id, dest)
+}
+
+// ----------------------------------------------------------------- save lines
+
+/// A save line a game on this device can follow.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineInfo {
+    pub id: String,
+    /// What a device called the line it keeps to itself. Empty for the
+    /// shared line.
+    pub name: String,
+    /// The line the game's devices share.
+    pub shared: bool,
+    /// The line the game follows on this device.
+    pub current: bool,
+    /// The devices on it, by name, as far as each has told the cloud.
+    pub devices: Vec<String>,
+}
+
+/// Which save line a game follows on this device (docs/plan-v2.md,
+/// section 7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LineChoice {
+    /// The line the game's devices share.
+    Shared,
+    /// A line of this device's own. `name` is what other devices see it as;
+    /// without one, the device's name.
+    Independent { name: Option<String> },
+    /// A line another device keeps to itself ([`LineInfo::id`]).
+    Follow { line: String },
+}
+
+/// The save lines the game can follow on this device: the shared one first,
+/// then each line a device keeps to itself. The line it follows now is
+/// always among them, in the cloud yet or not.
+pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
+    let cloud = ctx.cloud()?;
+    let here = cloud.place(&game.key)?;
+    let known = cloud.lines_of(&game.key)?;
+    let devices = cloud.list_devices().unwrap_or_default();
+    let (own_id, own_name) = ctx.device();
+    let mut out: Vec<LineInfo> = known
+        .iter()
+        .map(|l| {
+            let current = l.path == here.dir();
+            // This device's own record may be hours old: it is where the
+            // game says it is.
+            let mut on: Vec<String> =
+                devices.iter().filter(|d| d.id != own_id && d.installs.iter().any(|i| i.dir == l.path)).map(|d| d.name.clone()).collect();
+            if current {
+                on.push(own_name.to_string());
+            }
+            LineInfo { id: l.id.clone(), name: l.name.clone().unwrap_or_default(), shared: l.scope != v2::SCOPE_INDEPENDENT, current, devices: on }
+        })
+        .collect();
+    out.sort_by_key(|l| !l.shared);
+    if !out.iter().any(|l| l.shared) {
+        let current = here.line == library::MAIN_LINE && !out.iter().any(|l| l.current);
+        let devices = if current { vec![own_name.to_string()] } else { Vec::new() };
+        out.insert(0, LineInfo { id: library::MAIN_LINE.to_string(), name: String::new(), shared: true, current, devices });
+    }
+    if !out.iter().any(|l| l.current) {
+        out.push(LineInfo { id: here.line.clone(), name: own_name.to_string(), shared: false, current: true, devices: vec![own_name.to_string()] });
+    }
+    Ok(out)
+}
+
+fn set_line(key: &str, line: &str) -> Result<()> {
+    config::update(|c| match c.games.iter_mut().find(|g| g.key == key) {
+        Some(g) => {
+            g.line = Some(line.to_string());
+            Ok(())
+        }
+        None => bail!(crate::tr!("没有找到游戏 {key}", "The game {key} wasn't found")),
+    })
+}
+
+/// Make the game follow another save line on this device.
+///
+/// What waits for the cloud is uploaded to the line the game leaves first;
+/// when that can't be done now, nothing changes. The line it leaves stays
+/// as it is.
+///
+/// - [`LineChoice::Independent`]: the line of this device's own continues
+///   with the saves that are here now (a new line begins with them). The
+///   version says which one of the line it left it was, and a large save
+///   brings no content along that the cloud already has.
+/// - [`LineChoice::Shared`], [`LineChoice::Follow`]: as on a device that
+///   syncs the game for the first time. Saves that differ from the line's
+///   newest version are a conflict the user settles ([`Outcome::Conflict`],
+///   then [`sync`] with the choice); the side that loses stays in the cloud.
+///
+/// Choosing the line the game is on already changes nothing but its name
+/// (`Independent` with one), and settles the choice: the device's default
+/// no longer applies to this game.
+pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outcome> {
+    let cloud = ctx.cloud()?;
+    let key = game.key.as_str();
+    let from = cloud.following(key);
+    let to = match &choice {
+        LineChoice::Shared => library::MAIN_LINE.to_string(),
+        LineChoice::Independent { .. } => cloud::own_line_id(cloud.device_id(), key),
+        LineChoice::Follow { line } => line.clone(),
+    };
+    let staying = to == from;
+    let local = snapshot::local_state(game)?;
+    // Where the saves here come from, and what they can share content with.
+    let mut carried: (Option<Origin>, Option<Manifest>) = (None, None);
+    if !staying {
+        let mut old = cloud.open(key)?;
+        flush(cloud, &mut old, Some(game))?;
+        if to != library::MAIN_LINE && !matches!(choice, LineChoice::Independent { .. }) && !cloud.lines_of(key)?.iter().any(|l| l.id == to) {
+            bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
+        }
+        let st = state::game(key);
+        let origin = st.last_synced_id.clone().map(|snapshot| Origin {
+            game: old.place.game.clone(),
+            line: old.place.line.clone(),
+            snapshot,
+            how: "copy".to_string(),
+            extra: v2::Extra::new(),
+        });
+        carried = (origin, base_manifest(key, &st, local.total_size));
+    }
+    set_line(key, &to)?;
+    cloud.follow(key, &to);
+    if !staying {
+        // On the other line this device has synced nothing yet.
+        state::update_game(key, |g| {
+            g.last_synced_id = None;
+            g.last_synced_hash = None;
+            g.last_synced_vv = Vv::new();
+            g.last_synced_device = None;
+            g.last_sync_at = None;
+            g.counter = 0;
+            g.line = None;
+            g.conflict = None;
+            g.last_error = None;
+        })?;
+        remember_base(key, None);
+        log(format!("{key}: follows the save line {to} now (was {from})"));
+    }
+    let game = &GameEntry { line: Some(to), ..game.clone() };
+    let outcome = match choice {
+        LineChoice::Independent { name } => {
+            // The line is in the game's record from here on, where the
+            // other devices see it and can follow it.
+            let mut s = Session::open(ctx, cloud, game)?;
+            ready_to_write(cloud, &mut s.line, Some(game))?;
+            if let Some(name) = name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+                cloud.name_line(key, name)?;
+            }
+            let loc = local_of(&local, &state::game(key));
+            match decide::decide(&loc, &s.line.view) {
+                Action::Push { .. } | Action::Conflict { .. } if !staying => match decide::settle(&loc, &s.line.view) {
+                    Action::Push { bases, parent } => {
+                        let (origin, base) = carried;
+                        let pushed = s.push(&local, Shot { bases, parent, trigger: Some(Trigger::SyncNow), origin, base, ..Shot::default() }, false)?;
+                        best_effort_housekeeping(ctx, cloud, game);
+                        pushed
+                    }
+                    _ => Outcome::NothingToSave,
+                },
+                _ => sync(ctx, game, Resolution::Auto, Trigger::SyncNow)?,
+            }
+        }
+        _ => sync(ctx, game, Resolution::Auto, Trigger::SyncNow)?,
+    };
+    // The other devices list who is on which line: tell them now rather
+    // than at the next of this device's regular updates.
+    if !staying && cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
+        let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
+    }
+    Ok(outcome)
 }

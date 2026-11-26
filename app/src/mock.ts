@@ -385,6 +385,16 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "sync_game":
     case "backup_game":
       return delay<Outcome>({ kind: "uploaded", id: "01NEW" }, 700);
+    case "game_lines":
+      return delay(
+        [
+          { id: "main", name: "", shared: true, current: true, devices: ["DESKTOP-MAIN", "Steam Deck"] },
+          { id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC"), shared: false, current: false, devices: ["KID-PC"] },
+        ],
+        200,
+      );
+    case "use_game_line":
+      return delay<Outcome>({ kind: "upToDate" }, 500);
     case "screenshot_gallery":
       return delay(mockGallery(key), 300);
     case "screenshot_fetch":
@@ -474,6 +484,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         ludusavi: "ludusavi 0.31.0",
         version: "0.5.0",
         screenshots: "sync",
+        independentSaves: false,
       } as Record<string, unknown>;
       if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
       if (noCloudScene) s.cloud = { kind: "none" };

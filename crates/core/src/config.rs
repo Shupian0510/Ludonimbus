@@ -33,6 +33,11 @@ pub struct AppConfig {
     /// The Switch client's connection over the local network (see
     /// [`crate::nxlan`]). Off unless the user turns it on.
     pub nx_lan: bool,
+    /// Games on this device keep their saves to themselves unless told
+    /// otherwise: a game that hasn't synced here yet gets a save line of its
+    /// own instead of joining the one its other devices share
+    /// (docs/plan-v2.md, section 7).
+    pub independent_saves: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +87,7 @@ impl Default for AppConfig {
             screenshots: ScreenshotMode::Off,
             handheld: HandheldMode::Auto,
             nx_lan: false,
+            independent_saves: false,
         }
     }
 }
@@ -243,6 +249,13 @@ pub struct GameEntry {
     /// any other). `None` = worked out from [`crate::savelib::ids`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
+    /// The save line this version follows in the cloud: `main` is the one
+    /// the game's devices share, any other a line of its own
+    /// (docs/plan-v2.md, section 7). `None`: nothing was chosen; it is the
+    /// shared line, unless the device's default says otherwise the first
+    /// time the game syncs ([`AppConfig::independent_saves`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
 }
 
 fn yes() -> bool {

@@ -140,6 +140,8 @@ fn main() {
             commands::get_overview,
             commands::check_game,
             commands::sync_game,
+            commands::game_lines,
+            commands::use_game_line,
             commands::backup_game,
             commands::list_snapshots,
             commands::screenshot_gallery,

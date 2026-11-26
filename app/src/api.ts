@@ -523,6 +523,20 @@ export interface Settings {
   runnerExists: boolean;
   ludusavi: string | null;
   version: string;
+  /** Games new to this device keep their saves to themselves. */
+  independentSaves: boolean;
+}
+
+/** A save line a game can follow on this device. */
+export interface SaveLine {
+  id: string;
+  /** What a device called the line it keeps to itself; "" for the shared line. */
+  name: string;
+  shared: boolean;
+  /** The line the game follows on this device. */
+  current: boolean;
+  /** Names of the devices on it. */
+  devices: string[];
 }
 
 export interface DeviceInfo {
@@ -571,6 +585,15 @@ export const api = {
   sync: (key: string, resolution: "auto" | "local" | "cloud" = "auto") =>
     invoke<Outcome>("sync_game", { key, resolution }),
   backup: (key: string, comment: string) => invoke<Outcome>("backup_game", { key, comment }),
+  lines: (key: string) => invoke<SaveLine[]>("game_lines", { key }),
+  /** Follow another save line: the shared one, one of this device's own, or the one another device keeps. */
+  useLine: (key: string, choice: { kind: "shared" } | { kind: "independent"; name?: string } | { kind: "follow"; line: string }) =>
+    invoke<Outcome>("use_game_line", {
+      key,
+      kind: choice.kind,
+      line: choice.kind === "follow" ? choice.line : null,
+      name: choice.kind === "independent" ? (choice.name ?? null) : null,
+    }),
   snapshots: (key: string) =>
     invoke<{ snapshots: SnapshotSummary[]; headId: string | null; lastSyncedId: string | null }>(
       "list_snapshots",
@@ -671,6 +694,7 @@ export const api = {
     networkTimeoutSecs?: number;
     steamAccount?: string;
     screenshots?: ScreenshotMode;
+    independentSaves?: boolean;
   }) => invoke<void>("save_settings", { patch }),
   screenshots: (key: string) => invoke<Gallery>("screenshot_gallery", { key }),
   screenshotFetch: (key: string, device: string, name: string, thumb: boolean) =>

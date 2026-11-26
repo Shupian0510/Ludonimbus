@@ -13,6 +13,11 @@
 //! ([`Place::of_key`]), so reading never waits for the upgrade; the first
 //! write does it ([`Cloud::writable`]).
 //!
+//! `main` is the line a game's devices share. A game on this device can
+//! follow another line of its record instead ([`wanted_line`]): one of the
+//! device's own, or one another device keeps (docs/plan-v2.md, section 7).
+//! Everything here that takes a key works on the line that key follows.
+//!
 //! The functions with the names of 0.6 ([`Cloud::list_snapshots`],
 //! [`Cloud::get_meta`], [`Cloud::download`]) give snapshots in the shape the
 //! app has always shown them in, whichever layout they are stored in.
@@ -24,12 +29,14 @@ use super::saves::{self, Place};
 use super::store::{join, Store};
 use super::v2::{self, Access};
 use super::{upgrade, AccountInfo, CloudGame, DeviceInfo};
+use crate::config::{AppConfig, GameEntry};
 use crate::snapshot::{SnapshotMeta, SnapshotSummary};
-use crate::state::{self, CloudSeen, LineRef};
+use crate::state::{self, CloudSeen, GameState, LineRef};
 use crate::{logger, paths, util};
 use anyhow::{anyhow, bail, Result};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -53,6 +60,9 @@ pub struct Cloud {
     device_id: String,
     device_name: String,
     library: Mutex<Option<(Instant, Arc<Library>)>>,
+    /// The save line each game of this device follows, by key. A game that
+    /// isn't here follows the shared one.
+    lines: Mutex<HashMap<String, String>>,
 }
 
 /// A save line that has just been read.
@@ -98,15 +108,76 @@ fn place_of(line: &LineRef) -> Place {
     Place { game: line.game.clone(), line: line.line.clone(), folders: line.folders.clone(), dirs: line.dirs.clone() }
 }
 
-fn remember_place(key: &str, place: &Place) {
+/// Whether what is remembered is about the line `want`.
+fn is_for(known: &LineRef, want: &str) -> bool {
+    match known.asked.as_str() {
+        "" => want == library::MAIN_LINE,
+        asked => asked == want,
+    }
+}
+
+fn remember_place(key: &str, want: &str, place: &Place) {
     let line = LineRef {
         game: place.game.clone(),
         line: place.line.clone(),
+        asked: if want == library::MAIN_LINE { String::new() } else { want.to_string() },
         folders: place.folders.clone(),
         dirs: place.dirs.clone(),
         checked_at: Some(Utc::now()),
     };
     let _ = state::update_game(key, |g| g.line = Some(line));
+}
+
+/// The id of the save line a device keeps to itself for the game it calls
+/// `key`: `solo-` and four characters. It follows from the two, so the
+/// device needs no look at the cloud to know it, comes back to the same
+/// line when it leaves it and returns, and two devices don't arrive at the
+/// same one.
+pub fn own_line_id(device_id: &str, key: &str) -> String {
+    const LETTERS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+    let hash = blake3::hash(format!("{device_id}\0{key}").as_bytes());
+    let bytes = hash.as_bytes();
+    let n = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let tail: String = (0..4).map(|i| LETTERS[((n >> (i * 5)) & 31) as usize] as char).collect();
+    format!("solo-{tail}")
+}
+
+/// The save line a game on this device follows: the one chosen for it
+/// ([`GameEntry::line`]). With nothing chosen it is the shared line, unless
+/// the device keeps its games to itself ([`AppConfig::independent_saves`])
+/// and the game has not synced here yet: then a line of the device's own.
+/// `st` is what the device remembers of the game.
+pub fn wanted_line(cfg: &AppConfig, game: &GameEntry, st: Option<&GameState>) -> String {
+    if let Some(line) = game.line.as_ref().filter(|l| !l.is_empty()) {
+        return line.clone();
+    }
+    let synced = st.is_some_and(|st| st.last_synced_id.is_some() || !st.pending.is_empty());
+    if cfg.independent_saves && !synced {
+        own_line_id(&cfg.device.id, &game.key)
+    } else {
+        library::MAIN_LINE.to_string()
+    }
+}
+
+/// Line `want` of the game `key`, wherever it is now. A line the game had
+/// before it became part of another card is found by its folder; one added
+/// since is on the card.
+fn line_of<'a>(records: &'a [v2::GameRecord], key: &str, want: &str) -> Option<(&'a v2::GameRecord, &'a v2::Line)> {
+    library::resolve_line(records, key, want).or_else(|| {
+        let record = library::resolve(records, key)?;
+        record.lines.iter().find(|l| l.id == want).map(|l| (record, l))
+    })
+}
+
+/// What the cloud has of a line this device looked for.
+enum Seen {
+    /// The line, in the game's record or where 0.6 keeps it.
+    Line,
+    /// The game has no record: only a device on 0.6 can have left
+    /// something, under the key.
+    NoRecord,
+    /// A line no record has yet (one of this device's own): nothing.
+    NewLine,
 }
 
 impl OpenLine {
@@ -127,7 +198,35 @@ impl OpenLine {
 
 impl Cloud {
     pub fn new(store: Box<dyn Store>, device_id: &str, device_name: &str) -> Cloud {
-        Cloud { store: Cached::new(store), device_id: device_id.to_string(), device_name: device_name.to_string(), library: Mutex::default() }
+        Cloud {
+            store: Cached::new(store),
+            device_id: device_id.to_string(),
+            device_name: device_name.to_string(),
+            library: Mutex::default(),
+            lines: Mutex::default(),
+        }
+    }
+
+    /// With the save line each game in `cfg` follows ([`wanted_line`]).
+    pub fn for_config(self, cfg: &AppConfig) -> Cloud {
+        let state = state::load();
+        for g in &cfg.games {
+            let line = wanted_line(cfg, g, state.games.get(&g.key));
+            if line != library::MAIN_LINE {
+                self.follow(&g.key, &line);
+            }
+        }
+        self
+    }
+
+    /// From here on the game `key` follows the save line `line`.
+    pub fn follow(&self, key: &str, line: &str) {
+        self.lines.lock().unwrap().insert(key.to_string(), line.to_string());
+    }
+
+    /// The id of the save line the game `key` follows.
+    pub fn following(&self, key: &str) -> String {
+        self.lines.lock().unwrap().get(key).cloned().unwrap_or_else(|| library::MAIN_LINE.to_string())
     }
 
     pub fn kind(&self) -> &'static str {
@@ -254,28 +353,38 @@ impl Cloud {
         Ok(self.find(key)?.0)
     }
 
-    /// [`Cloud::place`], and whether the cloud is known to have something
-    /// for the game: `false` for a game without a record in a cloud of
-    /// layout 2.
-    fn find(&self, key: &str) -> Result<(Place, bool)> {
-        if let Some(line) = state::game(key).line {
-            return Ok((place_of(&line), true));
+    /// [`Cloud::place`], and what the cloud is known to have there.
+    fn find(&self, key: &str) -> Result<(Place, Seen)> {
+        let want = self.following(key);
+        if let Some(line) = state::game(key).line.filter(|l| is_for(l, &want)) {
+            return Ok((place_of(&line), Seen::Line));
         }
+        let shared = want == library::MAIN_LINE;
+        // Where a line that no record has yet will be.
+        let new_line = |record: Option<&v2::GameRecord>| {
+            let (game, folders) = match record {
+                Some(r) if !r.folders.is_empty() => (r.id.clone(), r.folders.clone()),
+                _ => (key.to_string(), vec![key.to_string()]),
+            };
+            let dirs = vec![v2::line_dir(&folders[0], &want)];
+            Place { game, line: want.clone(), folders, dirs }
+        };
         if self.access()? == Access::Legacy {
             // Not remembered: the upgrade may put the line on another card.
-            return Ok((Place::of_key(key), true));
+            return Ok(if shared { (Place::of_key(key), Seen::Line) } else { (new_line(None), Seen::NewLine) });
         }
         let library = self.library()?;
-        match library::resolve_line(&library.records, key, library::MAIN_LINE) {
-            Some((record, line)) => {
-                let place = Place::of(record, line);
-                remember_place(key, &place);
-                Ok((place, true))
-            }
+        if let Some((record, line)) = line_of(&library.records, key, &want) {
+            let place = Place::of(record, line);
+            remember_place(key, &want, &place);
+            return Ok((place, Seen::Line));
+        }
+        if shared {
             // No record yet: there is nothing to read but what a device on
             // 0.6 may have left under this key.
-            None => Ok((Place::of_key(key), false)),
+            return Ok((Place::of_key(key), Seen::NoRecord));
         }
+        Ok((new_line(library::resolve(&library.records, key)), Seen::NewLine))
     }
 
     /// Look at the record of the game `key` again when this device hasn't
@@ -289,9 +398,10 @@ impl Cloud {
         if known.checked_at.is_some_and(|t| Utc::now() - t < Duration::hours(LINE_FRESH_HOURS)) || self.access()? != Access::ReadWrite {
             return Ok(());
         }
+        let want = self.following(key);
         let library = self.library()?;
-        if let Some((record, line)) = library::resolve_line(&library.records, key, library::MAIN_LINE) {
-            remember_place(key, &Place::of(record, line));
+        if let Some((record, line)) = line_of(&library.records, key, &want) {
+            remember_place(key, &want, &Place::of(record, line));
         }
         Ok(())
     }
@@ -304,40 +414,108 @@ impl Cloud {
     /// `has_old`: the folder 0.6 keeps this key's snapshots in has some. The
     /// line of a new game reads that folder only then, as after an upgrade
     /// ([`upgrade::record_for`]).
+    ///
+    /// A line of the device's own that the record doesn't have is added to
+    /// it, named after the device, in the format the game's shared line has.
     pub fn place_to_write(&self, key: &str, def: Option<&CloudGame>, has_old: bool) -> Result<Place> {
         self.writable()?;
-        let known = state::game(key).line;
+        let want = self.following(key);
+        let known = state::game(key).line.filter(|l| is_for(l, &want));
         if let Some(line) = &known {
             if line.checked_at.is_some_and(|t| Utc::now() - t < Duration::hours(LINE_FRESH_HOURS)) {
                 return Ok(place_of(line));
             }
         }
         let library = self.library()?;
-        if let Some((record, line)) = library::resolve_line(&library.records, key, library::MAIN_LINE) {
+        if let Some((record, line)) = line_of(&library.records, key, &want) {
             let place = Place::of(record, line);
-            remember_place(key, &place);
+            remember_place(key, &want, &place);
             return Ok(place);
         }
-        // The same record the upgrade would have made for this key, so two
-        // devices that add the game at the same time write the same thing.
         let now = Utc::now();
-        let stored = match def {
-            Some(_) => None,
-            None => self.game_def(key)?,
+        let mut record = match library::resolve(&library.records, key) {
+            // The game is known, the line is new.
+            Some(record) => record.clone(),
+            // The same record the upgrade would have made for this key, so
+            // two devices that add the game at the same time write the same
+            // thing.
+            None => {
+                let stored = match def {
+                    Some(_) => None,
+                    None => self.game_def(key)?,
+                };
+                // The caller read the line this game follows. When that is
+                // not the shared one, what 0.6 left is one more listing.
+                let has_old = match want == library::MAIN_LINE {
+                    true => has_old,
+                    false => self.store.list(&v2::legacy_dir(key))?.iter().any(|e| !e.is_dir && e.name.ends_with(".json")),
+                };
+                let mut record = upgrade::record_for(key, def.or(stored.as_ref()), None, has_old);
+                record.created_at = Some(now);
+                record
+            }
         };
-        let mut record = upgrade::record_for(key, def.or(stored.as_ref()), None, has_old);
-        record.created_at = Some(now);
+        if !record.lines.iter().any(|l| l.id == want) {
+            // A line of this device's own, in the format the game's shared
+            // line has.
+            let like = record.lines.iter().find(|l| l.id == library::MAIN_LINE).or_else(|| record.lines.first());
+            let folder = record.folders.first().cloned().unwrap_or_else(|| key.to_string());
+            record.lines.push(v2::Line {
+                id: want.clone(),
+                format: like.map(|l| l.format.clone()).unwrap_or_else(|| "pc".to_string()),
+                scope: v2::SCOPE_INDEPENDENT.to_string(),
+                name: Some(self.device_name.clone()),
+                path: v2::line_dir(&folder, &want),
+                ..Default::default()
+            });
+        }
         let saved = library::save(&self.store, &record, &self.device_id, now)?;
         self.forget_library();
         let line = saved
             .lines
             .iter()
-            .find(|l| l.id == library::MAIN_LINE)
-            .or_else(|| saved.lines.first())
-            .ok_or_else(|| anyhow!(crate::tr!("云端的游戏记录 {key} 没有存档线", "The game record {key} in the cloud has no save line")))?;
+            .find(|l| l.id == want)
+            .ok_or_else(|| anyhow!(crate::tr!("云端的游戏记录 {key} 没有这条存档线", "The game record {key} in the cloud doesn't have this save line")))?;
         let place = Place::of(&saved, line);
-        remember_place(key, &place);
+        remember_place(key, &want, &place);
         Ok(place)
+    }
+
+    /// Give the save line the game `key` follows a name (a line of its own:
+    /// "the kid's PC"). The game's record is read and written.
+    pub fn name_line(&self, key: &str, name: &str) -> Result<()> {
+        self.writable()?;
+        let want = self.following(key);
+        self.forget_library();
+        let library = self.library()?;
+        let Some((record, line)) = line_of(&library.records, key, &want) else {
+            bail!(crate::tr!("云端还没有这条存档线", "The cloud doesn't have this save line yet"));
+        };
+        let name = Some(name.trim().to_string()).filter(|n| !n.is_empty());
+        if line.name == name {
+            return Ok(());
+        }
+        let mut record = record.clone();
+        let id = line.id.clone();
+        if let Some(l) = record.lines.iter_mut().find(|l| l.id == id) {
+            l.name = name;
+        }
+        library::save(&self.store, &record, &self.device_id, Utc::now())?;
+        self.forget_library();
+        Ok(())
+    }
+
+    /// The save lines the game `key` could follow: those of its card with
+    /// saves in the format its shared line has. None when the cloud has no
+    /// record of the game.
+    pub fn lines_of(&self, key: &str) -> Result<Vec<v2::Line>> {
+        if self.access()? == Access::Legacy {
+            return Ok(Vec::new());
+        }
+        let library = self.library()?;
+        let Some(record) = library::resolve(&library.records, key) else { return Ok(Vec::new()) };
+        let format = line_of(&library.records, key, library::MAIN_LINE).map(|(_, l)| l.format.clone());
+        Ok(record.lines.iter().filter(|l| format.as_ref().is_none_or(|f| &l.format == f)).cloned().collect())
     }
 
     /// Make the line of the game `key` read the folder 0.6 keeps the key's
@@ -346,7 +524,9 @@ impl Cloud {
     pub fn adopt_old_folder(&self, key: &str) -> Result<bool> {
         let Some(known) = state::game(key).line else { return Ok(false) };
         let old = v2::legacy_dir(key);
-        if known.dirs.contains(&old) || self.access()? != Access::ReadWrite {
+        // Only the shared line: what a device on 0.6 uploads is the game's
+        // progress as the other devices share it.
+        if !known.asked.is_empty() || known.dirs.contains(&old) || self.access()? != Access::ReadWrite {
             return Ok(false);
         }
         if !self.store.list(&old)?.iter().any(|e| !e.is_dir && e.name.ends_with(".json")) {
@@ -379,12 +559,17 @@ impl Cloud {
     /// on 0.6 uploaded some: one listing of the game's folder tells, and
     /// the line's folders are only read when there is something.
     pub fn open(&self, key: &str) -> Result<OpenLine> {
-        let (place, known) = self.find(key)?;
-        if !known {
-            let folder = self.store.list(&join(&["games", key]))?;
-            if !folder.iter().any(|e| e.is_dir && matches!(e.name.as_str(), "saves" | "snapshots")) {
-                return Ok(OpenLine { key: key.to_string(), place, view: LineView::default(), cache: LineCache::default() });
+        let (place, seen) = self.find(key)?;
+        let empty = match seen {
+            Seen::Line => false,
+            Seen::NewLine => true,
+            Seen::NoRecord => {
+                let folder = self.store.list(&join(&["games", key]))?;
+                !folder.iter().any(|e| e.is_dir && matches!(e.name.as_str(), "saves" | "snapshots"))
             }
+        };
+        if empty {
+            return Ok(OpenLine { key: key.to_string(), place, view: LineView::default(), cache: LineCache::default() });
         }
         self.open_at(key, place)
     }
@@ -487,12 +672,23 @@ impl Cloud {
 pub fn summaries(view: &LineView) -> Vec<SnapshotSummary> {
     let mut out: Vec<SnapshotSummary> =
         view.snapshots.iter().enumerate().map(|(i, s)| SnapshotSummary::of(s, view.heads.contains(&i))).collect();
-    // A version made by restoring another says so where 0.6 kept a note.
+    // A version made by restoring another says so where 0.6 kept a note; so
+    // does one a device brought along from another save line.
     for i in 0..out.len() {
         if !out[i].comment.is_empty() {
             continue;
         }
-        let Some(origin) = view.snapshots[i].origin.as_ref().filter(|o| o.how == "restore") else { continue };
+        let Some(origin) = view.snapshots[i].origin.as_ref() else { continue };
+        if origin.how == "copy" {
+            out[i].comment = match origin.line == library::MAIN_LINE {
+                true => crate::tr!("来自共用的存档", "From the shared saves"),
+                false => crate::tr!("来自另一条存档线", "From another save line"),
+            };
+            continue;
+        }
+        if origin.how != "restore" {
+            continue;
+        }
         if let Some(from) = view.get(&origin.snapshot) {
             out[i].comment = crate::tr!(
                 "恢复自 {} 在 {} 的版本",
@@ -503,4 +699,54 @@ pub fn summaries(view: &LineView) -> Vec<SnapshotSummary> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::DeviceConfig;
+
+    fn config(device: &str, independent: bool) -> AppConfig {
+        AppConfig { device: DeviceConfig { id: device.to_string(), name: "PC".to_string() }, independent_saves: independent, ..AppConfig::default() }
+    }
+
+    fn game(key: &str, line: Option<&str>) -> GameEntry {
+        GameEntry { key: key.to_string(), line: line.map(str::to_string), ..GameEntry::default() }
+    }
+
+    #[test]
+    fn a_device_has_one_line_of_its_own_for_a_game() {
+        let id = own_line_id("d-01", "stardew");
+        assert_eq!(id, own_line_id("d-01", "stardew"));
+        assert_ne!(id, own_line_id("d-02", "stardew"));
+        assert_ne!(id, own_line_id("d-01", "celeste"));
+        assert_ne!(id, library::MAIN_LINE);
+        let tail = id.strip_prefix("solo-").unwrap();
+        assert_eq!(tail.len(), 4);
+        assert!(tail.chars().all(|c| c.is_ascii_digit() || c.is_ascii_lowercase()), "{id}");
+    }
+
+    #[test]
+    fn the_line_a_game_follows_is_the_one_chosen_or_the_devices_default() {
+        let synced = GameState { last_synced_id: Some("01A".to_string()), ..GameState::default() };
+        let waiting = GameState { pending: vec!["01A".to_string()], ..GameState::default() };
+        let new = GameState::default();
+
+        // Nothing chosen, no default: shared.
+        let cfg = config("d-01", false);
+        assert_eq!(wanted_line(&cfg, &game("g", None), None), "main");
+        assert_eq!(wanted_line(&cfg, &game("g", None), Some(&synced)), "main");
+        // What was chosen, whatever the default.
+        assert_eq!(wanted_line(&cfg, &game("g", Some("solo-abcd")), Some(&synced)), "solo-abcd");
+
+        // The default is for games that have not synced here.
+        let cfg = config("d-01", true);
+        let own = own_line_id("d-01", "g");
+        assert_eq!(wanted_line(&cfg, &game("g", None), None), own);
+        assert_eq!(wanted_line(&cfg, &game("g", None), Some(&new)), own);
+        assert_eq!(wanted_line(&cfg, &game("g", None), Some(&synced)), "main");
+        assert_eq!(wanted_line(&cfg, &game("g", None), Some(&waiting)), "main");
+        assert_eq!(wanted_line(&cfg, &game("g", Some("main")), None), "main");
+        assert_eq!(wanted_line(&cfg, &game("g", Some("")), Some(&synced)), "main");
+    }
 }

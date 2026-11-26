@@ -56,7 +56,7 @@ use std::path::Path;
 use std::time::Duration;
 use store::Store;
 
-pub use client::{Cloud, OpenLine};
+pub use client::{own_line_id, wanted_line, Cloud, OpenLine};
 
 /// The cloud cannot be reached right now (offline, timeout, folder missing).
 #[derive(Debug)]
@@ -239,7 +239,7 @@ pub fn timeout(cfg: &AppConfig) -> Duration {
 pub fn open(cfg: &AppConfig) -> Result<Option<Cloud>> {
     match &cfg.cloud {
         CloudConfig::None => Ok(None),
-        other => Ok(Some(Cloud::new(build_store(other, None, timeout(cfg))?, &cfg.device.id, &cfg.device.name))),
+        other => Ok(Some(Cloud::new(build_store(other, None, timeout(cfg))?, &cfg.device.id, &cfg.device.name).for_config(cfg))),
     }
 }
 
