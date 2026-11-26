@@ -2,10 +2,10 @@
 // keeps its saves (Steam Cloud alone, Ludonimbus beside it, Ludonimbus), and
 // changing that.
 import { useEffect, useState } from "react";
-import { api, errorText, GameView, SteamCloudStatus } from "../api";
+import { api, errorText, GameView, SteamCloudApp, SteamCloudDone, SteamCloudStatus } from "../api";
 import { msg, useT } from "../i18n";
 import { withSteamClosed } from "./steamAction";
-import { Badge, Button, Hint, Icon, Modal, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Menu, Modal, useUi } from "./ui";
 
 type Ui = ReturnType<typeof useUi>;
 
@@ -193,6 +193,155 @@ export function TakeOverDialog({ game, onClose, onDone }: { game: GameView; onCl
               {c.openProperties}
             </Button>,
           )}
+      </ul>
+      <div className="check-line">
+        <label>
+          <input type="checkbox" checked={noWrapper} onChange={(e) => setNoWrapper(e.target.checked)} />
+          {c.noWrapper}
+        </label>
+        <Hint text={c.noWrapperHint} />
+      </div>
+    </Modal>
+  );
+}
+
+/** The games of a batch that weren't done, by name, each with its reason. */
+function notDone(apps: SteamCloudApp[], done: SteamCloudDone[]): string[] {
+  const name = (appid: number) => apps.find((a) => a.appid === appid)?.name ?? String(appid);
+  return done.filter((d) => d.error).map((d) => `${name(d.appid)}：${(d.error ?? "").replace(/^[A-Z_]+:\s*/, "")}`);
+}
+
+/**
+ * Settings: every game Steam installed at once. One line: how many are in
+ * the library, "back up all" for the rest, and "take over all" in the menu.
+ */
+export function StoreGamesRow({ onChanged }: { onChanged: () => void | Promise<void> }) {
+  const t = useT();
+  const c = t.steamCloud;
+  const ui = useUi();
+  const [apps, setApps] = useState<SteamCloudApp[] | null>(null);
+  const [left, setLeft] = useState<string[]>([]);
+  const [dialog, setDialog] = useState(false);
+  const load = () =>
+    api.steamCloudApps().then(
+      (a) => (setApps(a), a),
+      () => (setApps([]), [] as SteamCloudApp[]),
+    );
+  useEffect(() => void load(), []);
+  if (!apps || apps.length === 0) return null;
+
+  const added = apps.filter((a) => a.key).length;
+  const fresh = apps.length - added;
+  const backedUp = apps.filter((a) => a.key && a.state === "backup");
+
+  /** Say what a batch did, keep what it left, read the list again. */
+  const report = async (done: SteamCloudDone[], ok: (n: number) => string) => {
+    const n = done.filter((d) => !d.error).length;
+    setLeft(notDone(apps, done));
+    ui.toast(ok(n), n > 0 || done.length === 0 ? "ok" : "bad");
+    await load();
+    await onChanged();
+  };
+
+  const backupAll = async () => {
+    try {
+      await report(await api.steamCloudBackupAll(), c.allAdded);
+    } catch (e) {
+      ui.toast(plain(e), "bad");
+    }
+  };
+
+  return (
+    <div className="field">
+      <span>
+        {c.all} <Hint text={c.allHint} />
+      </span>
+      <div className="row">
+        <span className="muted small">{c.allCount(added, fresh)}</span>
+        <Button small onClick={backupAll} disabled={fresh === 0} busyText={c.allAdding}>
+          {c.backupAll}
+        </Button>
+        <Menu title={t.saves.more} items={[{ label: c.takeOverAll, onClick: () => setDialog(true), disabled: backedUp.length === 0, title: backedUp.length === 0 ? c.takeOverAllNone : undefined }]} />
+        {left.length > 0 && (
+          <span className="muted small">
+            {c.allLeft(left.length)} <Hint text={left.join("\n")} />
+          </span>
+        )}
+      </div>
+      {dialog && (
+        <TakeOverAllDialog
+          games={backedUp}
+          onClose={() => setDialog(false)}
+          onDone={async (done) => {
+            setDialog(false);
+            await report(done, c.allTaken);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Taking over every backed-up game: Steam Cloud has to be off for all games
+ * (the account's switch), which is the user's to do in Steam.
+ */
+function TakeOverAllDialog({ games, onClose, onDone }: { games: SteamCloudApp[]; onClose: () => void; onDone: (done: SteamCloudDone[]) => Promise<void> }) {
+  const t = useT();
+  const c = t.steamCloud;
+  const ui = useUi();
+  const [off, setOff] = useState<boolean | null>(null);
+  const [noWrapper, setNoWrapper] = useState(false);
+  // The account's switch as Steam's files have it now, read through any of the games.
+  const probe = games[0]?.key;
+  useEffect(() => {
+    if (!probe) return;
+    let live = true;
+    const read = () =>
+      api.steamCloudStatus(probe).then(
+        (s) => live && setOff(!s.globalEnabled),
+        () => undefined,
+      );
+    read();
+    const timer = setInterval(read, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [probe]);
+
+  const take = async () => {
+    try {
+      const done = await withSteamClosed(ui, (close) => api.steamCloudTakeOverAll(!noWrapper, close));
+      if (done) await onDone(done);
+    } catch (e) {
+      // Refused as a whole (Steam Cloud still on): the dialog stays.
+      ui.toast(plain(e), "bad");
+    }
+  };
+
+  return (
+    <Modal
+      title={c.takeOverAllTitle(games.length)}
+      onClose={onClose}
+      footer={
+        <>
+          <Button kind="ghost" onClick={onClose}>
+            {t.common.cancel}
+          </Button>
+          <Button kind="primary" onClick={take} disabled={off === null} busyText={c.allTaking}>
+            {c.takeOverDo}
+          </Button>
+        </>
+      }
+    >
+      <ul className="steps-list">
+        <li className={off ? "done" : ""}>
+          <Icon name={off ? "check" : "clock"} size={16} />
+          <span>
+            {off ? c.stepAllOff : c.stepAllOffTodo} <Hint text={c.stepAllOffHint} />
+          </span>
+        </li>
       </ul>
       <div className="check-line">
         <label>
