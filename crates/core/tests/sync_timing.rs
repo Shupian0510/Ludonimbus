@@ -11,7 +11,7 @@ use ludonimbus_core::cloud::store::{Entry, Store};
 use ludonimbus_core::cloud::{Cloud, Unavailable};
 use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry};
 use ludonimbus_core::snapshot::{SnapshotSummary, Trigger};
-use ludonimbus_core::sync::{self, Ctx, Gate, Outcome, Phase, Resolution};
+use ludonimbus_core::sync::{self, BacklogState, Ctx, Gate, Outcome, Phase, Resolution};
 use ludonimbus_core::{paths, state};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -368,9 +368,13 @@ fn a_fork_after_playing(store: &Slow, a: &Device, b: &Device) {
 /// cloud can't be reached, done once it can.
 fn owed_after_playing(store: &Slow, b: &Device) {
     assert!(!sync::is_owed(KEY));
+    assert_eq!(sync::backlog(KEY), None);
     sync::owe(KEY).unwrap();
     assert!(sync::is_owed(KEY));
     assert_eq!(sync::owed_keys(), vec![KEY.to_string()]);
+    // Owed, and nothing made yet: said so, without a size.
+    let owed = sync::backlog(KEY).expect("something owed");
+    assert_eq!((owed.state, owed.versions, owed.bytes), (BacklogState::Waiting, 0, 0));
 
     // Played without a cloud: the version waits in the queue, and the note
     // stays.
@@ -380,6 +384,9 @@ fn owed_after_playing(store: &Slow, b: &Device) {
     assert!(sync::is_owed(KEY));
     assert_eq!(state::game(KEY).pending, vec![q.clone()]);
     assert!(!versions_offline_safe(store).iter().any(|s| s.id == q));
+    let waiting = sync::backlog(KEY).expect("a version waits");
+    assert_eq!((waiting.state, waiting.versions), (BacklogState::Waiting, 1));
+    assert!(waiting.bytes > 0);
 
     // The cloud is back: the version that waited is uploaded, and the note
     // goes.
@@ -387,6 +394,7 @@ fn owed_after_playing(store: &Slow, b: &Device) {
     assert!(matches!(sync::finish_owed(&ctx(store), KEY).unwrap(), Some(Outcome::UpToDate)));
     assert!(!sync::is_owed(KEY));
     assert!(state::game(KEY).pending.is_empty());
+    assert_eq!(sync::backlog(KEY), None);
     assert!(versions(store).iter().any(|s| s.id == q && s.head));
     assert!(sync::finish_owed(&ctx(store), KEY).unwrap().is_none());
 
@@ -410,6 +418,9 @@ fn versions_offline_safe(store: &Slow) -> Vec<SnapshotSummary> {
 fn one_sync_at_a_time(store: &Slow) {
     let held = sync::lock_game(KEY, &Gate::default()).unwrap();
     assert!(sync::sync_running(KEY));
+    // What is owed is being done while a sync of the game runs.
+    sync::owe(KEY).unwrap();
+    assert_eq!(sync::backlog(KEY).map(|b| b.state), Some(BacklogState::Uploading));
     let before = store.requests();
     let gate = Gate::new();
     let sync = spawn(store, &gate);
@@ -426,4 +437,5 @@ fn one_sync_at_a_time(store: &Slow) {
     drop(held);
     assert!(matches!(sync.join().unwrap(), Outcome::UpToDate));
     assert!(!sync::sync_running(KEY));
+    assert_eq!(sync::backlog(KEY), None);
 }

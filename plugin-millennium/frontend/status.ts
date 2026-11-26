@@ -36,6 +36,20 @@ export interface GameStatus {
 	/** 0.6.0 and later. */
 	playtime?: Playtime;
 	apiVersion?: number;
+	/** API 4: a game Steam itself installed, and who keeps its saves. */
+	store?: StoreState | null;
+	/** API 4: what is left to do in the background after playing. */
+	backlog?: Backlog | null;
+}
+
+/** Steam Cloud keeps the saves / Ludonimbus stores versions of them / Ludonimbus keeps them. */
+export type StoreState = 'steam' | 'backup' | 'managed';
+
+export interface Backlog {
+	/** A sync of the game runs right now, or nobody is at it until later. */
+	state: 'uploading' | 'waiting';
+	versions: number;
+	bytes: number;
 }
 
 export interface PlaytimeDevice {
@@ -63,6 +77,8 @@ export interface Snapshot {
 	fileCount: number;
 	comment: string;
 	locked: boolean;
+	/** API 4: what it was saved on, e.g. "pc:steam". */
+	platform?: string;
 }
 
 export interface SnapshotList {
@@ -195,11 +211,16 @@ const TEXTS = {
 		preLaunch: '正在检查云存档…',
 		syncing: '正在同步…',
 		uploading: '正在上传存档…',
+		backlogUploading: (size: string) => `正在后台上传${size ? `（${size}）` : ''}`,
+		backlogWaiting: '没连上，稍后再传',
+		backlogQueued: (size: string) => `等待上传${size ? `（${size}）` : ''}`,
 		playingAuto: '游戏运行中，退出后自动上传',
 		playing: '游戏运行中',
 		broken: '快捷方式已更改，自动同步失效，点击修复',
+		brokenOptions: '启动选项已更改，自动同步失效，点击修复',
 		autoOff: '已关闭自动同步',
 		synced: (when: string) => `已是最新${when ? ` · ${when}` : ''}`,
+		backedUp: (when: string) => `已备份${when ? ` · ${when}` : ''}`,
 		localChanged: '本机有新存档，等待上传',
 		notUploaded: '存档尚未上传',
 		cloudNewer: (device: string | null) => (device ? `云端有更新的存档（${device}）` : '云端有更新的存档'),
@@ -210,26 +231,26 @@ const TEXTS = {
 		empty: '还没有存档',
 		error: '读取存档出错',
 		checking: '正在检查…',
-		clickVersions: '点击查看版本历史',
-		versionsTitle: (name: string) => `${name} · 云存档版本`,
-		loadingVersions: '正在读取版本历史…',
-		noVersions: '云端还没有版本。玩一次游戏或点「立即同步」后就会出现。',
+		clickVersions: '点击查看存档',
+		versionsTitle: (name: string) => `${name} · 存档`,
+		loadingVersions: '正在读取存档…',
+		noVersions: '云端还没有存档。玩一次游戏或点「立即同步」后就会出现。',
 		latest: '最新',
-		current: '本机当前',
-		locked: '已锁定',
+		current: '当前',
+		locked: '保留',
 		thisPc: '（本机）',
 		files: (n: number, size: string) => `${n} 个文件 · ${size}`,
-		restore: '恢复',
-		restoreTitle: '恢复到这个版本？',
-		restoreText: (device: string, at: string) => `将把存档恢复为 ${device} 在 ${at} 保存的版本。`,
-		restoreSafe: '当前存档如果云端还没有，会先自动备份，不会丢。',
-		confirmRestore: '恢复',
+		restore: '设为当前',
+		restoreTitle: '设为当前？',
+		restoreText: (device: string, at: string) => `这台设备上的存档会换成 ${device} 在 ${at} 的这一份，现在的会先保留。`,
+		restoreSteam: 'Steam 云也在同步这个游戏：它下次同步时可能问保留哪一份，选本机的。',
+		confirmRestore: '设为当前',
 		cancel: '取消',
 		close: '关闭',
 		openApp: '在 Ludonimbus 中打开',
-		restoring: '正在恢复…',
-		cantRestore: (reason: string) => `现在不能恢复：${reason}`,
-		needUpdate: '需要更新 Ludonimbus 到 0.6 或更高版本才能在 Steam 里查看版本历史。',
+		restoring: '正在切换…',
+		cantRestore: (reason: string) => `现在不能切换：${reason}`,
+		needUpdate: '需要更新 Ludonimbus 到 0.6 或更高版本才能在 Steam 里查看存档。',
 		trigger: {
 			'auto-exit': '退出游戏后自动',
 			'pre-launch': '启动前补传',
@@ -269,11 +290,16 @@ const TEXTS = {
 		preLaunch: 'Checking cloud saves…',
 		syncing: 'Syncing…',
 		uploading: 'Uploading saves…',
+		backlogUploading: (size: string) => `Uploading in the background${size ? ` (${size})` : ''}`,
+		backlogWaiting: "Couldn't reach the cloud; trying again later",
+		backlogQueued: (size: string) => `Waiting to upload${size ? ` (${size})` : ''}`,
 		playingAuto: 'Playing; saves upload when you quit',
 		playing: 'Playing',
 		broken: 'Shortcut changed; auto-sync is off. Click to repair',
+		brokenOptions: 'Launch options changed; auto-sync is off. Click to repair',
 		autoOff: 'Auto-sync is off',
 		synced: (when: string) => `Up to date${when ? ` · ${when}` : ''}`,
+		backedUp: (when: string) => `Backed up${when ? ` · ${when}` : ''}`,
 		localChanged: 'New saves on this PC, waiting to upload',
 		notUploaded: 'Saves not uploaded yet',
 		cloudNewer: (device: string | null) => (device ? `Newer saves in the cloud (${device})` : 'Newer saves in the cloud'),
@@ -285,26 +311,26 @@ const TEXTS = {
 		empty: 'No saves yet',
 		error: 'Error reading saves',
 		checking: 'Checking…',
-		clickVersions: 'Click to see the version history',
-		versionsTitle: (name: string) => `${name} · Cloud save versions`,
-		loadingVersions: 'Reading the version history…',
-		noVersions: 'No versions in the cloud yet. Play once or press "Sync now" to create the first one.',
+		clickVersions: 'Click to see the saves',
+		versionsTitle: (name: string) => `${name} · Saves`,
+		loadingVersions: 'Reading the saves…',
+		noVersions: 'No saves in the cloud yet. Play once or press "Sync now" to create the first one.',
 		latest: 'Latest',
-		current: 'On this PC',
-		locked: 'Locked',
+		current: 'Current',
+		locked: 'Kept',
 		thisPc: ' (this PC)',
 		files: (n: number, size: string) => `${n} ${pl(n, 'file', 'files')} · ${size}`,
-		restore: 'Restore',
-		restoreTitle: 'Restore this version?',
-		restoreText: (device: string, at: string) => `Your saves will be restored to the version ${device} saved at ${at}.`,
-		restoreSafe: "If the current saves aren't in the cloud yet, they're backed up first, so nothing is lost.",
-		confirmRestore: 'Restore',
+		restore: 'Make current',
+		restoreTitle: 'Make this the current save?',
+		restoreText: (device: string, at: string) => `The saves on this device are replaced by the ones ${device} saved at ${at}; the ones here are kept first.`,
+		restoreSteam: "Steam Cloud syncs this game too: next time it may ask which saves to keep. Pick this PC's.",
+		confirmRestore: 'Make current',
 		cancel: 'Cancel',
 		close: 'Close',
 		openApp: 'Open in Ludonimbus',
-		restoring: 'Restoring…',
-		cantRestore: (reason: string) => `Can't restore right now: ${reason}`,
-		needUpdate: 'Update Ludonimbus to 0.6 or later to see the version history in Steam.',
+		restoring: 'Switching…',
+		cantRestore: (reason: string) => `Can't switch right now: ${reason}`,
+		needUpdate: 'Update Ludonimbus to 0.6 or later to see the saves in Steam.',
 		trigger: {
 			'auto-exit': 'After the game exited',
 			'pre-launch': 'Uploaded before launch',
@@ -345,6 +371,12 @@ export function dateTime(iso: string): string {
 }
 
 const BROKEN_SHORTCUT = ['changed', 'runnerMoved', 'shortcutMissing'];
+/** The same for the launch options of a game Steam installed. */
+const BROKEN_OPTIONS = ['changed', 'runnerMoved', 'missing'];
+
+function broken(g: GameStatus): boolean {
+	return (g.store ? BROKEN_OPTIONS : BROKEN_SHORTCUT).includes(g.health);
+}
 
 /** `null` = show nothing (a regular Steam game, or not known yet). */
 export function describe(reply: Reply | null, appId: string): View | null {
@@ -375,6 +407,8 @@ export function describe(reply: Reply | null, appId: string): View | null {
 	if (!reply.managed) return null;
 
 	const g = reply;
+	// Steam Cloud keeps this game's saves and Ludonimbus does nothing with them.
+	if (g.store === 'steam') return null;
 	const tips: string[] = [];
 	if (g.lastSyncAt) {
 		tips.push(m.lastSync(dateTime(g.lastSyncAt), g.lastSyncedDevice));
@@ -384,10 +418,11 @@ export function describe(reply: Reply | null, appId: string): View | null {
 	if (g.cloudHead) tips.push(m.cloudHead(dateTime(g.cloudHead.createdAt), g.cloudHead.deviceName));
 	if (g.pending > 0) tips.push(m.pending(g.pending));
 	if (g.lastError) tips.push(m.lastError(g.lastError));
-	if (!g.steamEnabled) tips.push(m.notEnabled);
+	// A game Steam installed is synced without the wrapper too.
+	if (!g.steamEnabled && !g.store) tips.push(m.notEnabled);
 	// Conflicts and broken shortcuts are sorted out in Ludonimbus; otherwise
-	// a click shows the version history (app 0.6 and later).
-	const needsApp = g.status === 'conflict' || BROKEN_SHORTCUT.includes(g.health);
+	// a click shows the saves (app 0.6 and later).
+	const needsApp = g.status === 'conflict' || broken(g);
 	const action: 'versions' | 'open' = !needsApp && (g.apiVersion ?? 1) >= 2 ? 'versions' : 'open';
 	tips.push(action === 'versions' ? m.clickVersions : m.clickToOpen);
 	const tip = tips.join('\n');
@@ -397,15 +432,25 @@ export function describe(reply: Reply | null, appId: string): View | null {
 		case 'preLaunch':
 			return { ...base, text: m.preLaunch, tone: 'info', busy: true };
 		case 'syncing':
-			return { ...base, text: m.syncing, tone: 'info', busy: true };
+			// The app finishing what the wrapper left: said as that.
+			return { ...base, text: g.backlog ? m.backlogUploading(size(g.backlog)) : m.syncing, tone: 'info', busy: true };
 		case 'uploading':
 			return { ...base, text: m.uploading, tone: 'info', busy: true };
 		case 'playing':
 			return { ...base, text: g.autoSync ? m.playingAuto : m.playing, tone: 'muted' };
 	}
 
-	if (BROKEN_SHORTCUT.includes(g.health)) {
-		return { ...base, text: m.broken, tone: 'warn' };
+	// Played, and the cloud doesn't have it yet: in the background.
+	if (g.backlog?.state === 'uploading') {
+		return { ...base, text: m.backlogUploading(size(g.backlog)), tone: 'info', busy: true };
+	}
+	if (g.backlog) {
+		const text = g.status === 'offline' ? m.backlogWaiting : m.backlogQueued(size(g.backlog));
+		return { ...base, text, tone: 'muted', canSync: true };
+	}
+
+	if (broken(g)) {
+		return { ...base, text: g.store ? m.brokenOptions : m.broken, tone: 'warn' };
 	}
 	if (!g.autoSync) {
 		return { ...base, text: m.autoOff, tone: 'muted', canSync: true };
@@ -415,7 +460,7 @@ export function describe(reply: Reply | null, appId: string): View | null {
 	const canSync = true;
 	switch (g.status) {
 		case 'synced':
-			return { ...base, text: m.synced(when), tone: 'ok', canSync };
+			return { ...base, text: g.store === 'backup' ? m.backedUp(when) : m.synced(when), tone: 'ok', canSync };
 		case 'localChanged':
 			return { ...base, text: m.localChanged, tone: 'info', canSync };
 		case 'notUploaded':
@@ -437,6 +482,10 @@ export function describe(reply: Reply | null, appId: string): View | null {
 		default:
 			return { ...base, text: m.checking, tone: 'muted', busy: true };
 	}
+}
+
+function size(b: Backlog): string {
+	return b.bytes > 0 ? bytes(b.bytes) : '';
 }
 
 export function bytes(n: number): string {

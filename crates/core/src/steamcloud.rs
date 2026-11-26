@@ -164,6 +164,20 @@ pub fn status(cfg: &AppConfig, game: &GameEntry) -> Result<StoreStatus> {
     })
 }
 
+/// For the local API, in [`steam::Health`]'s words: whether the launch
+/// options of a game Steam installed still go through the wrapper ("ok",
+/// "missing", "changed", "runnerMoved"). "ok" when they aren't meant to.
+pub fn wrapper_word(cfg: &AppConfig, game: &GameEntry) -> &'static str {
+    let Some(link) = game.store.as_ref().filter(|l| l.wrapper) else { return "ok" };
+    let options = steam::root(cfg).and_then(|r| steam::launch_options(&r, &link.account, link.appid).ok().flatten());
+    match steam::wrapper_health(options.as_deref(), &game.key, &paths::runner_exe()) {
+        steam::WrapperHealth::Ok => "ok",
+        steam::WrapperHealth::Missing => "missing",
+        steam::WrapperHealth::Changed => "changed",
+        steam::WrapperHealth::RunnerMoved => "runnerMoved",
+    }
+}
+
 // ------------------------------------------------------------------ adding
 
 /// What a batch did for one game.

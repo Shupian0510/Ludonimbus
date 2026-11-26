@@ -387,7 +387,8 @@ pub fn spawn(app: AppHandle) {
 
 pub fn api_app(appid: u32, account: Option<&str>) -> Result<Value> {
     let cfg = config::load()?;
-    let Some(g) = crate::agent::find_game(&cfg, appid, account) else {
+    // A game Steam installed has Steam's own achievements there.
+    let Some(g) = crate::agent::find_game(&cfg, appid, account).filter(|g| g.store.is_none()) else {
         return Ok(json!({ "managed": false }));
     };
     let mut v = serde_json::to_value(ach::view(&g.key))?;

@@ -1156,6 +1156,40 @@ pub fn owed_keys() -> Vec<String> {
     keys
 }
 
+/// What a game still owes the cloud after playing, done in the background.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Backlog {
+    pub state: BacklogState,
+    /// Versions waiting on this device.
+    pub versions: usize,
+    /// How much there is to upload for them.
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BacklogState {
+    /// A sync of the game runs right now, in any process.
+    Uploading,
+    /// Nobody is at it: the cloud couldn't be reached, and it is tried again later.
+    Waiting,
+}
+
+/// What `key` still owes the cloud: versions that wait in the queue, or a
+/// sync after playing a wrapper handed over ([`owe`]). `None` when nothing.
+pub fn backlog(key: &str) -> Option<Backlog> {
+    let versions = queued(key).len();
+    if versions == 0 && !is_owed(key) {
+        return None;
+    }
+    let bytes = std::fs::read_dir(queue_dir(key))
+        .map(|rd| rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "zip")).filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+        .unwrap_or(0);
+    let state = if sync_running(key) { BacklogState::Uploading } else { BacklogState::Waiting };
+    Some(Backlog { state, versions, bytes })
+}
+
 fn settle_owed(key: &str) {
     if std::fs::remove_file(owed_file(key)).is_ok() {
         log(format!("{key}: the sync after playing is done"));
