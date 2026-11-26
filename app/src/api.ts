@@ -525,6 +525,12 @@ export interface Settings {
   version: string;
   /** Games new to this device keep their saves to themselves. */
   independentSaves: boolean;
+  /** Before playing, how long the launch wrapper waits for the cloud (seconds). */
+  launchWaitSecs: number;
+  /** After playing, how long it waits for the upload before handing it over (seconds). */
+  exitWaitSecs: number;
+  /** After playing, always wait until the upload is done. */
+  waitForUpload: boolean;
 }
 
 /** A save line a game can follow on this device. */
@@ -695,6 +701,9 @@ export const api = {
     steamAccount?: string;
     screenshots?: ScreenshotMode;
     independentSaves?: boolean;
+    launchWaitSecs?: number;
+    exitWaitSecs?: number;
+    waitForUpload?: boolean;
   }) => invoke<void>("save_settings", { patch }),
   screenshots: (key: string) => invoke<Gallery>("screenshot_gallery", { key }),
   screenshotFetch: (key: string, device: string, name: string, thumb: boolean) =>

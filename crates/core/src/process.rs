@@ -51,6 +51,26 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// When the process `pid` started, as a number that only means something
+/// compared with another one from here: a process id is reused once its
+/// process is gone, its start time tells the two apart. `None` when it
+/// can't be told.
+pub fn started(pid: u32) -> Option<u64> {
+    #[cfg(windows)]
+    {
+        win::started(pid)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unix::started(pid)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
 /// Linux: let the wrapper finish its work when Steam ends the game (its
 /// "Exit game" sends SIGTERM to the whole process tree): the signal is
 /// noted, the game exits, and the saves are still uploaded.
@@ -333,7 +353,7 @@ mod win {
         QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     };
     use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
 
     pub struct Job(HANDLE);
@@ -419,6 +439,22 @@ mod win {
             ok != 0 && code == STILL_ACTIVE
         }
     }
+
+    /// The creation time of the process, in 100 ns units.
+    pub fn started(pid: u32) -> Option<u64> {
+        use windows_sys::Win32::Foundation::FILETIME;
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return None;
+            }
+            let zero = || FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+            let (mut created, mut exited, mut kernel, mut user) = (zero(), zero(), zero(), zero());
+            let ok = GetProcessTimes(h, &mut created, &mut exited, &mut kernel, &mut user);
+            CloseHandle(h);
+            (ok != 0).then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -472,6 +508,15 @@ mod unix {
             Ok(stat) => stat.rfind(')').and_then(|i| stat[i + 2..].chars().next()).is_some_and(|s| s != 'Z'),
             Err(_) => false,
         }
+    }
+
+    /// When the process started, in clock ticks since boot (`starttime`,
+    /// the 22nd field of `/proc/<pid>/stat`).
+    #[cfg(target_os = "linux")]
+    pub fn started(pid: u32) -> Option<u64> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // After `pid (name) ` come the fields from the 3rd on.
+        stat[stat.rfind(')')? + 2..].split_whitespace().nth(19)?.parse().ok()
     }
 
     /// Become the reaper of our orphaned descendants (Linux 3.4+).

@@ -38,6 +38,17 @@ pub struct AppConfig {
     /// own instead of joining the one its other devices share
     /// (docs/plan-v2.md, section 7).
     pub independent_saves: bool,
+    /// Before playing, how long the launch wrapper waits for the cloud at
+    /// most; then the game starts with the saves on this device. A newer
+    /// version that is being downloaded by then is waited for, unless the
+    /// user says not to (docs/plan-v2.md, section 5.5).
+    pub launch_wait_secs: u64,
+    /// After playing, how long the launch wrapper waits for the upload; the
+    /// rest is done in the background.
+    pub exit_wait_secs: u64,
+    /// After playing, always wait until the upload is done (for someone who
+    /// turns the device off right after).
+    pub wait_for_upload: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +99,9 @@ impl Default for AppConfig {
             handheld: HandheldMode::Auto,
             nx_lan: false,
             independent_saves: false,
+            launch_wait_secs: 10,
+            exit_wait_secs: 10,
+            wait_for_upload: false,
         }
     }
 }

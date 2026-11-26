@@ -485,6 +485,9 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         version: "0.5.0",
         screenshots: "sync",
         independentSaves: false,
+        launchWaitSecs: 10,
+        exitWaitSecs: 10,
+        waitForUpload: false,
       } as Record<string, unknown>;
       if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
       if (noCloudScene) s.cloud = { kind: "none" };

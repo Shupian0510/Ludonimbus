@@ -837,6 +837,12 @@ pub struct SettingsView {
     screenshots: config::ScreenshotMode,
     /// Games new to this device keep their saves to themselves.
     independent_saves: bool,
+    /// Before playing, how long the launch wrapper waits for the cloud.
+    launch_wait_secs: u64,
+    /// After playing, how long it waits for the upload before handing it over.
+    exit_wait_secs: u64,
+    /// After playing, always wait until the upload is done.
+    wait_for_upload: bool,
 }
 
 #[derive(Serialize)]
@@ -888,6 +894,9 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             version: ludonimbus_core::APP_VERSION.to_string(),
             screenshots: cfg.screenshots,
             independent_saves: cfg.independent_saves,
+            launch_wait_secs: cfg.launch_wait_secs,
+            exit_wait_secs: cfg.exit_wait_secs,
+            wait_for_upload: cfg.wait_for_upload,
         })
     })
     .await
@@ -903,6 +912,9 @@ pub struct SettingsPatch {
     steam_account: Option<String>,
     screenshots: Option<config::ScreenshotMode>,
     independent_saves: Option<bool>,
+    launch_wait_secs: Option<u64>,
+    exit_wait_secs: Option<u64>,
+    wait_for_upload: Option<bool>,
 }
 
 /// First-run guide state.
@@ -974,6 +986,15 @@ pub async fn save_settings(patch: SettingsPatch) -> CmdResult<()> {
             }
             if let Some(v) = patch.independent_saves {
                 c.independent_saves = v;
+            }
+            if let Some(v) = patch.launch_wait_secs {
+                c.launch_wait_secs = v.min(600);
+            }
+            if let Some(v) = patch.exit_wait_secs {
+                c.exit_wait_secs = v.min(600);
+            }
+            if let Some(v) = patch.wait_for_upload {
+                c.wait_for_upload = v;
             }
             Ok(())
         })?;
