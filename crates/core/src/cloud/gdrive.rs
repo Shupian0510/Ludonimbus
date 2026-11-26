@@ -13,6 +13,11 @@
 //! when two devices create the same file at the same moment.
 //! [`DriveFile::beats`] says which of them counts and every operation
 //! follows it, so all devices read the same one.
+//!
+//! Finding a file by name is a request of its own, and so is asking whether
+//! a folder is still there. What Drive said a moment ago is kept in a
+//! [`Memo`], so that listing a folder and then reading or writing a few files
+//! in it needs neither.
 
 use super::oauth::{self, describe, GoogleClient};
 use super::store::{Entry, Store};
@@ -36,6 +41,143 @@ const FILE_FIELDS: &str = "id,name,size,mimeType,md5Checksum,createdTime,modifie
 /// Largest content replaced with a simple upload, the kind Drive documents
 /// for up to 5 MB. Anything bigger goes through an upload session.
 const SIMPLE_UPLOAD_MAX: usize = 5 * 1024 * 1024;
+/// What a create or an update asks Drive to answer with.
+const WRITTEN_FIELDS: &str = "id,trashed";
+
+/// How long the files Drive named in a folder are believed.
+///
+/// What this minute costs: two devices that create the same new name within
+/// it make two files, because the second one does not look for the first.
+/// That is what already happens when both look at the same moment.
+/// [`DriveFile::beats`] says which of the two counts, and the next write
+/// that looks for the name removes the other. Until its minute is over, a
+/// device goes on reading and replacing the file it remembers.
+const FILES_REMEMBERED: Duration = Duration::from_secs(60);
+
+/// How long a folder that Drive showed alive is written into without asking
+/// again.
+///
+/// What these ten minutes cost: a folder deleted or moved to the trash in
+/// Drive within them is noticed by the write itself and not before it. Drive
+/// answers 404 for a deleted folder, and says in its answer that a file
+/// landed in the trash; either way the folder is looked up again and the
+/// write is repeated once.
+const ALIVE_REMEMBERED: Duration = Duration::from_secs(600);
+
+/// What Drive told this store a moment ago, so that the next call about the
+/// same folder need not ask again. It lives as long as the store (one sync,
+/// one command of the app) and believes nothing for long. Every method is
+/// given the time, so the rules are tested without waiting.
+#[derive(Default)]
+struct Memo {
+    /// Folder id → when Drive last showed that the folder exists and is not
+    /// in the trash.
+    alive: HashMap<String, Instant>,
+    /// Folder id → the files Drive named in it.
+    folders: HashMap<String, Remembered>,
+}
+
+#[derive(Default)]
+struct Remembered {
+    /// When the whole folder was listed. Only such a listing can say that a
+    /// name is not there.
+    listed: Option<Instant>,
+    /// File name → when Drive named it, and the ids of the files called
+    /// that, the one that counts first.
+    names: HashMap<String, (Instant, Vec<String>)>,
+}
+
+/// What a write does about the file it is to replace.
+#[derive(Debug, PartialEq)]
+enum Target {
+    /// Replace this file. The others have the same name and are deleted.
+    Update { current: String, others: Vec<String> },
+    /// A listing of a moment ago has no file of this name: create it.
+    Create,
+    /// Nothing recent is known: look for the name first.
+    Ask,
+}
+
+fn recent(at: Instant, now: Instant, within: Duration) -> bool {
+    now.saturating_duration_since(at) < within
+}
+
+impl Memo {
+    fn saw_alive(&mut self, folder: &str, now: Instant) {
+        self.alive.insert(folder.to_string(), now);
+    }
+
+    fn is_alive(&self, folder: &str, now: Instant) -> bool {
+        self.alive.get(folder).is_some_and(|at| recent(*at, now, ALIVE_REMEMBERED))
+    }
+
+    /// A complete listing of a folder. It replaces everything that was known
+    /// about the folder's files.
+    fn listed(&mut self, folder: &str, names: HashMap<String, Vec<String>>, now: Instant) {
+        let names = names
+            .into_iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(name, ids)| (name, (now, ids)))
+            .collect();
+        let known = Remembered {
+            listed: Some(now),
+            names,
+        };
+        self.folders.insert(folder.to_string(), known);
+    }
+
+    /// The files called `name` as Drive just named them, or as a write left
+    /// them: the one that counts first.
+    fn named(&mut self, folder: &str, name: &str, ids: Vec<String>, now: Instant) {
+        let known = self.folders.entry(folder.to_string()).or_default();
+        if ids.is_empty() {
+            known.names.remove(name);
+        } else {
+            known.names.insert(name.to_string(), (now, ids));
+        }
+    }
+
+    /// The ids of the files called `name`, the one that counts first, when
+    /// Drive named them within the last minute.
+    ///
+    /// `None` means "ask Drive" and never "there is no such file", also right
+    /// after a complete listing: a caller that reads a record to merge it
+    /// with what another device wrote a moment ago must get that record.
+    fn ids(&self, folder: &str, name: &str, now: Instant) -> Option<Vec<String>> {
+        let (at, ids) = self.folders.get(folder)?.names.get(name)?;
+        recent(*at, now, FILES_REMEMBERED).then(|| ids.clone())
+    }
+
+    /// How to write `name`. Only a complete listing of the last minute
+    /// decides it without asking, because only that can say the name is new.
+    fn target(&self, folder: &str, name: &str, now: Instant) -> Target {
+        let listed = self.folders.get(folder).and_then(|known| known.listed);
+        if !listed.is_some_and(|at| recent(at, now, FILES_REMEMBERED)) {
+            return Target::Ask;
+        }
+        match self.ids(folder, name, now) {
+            Some(mut ids) => {
+                let current = ids.remove(0);
+                Target::Update { current, others: ids }
+            }
+            None => Target::Create,
+        }
+    }
+
+    /// The files of this name were deleted.
+    fn forget_name(&mut self, folder: &str, name: &str) {
+        if let Some(known) = self.folders.get_mut(folder) {
+            known.names.remove(name);
+        }
+    }
+
+    /// Drive no longer has something that was remembered about this folder
+    /// (404): nothing about it is believed any more.
+    fn forget(&mut self, folder: &str) {
+        self.alive.remove(folder);
+        self.folders.remove(folder);
+    }
+}
 
 pub struct GoogleDrive {
     client: GoogleClient,
@@ -53,6 +195,7 @@ pub struct GoogleDrive {
     /// The account's e-mail address (or name), once [`Store::quota`] has
     /// asked Drive for it.
     account: Mutex<Option<String>>,
+    memo: Mutex<Memo>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -162,6 +305,29 @@ fn pick(mut same: Vec<DriveFile>) -> Option<(DriveFile, Vec<DriveFile>)> {
     Some((current, same))
 }
 
+/// The ids of entries of one name and kind, the one that counts first.
+fn current_first(mut same: Vec<&DriveFile>) -> Vec<String> {
+    same.sort_by(|a, b| match (a.beats(b), b.beats(a)) {
+        (true, _) => std::cmp::Ordering::Less,
+        (_, true) => std::cmp::Ordering::Greater,
+        _ => std::cmp::Ordering::Equal,
+    });
+    same.into_iter().map(|f| f.id.clone()).collect()
+}
+
+/// The files of a listing for the [`Memo`]: name → ids, the one that counts
+/// first. Folders are left out; their ids have a cache of their own.
+fn ids_by_name(files: &[DriveFile]) -> HashMap<String, Vec<String>> {
+    let mut by_name: HashMap<&str, Vec<&DriveFile>> = HashMap::new();
+    for f in files.iter().filter(|f| !f.is_folder) {
+        by_name.entry(f.name.as_str()).or_default().push(f);
+    }
+    by_name
+        .into_iter()
+        .map(|(name, same)| (name.to_string(), current_first(same)))
+        .collect()
+}
+
 /// A folder's entries with one entry per name, in the order Drive listed
 /// them. A file and a folder may share a name; they stay two entries.
 fn one_per_name(files: Vec<DriveFile>) -> Vec<DriveFile> {
@@ -212,6 +378,53 @@ fn parse_about(v: &Value) -> (Option<String>, Option<u64>, Option<u64>) {
 /// so it is reported like any other connection problem.
 fn body_json(resp: ureq::Response) -> Result<Value> {
     resp.into_json().map_err(|e| anyhow!(Unavailable(e.to_string())))
+}
+
+/// A write did not reach a place readers find: Drive no longer has the file
+/// or folder it named (404), or has the folder in its trash. It reads like
+/// the error it stands for. `put` looks for it to ask Drive about the folder
+/// again instead of trusting the [`Memo`].
+#[derive(Debug)]
+struct Gone(String);
+
+impl std::fmt::Display for Gone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for Gone {}
+
+fn is_gone(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<Gone>().is_some())
+}
+
+/// [`drive_error`] for a create or an update: the same message, with a 404
+/// marked as [`Gone`].
+fn write_error(e: ureq::Error) -> anyhow::Error {
+    let gone = matches!(e, ureq::Error::Status(404, _));
+    let err = drive_error(e);
+    if gone {
+        anyhow!(Gone(err.to_string()))
+    } else {
+        err
+    }
+}
+
+/// Whether a file just written is where readers find it. A folder in Drive's
+/// trash still takes files, and they are in the trash with it; Drive says so
+/// in its answer to the write.
+///
+/// The message is read only when the second try ends the same way, which
+/// takes the app folder itself being in the trash. The next time the cloud is
+/// opened it is looked up by name again, and a new one is made.
+fn not_in_trash(written: &Value) -> Result<()> {
+    if written["trashed"].as_bool() == Some(true) {
+        return Err(anyhow!(Gone(crate::tr!(
+            "Google Drive 上的文件夹在回收站里。请在 Google Drive 里恢复它，或者重试。",
+            "The folder in Google Drive is in the trash. Restore it in Google Drive, or try again."
+        ))));
+    }
+    Ok(())
 }
 
 /// Copy a response body to `out`. A read that fails is the connection
@@ -355,6 +568,7 @@ impl GoogleDrive {
             root: Mutex::new(None),
             folders: Mutex::new(HashMap::new()),
             account: Mutex::new(None),
+            memo: Mutex::new(Memo::default()),
         }
     }
 
@@ -378,23 +592,34 @@ impl GoogleDrive {
 
     /// Whether a folder still exists and is not in the trash.
     fn folder_alive(&self, id: &str) -> Result<bool> {
-        match self
+        let asked = Instant::now();
+        let alive = match self
             .agent
             .get(&format!("{API}/files/{id}?fields=trashed"))
             .set("Authorization", &self.bearer()?)
             .call()
         {
-            Ok(r) => Ok(!body_json(r)?["trashed"].as_bool().unwrap_or(false)),
-            Err(ureq::Error::Status(404, _)) => Ok(false),
-            Err(e) => Err(drive_error(e)),
+            Ok(r) => !body_json(r)?["trashed"].as_bool().unwrap_or(false),
+            Err(ureq::Error::Status(404, _)) => false,
+            Err(e) => return Err(drive_error(e)),
+        };
+        let mut memo = self.memo.lock().unwrap();
+        if alive {
+            memo.saw_alive(id, asked);
+        } else {
+            memo.forget(id);
         }
+        Ok(alive)
     }
 
     /// Folder for writing: resolved (and created) with a liveness check so a
-    /// trashed cached folder is never written into.
+    /// trashed cached folder is never written into. The check is left out
+    /// while the [`Memo`] has the folder as alive; `put` deals with a folder
+    /// that went away since.
     fn writable_folder(&self, parts: &[&str]) -> Result<String> {
         let id = self.folder_id(parts, true)?.expect("created");
-        if self.folder_alive(&id)? {
+        let known_alive = self.memo.lock().unwrap().is_alive(&id, Instant::now());
+        if known_alive || self.folder_alive(&id)? {
             return Ok(id);
         }
         self.forget_folders();
@@ -524,17 +749,40 @@ impl GoogleDrive {
     /// Every file (not folder) called `name` directly in a folder: more than
     /// one when devices created it at the same moment.
     fn named(&self, parent: &str, name: &str) -> Result<Vec<DriveFile>> {
+        let asked = Instant::now();
         let q = format!("name='{}' and '{}' in parents and trashed=false", esc(name), esc(parent));
-        Ok(self.query(&q)?.into_iter().filter(|f| !f.is_folder).collect())
+        let files: Vec<DriveFile> = self.query(&q)?.into_iter().filter(|f| !f.is_folder).collect();
+        let ids = current_first(files.iter().collect());
+        let mut memo = self.memo.lock().unwrap();
+        // Only an answer with a file in it shows the folder alive: Drive
+        // finds nothing in a folder that is in its trash.
+        if !ids.is_empty() {
+            memo.saw_alive(parent, asked);
+        }
+        memo.named(parent, name, ids, asked);
+        Ok(files)
     }
 
-    /// The file a path stands for, if there is one.
-    fn file_at(&self, path: &str) -> Result<Option<DriveFile>> {
+    /// Start downloading the file a path stands for. `None` when there is no
+    /// such file.
+    fn fetch(&self, path: &str) -> Result<Option<ureq::Response>> {
         let (parts, name) = split_path(path);
         let Some(folder) = self.folder_id(&parts, false)? else {
             return Ok(None);
         };
-        Ok(pick(self.named(&folder, name)?).map(|(current, _)| current))
+        let known = self.memo.lock().unwrap().ids(&folder, name, Instant::now());
+        if let Some(id) = known.and_then(|ids| ids.into_iter().next()) {
+            if let Some(resp) = self.media(&id)? {
+                return Ok(Some(resp));
+            }
+            // Deleted since Drive named it. That says nothing about the
+            // name, which may have a new file by now: ask.
+            self.memo.lock().unwrap().forget(&folder);
+        }
+        let Some((current, _)) = pick(self.named(&folder, name)?) else {
+            return Ok(None);
+        };
+        self.media(&current.id)
     }
 
     /// Send `body` through an upload session: `start` opens it and one more
@@ -546,7 +794,7 @@ impl GoogleDrive {
             .set("X-Upload-Content-Type", mime)
             .set("X-Upload-Content-Length", &body.len().to_string())
             .send_json(meta)
-            .map_err(drive_error)?;
+            .map_err(write_error)?;
         let location = resp
             .header("Location")
             .ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?
@@ -556,33 +804,44 @@ impl GoogleDrive {
                 .put(&location)
                 .set("Content-Type", mime)
                 .send_bytes(body)
-                .map_err(drive_error)?,
+                .map_err(write_error)?,
         )
     }
 
-    fn create_file(&self, parent: &str, name: &str, mime: &str, body: &[u8]) -> Result<()> {
-        let start = self.agent.post(&format!("{UPLOAD}/files?uploadType=resumable&fields=id"));
+    /// Create a file and give its id.
+    fn create_file(&self, parent: &str, name: &str, mime: &str, body: &[u8]) -> Result<String> {
+        let start = self
+            .agent
+            .post(&format!("{UPLOAD}/files?uploadType=resumable&fields={WRITTEN_FIELDS}"));
         let v = self.upload_session(start, json!({ "name": name, "parents": [parent] }), mime, body)?;
-        if v["id"].as_str().is_none() {
-            return Err(anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")));
-        }
-        Ok(())
+        not_in_trash(&v)?;
+        v["id"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")))
     }
 
     fn update_content(&self, file_id: &str, mime: &str, body: &[u8]) -> Result<()> {
-        if body.len() > SIMPLE_UPLOAD_MAX {
-            let start = self
-                .agent
-                .request("PATCH", &format!("{UPLOAD}/files/{file_id}?uploadType=resumable&fields=id"));
-            return self.upload_session(start, json!({}), mime, body).map(|_| ());
-        }
-        self.bulk
-            .request("PATCH", &format!("{UPLOAD}/files/{file_id}?uploadType=media"))
-            .set("Authorization", &self.bearer()?)
-            .set("Content-Type", mime)
-            .send_bytes(body)
-            .map_err(drive_error)?;
-        Ok(())
+        let written = if body.len() > SIMPLE_UPLOAD_MAX {
+            let start = self.agent.request(
+                "PATCH",
+                &format!("{UPLOAD}/files/{file_id}?uploadType=resumable&fields={WRITTEN_FIELDS}"),
+            );
+            self.upload_session(start, json!({}), mime, body)?
+        } else {
+            body_json(
+                self.bulk
+                    .request(
+                        "PATCH",
+                        &format!("{UPLOAD}/files/{file_id}?uploadType=media&fields={WRITTEN_FIELDS}"),
+                    )
+                    .set("Authorization", &self.bearer()?)
+                    .set("Content-Type", mime)
+                    .send_bytes(body)
+                    .map_err(write_error)?,
+            )?
+        };
+        not_in_trash(&written)
     }
 
     /// Start downloading a file's content. `None` when the file is gone.
@@ -599,34 +858,72 @@ impl GoogleDrive {
         }
     }
 
-    fn delete_file(&self, file_id: &str) -> Result<()> {
+    /// Delete a file. `false` when Drive no longer had it.
+    fn delete_file(&self, file_id: &str) -> Result<bool> {
         match self
             .agent
             .delete(&format!("{API}/files/{file_id}"))
             .set("Authorization", &self.bearer()?)
             .call()
         {
+            Ok(_) => Ok(true),
             // Already gone (another device deleted it): that is what was asked for.
-            Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
+            Err(ureq::Error::Status(404, _)) => Ok(false),
             Err(e) => Err(drive_error(e)),
         }
     }
 
     /// Create the file a path stands for, or replace its content.
     fn put(&self, path: &str, data: &[u8]) -> Result<()> {
+        match self.put_once(path, data) {
+            // Drive no longer has the folder or the file this write went to.
+            // What was remembered about the folder is forgotten by now, so
+            // this time Drive is asked about both, and the folder is made
+            // again if need be.
+            Err(e) if is_gone(&e) => self.put_once(path, data),
+            done => done,
+        }
+    }
+
+    fn put_once(&self, path: &str, data: &[u8]) -> Result<()> {
         let (parts, name) = split_path(path);
         let folder = self.writable_folder(&parts)?;
         let mime = mime_for(name);
-        let Some((current, others)) = pick(self.named(&folder, name)?) else {
-            return self.create_file(&folder, name, mime, data);
+        let started = Instant::now();
+        let target = self.memo.lock().unwrap().target(&folder, name, started);
+        let (current, others) = match target {
+            Target::Update { current, others } => (Some(current), others),
+            Target::Create => (None, Vec::new()),
+            Target::Ask => match pick(self.named(&folder, name)?) {
+                Some((current, others)) => (Some(current.id), others.into_iter().map(|f| f.id).collect()),
+                None => (None, Vec::new()),
+            },
         };
-        self.update_content(&current.id, mime, data)?;
+        let written = match current {
+            Some(id) => self.update_content(&id, mime, data).map(|()| id),
+            None => self.create_file(&folder, name, mime, data),
+        };
+        let id = match written {
+            Ok(id) => id,
+            Err(e) => {
+                if is_gone(&e) {
+                    self.memo.lock().unwrap().forget(&folder);
+                }
+                return Err(e);
+            }
+        };
         // The file just written is now the newest of its name, so readers
-        // already get it; a duplicate that can't be deleted now goes with
-        // the next write.
+        // already get it; a duplicate that can't be deleted now stays
+        // remembered and goes with the next write.
+        let mut ids = vec![id];
         for other in others {
-            let _ = self.delete_file(&other.id);
+            if self.delete_file(&other).is_err() {
+                ids.push(other);
+            }
         }
+        let mut memo = self.memo.lock().unwrap();
+        memo.saw_alive(&folder, started);
+        memo.named(&folder, name, ids, started);
         Ok(())
     }
 }
@@ -643,11 +940,30 @@ fn split_path(path: &str) -> (Vec<&str>, &str) {
 /// ([`super::CloudProvider::files`]).
 ///
 /// Requests to Drive per call, once the folder ids are cached and the access
-/// token is fresh: `list` one per 1000 entries; `read` and `download` two
-/// (find the file by name, fetch it); `write` and `upload` three to replace a
-/// file (is the folder still there, find, send) and four to create one or to
-/// replace more than [`SIMPLE_UPLOAD_MAX`]; `remove` two; `check` and `quota`
-/// one each.
+/// token is fresh. The [`Memo`] decides which row applies: it knows a file's
+/// id for a minute after its folder was listed, its name was looked for or it
+/// was written, and it knows a folder as alive for ten minutes after a
+/// listing or a search found something in it, a file was written into it, or
+/// Drive was asked.
+///
+/// | Call | Requests |
+/// |---|---|
+/// | `list` | 1 per 1000 entries |
+/// | `read`, `download`: id known | 1 |
+/// | `read`, `download`: otherwise | 2 (find the file by name, fetch it) |
+/// | `write`, `upload`: folder listed within the minute, name in the listing | 1 |
+/// | `write`, `upload`: folder listed within the minute, name not in it | 2 (a create is always an upload session) |
+/// | `write`, `upload`: no such listing | 2 to replace (find, send), 3 to create |
+/// | `remove`: ids known | 1 per file of that name |
+/// | `remove`: otherwise | 2 |
+/// | `check`, `quota` | 1 each |
+///
+/// A write costs one more when the folder is not known as alive (ask Drive
+/// first), and one more when it replaces a file with more than
+/// [`SIMPLE_UPLOAD_MAX`]. When something that was remembered turns out to be
+/// gone, the call starts again with nothing remembered: the request that
+/// found out is the extra cost. A file sent into a folder that turned out to
+/// be in the trash is sent a second time.
 impl Store for GoogleDrive {
     fn kind(&self) -> &'static str {
         "googleDrive"
@@ -695,8 +1011,19 @@ impl Store for GoogleDrive {
         let Some(folder) = self.folder_id(&parts, false)? else {
             return Ok(Vec::new());
         };
+        let asked = Instant::now();
         let q = format!("'{}' in parents and trashed=false", esc(&folder));
-        Ok(one_per_name(self.query(&q)?)
+        let files = self.query(&q)?;
+        {
+            let mut memo = self.memo.lock().unwrap();
+            // An empty listing does not show the folder alive: that is also
+            // what Drive answers for a folder in its trash.
+            if !files.is_empty() {
+                memo.saw_alive(&folder, asked);
+            }
+            memo.listed(&folder, ids_by_name(&files), asked);
+        }
+        Ok(one_per_name(files)
             .into_iter()
             .map(|f| Entry {
                 name: f.name,
@@ -708,10 +1035,7 @@ impl Store for GoogleDrive {
     }
 
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        let Some(f) = self.file_at(path)? else {
-            return Ok(None);
-        };
-        let Some(resp) = self.media(&f.id)? else {
+        let Some(resp) = self.fetch(path)? else {
             return Ok(None);
         };
         let mut buf = Vec::new();
@@ -720,9 +1044,9 @@ impl Store for GoogleDrive {
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
-        let missing = || anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud"));
-        let f = self.file_at(path)?.ok_or_else(missing)?;
-        let resp = self.media(&f.id)?.ok_or_else(missing)?;
+        let resp = self
+            .fetch(path)?
+            .ok_or_else(|| anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud")))?;
         let tmp = dest.with_extension("lntmp");
         let mut out = std::fs::File::create(&tmp)?;
         copy_body(resp.into_reader(), &mut out)?;
@@ -748,11 +1072,26 @@ impl Store for GoogleDrive {
         let Some(folder) = self.folder_id(&parts, false)? else {
             return Ok(());
         };
+        let known = self.memo.lock().unwrap().ids(&folder, name, Instant::now());
+        if let Some(ids) = known {
+            let mut all_there = true;
+            for id in &ids {
+                all_there &= self.delete_file(id)?;
+            }
+            if all_there {
+                self.memo.lock().unwrap().forget_name(&folder, name);
+                return Ok(());
+            }
+            // One of them was gone already, so something else has changed
+            // this name since Drive named its files: ask what is there now.
+            self.memo.lock().unwrap().forget(&folder);
+        }
         // Every file of that name: a duplicate left behind would turn up as
         // the file again.
         for f in self.named(&folder, name)? {
             self.delete_file(&f.id)?;
         }
+        self.memo.lock().unwrap().forget_name(&folder, name);
         Ok(())
     }
 
@@ -1071,5 +1410,229 @@ mod tests {
         // The local disk failing is not the cloud being unreachable.
         let err = copy_body(&b"save data"[..], &mut Full).unwrap_err();
         assert!(!crate::cloud::is_unavailable(&err));
+    }
+
+    const LINE: &str = "1LineFolderId";
+    const PACKS: &str = "1PacksFolderId";
+
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    fn names(listing: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
+        listing
+            .iter()
+            .map(|(name, ids)| (name.to_string(), ids.iter().map(|id| id.to_string()).collect()))
+            .collect()
+    }
+
+    fn strings(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    fn update(current: &str, others: &[&str]) -> Target {
+        Target::Update {
+            current: current.into(),
+            others: strings(others),
+        }
+    }
+
+    #[test]
+    fn a_listing_gives_ids_in_the_order_that_counts() {
+        let listed = vec![
+            file("1", "index.json", "2026-11-26T10:00:00.000Z"),
+            file("2", "01A.json", "2026-11-26T09:00:00.000Z"),
+            file("3", "index.json", "2026-11-26T10:00:05.000Z"),
+            folder("4", "thumbnails", "2026-11-01T00:00:00.000Z"),
+            file("5", "index.json", "2026-11-25T10:00:00.000Z"),
+        ];
+        // The first id is the file `pick` chooses; folders are not files.
+        let expected = names(&[("index.json", &["3", "1", "5"]), ("01A.json", &["2"])]);
+        assert_eq!(ids_by_name(&listed), expected);
+        let same: Vec<DriveFile> = listed.iter().filter(|f| f.name == "index.json").cloned().collect();
+        assert_eq!(pick(same).unwrap().0.id, "3");
+        assert!(ids_by_name(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_listed_file_is_known_for_a_minute() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        memo.listed(LINE, names(&[("index.json", &["1"])]), t0);
+
+        assert_eq!(memo.ids(LINE, "index.json", t0), Some(strings(&["1"])));
+        assert_eq!(memo.ids(LINE, "index.json", t0 + secs(59)), Some(strings(&["1"])));
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(59)), update("1", &[]));
+        assert_eq!(memo.target(LINE, "01B.json", t0 + secs(59)), Target::Create);
+
+        // After the minute nothing is taken from it: Drive is asked.
+        assert_eq!(memo.ids(LINE, "index.json", t0 + secs(60)), None);
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(60)), Target::Ask);
+        assert_eq!(memo.target(LINE, "01B.json", t0 + secs(60)), Target::Ask);
+
+        // Another folder was never listed.
+        assert_eq!(memo.ids(PACKS, "index.json", t0), None);
+        assert_eq!(memo.target(PACKS, "index.json", t0), Target::Ask);
+    }
+
+    #[test]
+    fn a_listing_replaces_what_was_known() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        memo.named(LINE, "01A.json", strings(&["1"]), t0);
+        memo.named(LINE, "index.json", strings(&["2"]), t0);
+
+        memo.listed(LINE, names(&[("index.json", &["3", "2"])]), t0 + secs(5));
+        // Not in the listing any more, although it was named 5 seconds ago.
+        assert_eq!(memo.ids(LINE, "01A.json", t0 + secs(6)), None);
+        assert_eq!(memo.target(LINE, "01A.json", t0 + secs(6)), Target::Create);
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(6)), update("3", &["2"]));
+
+        // The next listing counts from its own time, and an empty one says
+        // that every name is new.
+        memo.listed(LINE, HashMap::new(), t0 + secs(50));
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(100)), Target::Create);
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(110)), Target::Ask);
+    }
+
+    #[test]
+    fn a_search_for_a_name_does_not_say_which_names_are_new() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        memo.named(PACKS, "01A.zip", strings(&["1"]), t0);
+        // The file can be read by id, but a write looks first: without a
+        // listing nothing says what else is in the folder.
+        assert_eq!(memo.ids(PACKS, "01A.zip", t0 + secs(1)), Some(strings(&["1"])));
+        assert_eq!(memo.target(PACKS, "01A.zip", t0 + secs(1)), Target::Ask);
+        assert_eq!(memo.target(PACKS, "01B.zip", t0 + secs(1)), Target::Ask);
+        assert_eq!(memo.ids(PACKS, "01A.zip", t0 + secs(60)), None);
+
+        // A search that finds nothing leaves no entry.
+        memo.named(PACKS, "01A.zip", Vec::new(), t0 + secs(2));
+        assert_eq!(memo.ids(PACKS, "01A.zip", t0 + secs(2)), None);
+    }
+
+    #[test]
+    fn a_write_is_remembered() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        memo.listed(LINE, names(&[("index.json", &["2", "1"])]), t0);
+
+        // A new file: its id is known from the answer to the create.
+        memo.named(LINE, "01B.json", strings(&["9"]), t0 + secs(1));
+        assert_eq!(memo.ids(LINE, "01B.json", t0 + secs(2)), Some(strings(&["9"])));
+        assert_eq!(memo.target(LINE, "01B.json", t0 + secs(2)), update("9", &[]));
+
+        // A replaced file whose duplicate was deleted on the way.
+        memo.named(LINE, "index.json", strings(&["2"]), t0 + secs(3));
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(4)), update("2", &[]));
+
+        // The id is known for a minute after the write, also when the
+        // listing is too old to say how to write.
+        assert_eq!(memo.ids(LINE, "01B.json", t0 + secs(60)), Some(strings(&["9"])));
+        assert_eq!(memo.target(LINE, "01B.json", t0 + secs(60)), Target::Ask);
+        assert_eq!(memo.ids(LINE, "01B.json", t0 + secs(61)), None);
+    }
+
+    #[test]
+    fn a_removed_name_is_new_again() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        memo.listed(LINE, names(&[("index.json", &["1"]), ("01A.json", &["2"])]), t0);
+        memo.forget_name(LINE, "01A.json");
+        assert_eq!(memo.ids(LINE, "01A.json", t0 + secs(1)), None);
+        assert_eq!(memo.target(LINE, "01A.json", t0 + secs(1)), Target::Create);
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(1)), update("1", &[]));
+        // Nothing known about the folder: nothing to forget.
+        memo.forget_name(PACKS, "01A.zip");
+        assert_eq!(memo.target(PACKS, "01A.zip", t0 + secs(1)), Target::Ask);
+    }
+
+    #[test]
+    fn a_404_forgets_the_folder() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        for folder in [LINE, PACKS] {
+            memo.saw_alive(folder, t0);
+            memo.listed(folder, names(&[("index.json", &["1"])]), t0);
+        }
+        memo.forget(LINE);
+        assert!(!memo.is_alive(LINE, t0 + secs(1)));
+        assert_eq!(memo.ids(LINE, "index.json", t0 + secs(1)), None);
+        // Not "create": the listing that could say so is forgotten too.
+        assert_eq!(memo.target(LINE, "index.json", t0 + secs(1)), Target::Ask);
+        assert_eq!(memo.target(LINE, "01B.json", t0 + secs(1)), Target::Ask);
+        // What is known about other folders stays.
+        assert!(memo.is_alive(PACKS, t0 + secs(1)));
+        assert_eq!(memo.target(PACKS, "index.json", t0 + secs(1)), update("1", &[]));
+    }
+
+    #[test]
+    fn a_name_missing_from_a_listing_is_still_asked_for_on_a_read() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        memo.listed(LINE, names(&[("index.json", &["1"])]), t0);
+        // A write may take the listing's word that the name is new. A read
+        // gets no answer from it: another device may have written the file
+        // since, so `fetch` asks Drive.
+        assert_eq!(memo.target(LINE, "game.json", t0 + secs(1)), Target::Create);
+        assert_eq!(memo.ids(LINE, "game.json", t0 + secs(1)), None);
+        memo.listed(PACKS, HashMap::new(), t0);
+        assert_eq!(memo.ids(PACKS, "01A.zip", t0), None);
+    }
+
+    #[test]
+    fn a_folder_is_known_alive_for_ten_minutes() {
+        let t0 = Instant::now();
+        let mut memo = Memo::default();
+        assert!(!memo.is_alive(LINE, t0));
+        memo.saw_alive(LINE, t0);
+        assert!(memo.is_alive(LINE, t0));
+        assert!(memo.is_alive(LINE, t0 + secs(599)));
+        assert!(!memo.is_alive(LINE, t0 + secs(600)));
+        assert!(!memo.is_alive(PACKS, t0));
+
+        // Seen again: ten minutes from then.
+        memo.saw_alive(LINE, t0 + secs(500));
+        assert!(memo.is_alive(LINE, t0 + secs(1099)));
+        assert!(!memo.is_alive(LINE, t0 + secs(1100)));
+
+        // Listing a folder does not by itself show it alive: `list` says so
+        // only when Drive found something in it.
+        memo.listed(PACKS, HashMap::new(), t0);
+        assert!(!memo.is_alive(PACKS, t0));
+    }
+
+    /// An answer from Drive with an error status, built without a request.
+    fn status(code: u16, reason: &str, message: &str) -> ureq::Error {
+        let body = json!({ "error": { "code": code, "message": message, "errors": [{ "reason": reason }] } });
+        ureq::Error::Status(code, ureq::Response::new(code, "Error", &body.to_string()).unwrap())
+    }
+
+    #[test]
+    fn a_write_that_drive_answers_with_404_is_marked() {
+        let gone = write_error(status(404, "notFound", "File not found: 1LineFolderId."));
+        assert!(is_gone(&gone));
+        // It reads like any other answer from Drive.
+        assert!(gone.to_string().contains("404"));
+        assert!(gone.to_string().contains("File not found: 1LineFolderId."));
+        // Found also when a caller has said what it was doing.
+        assert!(is_gone(&gone.context("upload")));
+
+        let full = write_error(status(403, "storageQuotaExceeded", "The Drive storage quota has been exceeded."));
+        assert!(!is_gone(&full));
+        let down = write_error(status(503, "backendError", "Backend Error"));
+        assert!(!is_gone(&down));
+        assert!(crate::cloud::is_unavailable(&down));
+        // The same answer to a request that is not a write is not marked.
+        assert!(!is_gone(&drive_error(status(404, "notFound", "File not found: 1LineFolderId."))));
+    }
+
+    #[test]
+    fn a_file_written_into_the_trash_is_not_written() {
+        let err = not_in_trash(&json!({ "id": "1", "trashed": true })).unwrap_err();
+        assert!(is_gone(&err));
+        assert!(not_in_trash(&json!({ "id": "1", "trashed": false })).is_ok());
+        assert!(not_in_trash(&json!({ "id": "1" })).is_ok());
     }
 }
