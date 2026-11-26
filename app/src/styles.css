@@ -629,26 +629,14 @@ textarea.input {
   font-weight: 600;
   background: linear-gradient(160deg, #2f4a66, #18222f);
 }
-.attention {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: var(--warn);
-  color: #1b1405;
-  border-radius: 50%;
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
+.card-attention {
+  display: inline-flex;
+  color: var(--warn);
 }
-.card-spinner {
-  position: absolute;
-  bottom: 8px;
-  right: 8px;
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 50%;
-  padding: 5px;
-  display: grid;
+.card-sub .spinner {
+  width: 10px;
+  height: 10px;
+  flex: none;
 }
 .card-meta {
   padding: 10px 2px 0;
@@ -663,12 +651,62 @@ textarea.input {
   margin-top: 6px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
+  min-height: 18px;
 }
 .card-time {
+  margin-left: auto;
   font-size: 12px;
   white-space: nowrap;
+}
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.status-dot i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7d8fa3;
+}
+.status-ok i {
+  background: #5ec26a;
+}
+.status-info i {
+  background: #66c0f4;
+}
+.status-warn {
+  color: #f7c97f;
+}
+.status-warn i {
+  background: #f0b04a;
+}
+.status-bad {
+  color: #f3a29c;
+}
+.status-bad i {
+  background: #e5625a;
+}
+.card-marks {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+.card-marks .mark {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.card-marks .mark.off {
+  filter: grayscale(1);
+  opacity: 0.45;
 }
 .table {
   display: flex;

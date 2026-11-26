@@ -130,6 +130,7 @@ export const savelib = {
   cloudOnlyHint: "这台电脑上还没有这个游戏，它的存档在云盘里",
   versions: (n: number) => `${n} 个版本`,
   here: "本机",
+  notHere: "不在本机",
   manual: "手动",
   independent: "独立",
   linesHint: "连在一起的共用同一个进度，分开放的各存各的。点「本机」可以改。",

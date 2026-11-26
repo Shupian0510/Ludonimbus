@@ -124,6 +124,7 @@ export const savelib: typeof Zh.savelib = {
   cloudOnlyHint: "This game isn't on this PC yet; its saves are in the cloud",
   versions: (n) => `${n} ${plural(n, "version", "versions")}`,
   here: "This PC",
+  notHere: "not on this PC",
   manual: "manual",
   independent: "own",
   linesHint: "Marks joined together share one progress; ones that stand apart keep their own. Click This PC to change it.",
