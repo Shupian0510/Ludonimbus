@@ -4,7 +4,7 @@ import { bytes, duration, relTime, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { groupBySource, type Grouped, type SourceGroup, tagText } from "../source";
-import { type Member, membersOf } from "./SaveLibrary";
+import { type Member, membersOf, variantLabel } from "./SaveLibrary";
 import { Badge, Button, Empty, Icon, Spinner, Toggle, useUi } from "./ui";
 
 function stored(storage: () => Storage, key: string): string | null {
@@ -27,12 +27,76 @@ function store(storage: () => Storage, key: string, value: string | null) {
 const local = () => localStorage;
 const session = () => sessionStorage;
 
+type Tone = "ok" | "info" | "warn" | "bad" | "muted";
+
+/** How a game on this PC stands with the cloud, in a word and a colour. */
+function statusOf(game: GameView, check?: StatusReport, checking?: boolean): { label: string; tone: Tone } {
+  const t = msg().library;
+  if (game.running) return { label: t.running, tone: "info" };
+  if (!check) return { label: checking ? t.checking : t.notChecked, tone: "muted" };
+  return statusInfo(check.status);
+}
+
 export function StatusBadge({ game, check, checking }: { game: GameView; check?: StatusReport; checking?: boolean }) {
-  const t = useT();
-  if (game.running) return <Badge tone="info">{t.library.running}</Badge>;
-  if (!check) return checking ? <Badge tone="muted">{t.library.checking}</Badge> : <Badge tone="muted">{t.library.notChecked}</Badge>;
-  const s = statusInfo(check.status);
+  useT();
+  const s = statusOf(game, check, checking);
   return <Badge tone={s.tone}>{s.label}</Badge>;
+}
+
+/**
+ * The status on a card: a dot in the status's colour, named on hover. In
+ * words only when something waits for the user.
+ */
+function StatusDot({ label, tone }: { label: string; tone: Tone }) {
+  return (
+    <span className={`status-dot status-${tone}`} title={label}>
+      <i />
+      {(tone === "warn" || tone === "bad") && label}
+    </span>
+  );
+}
+
+/** One mark per version of the game: what it runs on, and whether that is on this PC. */
+interface Mark {
+  label: string;
+  logo: string | null;
+  here: boolean;
+}
+
+function marksOf(members: Member[]): Mark[] {
+  const out: Mark[] = [];
+  for (const m of members) {
+    const label = variantLabel(m);
+    const seen = out.find((x) => x.label === label);
+    if (seen) {
+      seen.here ||= m.playable;
+      seen.logo ??= m.source.logo;
+    } else {
+      out.push({ label, logo: m.source.logo, here: m.playable });
+    }
+  }
+  // A game with one version and no program logo of its own has nothing to tell apart.
+  return out.length > 1 || out.some((m) => m.logo) ? out.sort((a, b) => Number(b.here) - Number(a.here)) : [];
+}
+
+function Marks({ members }: { members: Member[] }) {
+  const t = useT();
+  const marks = useMemo(() => marksOf(members), [members]);
+  const [failed, setFailed] = useState<string[]>([]);
+  if (marks.length === 0) return null;
+  return (
+    <span className="card-marks">
+      {marks.map((m) => (
+        <span key={m.label} className={m.here ? "mark" : "mark off"} title={`${m.label} · ${m.here ? t.savelib.here : t.savelib.notHere}`}>
+          {m.logo && !failed.includes(m.label) ? (
+            <img className="src-logo" src={m.logo} alt="" width={14} height={14} onError={() => setFailed((f) => [...f, m.label])} />
+          ) : (
+            m.label
+          )}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function needsAttention(g: GameView): boolean {
@@ -341,6 +405,10 @@ export function Library({
 
   const hint = (c: Card) => (c.playable ? undefined : c.main.cloud ? t.savelib.cloudOnlyHint : t.library.missingHint);
 
+  /** The same on a card, as a dot. */
+  const dot = (c: Card) =>
+    c.main.game ? <StatusDot {...statusOf(c.main.game, checks[c.main.key], checking[c.main.key])} /> : <StatusDot label={t.savelib.cloudOnly} tone="muted" />;
+
   /** Status of the card's main version: its sync status, or "only in the cloud". */
   const status = (c: Card) =>
     c.main.game ? (
@@ -369,26 +437,18 @@ export function Library({
           <button key={c.key} className={c.playable ? "card" : "card missing"} onClick={() => onOpen(c.key)} title={hint(c)}>
             <div className="cover">
               <Cover name={c.name} cover={artOf(c.main).cover} />
-              {g && needsAttention(g) && (
-                <span className="attention" title={t.library.needsAttention}>
-                  <Icon name="warn" size={15} />
-                </span>
-              )}
-              {checking[c.key] && (
-                <span className="card-spinner">
-                  <Spinner />
-                </span>
-              )}
             </div>
             <div className="card-meta">
               <div className="card-name">{c.name}</div>
               <div className="card-sub">
-                {status(c)}
-                <span className="card-time muted">
-                  {c.members.length > 1 && t.savelib.versions(c.members.length)}
-                  {c.members.length > 1 && c.secs > 0 && " · "}
-                  {c.secs > 0 && duration(c.secs)}
-                </span>
+                {checking[c.key] ? <Spinner /> : dot(c)}
+                {g && needsAttention(g) && (
+                  <span className="card-attention" title={t.library.needsAttention}>
+                    <Icon name="warn" size={14} />
+                  </span>
+                )}
+                <Marks members={c.members} />
+                <span className="card-time muted">{c.secs > 0 && duration(c.secs)}</span>
               </div>
             </div>
           </button>
