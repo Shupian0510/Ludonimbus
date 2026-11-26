@@ -8,7 +8,7 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, spec, steam, steamcloud, util};
+use ludonimbus_core::{adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, share, spec, steam, steamcloud, util};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -621,20 +621,51 @@ pub async fn purge_deleted_snapshot(key: String, id: String) -> CmdResult<()> {
     blocking(move || with_game(&key, |ctx, g| sync::purge_deleted(ctx, g, &id))).await
 }
 
+/// Save one version as a file to keep or to give to someone
+/// (`share::export`): a zip of its files that says which game it is of and
+/// nothing of this PC. `None` when no place was picked.
 #[tauri::command]
 pub async fn export_snapshot(key: String, id: String) -> CmdResult<Option<String>> {
     blocking(move || {
-        let file_name = format!("{key}-{id}.zip");
+        let ctx = Ctx::load()?;
+        // A game on this device, or one only the cloud has.
+        let (name, ids) = match ctx.cfg.game(&key) {
+            Some(g) => (g.name.clone(), savelib::ids(g)),
+            None => {
+                let cg = savelib::cached(&ctx.cfg).games.into_iter().find(|c| c.key == key);
+                let cg = cg.ok_or_else(|| anyhow!(ludonimbus_core::tr!("找不到这个游戏", "This game wasn't found")))?;
+                (cg.name.clone(), savelib::cloud_ids(&cg))
+            }
+        };
+        let safe: String = name.chars().map(|c| if c.is_control() || "<>:\"/\\|?*".contains(c) { '_' } else { c }).collect();
         let Some(dest) = rfd::FileDialog::new()
-            .set_title(ludonimbus_core::tr!("导出存档版本", "Export save version"))
-            .set_file_name(&file_name)
-            .add_filter("Zip", &["zip"])
+            .set_title(ludonimbus_core::tr!("导出存档", "Export a save"))
+            .set_file_name(format!("{}.{}", safe.trim(), share::EXT))
+            .add_filter(ludonimbus_core::tr!("Ludonimbus 存档", "Ludonimbus save"), &[share::EXT])
             .save_file()
         else {
             return Ok(None);
         };
-        Ctx::load()?.cloud()?.download(&key, &id, &dest)?;
+        share::export_as(&ctx, &key, &name, ids, &id, &dest)?;
         Ok(Some(dest.display().to_string()))
+    })
+    .await
+}
+
+/// Take in a save someone exported (a `.lnsave` file the user picks): it
+/// goes beside the game's history, kept, and changes nothing until it is
+/// made current. Returns its id; `None` when no file was picked.
+#[tauri::command]
+pub async fn import_shared_save(key: String) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let Some(path) = rfd::FileDialog::new()
+            .set_title(ludonimbus_core::tr!("导入存档", "Import a save"))
+            .add_filter(ludonimbus_core::tr!("Ludonimbus 存档", "Ludonimbus save"), &[share::EXT])
+            .pick_file()
+        else {
+            return Ok(None);
+        };
+        with_game(&key, |ctx, g| share::import(ctx, g, &path)).map(|m| Some(m.id))
     })
     .await
 }

@@ -162,6 +162,7 @@ fn main() {
             commands::restore_deleted_snapshot,
             commands::purge_deleted_snapshot,
             commands::export_snapshot,
+            commands::import_shared_save,
             commands::local_files,
             commands::open_path,
             commands::open_save_folder,

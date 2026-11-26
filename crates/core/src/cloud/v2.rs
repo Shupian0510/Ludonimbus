@@ -362,7 +362,8 @@ pub struct Origin {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub line: String,
     pub snapshot: String,
-    /// `restore`, `copy` or `convert:<converter>`.
+    /// `restore`, `copy`, `convert:<converter>`, or `share` (taken in from
+    /// a file someone shared: no game, line or snapshot to name).
     pub how: String,
     #[serde(flatten)]
     pub extra: Extra,

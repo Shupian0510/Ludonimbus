@@ -17,7 +17,9 @@ export type Trigger =
   | "manual"
   | "restore"
   | "pre-restore"
-  | "conflict-keep";
+  | "conflict-keep"
+  /** A save someone exported, taken in beside the history. */
+  | "shared";
 
 export type Status =
   | "noCloud"
@@ -745,7 +747,10 @@ export const api = {
   /** Resolves to whether the version was also locked (so retention keeps it). */
   restoreDeletedSnapshot: (key: string, id: string) => invoke<boolean>("restore_deleted_snapshot", { key, id }),
   purgeDeletedSnapshot: (key: string, id: string) => invoke<void>("purge_deleted_snapshot", { key, id }),
+  /** Save one version as a .lnsave file (to keep, or to give to someone); the path, or null when cancelled. */
   exportSnapshot: (key: string, id: string) => invoke<string | null>("export_snapshot", { key, id }),
+  /** Take in a .lnsave file the user picks, beside the game's history; its id, or null when cancelled. */
+  importSharedSave: (key: string) => invoke<string | null>("import_shared_save", { key }),
   localFiles: (key: string) =>
     invoke<{ files: LocalFile[]; roots: Record<string, string> }>("local_files", { key }),
   openPath: (path: string) => invoke<void>("open_path", { path }),

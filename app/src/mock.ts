@@ -578,7 +578,27 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined);
     }
     case "export_snapshot":
-      return delay(`C:\\Users\\me\\Downloads\\${key}-${String(args.id)}.zip`, 300);
+      return delay(`C:\\Users\\me\\Downloads\\${overview.games.find((g) => g.key === key)?.name ?? key}.lnsave`, 300);
+    case "import_shared_save": {
+      // A friend's save: beside the history, kept, from no device of this account.
+      const list = (snapshots[key] ??= []);
+      const like = list[0];
+      const id = `shared${list.length}`;
+      list.push({
+        ...(like ?? {}),
+        id,
+        deviceId: "shared",
+        deviceName: L("分享", "Shared"),
+        createdAt: new Date().toISOString(),
+        trigger: "shared",
+        comment: L("分享的存档", "Shared save"),
+        locked: true,
+        side: true,
+        head: false,
+        contentHash: id,
+      } as SnapshotSummary);
+      return delay(id, 600);
+    }
     case "join_suggestion": {
       // The Xbox version here keeps the same saves as the laptop's version, in other folders.
       const s: JoinSuggestion = {

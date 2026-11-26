@@ -30,6 +30,7 @@ export const format: typeof Zh.format = {
     restore: "Restored an older version",
     "pre-restore": "Kept before restoring",
     "conflict-keep": "Kept in a conflict",
+    shared: "Shared by someone",
   },
   status: {
     synced: "Synced",
@@ -474,6 +475,9 @@ export const saves: typeof Zh.saves = {
   deleted: "Moved to Recently deleted",
   auto: (n) => `Automatic saves ${n}`,
   autoHint: "Saved each time you finish playing. Only the most recent ones stay, plus one a day (change how many in Settings). Star a save to keep it for good.",
+  import: "Import…",
+  importHint: "\"Export\" writes a .lnsave file you can give to someone. They import it into the same game: one more kept save, nothing on their PC changes until they make it current. The file doesn't hold your device's name or folders.",
+  imported: "Imported; it is among the kept saves",
   trash: "Recently deleted",
   trashCount: (n) => `Recently deleted ${n}`,
   trashEmpty: "Nothing was deleted recently",

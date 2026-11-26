@@ -18,6 +18,8 @@ function daysLeft(d: TrashedSnapshot): number {
 
 /** Kept beside the history: the saves a restore replaced, the losing side of a conflict. */
 const isSide = (s: SnapshotSummary) => s.side ?? (s.trigger === "pre-restore" || s.trigger === "conflict-keep");
+/** A save someone else exported, taken in here: beside the history as well, but nothing it replaced. Its device column says so. */
+const isShared = (s: SnapshotSummary) => s.trigger === "shared";
 
 interface Row {
   s: SnapshotSummary;
@@ -211,6 +213,18 @@ export function Saves({
     }
   };
 
+  /** Take in a save someone exported: it shows among the kept ones, and nothing else changes. */
+  const importShared = async () => {
+    try {
+      if ((await api.importSharedSave(game.key)) === null) return;
+      ui.toast(msg().saves.imported);
+      await load();
+      await onChanged();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
   const toggleTrash = async () => {
     setTrashOpen(!trashOpen);
     if (!trashOpen) await loadTrash();
@@ -266,7 +280,7 @@ export function Saves({
     const named = s.locked && !!s.comment;
     const id = other ? `${other.line}/${s.id}` : s.id;
     return (
-      <div key={id} className={`save${isSide(s) ? " side" : ""}${open === s.id && !other ? " open" : ""}`}>
+      <div key={id} className={`save${isSide(s) && !isShared(s) ? " side" : ""}${open === s.id && !other ? " open" : ""}`}>
         <div className="save-row">
           <button className="save-main" onClick={() => !other && toggle(s.id)} disabled={!!other} title={`${dateTime(s.createdAt)} · ${triggerLabel(s.trigger)}`}>
             <PlatformTag mark={marks[s.platform ?? ""]} />
@@ -274,7 +288,7 @@ export function Saves({
               <b>{named ? s.comment : relTime(s.createdAt)}</b>
               {(named || s.comment) && <span className="muted">{named ? relTime(s.createdAt) : s.comment}</span>}
               {other && <Badge tone="muted">{other.shared ? v.sharedLine : other.name || v.ownLine}</Badge>}
-              {isSide(s) && <Badge tone="muted">{v.replaced}</Badge>}
+              {isSide(s) && !isShared(s) && <Badge tone="muted">{v.replaced}</Badge>}
               {isHead && !isCurrent && !cloudOnly && <Badge tone="info">{v.newest}</Badge>}
             </span>
             <span className={`device${mine ? " mine" : ""}`}>{s.deviceName}</span>
@@ -339,9 +353,15 @@ export function Saves({
         )}
         {auto.length > 0 && <Hint text={v.autoHint} />}
         {!cloudOnly && (
-          <button className="link saves-trash" onClick={toggleTrash} aria-expanded={trashOpen}>
-            <Icon name="trash" size={14} /> {trashOpen && trash ? v.trashCount(trash.length) : v.trash}
-          </button>
+          <span className="saves-more">
+            <button className="link" onClick={importShared}>
+              <Icon name="upload" size={14} /> {v.import}
+            </button>
+            <Hint text={v.importHint} />
+            <button className="link" onClick={toggleTrash} aria-expanded={trashOpen}>
+              <Icon name="trash" size={14} /> {trashOpen && trash ? v.trashCount(trash.length) : v.trash}
+            </button>
+          </span>
         )}
       </div>
       {autoOpen && auto.map(row)}
