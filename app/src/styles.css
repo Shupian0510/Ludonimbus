@@ -2412,6 +2412,36 @@ button.member:hover {
 .banner.join-row {
   padding: 8px 14px;
 }
+.steps-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+  padding: 0;
+}
+.steps-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--text-2);
+}
+.steps-list li.done {
+  color: #8fe09a;
+}
+.steps-list li .btn {
+  margin-left: auto;
+}
+.check-line,
+.check-line label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.check-line label {
+  cursor: pointer;
+}
 .version-bar-actions {
   display: flex;
   gap: 14px;

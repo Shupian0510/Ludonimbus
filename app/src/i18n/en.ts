@@ -137,6 +137,9 @@ export const savelib: typeof Zh.savelib = {
   autoSync: "Sync automatically",
   autoOn: "Syncs automatically now",
   autoOff: "Syncs only when you ask now",
+  backupOnly: "Backup only",
+  backupOn: "Backup only now",
+  manualSync: "Only when I ask",
   editSaves: "Change the save location…",
   leaveJoin: "Keep apart from the other versions",
   left: "Kept apart now",
@@ -337,9 +340,47 @@ export const platformFolders: typeof Zh.platformFolders = {
   xbox: "For Xbox games, pick gamelaunchhelper.exe in the game's Content folder (the game's own program is protected and can't be picked).",
 };
 
+export const steamCloud: typeof Zh.steamCloud = {
+  title: "Steam Cloud",
+  hint: "Steam's: Ludonimbus leaves this game alone.\nBackup only: Steam Cloud syncs as usual; Ludonimbus stores a version after you play and never changes the game's saves by itself.\nLudonimbus: Steam Cloud is off for this game and Ludonimbus syncs it, so its saves can be shared with other platforms and devices.",
+  state: { steam: "Steam's", backup: "Backup only", managed: "Ludonimbus" },
+  textSteam: "Ludonimbus leaves this game's saves alone.",
+  textBackup: "Steam Cloud syncs as usual; Ludonimbus only stores versions.",
+  textManaged: "Synced before it starts from Steam and after you quit.",
+  textBackground: "Synced in the background; Steam's launch options are untouched.",
+  textNoCloud: "Steam Cloud doesn't keep this game; Ludonimbus syncs it.",
+  wrapper: {
+    missing: "The launch options in Steam were cleared: no sync before the game starts.",
+    changed: "The launch options in Steam were changed: no sync before the game starts.",
+    runnerMoved: "Ludonimbus moved, and the launch options in Steam still point to the old place.",
+  },
+  backup: "Back up only",
+  backupOn: "Backup only now",
+  takeOver: "Take over…",
+  takeOverTitle: (name) => `Let Ludonimbus sync ${name}`,
+  takeOverDo: "Take over",
+  taken: "Taken over: syncs when started from Steam",
+  takenBackground: "Taken over: syncs in the background",
+  stepSynced: "Steam is done syncing with its cloud",
+  stepSyncedTodo: "Let Steam finish syncing with its cloud",
+  stepSyncedHint: "Until it is, this device may not have the newest saves. Start Steam and let it finish; start the game once and quit if needed.",
+  stepOff: "Steam Cloud is off for this game",
+  stepOffTodo: "Turn Steam Cloud off for this game in Steam",
+  stepOffHint: "In Steam: Properties → General → turn off \"Keep game saves in the Steam Cloud\". Turning it off for all games in Steam's Settings → Cloud counts too. Ludonimbus never flips this switch for you. Steam may note the change only after a while, or when it quits.",
+  openProperties: "Open Properties",
+  noWrapper: "Leave Steam's launch options alone",
+  noWrapperHint: "For games with anti-cheat or their own launcher that won't start through Ludonimbus: they sync in the background instead, without the guarantee of being up to date before each start.",
+  handBack: "Give back to Steam",
+  handedBack: "Given back. Turn Steam Cloud on again in Steam; if Steam asks which saves to keep, pick this PC's.",
+  repair: "Repair",
+  repaired: "Launch options repaired",
+  beforeLaunch: "Sync before it starts",
+  restoreNote: "Steam Cloud syncs this game too: next time it may ask which saves to keep. Pick this PC's.",
+};
+
 export const steamAction: typeof Zh.steamAction = {
   title: "Steam needs to close for a moment",
-  text: "Steam overwrites changes to shortcuts while it runs. Ludonimbus will close Steam, make the change, then reopen it.",
+  text: "Steam overwrites changes Ludonimbus makes to it while it runs. Ludonimbus will close Steam, make the change, then reopen it.",
   confirm: "Close Steam and continue",
 };
 

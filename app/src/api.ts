@@ -186,6 +186,8 @@ export interface GameView {
   joined: boolean;
   /** The last time saves of the cloud replaced the ones here, while that can still be undone. */
   replaced: { device: string; at: string } | null;
+  /** For a game Steam installed: who keeps its saves, and whether its launch options go through the wrapper. */
+  store: { appid: number; mode: SteamCloudState; wrapper: boolean } | null;
 }
 
 /** A game the cloud has but this PC doesn't: grey in the library. */
@@ -833,6 +835,8 @@ export const api = {
     invoke<SteamCloudStatus>("steam_cloud_take_over", { key, wrapper, closeSteam }),
   /** Back to Steam Cloud: launch options as before, backup only. */
   steamCloudHandBack: (key: string, closeSteam: boolean) => invoke<SteamCloudStatus>("steam_cloud_hand_back", { key, closeSteam }),
+  /** Open the game's properties in Steam (its Steam Cloud switch is there). */
+  steamCloudOpenProperties: (key: string) => invoke<void>("steam_cloud_open_properties", { key }),
   /** Every game Steam installed whose save location is known, backup only. */
   steamCloudBackupAll: () => invoke<SteamCloudDone[]>("steam_cloud_backup_all"),
   /** Take over every backed-up game; refused (STEAM_CLOUD_ON) unless Steam Cloud is off for all games. */

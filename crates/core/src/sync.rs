@@ -298,12 +298,13 @@ fn local_of(local: &LocalState, st: &GameState) -> Local {
 
 /// Where the saves of a game come from, for the manifest's `platform`.
 /// A PC game says which store's version it is where that is known
-/// (`pc:xbox`): versions of several stores can share one line, and the
-/// app shows which one each version was played on.
+/// (`pc:xbox`, `pc:steam`): versions of several stores can share one line,
+/// and the app shows which one each version was played on.
 pub fn platform(game: &GameEntry) -> String {
     match game.adapter.as_deref().and_then(crate::adapters::find) {
         Some(a) if a.is_emulator() => format!("emu:{}", a.key),
         Some(a) => format!("recomp:{}", a.key),
+        None if game.store.is_some() => "pc:steam".to_string(),
         None if crate::games::source(game).kind == crate::games::SourceKind::Xbox => "pc:xbox".to_string(),
         None => "pc".to_string(),
     }

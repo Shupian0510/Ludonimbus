@@ -410,6 +410,8 @@ fn backup_only(root: &Path) {
     let from_b = uploaded(b.sync());
     assert_eq!(b.files_of(&from_b), ["steamuser/1000/remote/slot1.sav", "steamuser/1000/remote/slot2.sav"]);
     assert_eq!(head(&b).id, from_b);
+    // The versions say they were made on the Steam version of the game.
+    assert_eq!(head(&b).platform, "pc:steam");
     assert!(state::game(KEY).conflict.is_none());
     assert_eq!((b.steam.read_save("slot1.sav").as_deref(), b.steam.read_save("slot2.sav").as_deref()), (Some("b1"), Some("b2")));
 

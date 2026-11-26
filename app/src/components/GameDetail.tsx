@@ -15,6 +15,7 @@ import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi
 import { Screenshots } from "./Screenshots";
 import { Saves } from "./Saves";
 import { ApplyDialog, familyOf, JoinRow, UndoRow, VersionBar } from "./SaveLibrary";
+import { handBack, StorePanel, TakeOverDialog } from "./SteamCloud";
 import { GameAchievements } from "./Achievements";
 
 type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
@@ -78,7 +79,7 @@ export function GameDetail({
   const [versionsKey, setVersionsKey] = useState(0);
   const [heroFailed, setHeroFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
-  const [dialog, setDialog] = useState<"art" | "steam" | null>(sceneIs("art-picker") ? "art" : null);
+  const [dialog, setDialog] = useState<"art" | "steam" | "takeover" | null>(sceneIs("art-picker") ? "art" : null);
   useEffect(() => setHeroFailed(false), [game.art.hero]);
   useEffect(() => setLogoFailed(false), [game.art.logo]);
 
@@ -357,56 +358,60 @@ export function GameDetail({
             setTab("config");
             setTimeout(() => document.querySelector(".detail-body .tabs")?.scrollIntoView({ block: "start" }), 0);
           }}
+          store={game.store ? { onTakeOver: () => setDialog("takeover"), onHandBack: () => handBack(ui, game, () => after()) } : undefined}
         />
         <UndoRow game={game} onChanged={() => after()} />
         {overview.cloud.kind !== "none" && !game.joined && <JoinRow key={game.key} gameKey={game.key} name={game.name} disabled={game.running} onChanged={() => after()} />}
 
         <div className="cards2">
-          <section className="panel">
-            <div className="panel-head">
-              <Icon name="steam" />
-              <h3>{g.steamTitle}</h3>
-              {game.steam && (
-                <Toggle
-                  checked={game.steam.enabled}
-                  onChange={(v) =>
-                    steamAction(
-                      (close) => api.steamSetEnabled(game.key, v, close),
-                      v ? msg().game.steamOn : msg().game.steamOff,
-                    )
-                  }
-                />
+          {game.store && <StorePanel game={game} onChanged={() => after()} onTakeOver={() => setDialog("takeover")} />}
+          {!game.store && (
+            <section className="panel">
+              <div className="panel-head">
+                <Icon name="steam" />
+                <h3>{g.steamTitle}</h3>
+                {game.steam && (
+                  <Toggle
+                    checked={game.steam.enabled}
+                    onChange={(v) =>
+                      steamAction(
+                        (close) => api.steamSetEnabled(game.key, v, close),
+                        v ? msg().game.steamOn : msg().game.steamOff,
+                      )
+                    }
+                  />
+                )}
+              </div>
+              <p className={`health health-${health.tone}`}>{health.text}</p>
+              {health.fixable && (
+                <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
+                  {g.repair}
+                </Button>
               )}
-            </div>
-            <p className={`health health-${health.tone}`}>{health.text}</p>
-            {health.fixable && (
-              <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
-                {g.repair}
-              </Button>
-            )}
-            {game.steam && (
-              <p className="muted small">{g.steamHint}</p>
-            )}
-            {!game.steam && game.health.state !== "noSteam" && (
-              <>
-                <p className="muted small">
-                  {game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe}
-                </p>
+              {game.steam && (
+                <p className="muted small">{g.steamHint}</p>
+              )}
+              {!game.steam && game.health.state !== "noSteam" && (
+                <>
+                  <p className="muted small">
+                    {game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe}
+                  </p>
+                  <div className="row">
+                    <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
+                      {g.addSteam}
+                    </Button>
+                  </div>
+                </>
+              )}
+              {game.steam?.created && (
                 <div className="row">
-                  <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
-                    {g.addSteam}
+                  <Button small kind="ghost" icon="trash" onClick={removeFromSteam}>
+                    {g.removeSteam}
                   </Button>
                 </div>
-              </>
-            )}
-            {game.steam?.created && (
-              <div className="row">
-                <Button small kind="ghost" icon="trash" onClick={removeFromSteam}>
-                  {g.removeSteam}
-                </Button>
-              </div>
-            )}
-          </section>
+              )}
+            </section>
+          )}
 
           <section className="panel">
             <div className="panel-head">
@@ -494,6 +499,16 @@ export function GameDetail({
           <ArtPicker gameKey={game.key} name={game.name} current={game.art} onApplied={onChanged} />
           {game.steam && <p className="muted small">{g.artSteamNote}</p>}
         </Modal>
+      )}
+      {dialog === "takeover" && (
+        <TakeOverDialog
+          game={game}
+          onClose={() => setDialog(null)}
+          onDone={async () => {
+            setDialog(null);
+            await after();
+          }}
+        />
       )}
       {dialog === "steam" && (
         <Modal title={g.addSteamTitle(game.name)} onClose={() => setDialog(null)}>

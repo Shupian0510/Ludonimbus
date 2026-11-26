@@ -3,7 +3,7 @@
 // newest of every other save line come first; everything else is folded
 // away under "automatic saves". One action per row: make it the current one.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, OtherSave, Overview, PlatformMark, PlatformMarks, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot } from "../api";
+import { api, errorText, GameView, OtherSave, Overview, PlatformMark, PlatformMarks, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot } from "../api";
 import { bytes, dateTime, outcomeText, relTime, triggerLabel } from "../format";
 import { msg, useT } from "../i18n";
 import { ApplyDialog, membersOf } from "./SaveLibrary";
@@ -74,7 +74,7 @@ export function Saves({
   onChanged,
   onApplied,
 }: {
-  game: { key: string; name: string };
+  game: { key: string; name: string; store?: GameView["store"] };
   overview: Overview;
   /** The game is running: nothing that changes its saves. */
   disabled: boolean;
@@ -162,9 +162,19 @@ export function Saves({
 
   /** The one action that replaces the saves on this PC, so the one that asks first. */
   const makeCurrent = async ({ s, other }: Row) => {
+    const text = v.makeCurrentText(game.name, s.deviceName, dateTime(s.createdAt));
+    // Steam Cloud keeps this game's saves too, and will notice they changed.
+    const steamToo = !!game.store && game.store.mode !== "managed";
     const ok = await ui.confirm({
       title: v.makeCurrentTitle,
-      text: v.makeCurrentText(game.name, s.deviceName, dateTime(s.createdAt)),
+      text: steamToo ? (
+        <>
+          <p>{text}</p>
+          <p className="muted">{t.steamCloud.restoreNote}</p>
+        </>
+      ) : (
+        text
+      ),
       confirm: v.makeCurrent,
     });
     if (!ok) return;

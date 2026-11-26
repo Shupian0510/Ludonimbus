@@ -96,6 +96,17 @@ pub struct GameView {
     /// The last time saves of the cloud replaced the ones here, while that
     /// can still be undone (`sync::undo`).
     replaced: Option<ReplacedView>,
+    /// For a game Steam installed: who keeps its saves.
+    store: Option<StoreView>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoreView {
+    appid: u32,
+    mode: steamcloud::State,
+    /// Its launch options are meant to go through the wrapper.
+    wrapper: bool,
 }
 
 #[derive(Serialize)]
@@ -177,6 +188,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         family: families.get(&g.key).cloned().unwrap_or_else(|| g.key.clone()),
         link: g.game.clone(),
         joined: !g.bind.is_empty(),
+        store: g.store.as_ref().map(|s| StoreView { appid: s.appid, mode: steamcloud::state(g), wrapper: s.wrapper }),
     }
 }
 
@@ -1049,6 +1061,19 @@ pub async fn steam_cloud_hand_back(key: String, close_steam: bool) -> CmdResult<
         let hand = || Ctx::load().and_then(|ctx| steamcloud::hand_back(&ctx, &key));
         let entry = if wrapped { with_steam_closed(close_steam, hand)? } else { hand()? };
         steamcloud::status(&config::load()?, &entry)
+    })
+    .await
+}
+
+/// Open the game's properties in Steam, where its Steam Cloud switch is.
+#[tauri::command]
+pub async fn steam_cloud_open_properties(key: String) -> CmdResult<()> {
+    blocking(move || {
+        let cfg = config::load()?;
+        let game = cfg.require_game(&key)?;
+        let link = game.store.as_ref().ok_or_else(|| anyhow!(ludonimbus_core::tr!("「{}」不是从 Steam 安装的游戏", "\"{}\" isn't a game installed through Steam", game.name)))?;
+        opener::open(format!("steam://gameproperties/{}", link.appid))?;
+        Ok(())
     })
     .await
 }

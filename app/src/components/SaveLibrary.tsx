@@ -38,6 +38,7 @@ export function variantLabel(m: Member): string {
   const s = m.source;
   if (s.label) return s.label;
   if (s.kind === "emulator" && s.name) return s.name;
+  if (m.game?.store && s.kind !== "emulator" && s.kind !== "recomp") return "Steam";
   if (s.kind === "pc" && m.game?.steam) return "Steam";
   if (s.kind === "recomp") return m.game?.platform ?? m.cloud?.platform ?? msg().source.kinds.recomp;
   return msg().source.kinds[s.kind];
@@ -57,6 +58,7 @@ export function VersionBar({
   onOpen,
   onChanged,
   onEditSaves,
+  store,
 }: {
   overview: Overview;
   current: string;
@@ -66,6 +68,8 @@ export function VersionBar({
   onChanged: () => Promise<void>;
   /** Show where the game's save folders are set. */
   onEditSaves?: () => void;
+  /** For a game Steam installed: taking it over from Steam Cloud, giving it back. */
+  store?: { onTakeOver: () => void; onHandBack: () => void | Promise<unknown> };
 }) {
   const t = useT();
   const s = t.savelib;
@@ -131,12 +135,34 @@ export function VersionBar({
         menu.push({ label: s.lineFollow(l.name || l.devices.join(", ")), disabled, title: why, onClick: () => done(() => api.useLine(current, { kind: "follow", line: l.id }), msg().savelib.lineChanged) });
       }
     }
-    menu.push({
-      label: s.autoSync,
-      checked: game.autoSync,
-      divider: menu.length > 0,
-      onClick: () => done(() => api.updateGame(current, { autoSync: !game.autoSync }), game.autoSync ? msg().savelib.autoOff : msg().savelib.autoOn),
-    });
+    const auto = (on: boolean, ok: string) => done(() => api.updateGame(current, { autoSync: on }), ok);
+    const mode = game.store?.mode;
+    if (mode && store) {
+      // Three ways for a game Steam installed: Ludonimbus syncs it, stores versions beside Steam Cloud, or does nothing by itself.
+      menu.push({
+        label: s.autoSync,
+        checked: mode === "managed" && game.autoSync,
+        divider: menu.length > 0,
+        disabled: disabled && mode !== "managed",
+        title: disabled && mode !== "managed" ? why : undefined,
+        onClick: () => (mode !== "managed" ? store.onTakeOver() : game.autoSync ? undefined : auto(true, msg().savelib.autoOn)),
+      });
+      menu.push({
+        label: s.backupOnly,
+        checked: mode === "backup",
+        disabled: disabled && mode === "managed",
+        title: disabled && mode === "managed" ? why : undefined,
+        onClick: () => (mode === "managed" ? store.onHandBack() : mode === "steam" ? auto(true, msg().savelib.backupOn) : undefined),
+      });
+      menu.push({ label: s.manualSync, checked: !game.autoSync, onClick: () => (game.autoSync ? auto(false, msg().savelib.autoOff) : undefined) });
+    } else {
+      menu.push({
+        label: s.autoSync,
+        checked: game.autoSync,
+        divider: menu.length > 0,
+        onClick: () => auto(!game.autoSync, game.autoSync ? msg().savelib.autoOff : msg().savelib.autoOn),
+      });
+    }
     if (onEditSaves) menu.push({ label: s.editSaves, onClick: onEditSaves });
     if (game.joined) menu.push({ label: s.leaveJoin, disabled, title: why, onClick: () => done(() => api.joinAnswer(current, "leave"), msg().savelib.left) });
     if (members.length > 1) menu.push({ label: s.split, onClick: split });
@@ -147,6 +173,7 @@ export function VersionBar({
       {me.source.logo && <img className="src-logo" src={me.source.logo} alt="" width={15} height={15} />}
       {hereLabel} · {s.here}
       {!game?.autoSync && game && <span className="chip-count">{s.manual}</span>}
+      {game?.autoSync && game.store?.mode === "backup" && <span className="chip-count">{s.backupOnly}</span>}
       <Icon name="down" size={12} />
     </>
   );

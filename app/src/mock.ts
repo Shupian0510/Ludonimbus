@@ -74,6 +74,8 @@ const snapshots: Record<string, SnapshotSummary[]> = {
   ],
   "fe-fortunes-weave": [snap("01FE2", 60 * 3, "DESKTOP-MAIN", "auto-exit", 56422, 4, { gameVersion: "0.2.7" }), snap("01FE1", 60 * 30, "DESKTOP-MAIN", "auto-exit", 40100, 3)],
   "bloodborne-lantern": [snap("01BB2", 60 * 5, "GPD-Win-Mini", "auto-exit", 15309618, 16), snap("01BB1", 60 * 48, "DESKTOP-MAIN", "auto-exit", 15309618, 16)],
+  "slay-the-spire": [snap("01STS2", 60 * 2, "DESKTOP-MAIN", "auto-exit", 48200, 6), snap("01STS1", 60 * 28, "DESKTOP-MAIN", "auto-exit", 47100, 6)],
+  hades: [snap("01HAD2", 60 * 4, "Steam Deck", "auto-exit", 2310000, 5), snap("01HAD1", 60 * 52, "DESKTOP-MAIN", "auto-exit", 2290000, 5)],
   // Two store versions on one save line: the newest of each comes first.
   celeste: [
     snap("01CE4", 50, "DESKTOP-MAIN", "auto-exit", 6210, 3),
@@ -86,13 +88,14 @@ const snapshots: Record<string, SnapshotSummary[]> = {
 
 // What each game's saves are made on, and how the app shows that (the logo
 // is the program's own icon when this PC has it).
-const mockPlatforms: Record<string, string> = { "zelda-oot-longshot": "recomp:longshot", "fe-fortunes-weave": "recomp:fefw", "bloodborne-lantern": "emu:shadps4", "doom-eternal": "pc:xbox" };
+const mockPlatforms: Record<string, string> = { "zelda-oot-longshot": "recomp:longshot", "fe-fortunes-weave": "recomp:fefw", "bloodborne-lantern": "emu:shadps4", "doom-eternal": "pc:xbox", "slay-the-spire": "pc:steam", hades: "pc:steam" };
 const platformMarks: PlatformMarks = {
   "recomp:longshot": { label: "Longshot", logo: art(4079546474, "_icon.png") },
   "recomp:fefw": { label: "fefw recomp", logo: art(2661209017, "_icon.png") },
   "emu:shadps4": { label: "Lantern Engine", logo: art(4000695018, "_icon.png") },
   pc: { label: "PC", logo: null },
   "pc:xbox": { label: "Xbox", logo: null },
+  "pc:steam": { label: "Steam", logo: null },
 };
 for (const [k, list] of Object.entries(snapshots)) for (const s of list) s.platform ??= mockPlatforms[k] ?? "pc";
 
@@ -116,6 +119,7 @@ function mockLines(key: string): SaveLine[] {
     lines.push({ ...kidLine(), shared: false, current: false, devices: [], members: [{ device: "KID-PC", platform: p, here: false }] });
   }
   if (key === "celeste") lines[0].members.push({ device: "LAPTOP", platform: "pc:xbox", here: false });
+  if (key === "hades") lines[0].members.push({ device: "Steam Deck", platform: p, here: false });
   if (at === "own") lines.push({ id: "own", name: "DESKTOP-MAIN", shared: false, current: false, devices: [], members: [] });
   const mine = lines.find((l) => l.id === at) ?? lines[0];
   mine.current = true;
@@ -190,6 +194,7 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     link: null,
     joined: false,
     replaced: null,
+    store: null,
     ...extra,
   };
 }
@@ -334,6 +339,26 @@ if (!mockScene || mockScene === "library-sources") {
   );
 }
 
+// Games Steam itself installed (see `steamCloudApps`): one backed up beside
+// Steam Cloud, one Ludonimbus syncs. Not in the docs screenshots.
+if (!mockScene) {
+  const steamGame = (key: string, name: string, exe: string) =>
+    game(key, name, 0, "", exe, ["{ludusavi}"], {
+      adapter: null,
+      adapterName: null,
+      platform: null,
+      ludusaviTitle: name,
+      steam: null,
+      health: { state: "notLinked" },
+      art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+      source: { kind: "pc", name: null, detail: null, label: null, logo: null },
+    });
+  overview.games.push(
+    steamGame("slay-the-spire", "Slay the Spire", "D:\\SteamLibrary\\steamapps\\common\\SlayTheSpire\\SlayTheSpire.exe"),
+    steamGame("hades", "Hades", "D:\\SteamLibrary\\steamapps\\common\\Hades\\x64\\Hades.exe"),
+  );
+}
+
 function found(id: string, name: string, source: Found["source"], extra: Partial<Found> = {}): Found {
   return {
     id,
@@ -400,7 +425,7 @@ const delay = <T,>(v: T, ms = 250) => new Promise<T>((r) => setTimeout(() => r(v
 
 /** Games Steam installed: one backed up, one taken over, one left to Steam (Steam Cloud not done syncing), one without Steam Cloud. */
 const steamCloudApps: SteamCloudApp[] = [
-  { appid: 367520, name: "Hollow Knight", key: "hollow-knight", state: "backup", syncState: "synchronized", cloudEnabled: true, cloudUsed: true },
+  { appid: 646570, name: "Slay the Spire", key: "slay-the-spire", state: "backup", syncState: "synchronized", cloudEnabled: true, cloudUsed: true },
   { appid: 1145360, name: "Hades", key: "hades", state: "managed", syncState: "synchronized", cloudEnabled: false, cloudUsed: true },
   { appid: 1716740, name: "Starfield", key: null, state: "steam", syncState: "changesincloud", cloudEnabled: true, cloudUsed: true },
   { appid: 2527500, name: "MiSide", key: null, state: "steam", syncState: null, cloudEnabled: true, cloudUsed: false },
@@ -416,8 +441,19 @@ function mockSteamStatus(key: string): SteamCloudStatus {
     cloudUsed: a?.cloudUsed ?? true,
     globalEnabled: true,
     steamRunning: true,
-    wrapper: a?.state === "managed" ? "ok" : null,
+    wrapper: a?.state === "managed" && !mockNoWrapper.has(key) ? "ok" : null,
   };
+}
+
+/** Games taken over without the wrapper in their launch options. */
+const mockNoWrapper = new Set<string>();
+
+/** `GameView.store` of a game in the mock library. */
+function mockStore(g: GameView): GameView["store"] {
+  const a = steamCloudApps.find((x) => x.key === g.key);
+  if (!a) return null;
+  const managed = a.state === "managed";
+  return { appid: a.appid, mode: managed ? "managed" : g.autoSync ? "backup" : "steam", wrapper: managed && !mockNoWrapper.has(g.key) };
 }
 
 /** Adds games Steam installed to the mock library, backup only. */
@@ -432,13 +468,17 @@ function mockSteamAdd(appids: number[]): SteamCloudDone[] {
 }
 
 /** Takes a game over as the backend would, or refuses with its error code. */
-function mockSteamTakeOver(key: string): SteamCloudStatus {
+function mockSteamTakeOver(key: string, wrapper = true): SteamCloudStatus {
   const a = steamCloudApps.find((x) => x.key === key);
   if (a && a.cloudUsed && a.syncState !== "synchronized")
     throw L("STEAM_NOT_SYNCED: Steam 上次没有和云端同步完。请打开 Steam 等它同步完成，然后再接管", "STEAM_NOT_SYNCED: Steam didn't finish syncing with Steam Cloud last time. Start Steam and let it finish, then take it over");
   if (a?.cloudUsed && a.cloudEnabled)
     throw L("STEAM_CLOUD_ON: Steam 云存档还开着。请在 Steam 里右键这个游戏 → 属性 → 通用，关掉它，然后再接管", "STEAM_CLOUD_ON: Steam Cloud is still on. In Steam, right-click the game → Properties → General and turn it off, then take it over");
   if (a) a.state = "managed";
+  if (wrapper) mockNoWrapper.delete(key);
+  else mockNoWrapper.add(key);
+  const g = overview.games.find((x) => x.key === key);
+  if (g) g.autoSync = true;
   return mockSteamStatus(key);
 }
 
@@ -466,6 +506,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         const g = o.games.find((x) => x.key === "zelda-oot-longshot")!;
         g.pending = 2;
       }
+      for (const g of o.games) g.store = mockStore(g);
       return delay(o, 150);
     }
     case "get_language": {
@@ -915,11 +956,18 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "steam_cloud_status":
       return delay(mockSteamStatus(key), 200);
     case "steam_cloud_take_over":
-      return delay(mockSteamTakeOver(key), 1200);
+      return delay(mockSteamTakeOver(key, args.wrapper !== false), 1200);
     case "steam_cloud_hand_back": {
       const a = steamCloudApps.find((x) => x.key === key);
       if (a) a.state = "backup";
+      mockNoWrapper.delete(key);
       return delay(mockSteamStatus(key), 800);
+    }
+    case "steam_cloud_open_properties": {
+      // As if the user then flipped the game's Steam Cloud switch in Steam.
+      const a = steamCloudApps.find((x) => x.key === key);
+      if (a) a.cloudEnabled = !a.cloudEnabled;
+      return delay(undefined, 200);
     }
     case "steam_cloud_take_over_all":
       return delay<SteamCloudDone[]>(
