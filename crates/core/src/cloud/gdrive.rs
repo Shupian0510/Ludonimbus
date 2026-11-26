@@ -1,23 +1,29 @@
-//! Google Drive (REST v3, `drive.file` scope).
+//! Google Drive (REST v3, `drive.file` scope) as a path-based [`Store`].
 //!
 //! Files live in a visible "Ludonimbus" folder in My Drive so users can
 //! always download their saves from the Drive website, even without the app.
-//! Snapshot summaries are stored in `appProperties` / `description` of the
-//! zip file, so one listing call returns the whole history.
+//! What goes into that folder is decided by [`super::repo::Repo`], as on
+//! every other cloud; this file only turns paths into Drive's files.
 //!
+//! Drive addresses files by id, so a path is resolved folder by folder.
 //! Sub-folder ids are cached on disk (keyed by the app folder's id) so that a
 //! launch from Steam needs only a few requests.
+//!
+//! Drive also allows several files with one name in a folder, which happens
+//! when two devices create the same file at the same moment.
+//! [`DriveFile::beats`] says which of them counts and every operation
+//! follows it, so all devices read the same one.
 
 use super::oauth::{self, describe, GoogleClient};
 use super::store::{Entry, Store};
-use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo, TrashedSnapshot};
-use crate::snapshot::{SnapshotMeta, SnapshotSummary, Trigger};
+use super::Unavailable;
 use crate::{paths, util};
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -25,11 +31,18 @@ use std::time::{Duration, Instant};
 const API: &str = "https://www.googleapis.com/drive/v3";
 const UPLOAD: &str = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
+/// What a listing asks Drive for about each file.
+const FILE_FIELDS: &str = "id,name,size,mimeType,md5Checksum,createdTime,modifiedTime";
+/// Largest content replaced with a simple upload, the kind Drive documents
+/// for up to 5 MB. Anything bigger goes through an upload session.
+const SIMPLE_UPLOAD_MAX: usize = 5 * 1024 * 1024;
 
 pub struct GoogleDrive {
     client: GoogleClient,
     refresh_token: String,
     folder: String,
+    /// Which sign-in and folder name this is, see [`sign_in_key`].
+    owner: String,
     agent: ureq::Agent,
     bulk: ureq::Agent,
     token: Mutex<Option<(String, Instant)>>,
@@ -37,28 +50,184 @@ pub struct GoogleDrive {
     root: Mutex<Option<String>>,
     /// Sub-folder path (e.g. `games/x/snapshots`) → id, below `root`.
     folders: Mutex<HashMap<String, String>>,
+    /// The account's e-mail address (or name), once [`Store::quota`] has
+    /// asked Drive for it.
+    account: Mutex<Option<String>>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct FolderCache {
+    /// [`sign_in_key`] of the sign-in that looked `root` up. Empty in files
+    /// written by older versions.
+    #[serde(default)]
+    owner: String,
     root: String,
     folders: HashMap<String, String>,
+}
+
+impl FolderCache {
+    /// The app folder's id, when this cache was written for the same sign-in
+    /// and folder name. A cache left by another Google account says nothing
+    /// about this one.
+    fn root_for(&self, owner: &str) -> Option<String> {
+        (self.owner == owner && !self.root.is_empty()).then(|| self.root.clone())
+    }
 }
 
 fn cache_file() -> std::path::PathBuf {
     paths::data_dir().join("gdrive-folders.json")
 }
 
-#[derive(Debug, Clone)]
+fn read_cache() -> FolderCache {
+    std::fs::read(cache_file())
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Names one sign-in and folder name without giving either away, so the
+/// folder cache on disk can say whom it belongs to. Signing in again, also to
+/// the same account, gives a new key: the cache is then filled again by the
+/// first request.
+fn sign_in_key(client_id: &str, refresh_token: &str, folder: &str) -> String {
+    let text = format!("gdrive\n{client_id}\n{folder}\n{refresh_token}");
+    blake3::hash(text.as_bytes()).to_hex()[..16].to_string()
+}
+
+/// [`Store::cache_scope`] of an app folder. Its id belongs to one folder of
+/// one account, and stays the same for as long as that folder exists.
+fn scope_of(root_id: &str) -> String {
+    format!("gdrive|{root_id}")
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct DriveFile {
     id: String,
     name: String,
-    app: HashMap<String, String>,
-    description: String,
     size: u64,
     is_folder: bool,
-    /// Content checksum, or modification time for files without one.
+    created: Option<DateTime<Utc>>,
+    modified: Option<DateTime<Utc>>,
+    /// Changes whenever the content changes, see [`change_tag`].
     tag: String,
+}
+
+fn time(v: &Value) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(v.as_str()?).ok().map(|t| t.with_timezone(&Utc))
+}
+
+/// What tells one content of a file from another: Drive's MD5 of the
+/// content. Folders (and Google's own document types, which Ludonimbus never
+/// creates) have no checksum and fall back to the modification time.
+fn change_tag(md5: Option<&str>, modified: Option<&str>) -> String {
+    md5.or(modified).unwrap_or_default().to_string()
+}
+
+impl DriveFile {
+    /// One entry of a `files.list` answer.
+    fn parse(f: &Value) -> DriveFile {
+        DriveFile {
+            id: f["id"].as_str().unwrap_or_default().to_string(),
+            name: f["name"].as_str().unwrap_or_default().to_string(),
+            // Drive sends 64-bit numbers as strings.
+            size: f["size"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
+            is_folder: f["mimeType"].as_str() == Some(FOLDER_MIME),
+            created: time(&f["createdTime"]),
+            modified: time(&f["modifiedTime"]),
+            tag: change_tag(f["md5Checksum"].as_str(), f["modifiedTime"].as_str()),
+        }
+    }
+
+    /// Whether this entry counts rather than `other` when both have the same
+    /// name in one folder.
+    ///
+    /// Files: the most recently modified, which is the last write. Folders:
+    /// the one created first, so every device settles on the same folder and
+    /// a duplicate made later never hides one that already has files in it.
+    /// The id settles ties, so the answer never depends on the order Drive
+    /// lists them in.
+    fn beats(&self, other: &DriveFile) -> bool {
+        if self.is_folder {
+            (self.created, &self.id) < (other.created, &other.id)
+        } else {
+            (self.modified, &self.id) > (other.modified, &other.id)
+        }
+    }
+}
+
+/// Split entries of one name and kind into the one that counts and the rest.
+fn pick(mut same: Vec<DriveFile>) -> Option<(DriveFile, Vec<DriveFile>)> {
+    let best = (0..same.len()).reduce(|a, b| if same[b].beats(&same[a]) { b } else { a })?;
+    let current = same.swap_remove(best);
+    Some((current, same))
+}
+
+/// A folder's entries with one entry per name, in the order Drive listed
+/// them. A file and a folder may share a name; they stay two entries.
+fn one_per_name(files: Vec<DriveFile>) -> Vec<DriveFile> {
+    let mut out: Vec<DriveFile> = Vec::new();
+    let mut seen: HashMap<(String, bool), usize> = HashMap::new();
+    for f in files {
+        match seen.get(&(f.name.clone(), f.is_folder)) {
+            Some(&i) => {
+                if f.beats(&out[i]) {
+                    out[i] = f;
+                }
+            }
+            None => {
+                seen.insert((f.name.clone(), f.is_folder), out.len());
+                out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// The content type stored with a file. Drive's website chooses the icon and
+/// the preview by it.
+fn mime_for(name: &str) -> &'static str {
+    if name.ends_with(".json") {
+        "application/json"
+    } else if name.ends_with(".zip") {
+        "application/zip"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// What `about` says: the account to show, bytes used and bytes in total
+/// (no total on accounts without a limit).
+fn parse_about(v: &Value) -> (Option<String>, Option<u64>, Option<u64>) {
+    let num = |p: &str| v["storageQuota"][p].as_str().and_then(|s| s.parse().ok());
+    let user = &v["user"];
+    let account = user["emailAddress"]
+        .as_str()
+        .or(user["displayName"].as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
+    (account, num("usage"), num("limit"))
+}
+
+/// Read a JSON answer. A body that stops half-way is the connection failing,
+/// so it is reported like any other connection problem.
+fn body_json(resp: ureq::Response) -> Result<Value> {
+    resp.into_json().map_err(|e| anyhow!(Unavailable(e.to_string())))
+}
+
+/// Copy a response body to `out`. A read that fails is the connection
+/// dropping and becomes [`Unavailable`]; a write that fails (a full disk) is
+/// not the cloud's fault and keeps its own error.
+fn copy_body(mut body: impl Read, out: &mut impl Write) -> Result<()> {
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = match body.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(n) => n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(anyhow!(Unavailable(e.to_string()))),
+        };
+        out.write_all(&buf[..n])?;
+    }
 }
 
 fn esc(s: &str) -> String {
@@ -167,10 +336,12 @@ fn drive_error(e: ureq::Error) -> anyhow::Error {
 
 impl GoogleDrive {
     pub fn new(client: GoogleClient, refresh_token: String, folder: String, timeout: Duration) -> Self {
+        let folder = if folder.trim().is_empty() { "Ludonimbus".to_string() } else { folder };
         GoogleDrive {
+            owner: sign_in_key(&client.id, &refresh_token, &folder),
             client,
             refresh_token,
-            folder: if folder.trim().is_empty() { "Ludonimbus".into() } else { folder },
+            folder,
             agent: ureq::AgentBuilder::new()
                 .timeout_connect(timeout)
                 .timeout_read(timeout.max(Duration::from_secs(20)))
@@ -183,12 +354,14 @@ impl GoogleDrive {
             token: Mutex::new(None),
             root: Mutex::new(None),
             folders: Mutex::new(HashMap::new()),
+            account: Mutex::new(None),
         }
     }
 
     fn save_cache(&self) {
         let Some(root) = self.root.lock().unwrap().clone() else { return };
         let cache = FolderCache {
+            owner: self.owner.clone(),
             root,
             folders: self.folders.lock().unwrap().clone(),
         };
@@ -211,10 +384,7 @@ impl GoogleDrive {
             .set("Authorization", &self.bearer()?)
             .call()
         {
-            Ok(r) => {
-                let v: Value = r.into_json()?;
-                Ok(!v["trashed"].as_bool().unwrap_or(false))
-            }
+            Ok(r) => Ok(!body_json(r)?["trashed"].as_bool().unwrap_or(false)),
             Err(ureq::Error::Status(404, _)) => Ok(false),
             Err(e) => Err(drive_error(e)),
         }
@@ -243,16 +413,14 @@ impl GoogleDrive {
         Ok(format!("Bearer {tok}"))
     }
 
-    fn list(&self, q: &str) -> Result<Vec<DriveFile>> {
+    /// Everything a Drive search query matches.
+    fn query(&self, q: &str) -> Result<Vec<DriveFile>> {
         let mut out = Vec::new();
         let mut page: Option<String> = None;
         loop {
             let mut params = vec![
                 ("q", q.to_string()),
-                (
-                    "fields",
-                    "nextPageToken,files(id,name,size,mimeType,md5Checksum,modifiedTime,appProperties,description)".to_string(),
-                ),
+                ("fields", format!("nextPageToken,files({FILE_FIELDS})")),
                 ("pageSize", "1000".to_string()),
                 ("spaces", "drive".to_string()),
             ];
@@ -260,35 +428,14 @@ impl GoogleDrive {
                 params.push(("pageToken", p.clone()));
             }
             let url = url::Url::parse_with_params(&format!("{API}/files"), &params)?;
-            let v: Value = self
-                .agent
-                .get(url.as_str())
-                .set("Authorization", &self.bearer()?)
-                .call()
-                .map_err(drive_error)?
-                .into_json()?;
-            for f in v["files"].as_array().into_iter().flatten() {
-                out.push(DriveFile {
-                    id: f["id"].as_str().unwrap_or_default().to_string(),
-                    name: f["name"].as_str().unwrap_or_default().to_string(),
-                    app: f["appProperties"]
-                        .as_object()
-                        .map(|o| {
-                            o.iter()
-                                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    description: f["description"].as_str().unwrap_or_default().to_string(),
-                    size: f["size"].as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
-                    is_folder: f["mimeType"].as_str() == Some(FOLDER_MIME),
-                    tag: f["md5Checksum"]
-                        .as_str()
-                        .or(f["modifiedTime"].as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                });
-            }
+            let v = body_json(
+                self.agent
+                    .get(url.as_str())
+                    .set("Authorization", &self.bearer()?)
+                    .call()
+                    .map_err(drive_error)?,
+            )?;
+            out.extend(v["files"].as_array().into_iter().flatten().map(DriveFile::parse));
             match v["nextPageToken"].as_str() {
                 Some(t) => page = Some(t.to_string()),
                 None => break,
@@ -298,13 +445,13 @@ impl GoogleDrive {
     }
 
     fn create_folder(&self, name: &str, parent: &str) -> Result<String> {
-        let v: Value = self
-            .agent
-            .post(&format!("{API}/files?fields=id"))
-            .set("Authorization", &self.bearer()?)
-            .send_json(json!({ "name": name, "mimeType": FOLDER_MIME, "parents": [parent] }))
-            .map_err(drive_error)?
-            .into_json()?;
+        let v = body_json(
+            self.agent
+                .post(&format!("{API}/files?fields=id"))
+                .set("Authorization", &self.bearer()?)
+                .send_json(json!({ "name": name, "mimeType": FOLDER_MIME, "parents": [parent] }))
+                .map_err(drive_error)?,
+        )?;
         v["id"]
             .as_str()
             .map(str::to_string)
@@ -319,23 +466,26 @@ impl GoogleDrive {
             "name='{}' and 'root' in parents and mimeType='{FOLDER_MIME}' and trashed=false",
             esc(&self.folder)
         );
-        let id = match self.list(&q)?.into_iter().next() {
-            Some(f) => f.id,
+        let id = match pick(self.query(&q)?) {
+            Some((f, _)) => f.id,
             None if create => self.create_folder(&self.folder, "root")?,
             None => return Ok(None),
         };
-        let disk: FolderCache = std::fs::read(cache_file())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let disk = read_cache();
+        let same_root = disk.root == id;
         {
             let mut folders = self.folders.lock().unwrap();
             folders.clear();
-            if disk.root == id {
+            if same_root {
                 folders.extend(disk.folders);
             }
         }
         *self.root.lock().unwrap() = Some(id.clone());
+        // Also before any sub-folder is known: the next process takes the
+        // app folder's id from this file for `cache_scope`.
+        if !same_root || disk.owner != self.owner {
+            self.save_cache();
+        }
         Ok(Some(id))
     }
 
@@ -359,8 +509,8 @@ impl GoogleDrive {
                 esc(name),
                 esc(&parent)
             );
-            let id = match self.list(&q)?.into_iter().next() {
-                Some(f) => f.id,
+            let id = match pick(self.query(&q)?) {
+                Some((f, _)) => f.id,
                 None if create => self.create_folder(name, &parent)?,
                 None => return Ok(None),
             };
@@ -371,33 +521,27 @@ impl GoogleDrive {
         Ok(Some(parent))
     }
 
-    fn find_file(&self, parent: &str, name: &str) -> Result<Option<DriveFile>> {
+    /// Every file (not folder) called `name` directly in a folder: more than
+    /// one when devices created it at the same moment.
+    fn named(&self, parent: &str, name: &str) -> Result<Vec<DriveFile>> {
         let q = format!("name='{}' and '{}' in parents and trashed=false", esc(name), esc(parent));
-        Ok(self.list(&q)?.into_iter().next())
+        Ok(self.query(&q)?.into_iter().filter(|f| !f.is_folder).collect())
     }
 
-    /// A file of ours in the Drive trash (「最近删除」).
-    fn find_trashed(&self, parent: &str, name: &str) -> Result<Option<DriveFile>> {
-        let q = format!("name='{}' and '{}' in parents and trashed=true", esc(name), esc(parent));
-        Ok(self.list(&q)?.into_iter().next())
+    /// The file a path stands for, if there is one.
+    fn file_at(&self, path: &str) -> Result<Option<DriveFile>> {
+        let (parts, name) = split_path(path);
+        let Some(folder) = self.folder_id(&parts, false)? else {
+            return Ok(None);
+        };
+        Ok(pick(self.named(&folder, name)?).map(|(current, _)| current))
     }
 
-    fn snapshots_folder(&self, game: &str) -> Result<String> {
-        self.folder_id(&["games", game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))
-    }
-
-    /// Create a file with a resumable upload (works for any size).
-    fn create_file(&self, parent: &str, name: &str, mime: &str, meta_extra: Value, body: Vec<u8>) -> Result<String> {
-        let mut meta = json!({ "name": name, "parents": [parent] });
-        if let (Some(m), Some(extra)) = (meta.as_object_mut(), meta_extra.as_object()) {
-            for (k, v) in extra {
-                m.insert(k.clone(), v.clone());
-            }
-        }
-        let resp = self
-            .agent
-            .post(&format!("{UPLOAD}/files?uploadType=resumable&fields=id"))
+    /// Send `body` through an upload session: `start` opens it and one more
+    /// request carries the bytes. The file appears (or changes) only once the
+    /// last byte has arrived, at any size.
+    fn upload_session(&self, start: ureq::Request, meta: Value, mime: &str, body: &[u8]) -> Result<Value> {
+        let resp = start
             .set("Authorization", &self.bearer()?)
             .set("X-Upload-Content-Type", mime)
             .set("X-Upload-Content-Length", &body.len().to_string())
@@ -407,20 +551,31 @@ impl GoogleDrive {
             .header("Location")
             .ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?
             .to_string();
-        let v: Value = self
-            .bulk
-            .put(&location)
-            .set("Content-Type", mime)
-            .send_bytes(&body)
-            .map_err(drive_error)?
-            .into_json()?;
-        v["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")))
+        body_json(
+            self.bulk
+                .put(&location)
+                .set("Content-Type", mime)
+                .send_bytes(body)
+                .map_err(drive_error)?,
+        )
+    }
+
+    fn create_file(&self, parent: &str, name: &str, mime: &str, body: &[u8]) -> Result<()> {
+        let start = self.agent.post(&format!("{UPLOAD}/files?uploadType=resumable&fields=id"));
+        let v = self.upload_session(start, json!({ "name": name, "parents": [parent] }), mime, body)?;
+        if v["id"].as_str().is_none() {
+            return Err(anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")));
+        }
+        Ok(())
     }
 
     fn update_content(&self, file_id: &str, mime: &str, body: &[u8]) -> Result<()> {
+        if body.len() > SIMPLE_UPLOAD_MAX {
+            let start = self
+                .agent
+                .request("PATCH", &format!("{UPLOAD}/files/{file_id}?uploadType=resumable&fields=id"));
+            return self.upload_session(start, json!({}), mime, body).map(|_| ());
+        }
         self.bulk
             .request("PATCH", &format!("{UPLOAD}/files/{file_id}?uploadType=media"))
             .set("Authorization", &self.bearer()?)
@@ -430,320 +585,49 @@ impl GoogleDrive {
         Ok(())
     }
 
-    fn patch_meta(&self, file_id: &str, body: Value) -> Result<()> {
-        self.agent
-            .request("PATCH", &format!("{API}/files/{file_id}"))
-            .set("Authorization", &self.bearer()?)
-            .send_json(body)
-            .map_err(drive_error)?;
-        Ok(())
-    }
-
-    fn download_bytes(&self, file_id: &str) -> Result<Vec<u8>> {
-        let resp = self
+    /// Start downloading a file's content. `None` when the file is gone.
+    fn media(&self, file_id: &str) -> Result<Option<ureq::Response>> {
+        match self
             .bulk
             .get(&format!("{API}/files/{file_id}?alt=media"))
             .set("Authorization", &self.bearer()?)
             .call()
-            .map_err(drive_error)?;
-        let mut buf = Vec::new();
-        resp.into_reader().read_to_end(&mut buf)?;
-        Ok(buf)
+        {
+            Ok(r) => Ok(Some(r)),
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(e) => Err(drive_error(e)),
+        }
     }
 
     fn delete_file(&self, file_id: &str) -> Result<()> {
-        self.agent
+        match self
+            .agent
             .delete(&format!("{API}/files/{file_id}"))
             .set("Authorization", &self.bearer()?)
             .call()
-            .map_err(drive_error)?;
-        Ok(())
-    }
-
-    fn put_json(&self, parts: &[&str], name: &str, value: &Value) -> Result<()> {
-        let folder = self.writable_folder(parts)?;
-        let body = serde_json::to_vec_pretty(value)?;
-        match self.find_file(&folder, name)? {
-            Some(f) => self.update_content(&f.id, "application/json", &body),
-            None => self
-                .create_file(&folder, name, "application/json", json!({}), body)
-                .map(|_| ()),
+        {
+            // Already gone (another device deleted it): that is what was asked for.
+            Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
+            Err(e) => Err(drive_error(e)),
         }
     }
 
-    fn summary_props(meta: &SnapshotMeta) -> (Value, String) {
-        let props = json!({
-            "lnId": meta.id,
-            "lnParent": meta.parent.clone().unwrap_or_default(),
-            "lnDevice": meta.device_id,
-            "lnTrigger": serde_json::to_value(meta.trigger).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(),
-            "lnHash": meta.content_hash,
-            "lnCreated": meta.created_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            "lnSize": meta.total_size.to_string(),
-            "lnCount": meta.files.len().to_string(),
-            "lnLocked": if meta.locked { "1" } else { "0" },
-        });
-        let mut desc = json!({ "deviceName": meta.device_name, "comment": meta.comment });
-        if let Some(v) = &meta.game_version {
-            desc["gameVersion"] = json!(v);
-        }
-        if let Some(v) = &meta.installed_version {
-            desc["installedVersion"] = json!(v);
-        }
-        (props, desc.to_string())
-    }
-
-    fn summary_from(f: &DriveFile) -> Option<SnapshotSummary> {
-        let a = &f.app;
-        let id = a.get("lnId")?.clone();
-        let desc: Value = serde_json::from_str(&f.description).unwrap_or(Value::Null);
-        let trigger: Trigger = serde_json::from_value(Value::String(a.get("lnTrigger")?.clone())).ok()?;
-        Some(SnapshotSummary {
-            id,
-            parent: a.get("lnParent").filter(|s| !s.is_empty()).cloned(),
-            device_id: a.get("lnDevice").cloned().unwrap_or_default(),
-            device_name: desc["deviceName"].as_str().unwrap_or_default().to_string(),
-            created_at: chrono::DateTime::parse_from_rfc3339(a.get("lnCreated")?)
-                .ok()?
-                .with_timezone(&chrono::Utc),
-            trigger,
-            content_hash: a.get("lnHash").cloned().unwrap_or_default(),
-            total_size: a.get("lnSize").and_then(|s| s.parse().ok()).unwrap_or(f.size),
-            file_count: a.get("lnCount").and_then(|s| s.parse().ok()).unwrap_or(0),
-            comment: desc["comment"].as_str().unwrap_or_default().to_string(),
-            locked: a.get("lnLocked").map(|s| s == "1").unwrap_or(false),
-            game_version: desc["gameVersion"].as_str().map(str::to_string),
-            installed_version: desc["installedVersion"].as_str().map(str::to_string),
-        })
-    }
-}
-
-impl CloudProvider for GoogleDrive {
-    fn kind(&self) -> &'static str {
-        "googleDrive"
-    }
-
-    fn account(&self) -> Result<AccountInfo> {
-        let v: Value = self
-            .agent
-            .get(&format!("{API}/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)"))
-            .set("Authorization", &self.bearer()?)
-            .call()
-            .map_err(drive_error)?
-            .into_json()?;
-        let num = |p: &str| v["storageQuota"][p].as_str().and_then(|s| s.parse().ok());
-        Ok(AccountInfo {
-            label: v["user"]["emailAddress"]
-                .as_str()
-                .or(v["user"]["displayName"].as_str())
-                .unwrap_or("Google Drive")
-                .to_string(),
-            used: num("usage"),
-            total: num("limit"),
-        })
-    }
-
-    fn list_snapshots(&self, game: &str) -> Result<Vec<SnapshotSummary>> {
-        let Some(folder) = self.folder_id(&["games", game, "snapshots"], false)? else {
-            return Ok(Vec::new());
+    /// Create the file a path stands for, or replace its content.
+    fn put(&self, path: &str, data: &[u8]) -> Result<()> {
+        let (parts, name) = split_path(path);
+        let folder = self.writable_folder(&parts)?;
+        let mime = mime_for(name);
+        let Some((current, others)) = pick(self.named(&folder, name)?) else {
+            return self.create_file(&folder, name, mime, data);
         };
-        let q = format!("'{}' in parents and trashed=false", esc(&folder));
-        let mut out: Vec<SnapshotSummary> = self
-            .list(&q)?
-            .iter()
-            .filter(|f| f.name.ends_with(".zip"))
-            .filter_map(Self::summary_from)
-            .collect();
-        out.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
-        Ok(out)
-    }
-
-    fn get_meta(&self, game: &str, id: &str) -> Result<SnapshotMeta> {
-        let folder = self
-            .folder_id(&["games", game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))?;
-        let f = self
-            .find_file(&folder, &format!("{id}.json"))?
-            .ok_or_else(|| anyhow!(crate::tr!("找不到快照 {id}", "Snapshot {id} not found")))?;
-        Ok(serde_json::from_slice(&self.download_bytes(&f.id)?)?)
-    }
-
-    fn upload(&self, meta: &SnapshotMeta, zip: &Path) -> Result<()> {
-        let folder = self.writable_folder(&["games", &meta.game, "snapshots"])?;
-        let body = std::fs::read(zip).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", zip.display()))?;
-        let (props, desc) = Self::summary_props(meta);
-        // Full metadata first, then the zip (its appProperties make it visible).
-        self.create_file(
-            &folder,
-            &format!("{}.json", meta.id),
-            "application/json",
-            json!({}),
-            serde_json::to_vec_pretty(meta)?,
-        )?;
-        self.create_file(
-            &folder,
-            &format!("{}.zip", meta.id),
-            "application/zip",
-            json!({ "appProperties": props, "description": desc }),
-            body,
-        )?;
-        Ok(())
-    }
-
-    fn download(&self, game: &str, id: &str, dest: &Path) -> Result<()> {
-        let folder = self
-            .folder_id(&["games", game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))?;
-        let f = self
-            .find_file(&folder, &format!("{id}.zip"))?
-            .ok_or_else(|| anyhow!(crate::tr!("找不到快照文件 {id}", "Snapshot file {id} not found")))?;
-        let resp = self
-            .bulk
-            .get(&format!("{API}/files/{}?alt=media", f.id))
-            .set("Authorization", &self.bearer()?)
-            .call()
-            .map_err(drive_error)?;
-        let mut out = std::fs::File::create(dest)?;
-        std::io::copy(&mut resp.into_reader(), &mut out)?;
-        Ok(())
-    }
-
-    fn delete(&self, game: &str, id: &str) -> Result<()> {
-        let Some(folder) = self.folder_id(&["games", game, "snapshots"], false)? else {
-            return Ok(());
-        };
-        for name in [format!("{id}.zip"), format!("{id}.json")] {
-            if let Some(f) = self.find_file(&folder, &name)? {
-                self.delete_file(&f.id)?;
-            }
+        self.update_content(&current.id, mime, data)?;
+        // The file just written is now the newest of its name, so readers
+        // already get it; a duplicate that can't be deleted now goes with
+        // the next write.
+        for other in others {
+            let _ = self.delete_file(&other.id);
         }
         Ok(())
-    }
-
-    // 「最近删除」 is the Drive trash: trashed files keep their place and are
-    // emptied by Google after 30 days (the same as TRASH_DAYS). The deletion
-    // time and device go into the zip's appProperties.
-    fn trash(&self, game: &str, id: &str, by: &str) -> Result<()> {
-        let folder = self.snapshots_folder(game)?;
-        let zip = self
-            .find_file(&folder, &format!("{id}.zip"))?
-            .ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
-        // appProperties allow 124 bytes per key and value.
-        let by: String = by.chars().take(30).collect();
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        self.patch_meta(&zip.id, json!({ "trashed": true, "appProperties": { "lnDeletedAt": now, "lnDeletedBy": by } }))?;
-        if let Some(f) = self.find_file(&folder, &format!("{id}.json"))? {
-            self.patch_meta(&f.id, json!({ "trashed": true }))?;
-        }
-        Ok(())
-    }
-
-    fn list_trash(&self, game: &str) -> Result<Vec<TrashedSnapshot>> {
-        let Some(folder) = self.folder_id(&["games", game, "snapshots"], false)? else {
-            return Ok(Vec::new());
-        };
-        let q = format!("'{}' in parents and trashed=true", esc(&folder));
-        let mut out: Vec<TrashedSnapshot> = self
-            .list(&q)?
-            .iter()
-            .filter(|f| f.name.ends_with(".zip"))
-            .filter_map(|f| {
-                // Files trashed by hand in Drive carry no deletion time.
-                let at = chrono::DateTime::parse_from_rfc3339(f.app.get("lnDeletedAt")?).ok()?;
-                Some(TrashedSnapshot {
-                    snapshot: Self::summary_from(f)?,
-                    deleted_at: at.with_timezone(&chrono::Utc),
-                    deleted_by: f.app.get("lnDeletedBy").cloned().unwrap_or_default(),
-                })
-            })
-            .collect();
-        out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
-        Ok(out)
-    }
-
-    fn untrash(&self, game: &str, id: &str) -> Result<()> {
-        let folder = self.snapshots_folder(game)?;
-        let zip = self.find_trashed(&folder, &format!("{id}.zip"))?.ok_or_else(|| {
-            anyhow!(crate::tr!("「最近删除」里没有这个版本了，可能已经被彻底删除", "This version is no longer in Recently deleted; it may have been deleted for good"))
-        })?;
-        // The metadata first: the zip makes the snapshot visible.
-        if let Some(f) = self.find_trashed(&folder, &format!("{id}.json"))? {
-            self.patch_meta(&f.id, json!({ "trashed": false }))?;
-        }
-        self.patch_meta(&zip.id, json!({ "trashed": false, "appProperties": { "lnDeletedAt": null, "lnDeletedBy": null } }))
-    }
-
-    fn purge(&self, game: &str, id: &str) -> Result<()> {
-        let folder = self.snapshots_folder(game)?;
-        for name in [format!("{id}.zip"), format!("{id}.json")] {
-            if let Some(f) = self.find_trashed(&folder, &name)? {
-                self.delete_file(&f.id)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn update_meta(&self, meta: &SnapshotMeta) -> Result<()> {
-        let folder = self
-            .folder_id(&["games", &meta.game, "snapshots"], false)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端没有这个游戏的快照", "The cloud has no snapshots of this game")))?;
-        let (props, desc) = Self::summary_props(meta);
-        if let Some(f) = self.find_file(&folder, &format!("{}.zip", meta.id))? {
-            self.patch_meta(&f.id, json!({ "appProperties": props, "description": desc }))?;
-        }
-        if let Some(f) = self.find_file(&folder, &format!("{}.json", meta.id))? {
-            self.update_content(&f.id, "application/json", &serde_json::to_vec_pretty(meta)?)?;
-        }
-        Ok(())
-    }
-
-    fn put_device(&self, device: &DeviceInfo) -> Result<()> {
-        self.put_json(&["devices"], &format!("{}.json", device.id), &serde_json::to_value(device)?)
-    }
-
-    fn list_devices(&self) -> Result<Vec<DeviceInfo>> {
-        let Some(folder) = self.folder_id(&["devices"], false)? else {
-            return Ok(Vec::new());
-        };
-        let q = format!("'{}' in parents and trashed=false", esc(&folder));
-        let mut out = Vec::new();
-        for f in self.list(&q)? {
-            if let Ok(bytes) = self.download_bytes(&f.id) {
-                if let Ok(d) = serde_json::from_slice(&bytes) {
-                    out.push(d);
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    fn put_game(&self, game: &CloudGame) -> Result<()> {
-        self.put_json(&["games", &game.key], "game.json", &serde_json::to_value(game)?)
-    }
-
-    fn files(&self) -> &dyn Store {
-        self
-    }
-
-    fn list_games(&self) -> Result<Vec<CloudGame>> {
-        let Some(games) = self.folder_id(&["games"], false)? else {
-            return Ok(Vec::new());
-        };
-        let q = format!(
-            "'{}' in parents and mimeType='{FOLDER_MIME}' and trashed=false",
-            esc(&games)
-        );
-        let mut out = Vec::new();
-        for dir in self.list(&q)? {
-            if let Some(f) = self.find_file(&dir.id, "game.json")? {
-                if let Ok(bytes) = self.download_bytes(&f.id) {
-                    if let Ok(g) = serde_json::from_slice(&bytes) {
-                        out.push(g);
-                    }
-                }
-            }
-        }
-        Ok(out)
     }
 }
 
@@ -754,19 +638,55 @@ fn split_path(path: &str) -> (Vec<&str>, &str) {
     (parts, name)
 }
 
-/// Path-based access for data that is not a save snapshot
-/// ([`CloudProvider::files`]). Folders are resolved through the same cached
-/// folder ids as the snapshot code.
+/// Everything Ludonimbus keeps in Google Drive goes through these operations:
+/// the save history ([`super::repo::Repo`]) and all other data
+/// ([`super::CloudProvider::files`]).
+///
+/// Requests to Drive per call, once the folder ids are cached and the access
+/// token is fresh: `list` one per 1000 entries; `read` and `download` two
+/// (find the file by name, fetch it); `write` and `upload` three to replace a
+/// file (is the folder still there, find, send) and four to create one or to
+/// replace more than [`SIMPLE_UPLOAD_MAX`]; `remove` two; `check` and `quota`
+/// one each.
 impl Store for GoogleDrive {
     fn kind(&self) -> &'static str {
         "googleDrive"
     }
 
     fn label(&self) -> String {
-        format!("Google Drive · {}", self.folder)
+        // The account once Drive has named it, so Settings shows who is
+        // signed in: `Repo::account` asks for `quota` before the label.
+        let account = self.account.lock().unwrap().clone();
+        account.unwrap_or_else(|| format!("Google Drive · {}", self.folder))
+    }
+
+    fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
+        let v = body_json(
+            self.agent
+                .get(&format!("{API}/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)"))
+                .set("Authorization", &self.bearer()?)
+                .call()
+                .map_err(drive_error)?,
+        )?;
+        let (account, used, total) = parse_about(&v);
+        if account.is_some() {
+            *self.account.lock().unwrap() = account;
+        }
+        Ok((used, total))
     }
 
     fn check(&self) -> Result<()> {
+        // Ask Drive even when the folder is already known to this process:
+        // this is the test of whether the cloud can be reached.
+        let known = self.root.lock().unwrap().clone();
+        if let Some(id) = known {
+            if self.folder_alive(&id)? {
+                return Ok(());
+            }
+            // Deleted in Drive meanwhile: look it up, or create it, again.
+            *self.root.lock().unwrap() = None;
+            self.folders.lock().unwrap().clear();
+        }
         self.root_id(true).map(|_| ())
     }
 
@@ -776,7 +696,7 @@ impl Store for GoogleDrive {
             return Ok(Vec::new());
         };
         let q = format!("'{}' in parents and trashed=false", esc(&folder));
-        Ok(GoogleDrive::list(self, &q)?
+        Ok(one_per_name(self.query(&q)?)
             .into_iter()
             .map(|f| Entry {
                 name: f.name,
@@ -788,51 +708,39 @@ impl Store for GoogleDrive {
     }
 
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
-        let (parts, name) = split_path(path);
-        let Some(folder) = self.folder_id(&parts, false)? else {
+        let Some(f) = self.file_at(path)? else {
             return Ok(None);
         };
-        match self.find_file(&folder, name)? {
-            Some(f) => Ok(Some(self.download_bytes(&f.id)?)),
-            None => Ok(None),
-        }
+        let Some(resp) = self.media(&f.id)? else {
+            return Ok(None);
+        };
+        let mut buf = Vec::new();
+        copy_body(resp.into_reader(), &mut buf)?;
+        Ok(Some(buf))
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
-        let (parts, name) = split_path(path);
-        let f = self
-            .folder_id(&parts, false)?
-            .map(|folder| self.find_file(&folder, name))
-            .transpose()?
-            .flatten()
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud")))?;
-        let resp = self
-            .bulk
-            .get(&format!("{API}/files/{}?alt=media", f.id))
-            .set("Authorization", &self.bearer()?)
-            .call()
-            .map_err(drive_error)?;
+        let missing = || anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud"));
+        let f = self.file_at(path)?.ok_or_else(missing)?;
+        let resp = self.media(&f.id)?.ok_or_else(missing)?;
         let tmp = dest.with_extension("lntmp");
         let mut out = std::fs::File::create(&tmp)?;
-        std::io::copy(&mut resp.into_reader(), &mut out)?;
+        copy_body(resp.into_reader(), &mut out)?;
         drop(out);
         std::fs::rename(&tmp, dest)?;
         Ok(())
     }
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
-        let (parts, name) = split_path(path);
-        let folder = self.writable_folder(&parts)?;
-        let mime = if name.ends_with(".json") { "application/json" } else { "application/octet-stream" };
-        match self.find_file(&folder, name)? {
-            Some(f) => self.update_content(&f.id, mime, data),
-            None => self.create_file(&folder, name, mime, json!({}), data.to_vec()).map(|_| ()),
-        }
+        self.put(path, data)
     }
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        // The whole file is held in memory while it is sent. That is fine
+        // for saves of tens of megabytes and too much for very large files;
+        // sending in pieces that can be resumed is planned separately.
         let data = std::fs::read(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
-        Store::write(self, path, &data)
+        self.put(path, &data)
     }
 
     fn remove(&self, path: &str) -> Result<()> {
@@ -840,10 +748,26 @@ impl Store for GoogleDrive {
         let Some(folder) = self.folder_id(&parts, false)? else {
             return Ok(());
         };
-        if let Some(f) = self.find_file(&folder, name)? {
+        // Every file of that name: a duplicate left behind would turn up as
+        // the file again.
+        for f in self.named(&folder, name)? {
             self.delete_file(&f.id)?;
         }
         Ok(())
+    }
+
+    fn cache_scope(&self) -> Option<String> {
+        // `Repo` asks once, when it is built and before any request, so the
+        // app folder's id has to be known on this PC already: from an
+        // earlier request of this process, or from the folder cache a
+        // previous one left. Right after signing in there is none yet, and
+        // that `Repo` reads without its cache.
+        let resolved = self.root.lock().unwrap().clone();
+        let root = match resolved {
+            Some(id) => id,
+            None => read_cache().root_for(&self.owner)?,
+        };
+        Some(scope_of(&root))
     }
 }
 
@@ -891,5 +815,261 @@ mod tests {
         assert_eq!(refusal(403, &body("storageQuotaExceeded", "The user's Drive storage quota has been exceeded.")), None);
         assert_eq!(refusal(404, &body("notFound", "File not found: x.")), None);
         assert_eq!(refusal(400, &body("invalid", "Invalid Value")), None);
+    }
+
+    fn at(s: &str) -> Option<DateTime<Utc>> {
+        time(&json!(s))
+    }
+
+    fn file(id: &str, name: &str, modified: &str) -> DriveFile {
+        DriveFile {
+            id: id.into(),
+            name: name.into(),
+            size: 1,
+            is_folder: false,
+            created: at("2026-01-01T00:00:00.000Z"),
+            modified: at(modified),
+            tag: format!("md5-of-{id}"),
+        }
+    }
+
+    fn folder(id: &str, name: &str, created: &str) -> DriveFile {
+        DriveFile {
+            id: id.into(),
+            name: name.into(),
+            size: 0,
+            is_folder: true,
+            created: at(created),
+            modified: at("2026-06-01T00:00:00.000Z"),
+            tag: String::new(),
+        }
+    }
+
+    fn ids(files: &[DriveFile]) -> Vec<&str> {
+        files.iter().map(|f| f.id.as_str()).collect()
+    }
+
+    #[test]
+    fn the_most_recently_modified_file_counts() {
+        let old = file("z-old", "index.json", "2026-11-26T10:00:00.000Z");
+        let new = file("a-new", "index.json", "2026-11-26T10:00:00.250Z");
+        let older = file("m-older", "index.json", "2026-11-25T23:59:59.999Z");
+        // Whatever order Drive lists them in.
+        for listed in [
+            vec![old.clone(), new.clone(), older.clone()],
+            vec![new.clone(), older.clone(), old.clone()],
+            vec![older.clone(), old.clone(), new.clone()],
+        ] {
+            let (current, others) = pick(listed).unwrap();
+            assert_eq!(current.id, "a-new");
+            let mut rest = ids(&others);
+            rest.sort();
+            assert_eq!(rest, ["m-older", "z-old"]);
+        }
+    }
+
+    #[test]
+    fn files_modified_at_the_same_moment_are_settled_by_id() {
+        let a = file("a", "index.json", "2026-11-26T10:00:00.000Z");
+        let b = file("b", "index.json", "2026-11-26T10:00:00.000Z");
+        assert_eq!(pick(vec![a.clone(), b.clone()]).unwrap().0.id, "b");
+        assert_eq!(pick(vec![b, a]).unwrap().0.id, "b");
+    }
+
+    #[test]
+    fn a_file_without_a_time_loses() {
+        let mut blank = file("z", "index.json", "2026-11-26T10:00:00.000Z");
+        blank.modified = None;
+        let dated = file("a", "index.json", "2020-01-01T00:00:00.000Z");
+        assert_eq!(pick(vec![blank.clone(), dated.clone()]).unwrap().0.id, "a");
+        assert_eq!(pick(vec![dated, blank]).unwrap().0.id, "a");
+    }
+
+    #[test]
+    fn the_folder_created_first_counts() {
+        let first = folder("z-first", "games", "2026-11-01T08:00:00.000Z");
+        let second = folder("a-second", "games", "2026-11-01T08:00:00.400Z");
+        assert_eq!(pick(vec![second.clone(), first.clone()]).unwrap().0.id, "z-first");
+        assert_eq!(pick(vec![first, second]).unwrap().0.id, "z-first");
+    }
+
+    #[test]
+    fn one_file_or_none() {
+        assert_eq!(pick(Vec::new()), None);
+        let only = file("a", "game.json", "2026-11-26T10:00:00.000Z");
+        assert_eq!(pick(vec![only.clone()]), Some((only, Vec::new())));
+    }
+
+    #[test]
+    fn a_listing_has_one_entry_per_name() {
+        let listed = vec![
+            file("1", "01A.json", "2026-11-26T10:00:00.000Z"),
+            file("2", "index.json", "2026-11-26T10:00:00.000Z"),
+            folder("3", "thumbnails", "2026-11-02T00:00:00.000Z"),
+            file("4", "index.json", "2026-11-26T10:00:05.000Z"),
+            file("5", "01A.zip", "2026-11-26T09:00:00.000Z"),
+            folder("6", "thumbnails", "2026-11-01T00:00:00.000Z"),
+            // A file may be called like a folder; both are kept.
+            file("7", "thumbnails", "2026-11-26T10:00:00.000Z"),
+        ];
+        let out = one_per_name(listed);
+        assert_eq!(ids(&out), ["1", "4", "6", "5", "7"]);
+        // The entry carries the tag of the file that reads return.
+        assert_eq!(out[1].tag, "md5-of-4");
+    }
+
+    #[test]
+    fn reads_a_listing_entry() {
+        let zip = DriveFile::parse(&json!({
+            "id": "1AbC", "name": "01JDV.zip", "mimeType": "application/zip", "size": "15728640",
+            "md5Checksum": "9e107d9d372bb6826bd81d3542a419d6",
+            "createdTime": "2026-11-20T08:00:00.000Z", "modifiedTime": "2026-11-20T08:00:05.123Z"
+        }));
+        assert_eq!(zip.id, "1AbC");
+        assert_eq!(zip.name, "01JDV.zip");
+        assert_eq!(zip.size, 15_728_640);
+        assert!(!zip.is_folder);
+        assert_eq!(zip.tag, "9e107d9d372bb6826bd81d3542a419d6");
+        assert_eq!(zip.modified, at("2026-11-20T08:00:05.123Z"));
+        assert!(zip.created < zip.modified);
+
+        let dir = DriveFile::parse(&json!({
+            "id": "f1", "name": "snapshots", "mimeType": FOLDER_MIME,
+            "createdTime": "2026-11-20T08:00:00.000Z", "modifiedTime": "2026-11-21T08:00:00.000Z"
+        }));
+        assert!(dir.is_folder);
+        assert_eq!(dir.size, 0);
+        assert_eq!(dir.tag, "2026-11-21T08:00:00.000Z");
+    }
+
+    #[test]
+    fn the_tag_is_the_checksum_of_the_content() {
+        let t = "2026-11-20T08:00:05.123Z";
+        // Same content written again: same tag, although the time moved on.
+        assert_eq!(change_tag(Some("abc"), Some(t)), change_tag(Some("abc"), Some("2026-11-21T00:00:00.000Z")));
+        assert_ne!(change_tag(Some("abc"), Some(t)), change_tag(Some("abd"), Some(t)));
+        assert_eq!(change_tag(None, Some(t)), t);
+        assert_eq!(change_tag(None, None), "");
+    }
+
+    #[test]
+    fn splits_paths() {
+        assert_eq!(split_path("games/fe/snapshots/01J.zip"), (vec!["games", "fe", "snapshots"], "01J.zip"));
+        assert_eq!(split_path("index.json"), (vec![], "index.json"));
+        assert_eq!(split_path("/games//fe/game.json"), (vec!["games", "fe"], "game.json"));
+        assert_eq!(split_path(""), (vec![], ""));
+    }
+
+    #[test]
+    fn escapes_names_in_queries() {
+        assert_eq!(esc("Baldur's Gate"), "Baldur\\'s Gate");
+        assert_eq!(esc("a\\b"), "a\\\\b");
+        assert_eq!(esc("血源"), "血源");
+    }
+
+    #[test]
+    fn content_types() {
+        assert_eq!(mime_for("01J.json"), "application/json");
+        assert_eq!(mime_for("01J.zip"), "application/zip");
+        assert_eq!(mime_for("shot.jpg"), "application/octet-stream");
+    }
+
+    #[test]
+    fn about_names_the_account_and_the_space() {
+        let v = json!({
+            "user": { "emailAddress": "someone@example.com", "displayName": "Some One" },
+            "storageQuota": { "limit": "16106127360", "usage": "1048576" }
+        });
+        assert_eq!(parse_about(&v), (Some("someone@example.com".into()), Some(1_048_576), Some(16_106_127_360)));
+        // No address: the name. No limit: an account without one.
+        let v = json!({ "user": { "displayName": "Some One" }, "storageQuota": { "usage": "5" } });
+        assert_eq!(parse_about(&v), (Some("Some One".into()), Some(5), None));
+        assert_eq!(parse_about(&json!({})), (None, None, None));
+    }
+
+    fn drive(refresh_token: &str, folder: &str) -> GoogleDrive {
+        let client = GoogleClient {
+            id: "client-id".into(),
+            secret: String::new(),
+        };
+        GoogleDrive::new(client, refresh_token.into(), folder.into(), Duration::from_secs(5))
+    }
+
+    #[test]
+    fn the_label_is_the_account_once_known() {
+        let d = drive("token", "");
+        assert_eq!(Store::kind(&d), "googleDrive");
+        assert_eq!(d.label(), "Google Drive · Ludonimbus");
+        *d.account.lock().unwrap() = Some("someone@example.com".into());
+        assert_eq!(d.label(), "someone@example.com");
+    }
+
+    #[test]
+    fn the_cache_scope_is_the_app_folder() {
+        let d = drive("token", "Ludonimbus");
+        *d.root.lock().unwrap() = Some("1RootFolderId".into());
+        assert_eq!(d.cache_scope(), Some("gdrive|1RootFolderId".into()));
+        assert_ne!(scope_of("1RootFolderId"), scope_of("1OtherFolderId"));
+    }
+
+    #[test]
+    fn the_folder_cache_belongs_to_one_sign_in() {
+        let mine = drive("token-a", "Ludonimbus");
+        let cache = FolderCache {
+            owner: mine.owner.clone(),
+            root: "1RootFolderId".into(),
+            folders: HashMap::new(),
+        };
+        assert_eq!(cache.root_for(&mine.owner), Some("1RootFolderId".into()));
+        // The same sign-in opened again reads it; another account or another
+        // folder name does not.
+        assert_eq!(cache.root_for(&drive("token-a", "Ludonimbus").owner), Some("1RootFolderId".into()));
+        assert_eq!(cache.root_for(&drive("token-b", "Ludonimbus").owner), None);
+        assert_eq!(cache.root_for(&drive("token-a", "Other").owner), None);
+        // A cache file written before the owner was recorded.
+        let old: FolderCache = serde_json::from_str(r#"{ "root": "1RootFolderId", "folders": {} }"#).unwrap();
+        assert_eq!(old.root_for(&mine.owner), None);
+        assert_eq!(FolderCache::default().root_for(""), None);
+    }
+
+    #[test]
+    fn the_sign_in_key_does_not_show_the_token() {
+        let key = sign_in_key("client-id", "1//refresh-token-value", "Ludonimbus");
+        assert_eq!(key.len(), 16);
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(key, sign_in_key("client-id", "1//refresh-token-value", "Ludonimbus"));
+        assert_ne!(key, sign_in_key("other-client", "1//refresh-token-value", "Ludonimbus"));
+    }
+
+    struct Dropped;
+    impl Read for Dropped {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(ErrorKind::ConnectionReset, "connection reset"))
+        }
+    }
+
+    struct Full;
+    impl Write for Full {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_download_that_breaks_off_is_a_connection_problem() {
+        let mut out = Vec::new();
+        copy_body(&b"save data"[..], &mut out).unwrap();
+        assert_eq!(out, b"save data");
+
+        // Part of the body arrives, then the connection drops.
+        let err = copy_body((&b"save"[..]).chain(Dropped), &mut Vec::new()).unwrap_err();
+        assert!(crate::cloud::is_unavailable(&err));
+
+        // The local disk failing is not the cloud being unreachable.
+        let err = copy_body(&b"save data"[..], &mut Full).unwrap_err();
+        assert!(!crate::cloud::is_unavailable(&err));
     }
 }

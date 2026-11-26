@@ -2,9 +2,9 @@
 //!
 //! A snapshot is committed when its `.json` exists next to its `.zip`: the
 //! zip is uploaded first and the metadata last, so an interrupted upload is
-//! never listed. Stores without Drive-style file properties need one read per
-//! snapshot to list the history; those reads are cached on disk by the
-//! store's change tag, so only new or edited snapshots are fetched again.
+//! never listed. Listing the history takes one read per snapshot on every
+//! store; those reads are cached on disk by the store's change tag, so only
+//! new or edited snapshots are fetched again.
 
 use super::store::{join, Store};
 use super::{AccountInfo, CloudGame, CloudProvider, DeviceInfo, TrashedSnapshot};
