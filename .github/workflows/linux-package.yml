@@ -1,0 +1,86 @@
+name: Linux package
+
+# Builds the Linux download (AppImage, launch wrapper, background service,
+# install script) and the Decky plugin. ci.yml calls it for development
+# builds and release.yml for releases, so both are built the same way.
+on:
+  workflow_call:
+    inputs:
+      version-suffix:
+        description: "Appended to the version in the tree, e.g. dev.57. Empty for a release."
+        type: string
+        default: ""
+      artifact:
+        description: "Name of the workflow artifact that receives the two files"
+        type: string
+        required: true
+      retention-days:
+        type: number
+        default: 14
+      save-cache:
+        type: boolean
+        default: false
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-release-build-${{ hashFiles('.cargo/config.toml') }}
+          save-if: ${{ inputs.save-cache }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            plugin-decky/package-lock.json
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libsoup-3.0-dev libssl-dev libdbus-1-dev libfuse2 file
+      - name: Version of this build
+        if: inputs.version-suffix != ''
+        shell: pwsh
+        run: ./scripts/set-build-version.ps1 -Suffix "${{ inputs.version-suffix }}"
+      - name: Build
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
+          LUDONIMBUS_GOOGLE_CLIENT_ID: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_ID }}
+          LUDONIMBUS_GOOGLE_CLIENT_SECRET: ${{ secrets.LUDONIMBUS_GOOGLE_CLIENT_SECRET }}
+        run: |
+          bash scripts/prepare-sidecars.sh --release
+          cargo build --locked --release -p ludonimbus-agent
+          cd app
+          npm ci
+          npx tauri build --bundles appimage
+      - name: Pack the Linux download
+        run: |
+          out=Ludonimbus-linux-x86_64
+          mkdir -p "$out"
+          cp target/release/bundle/appimage/*.AppImage "$out/"
+          cp target/release/ludonimbus-run target/release/ludonimbus-agent "$out/"
+          cp scripts/install-linux.sh "$out/"
+          cp app/src-tauri/icons/128x128@2x.png "$out/ludonimbus.png"
+          chmod +x "$out"/*.AppImage "$out"/ludonimbus-run "$out"/ludonimbus-agent "$out"/install-linux.sh
+          tar czf "$out.tar.gz" "$out"
+      - name: Decky plugin
+        working-directory: plugin-decky
+        run: |
+          npm ci
+          npm run build
+          mkdir -p Ludonimbus
+          cp -r dist main.py plugin.json package.json Ludonimbus/
+          cp ../LICENSE Ludonimbus/
+          zip -r ../Ludonimbus-decky.zip Ludonimbus
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: |
+            Ludonimbus-linux-x86_64.tar.gz
+            Ludonimbus-decky.zip
+          retention-days: ${{ inputs.retention-days }}

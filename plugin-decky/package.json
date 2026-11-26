@@ -1,7 +1,7 @@
 {
   "name": "ludonimbus-decky",
   "private": true,
-  "version": "0.7.0",
+  "version": "1.0.0",
   "description": "Ludonimbus for Steam Deck Game Mode (Decky Loader)",
   "type": "module",
   "scripts": {

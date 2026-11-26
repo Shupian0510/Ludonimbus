@@ -1,0 +1,20 @@
+name: 建议 / Idea
+description: 想要的功能、想支持的游戏或平台 / A feature, a game or a platform you'd like supported
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 你想做到什么 / What you want to be able to do
+      description: 说场景，不用说怎么实现 / The situation, not the implementation
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: 现在是怎么做的 / How you do it today
+  - type: input
+    id: game
+    attributes:
+      label: 游戏和平台（如果有关）/ Game and platform, if it is about one
+      placeholder: "Stardew Valley (Steam + Switch)"
