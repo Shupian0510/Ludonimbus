@@ -5,17 +5,17 @@
 //! <root>/devices/<device-id>.json
 //! <root>/games/<game-key>/game.json
 //! <root>/games/<game-key>/snapshots/<ULID>.zip   (+ <ULID>.json metadata)
-//! <root>/games/<game-key>/trash/<ULID>.json      (「最近删除」, path-based clouds)
+//! <root>/games/<game-key>/trash/<ULID>.json      (「最近删除」)
 //! <root>/games/<game-key>/playtime/<device-id>.json
 //! <root>/games/<game-key>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
 //! ```
 //! Snapshots are immutable and append-only; there is no mutable "head"
 //! pointer, the newest mainline snapshot is the head.
 //!
-//! Google Drive implements [`CloudProvider`] directly (it is id-based and
-//! stores snapshot summaries in file properties). Every other backend only
-//! implements the small path-based [`store::Store`] trait and gets the layout
-//! from [`repo::Repo`]. Data that is not a save snapshot (playtime,
+//! Every backend, Google Drive included, only implements the small
+//! path-based [`store::Store`] trait. [`repo::Repo`] builds the layout on
+//! top of it and is the only [`CloudProvider`], so a change to the layout is
+//! written once. Data that is not a save snapshot (playtime,
 //! screenshots, ...) goes through [`CloudProvider::files`], the same folder
 //! seen as a path-based [`store::Store`], so it works on every backend.
 
@@ -139,8 +139,7 @@ impl From<&GameEntry> for CloudGame {
     }
 }
 
-/// How long a deleted version stays in 「最近删除」 before it is purged
-/// (Google Drive empties its own trash after the same 30 days).
+/// How long a deleted version stays in 「最近删除」 before it is purged.
 pub const TRASH_DAYS: i64 = 30;
 
 /// A version the user deleted: hidden from the history on every device and
@@ -204,22 +203,11 @@ pub fn open(cfg: &AppConfig) -> Result<Option<Box<dyn CloudProvider>>> {
     open_config(&cfg.cloud, timeout(cfg))
 }
 
-/// Open any cloud configuration with its saved credentials.
+/// Open any cloud configuration with its saved credentials: its
+/// [`Store`] with the layout of [`repo::Repo`] on top.
 pub fn open_config(cloud: &CloudConfig, timeout: Duration) -> Result<Option<Box<dyn CloudProvider>>> {
     match cloud {
         CloudConfig::None => Ok(None),
-        CloudConfig::GoogleDrive {
-            client_id,
-            client_secret,
-            folder,
-            ..
-        } => {
-            let client = oauth::GoogleClient::resolve(client_id, client_secret)
-                .ok_or_else(|| anyhow!(crate::tr!("Google Drive 缺少 OAuth Client ID，请在设置里填写", "Google Drive has no OAuth Client ID. Enter one in Settings")))?;
-            let token = oauth::load_refresh_token()?
-                .ok_or_else(|| anyhow!(crate::tr!("Google Drive 登录已失效，请在设置里重新连接", "The Google Drive sign-in has expired. Reconnect in Settings")))?;
-            Ok(Some(Box::new(gdrive::GoogleDrive::new(client, token, folder.clone(), timeout))))
-        }
         other => Ok(Some(Box::new(repo::Repo::new(build_store(other, None, timeout)?)))),
     }
 }
@@ -261,7 +249,8 @@ impl<T: Store + ?Sized> Store for Box<T> {
 }
 
 /// Build a path-based store. `secret` overrides the saved password / key
-/// (used to test new settings before saving them).
+/// (used to test new settings before saving them); clouds signed in to in
+/// the browser (Google Drive, Baidu Netdisk) always use their saved sign-in.
 pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration) -> Result<Box<dyn Store>> {
     let secret = |missing: &str| -> Result<String> {
         match secret {
@@ -314,7 +303,19 @@ pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration)
             ))
         }
         CloudConfig::Quark { folder } => Box::new(quark::Quark::open(folder, timeout)?),
-        CloudConfig::None | CloudConfig::GoogleDrive { .. } => bail!(crate::tr!("这种云盘不能这样打开", "This kind of cloud can't be opened this way")),
+        CloudConfig::GoogleDrive {
+            client_id,
+            client_secret,
+            folder,
+            ..
+        } => {
+            let client = oauth::GoogleClient::resolve(client_id, client_secret)
+                .ok_or_else(|| anyhow!(crate::tr!("Google Drive 缺少 OAuth Client ID，请在设置里填写", "Google Drive has no OAuth Client ID. Enter one in Settings")))?;
+            let token = oauth::load_refresh_token()?
+                .ok_or_else(|| anyhow!(crate::tr!("Google Drive 登录已失效，请在设置里重新连接", "The Google Drive sign-in has expired. Reconnect in Settings")))?;
+            Box::new(gdrive::GoogleDrive::new(client, token, folder.clone(), timeout))
+        }
+        CloudConfig::None => return Err(anyhow!(NotConfigured)),
     })
 }
 
