@@ -84,6 +84,9 @@ const paths: Record<string, ReactNode> = {
   /** Saves from one version of a game to another. */
   transfer: <path d="M4 8h13m0 0-3.5-3.5M17 8l-3.5 3.5M20 16H7m0 0 3.5-3.5M7 16l3.5 3.5" />,
   link: <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />,
+  more: <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" strokeWidth={2.6} />,
+  chevron: <path d="M9 6l6 6-6 6" />,
+  down: <path d="M6 9l6 6 6-6" />,
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths | string; size?: number }) {
@@ -172,6 +175,146 @@ export function Badge({ tone, children }: { tone: "ok" | "info" | "warn" | "bad"
 
 export function Spinner() {
   return <span className="spinner" />;
+}
+
+/**
+ * A "?" next to a title: what the thing is for, shown on hover or focus.
+ * The text is placed against the window, so nothing around it cuts it off.
+ */
+export function Hint({ text }: { text: string }) {
+  const [at, setAt] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const mark = useRef<HTMLSpanElement>(null);
+  const show = () => {
+    const r = mark.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(8, Math.min(r.left - 10, window.innerWidth - 348));
+    // Above the mark when there is little room below.
+    setAt(window.innerHeight - r.bottom < 170 && r.top > 170 ? { left, bottom: window.innerHeight - r.top + 6 } : { left, top: r.bottom + 6 });
+  };
+  const hide = () => setAt(null);
+  return (
+    <span
+      ref={mark}
+      className="hint"
+      aria-label={text}
+      tabIndex={0}
+      role="note"
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
+      // Inside a <label>, a click is not one on the field.
+      onClick={(e) => e.preventDefault()}
+      onKeyDown={(e) => e.key === "Escape" && hide()}
+    >
+      ?
+      {at && (
+        <span className="tip" role="tooltip" style={at}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  icon?: string;
+  onClick: () => void | Promise<unknown>;
+  disabled?: boolean;
+  /** Why it is disabled, or what it does. */
+  title?: string;
+  danger?: boolean;
+  /** One of several choices: the one in effect has a check mark. */
+  checked?: boolean;
+  /** A line above this item. */
+  divider?: boolean;
+}
+
+/**
+ * A button that opens a short list of actions under it. The list is placed
+ * against the window, so a row that clips its content doesn't cut it off.
+ */
+export function Menu({
+  items,
+  title,
+  children,
+  className = "icon-btn",
+  disabled,
+}: {
+  items: MenuItem[];
+  /** The button's name (shown on hover; read by screen readers). */
+  title: string;
+  /** The button's content; three dots when left out. */
+  children?: ReactNode;
+  className?: string;
+  disabled?: boolean;
+}) {
+  const [at, setAt] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    const down = (e: MouseEvent) => {
+      if (!list.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) close();
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && (close(), btn.current?.focus());
+    window.addEventListener("mousedown", down);
+    window.addEventListener("keydown", key);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    list.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    return () => {
+      window.removeEventListener("mousedown", down);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [at]);
+  const toggle = () => {
+    if (at) return setAt(null);
+    const r = btn.current?.getBoundingClientRect();
+    if (!r) return;
+    const right = Math.max(8, window.innerWidth - r.right);
+    // Opens upward when there is more room above.
+    const below = window.innerHeight - r.bottom;
+    setAt(below < 40 + items.length * 34 && r.top > below ? { right, bottom: window.innerHeight - r.top + 4 } : { right, top: r.bottom + 4 });
+  };
+  const arrows = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const all = [...(list.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+    const i = all.indexOf(document.activeElement as HTMLButtonElement);
+    all[(i + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
+  };
+  return (
+    <>
+      <button ref={btn} className={className} title={title} aria-label={title} aria-haspopup="menu" aria-expanded={!!at} onClick={toggle} disabled={disabled}>
+        {children ?? <Icon name="more" size={16} />}
+      </button>
+      {at && (
+        <div ref={list} className="menu" role="menu" style={at} onKeyDown={arrows}>
+          {items.map((it) => (
+            <button
+              key={it.label}
+              role="menuitem"
+              className={`menu-item${it.danger ? " danger" : ""}${it.divider ? " divider" : ""}`}
+              disabled={it.disabled}
+              title={it.title}
+              onClick={() => {
+                setAt(null);
+                void it.onClick();
+              }}
+            >
+              <span className="menu-mark">{it.checked ? <Icon name="check" size={14} /> : it.icon ? <Icon name={it.icon} size={15} /> : null}</span>
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 export function Empty({ icon, title, children }: { icon: string; title: string; children?: ReactNode }) {
@@ -316,7 +459,12 @@ export function PathField({
 // ---------------------------------------------------------------------------
 // Toasts + confirm / prompt dialogs
 
-type Toast = { id: number; text: string; tone: "ok" | "info" | "warn" | "bad" };
+/** What a toast offers to do about what it reports (undo). */
+export interface ToastAction {
+  label: string;
+  run: () => void | Promise<unknown>;
+}
+type Toast = { id: number; text: string; tone: "ok" | "info" | "warn" | "bad"; action?: ToastAction };
 type Ask = {
   title: string;
   text: ReactNode;
@@ -327,7 +475,7 @@ type Ask = {
 };
 
 interface UiApi {
-  toast: (text: string, tone?: Toast["tone"]) => void;
+  toast: (text: string, tone?: Toast["tone"], action?: ToastAction) => void;
   confirm: (o: { title: string; text: ReactNode; confirm?: string; danger?: boolean }) => Promise<boolean>;
   prompt: (o: { title: string; text: ReactNode; placeholder?: string; value?: string; confirm?: string }) => Promise<string | null>;
 }
@@ -347,10 +495,11 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const seq = useRef(0);
   const t = useT();
 
-  const toast = useCallback((text: string, tone: Toast["tone"] = "ok") => {
+  const toast = useCallback((text: string, tone: Toast["tone"] = "ok", action?: ToastAction) => {
     const id = ++seq.current;
-    setToasts((t) => [...t, { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === "bad" ? 9000 : 4500);
+    setToasts((t) => [...t, { id, text, tone, action }]);
+    // One that can be undone stays long enough to be read and reached.
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 10000 : tone === "bad" ? 9000 : 4500);
   }, []);
 
   const confirm = useCallback<UiApi["confirm"]>(
@@ -389,6 +538,17 @@ export function UiProvider({ children }: { children: ReactNode }) {
           <div key={t.id} className={`toast toast-${t.tone}`}>
             <Icon name={t.tone === "ok" ? "check" : t.tone === "bad" ? "x" : t.tone === "warn" ? "warn" : "cloud"} />
             <span>{t.text}</span>
+            {t.action && (
+              <button
+                className="link toast-action"
+                onClick={() => {
+                  setToasts((all) => all.filter((x) => x.id !== t.id));
+                  void t.action?.run();
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>

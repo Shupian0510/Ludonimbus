@@ -798,6 +798,27 @@ impl Cloud {
         Ok(record.lines.iter().filter(|l| fits(l)).cloned().collect())
     }
 
+    /// The save lines the game `key` could follow besides the one it
+    /// follows now ([`Cloud::lines_of`]), each with where it is.
+    pub fn other_lines(&self, key: &str) -> Result<Vec<(v2::Line, Place)>> {
+        let lines = self.lines_of(key)?;
+        if lines.is_empty() {
+            return Ok(Vec::new());
+        }
+        let here = self.place(key)?;
+        let library = self.library()?;
+        let id = self.record_of(key, &library.records);
+        let Some(record) = library::resolve(&library.records, &id) else { return Ok(Vec::new()) };
+        Ok(lines
+            .into_iter()
+            .filter(|l| l.path != here.dir())
+            .map(|l| {
+                let place = Place::of(record, &l);
+                (l, place)
+            })
+            .collect())
+    }
+
     /// Make the line of the game `key` read the folder 0.6 keeps the key's
     /// snapshots in, when the line doesn't yet and a device still on 0.6 has
     /// put something there. One listing; returns whether the line changed.

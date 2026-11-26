@@ -253,6 +253,7 @@ fn sync_on_layout_2() {
     from_06(root);
     managing_versions(root);
     own_lines(root);
+    from_another_line(root);
 }
 
 /// What a sync asks of the cloud: the number of requests is what a slow
@@ -838,4 +839,91 @@ fn own_lines(root: &Path) {
     assert_eq!(chosen(), None);
     assert!(cloud.join(LINE).join(format!("{d4}.json")).is_file());
     assert_eq!(heads(), vec![d4]);
+}
+
+/// A version of another save line becomes the progress here: the game page's
+/// "set as current" on a save another device keeps to itself.
+fn from_another_line(root: &Path) {
+    let cloud = root.join("take-cloud");
+    fs::create_dir_all(&cloud).unwrap();
+    let folder = || CloudConfig::LocalFolder { path: cloud.clone() };
+    let dad = Device::new(root, "TAKE-DAD", folder());
+    let kid = Device::new(root, "TAKE-KID", folder());
+    let others = || {
+        let ctx = Ctx::load().unwrap();
+        sync::other_saves(&ctx, &ctx.game(KEY).unwrap()).unwrap()
+    };
+    let take = |line: &str, id: &str| {
+        let ctx = Ctx::load().unwrap();
+        sync::take_from(&ctx, &ctx.game(KEY).unwrap(), line, id)
+    };
+
+    dad.activate();
+    dad.write("d1");
+    let d1 = uploaded(run(Trigger::AutoExit));
+    // Nothing else to take from while there is one line.
+    assert!(others().is_empty());
+    kid.activate();
+    assert_eq!(pulled(run(Trigger::PreLaunch)), d1);
+    kid.write("k1");
+    let k1 = uploaded(use_line(LineChoice::Independent { name: Some("Kid".into()) }).unwrap());
+    let own = own_line_id(&config::load().unwrap().device.id, KEY);
+    kid.write("k2");
+    let k2 = uploaded(run(Trigger::AutoExit));
+
+    // The kid's PC sees the shared line's newest version, the other one the kid's.
+    let seen = others();
+    assert_eq!(seen.len(), 1, "{seen:#?}");
+    assert!(seen[0].shared && seen[0].line == "main" && seen[0].snapshot.id == d1 && seen[0].snapshot.platform == "pc", "{seen:#?}");
+    dad.activate();
+    dad.write("d2");
+    let d2 = uploaded(run(Trigger::AutoExit));
+    let seen = others();
+    assert_eq!(seen.len(), 1, "{seen:#?}");
+    assert!(!seen[0].shared && seen[0].name == "Kid" && seen[0].line == own && seen[0].snapshot.id == k2, "{seen:#?}");
+    // Who is on which line, and on what.
+    let ctx = Ctx::load().unwrap();
+    let all = sync::lines(&ctx, &ctx.game(KEY).unwrap()).unwrap();
+    assert_eq!(all[0].members.iter().map(|m| (m.device.as_str(), m.platform.as_str(), m.here)).collect::<Vec<_>>(), vec![("TAKE-DAD", "pc", true)]);
+    assert_eq!(all[1].members.iter().map(|m| (m.device.as_str(), m.platform.as_str(), m.here)).collect::<Vec<_>>(), vec![("TAKE-KID", "pc", false)]);
+
+    // A line or a version that isn't there: nothing changes.
+    assert!(take("solo-none", &k2).is_err());
+    assert!(take(&own, "no-such-version").is_err());
+    assert_eq!(dad.read(), "d2");
+    assert_eq!(ids(&versions()), vec![d1.clone(), d2.clone()]);
+
+    // The kid's older version comes over: the files here are its files, it
+    // is the shared line's newest version and says where it came from. What
+    // was here is in the history already.
+    let t1 = uploaded(take(&own, &k1).unwrap());
+    assert_eq!(dad.read(), "k1");
+    let list = versions();
+    assert_eq!(ids(&list), vec![d1.clone(), d2.clone(), t1.clone()]);
+    assert_eq!(heads(), vec![t1.clone()]);
+    assert_eq!(status(), Status::Synced);
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(cloud.join(LINE).join(format!("{t1}.json"))).unwrap()).unwrap();
+    assert_eq!(manifest["origin"]["how"], "copy");
+    assert_eq!(manifest["origin"]["line"], own.as_str());
+    assert_eq!(manifest["origin"]["snapshot"], k1.as_str());
+
+    // Saves that are nowhere in the cloud yet are kept beside the history
+    // before they are replaced.
+    dad.write("d3 unsaved");
+    let t2 = uploaded(take(&own, &k2).unwrap());
+    assert_eq!(dad.read(), "k2");
+    let list = versions();
+    let kept: Vec<_> = list.iter().filter(|s| s.side).collect();
+    assert_eq!(kept.len(), 1, "{list:#?}");
+    assert_eq!(heads(), vec![t2.clone()]);
+    // That copy can be brought back.
+    let ctx = Ctx::load().unwrap();
+    sync::restore(&ctx, &ctx.game(KEY).unwrap(), &kept[0].id).unwrap();
+    assert_eq!(dad.read(), "d3 unsaved");
+
+    // The kid's line is as it was, and the kid's PC is untouched.
+    kid.activate();
+    assert_eq!(ids(&versions()), vec![k1.clone(), k2.clone()]);
+    assert!(matches!(run(Trigger::PreLaunch), Outcome::UpToDate));
+    assert_eq!(kid.read(), "k2");
 }

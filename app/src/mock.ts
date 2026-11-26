@@ -1,7 +1,22 @@
 // Browser-only mock backend, used when the UI runs outside Tauri
 // (`npm run dev` in a normal browser) so the interface can be developed and
 // reviewed without the Rust side. Never loaded inside the app.
-import type { CloudOnlyView, Found, GameView, Outcome, Overview, PlaytimeDevice, PlaytimeSummary, SnapshotSummary, StatusReport, TrashedSnapshot } from "./api";
+import type {
+  CloudOnlyView,
+  Found,
+  GameView,
+  JoinSuggestion,
+  OtherSave,
+  Outcome,
+  Overview,
+  PlatformMarks,
+  PlaytimeDevice,
+  PlaytimeSummary,
+  SaveLine,
+  SnapshotSummary,
+  StatusReport,
+  TrashedSnapshot,
+} from "./api";
 
 // Sample data in the preview's language (?lang=, the saved choice, or the browser's).
 const mockLang = (() => {
@@ -56,7 +71,54 @@ const snapshots: Record<string, SnapshotSummary[]> = {
   ],
   "fe-fortunes-weave": [snap("01FE2", 60 * 3, "DESKTOP-MAIN", "auto-exit", 56422, 4, { gameVersion: "0.2.7" }), snap("01FE1", 60 * 30, "DESKTOP-MAIN", "auto-exit", 40100, 3)],
   "bloodborne-lantern": [snap("01BB2", 60 * 5, "GPD-Win-Mini", "auto-exit", 15309618, 16), snap("01BB1", 60 * 48, "DESKTOP-MAIN", "auto-exit", 15309618, 16)],
+  // Two store versions on one save line: the newest of each comes first.
+  celeste: [
+    snap("01CE4", 50, "DESKTOP-MAIN", "auto-exit", 6210, 3),
+    snap("01CE3", 60 * 5, "LAPTOP", "auto-exit", 6100, 3, { platform: "pc:xbox" }),
+    snap("01CE2", 60 * 30, "DESKTOP-MAIN", "manual", 5900, 3, { comment: L("第七章之前", "Before chapter 7"), locked: true }),
+    snap("01CE1", 60 * 72, "LAPTOP", "auto-exit", 5040, 3, { platform: "pc:xbox" }),
+    snap("01CE0", 60 * 96, "DESKTOP-MAIN", "auto-exit", 4800, 3),
+  ],
 };
+
+// What each game's saves are made on, and how the app shows that (the logo
+// is the program's own icon when this PC has it).
+const mockPlatforms: Record<string, string> = { "zelda-oot-longshot": "recomp:longshot", "fe-fortunes-weave": "recomp:fefw", "bloodborne-lantern": "emu:shadps4", "doom-eternal": "pc:xbox" };
+const platformMarks: PlatformMarks = {
+  "recomp:longshot": { label: "Longshot", logo: art(4079546474, "_icon.png") },
+  "recomp:fefw": { label: "fefw recomp", logo: art(2661209017, "_icon.png") },
+  "emu:shadps4": { label: "Lantern Engine", logo: art(4000695018, "_icon.png") },
+  pc: { label: "PC", logo: null },
+  "pc:xbox": { label: "Xbox", logo: null },
+};
+for (const [k, list] of Object.entries(snapshots)) for (const s of list) s.platform ??= mockPlatforms[k] ?? "pc";
+
+// The save this PC is at, where it isn't the newest one; the line each game follows here.
+const syncedId: Record<string, string> = { "bloodborne-lantern": "01BB1" };
+const lineOf: Record<string, string> = {};
+const joinAnswered = new Set<string>();
+let made = 0;
+const headOf = (key: string) => (snapshots[key] ?? []).find((s) => s.trigger !== "pre-restore" && s.trigger !== "conflict-keep")?.id ?? null;
+const kidLine = () => ({ id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC") });
+const kidSave = () => snap("01KID1", 60 * 20, "KID-PC", "auto-exit", 905000, 11, { platform: "recomp:longshot", head: true });
+
+/** Who is on which save line of a game. */
+function mockLines(key: string): SaveLine[] {
+  const p = mockPlatforms[key] ?? "pc";
+  const at = lineOf[key] ?? "main";
+  const lines: SaveLine[] = [{ id: "main", name: "", shared: true, current: false, devices: [], members: [] }];
+  if (key === "zelda-oot-longshot") {
+    lines[0].members.push({ device: "Steam Deck", platform: p, here: false });
+    lines.push({ ...kidLine(), shared: false, current: false, devices: [], members: [{ device: "KID-PC", platform: p, here: false }] });
+  }
+  if (key === "celeste") lines[0].members.push({ device: "LAPTOP", platform: "pc:xbox", here: false });
+  if (at === "own") lines.push({ id: "own", name: "DESKTOP-MAIN", shared: false, current: false, devices: [], members: [] });
+  const mine = lines.find((l) => l.id === at) ?? lines[0];
+  mine.current = true;
+  mine.members.push({ device: "DESKTOP-MAIN", platform: p, here: true });
+  for (const l of lines) l.devices = [...new Set(l.members.map((m) => m.device))];
+  return lines;
+}
 
 const trash: Record<string, TrashedSnapshot[]> = {
   "zelda-oot-longshot": [{ snapshot: snap("01OOT0", 60 * 24 * 6, "DESKTOP-MAIN", "auto-exit", 790000, 10), deletedAt: ago(60 * 24 * 2), deletedBy: "DESKTOP-MAIN" }],
@@ -122,6 +184,7 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     source: { kind: "recomp", name: null, detail: platform || null, label: null, logo: appid ? art(appid, "_icon.png") : null },
     family: key,
     link: null,
+    joined: false,
     ...extra,
   };
 }
@@ -386,19 +449,67 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "backup_game":
       return delay<Outcome>({ kind: "uploaded", id: "01NEW" }, 700);
     case "game_lines":
-      return delay(
-        [
-          { id: "main", name: "", shared: true, current: true, devices: ["DESKTOP-MAIN", "Steam Deck"] },
-          { id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC"), shared: false, current: false, devices: ["KID-PC"] },
-        ],
-        200,
-      );
+      return delay(mockLines(key), 200);
+    case "game_line_members":
+      return delay({ lines: mockLines(key), platforms: platformMarks }, 200);
     case "use_game_line":
+      lineOf[key] = args.kind === "shared" ? "main" : args.kind === "independent" ? "own" : String(args.line);
       return delay<Outcome>({ kind: "upToDate" }, 500);
-    case "join_suggestion":
-      return delay(null, 200);
-    case "join_answer":
+    case "other_saves": {
+      // The newest save of each line this PC doesn't follow.
+      const saves: OtherSave[] = [];
+      const at = lineOf[key] ?? "main";
+      const head = (snapshots[key] ?? []).find((s) => s.id === headOf(key));
+      if (at !== "main" && head) saves.push({ line: "main", name: "", shared: true, snapshot: head });
+      if (key === "zelda-oot-longshot" && at !== kidLine().id) saves.push({ line: kidLine().id, name: kidLine().name, shared: false, snapshot: kidSave() });
+      return delay({ saves, platforms: platformMarks }, 250);
+    }
+    case "restore_snapshot":
+    case "take_save": {
+      // The chosen save becomes a new, newest one made here.
+      const list = snapshots[key] ?? [];
+      const from = list.find((x) => x.id === args.id) ?? kidSave();
+      const id = `01NEW${++made}`;
+      snapshots[key] = [
+        { ...from, id, createdAt: new Date().toISOString(), deviceId: "d-mock", deviceName: "DESKTOP-MAIN", trigger: "restore", comment: "", locked: false, head: undefined, side: undefined },
+        ...list,
+      ];
+      delete syncedId[key];
+      return delay<Outcome>({ kind: "uploaded", id }, 600);
+    }
+    case "set_snapshot": {
+      const s = (snapshots[key] ?? []).find((x) => x.id === args.id);
+      if (s && args.locked != null) s.locked = Boolean(args.locked);
+      if (s && args.comment != null) s.comment = String(args.comment);
+      return delay(undefined);
+    }
+    case "export_snapshot":
+      return delay(`C:\\Users\\me\\Downloads\\${key}-${String(args.id)}.zip`, 300);
+    case "join_suggestion": {
+      // The Xbox version here keeps the same saves as the laptop's version, in other folders.
+      const s: JoinSuggestion = {
+        record: key,
+        def: "mock",
+        device: "LAPTOP",
+        platform: "pc",
+        createdAt: ago(60 * 5),
+        confirmed: false,
+        fit: "ready",
+        binds: [{ canon: "saves", local: "C:\\Users\\me\\Saved Games\\id Software\\DOOMEternal\\base\\savegame" }],
+        matched: 6,
+        onlyInLine: 0,
+        onlyHere: 1,
+        uncovered: [],
+        outside: ["savegame/crash.dmp"],
+      };
+      return delay(key === "doom-eternal" && !joinAnswered.has(key) ? s : null, 200);
+    }
+    case "join_answer": {
+      joinAnswered.add(key);
+      const g = overview.games.find((x) => x.key === key);
+      if (g) g.joined = args.answer === "accept";
       return delay<Outcome | null>(args.answer === "decline" ? null : { kind: "upToDate" }, 500);
+    }
     case "screenshot_gallery":
       return delay(mockGallery(key), 300);
     case "screenshot_fetch":
@@ -408,7 +519,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "screenshot_reveal":
       return delay(undefined);
     case "list_snapshots":
-      return delay({ snapshots: snapshots[key] ?? [], headId: snapshots[key]?.[0]?.id ?? null, lastSyncedId: snapshots[key]?.[0]?.id ?? null });
+      return delay({ snapshots: snapshots[key] ?? [], headId: headOf(key), lastSyncedId: syncedId[key] ?? headOf(key), platforms: platformMarks });
     case "delete_snapshot": {
       const list = snapshots[key] ?? [];
       const s = list.find((x) => x.id === args.id);
@@ -554,8 +665,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           prompt: {
             title: L("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"),
             text: L(
-              "「Bloodborne」的存档在本机和云端都有新的改动。\n\n云端：GPD-Win-Mini 于 2026-11-24 21:30 保存（16 个文件，14.6 MB）\n本机：16 个文件，14.6 MB\n\n请选择这次要使用哪一份。没选的那份也会保存在版本历史里，随时可以恢复。",
-              "Both this PC and the cloud have new changes to the saves of \"Bloodborne\".\n\nCloud: saved by GPD-Win-Mini at 2026-11-24 21:30 (16 files, 14.6 MB)\nThis PC: 16 files, 14.6 MB\n\nChoose which one to use this time. The other one is kept in the version history and can be restored at any time.",
+              "「Bloodborne」的存档在本机和云端都有新的改动。\n\n云端：GPD-Win-Mini 于 2026-11-24 21:30 保存（16 个文件，14.6 MB）\n本机：16 个文件，14.6 MB\n\n请选择这次要使用哪一份。没选的那份也会留在「存档」里，随时可以设回去。",
+              "Both this PC and the cloud have new changes to the saves of \"Bloodborne\".\n\nCloud: saved by GPD-Win-Mini at 2026-11-24 21:30 (16 files, 14.6 MB)\nThis PC: 16 files, 14.6 MB\n\nChoose which one to use this time. The other one stays under Saves and can be made current again at any time.",
             ),
             level: "warn",
             buttons: [

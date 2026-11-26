@@ -7,7 +7,7 @@ import { bytes, dateTime, duration } from "../format";
 import { msg, useT } from "../i18n";
 import { AccountPicker, useAccounts } from "./AddGame";
 import { VersionBar } from "./SaveLibrary";
-import { Versions } from "./Versions";
+import { Saves } from "./Saves";
 import { Button, Icon, Modal, useUi } from "./ui";
 
 export function CloudGameDetail({
@@ -118,7 +118,7 @@ export function CloudGameDetail({
         <div className="tabs">
           <button className="on">{t.game.tabVersions}</button>
         </div>
-        <Versions game={game} overview={overview} disabled cloudOnly onChanged={async () => undefined} onApplied={async (k) => onOpen(k)} />
+        <Saves game={game} overview={overview} disabled cloudOnly onChanged={async () => undefined} onApplied={async (k) => onOpen(k)} />
       </div>
 
       {adding && <AddHere game={game} onClose={() => setAdding(false)} onAdded={onAdded} />}

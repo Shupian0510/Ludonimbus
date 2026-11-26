@@ -139,6 +139,11 @@ pub struct SnapshotSummary {
     pub game_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_version: Option<String>,
+    /// What the saves were made on, as the version says it (`pc`,
+    /// `pc:xbox`, `emu:<rule>`, `recomp:<rule>`, `console:switch`). Empty
+    /// where it isn't known (versions of 0.6).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub platform: String,
     /// A newest version of its save line (several when the line has forked).
     /// Not set in lists read the way 0.6 reads them: there the newest
     /// mainline snapshot is the head ([`crate::sync::mainline_head`]).
@@ -178,6 +183,7 @@ impl SnapshotSummary {
             locked: entry.pin.is_some(),
             game_version: entry.game_version.clone(),
             installed_version: entry.installed_version.clone(),
+            platform: entry.platform.clone(),
             head,
             side: entry.is_side(),
         }
@@ -237,6 +243,7 @@ impl From<&SnapshotMeta> for SnapshotSummary {
             locked: m.locked,
             game_version: m.game_version.clone(),
             installed_version: m.installed_version.clone(),
+            platform: String::new(),
             head: false,
             side: !m.trigger.is_mainline(),
         }

@@ -8,7 +8,7 @@ import { HandheldPanel } from "./HandheldPanel";
 import { NxPanel } from "./NxPanel";
 import { SpeedTestPanel } from "./SpeedTest";
 import { AchievementSettingsPanel } from "./Achievements";
-import { Badge, Button, Icon, PathChoice, PathField, samePath, Spinner, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, PathChoice, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 import { LANGS, LangPref, msg, useI18n, useT } from "../i18n";
 import { DISCORD_URL, docsUrl, GITHUB_URL } from "../links";
@@ -50,6 +50,8 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
   const [keepRecent, setKeepRecent] = useState(20);
   const [keepDaily, setKeepDaily] = useState(30);
   const [timeout, setTimeoutSecs] = useState(8);
+  const [launchWait, setLaunchWait] = useState(10);
+  const [exitWait, setExitWait] = useState(10);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
   const load = useCallback(async () => {
@@ -59,6 +61,8 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
     setKeepRecent(v.retention.keepRecent);
     setKeepDaily(v.retention.keepDailyDays);
     setTimeoutSecs(v.networkTimeoutSecs);
+    setLaunchWait(v.launchWaitSecs);
+    setExitWait(v.exitWaitSecs);
     setAccount(null);
     setAccountError(null);
     if (v.cloud.kind !== "none") api.cloudAccount().then(setAccount, (e) => setAccountError(errorText(e)));
@@ -115,7 +119,7 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
 
   const saveGeneral = async () => {
     try {
-      await api.saveSettings({ deviceName, keepRecent, keepDailyDays: keepDaily, networkTimeoutSecs: timeout });
+      await api.saveSettings({ deviceName, keepRecent, keepDailyDays: keepDaily, networkTimeoutSecs: timeout, launchWaitSecs: launchWait, exitWaitSecs: exitWait });
       await done(msg().settings.saved);
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -205,6 +209,35 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
             <span className="muted small">{st.timeoutHint}</span>
           </div>
         </label>
+        <label>
+          <span>
+            {st.launchWait} <Hint text={st.launchWaitHint} />
+          </span>
+          <div className="row">
+            <input className="input num" type="number" min={0} max={600} value={launchWait} onChange={(e) => setLaunchWait(Number(e.target.value))} />
+            <span className="muted small">{st.seconds}</span>
+          </div>
+        </label>
+        <div className="field">
+          <span>
+            {st.exitWait} <Hint text={st.exitWaitHint} />
+          </span>
+          <div className="row">
+            <input className="input num" type="number" min={0} max={600} value={exitWait} onChange={(e) => setExitWait(Number(e.target.value))} disabled={s.waitForUpload} />
+            <span className="muted small">{st.seconds}</span>
+            <Toggle checked={s.waitForUpload} onChange={(v) => api.saveSettings({ waitForUpload: v }).then(() => done(msg().settings.saved), (e) => ui.toast(errorText(e), "bad"))} />
+            <span>{st.waitForUpload}</span>
+            <Hint text={st.waitForUploadHint} />
+          </div>
+        </div>
+        <div className="field">
+          <span>
+            {st.independentSaves} <Hint text={st.independentSavesHint} />
+          </span>
+          <div className="row">
+            <Toggle checked={s.independentSaves} onChange={(v) => api.saveSettings({ independentSaves: v }).then(() => done(msg().settings.saved), (e) => ui.toast(errorText(e), "bad"))} />
+          </div>
+        </div>
         <div className="row">
           <Button kind="primary" onClick={saveGeneral}>
             {t.common.save}
