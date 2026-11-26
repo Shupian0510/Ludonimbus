@@ -323,6 +323,63 @@ pub fn line_to_join<'a>(records: &'a [GameRecord], ids: &[String], format: &str,
     })
 }
 
+/// The shared lines `main` of the card of the game known by `ids`, as they
+/// are on the card now, each with the record whose line `main` it is: the
+/// card's own first, then those of the records merged into it, oldest
+/// first. A game follows such a line by belonging to that record.
+fn main_lines<'a>(records: &'a [GameRecord], ids: &[String]) -> Vec<(&'a GameRecord, &'a Line)> {
+    let Match::Record(card) = find(records, ids) else { return Vec::new() };
+    let mut of_card: Vec<&GameRecord> =
+        records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
+    of_card.sort_by(|a, b| (a.id != card.id).cmp(&(b.id != card.id)).then_with(|| seniority(a, b)));
+    let mut out: Vec<(&GameRecord, &Line)> = Vec::new();
+    for r in of_card {
+        let Some((_, line)) = resolve_line(records, &r.id, MAIN_LINE) else { continue };
+        // Lines that became one history are one line.
+        if line.scope == SCOPE_SHARED && !out.iter().any(|(_, l)| l.path == line.path) {
+            out.push((r, line));
+        }
+    }
+    out
+}
+
+/// The bindings of a line for versions of the game that keep their saves
+/// the way `def` says.
+pub fn binds_for<'a>(line: &'a Line, def: &str) -> Option<&'a [crate::bind::Bind]> {
+    line.binds.iter().find(|b| b.def == def).map(|b| b.map.as_slice()).filter(|m| !m.is_empty())
+}
+
+/// The record whose shared line a game can share through bindings a user
+/// confirmed on another device ([`Line::binds`]), and those bindings: the
+/// game is a version of that card (`ids`, as for [`line_to_join`]), of the
+/// line's format, and keeps its saves the way `def` says.
+pub fn bound_line<'a>(records: &'a [GameRecord], ids: &[String], format: &str, def: &str) -> Option<(&'a GameRecord, &'a [crate::bind::Bind])> {
+    main_lines(records, ids)
+        .into_iter()
+        .filter(|(_, l)| l.format == format)
+        .find_map(|(r, l)| binds_for(l, def).map(|map| (r, map)))
+}
+
+/// The shared lines a game might share although its saves are kept
+/// elsewhere, for the user to be asked about once: those of its card
+/// (`ids`) of its format that say which files they hold, other than its own
+/// (`def`). Each with the record to belong to.
+pub fn lines_to_ask<'a>(records: &'a [GameRecord], ids: &[String], format: &str, def: &str) -> Vec<(&'a GameRecord, &'a Line)> {
+    main_lines(records, ids)
+        .into_iter()
+        .filter(|(_, l)| l.format == format && l.def.as_deref().is_some_and(|d| d != def))
+        .collect()
+}
+
+/// Add bindings to a line: for versions it has none for yet.
+fn add_binds(line: &mut Line, more: &[v2::LineBind]) {
+    for b in more {
+        if !line.binds.iter().any(|x| x.def == b.def) {
+            line.binds.push(b.clone());
+        }
+    }
+}
+
 // ---------------------------------------------------------------- new records
 
 /// Crockford's base 32, as in snapshot ids: no i, l, o or u, so an id is
@@ -497,6 +554,7 @@ pub fn merge(a: &GameRecord, b: &GameRecord) -> GameRecord {
                 // Also `path`, should the two differ: a folder with
                 // snapshots in it must never drop out of sight.
                 add_places(mine, std::iter::once(&line.path).chain(&line.also));
+                add_binds(mine, &line.binds);
                 add_extra(&mut mine.extra, &line.extra);
             }
             None => out.lines.push(line.clone()),
@@ -633,6 +691,7 @@ fn take_over(survivor: &mut GameRecord, other: &GameRecord, join: &dyn Fn(&Line,
         if shared(line) {
             if let Some(i) = lines.iter().position(|l| shared(l) && l.format == line.format && join(l, line)) {
                 add_places(&mut lines[i], std::iter::once(&line.path).chain(&line.also));
+                add_binds(&mut lines[i], &line.binds);
                 continue;
             }
         }

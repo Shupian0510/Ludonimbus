@@ -23,6 +23,7 @@
 pub mod achievements;
 pub mod adapters;
 pub mod artsync;
+pub mod bind;
 pub mod catchup;
 pub mod cloud;
 pub mod config;
@@ -35,6 +36,7 @@ pub mod gamebackup;
 pub mod games;
 pub mod handheld;
 pub mod i18n;
+pub mod join;
 pub mod localart;
 pub mod logos;
 pub mod lockfile;

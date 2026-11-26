@@ -340,8 +340,38 @@ fn rel_slash(base: &Path, p: &Path) -> Option<String> {
     )
 }
 
-/// Find the save files of a game on this device.
+/// Find the save files of a game on this device, under the paths of the
+/// save line it syncs with. For a version that shares the line of one that
+/// keeps the same saves elsewhere ([`GameEntry::bind`]), those are the
+/// line's paths, and files outside every binding are not among them.
 pub fn scan(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, PathBuf>)> {
+    let (files, roots) = scan_own(game)?;
+    if game.bind.is_empty() {
+        return Ok((files, roots));
+    }
+    let mut out: BTreeMap<String, LocalFile> = BTreeMap::new();
+    for mut f in files {
+        if let Some(canon) = crate::bind::to_canon(&game.bind, &f.logical) {
+            f.logical = canon;
+            out.insert(f.logical.to_lowercase(), f);
+        }
+    }
+    Ok((out.into_values().collect(), roots))
+}
+
+/// The files of a line (`files`) this version of the game has no folder
+/// for ([`GameEntry::bind`]). None for a version whose files are the line's
+/// as they are.
+pub fn no_place_for(game: &GameEntry, files: &[FileEntry]) -> Vec<String> {
+    if game.bind.is_empty() {
+        return Vec::new();
+    }
+    crate::bind::uncovered(&game.bind, files.iter().map(|f| f.path.as_str()))
+}
+
+/// Find the save files of a game on this device, under the paths this
+/// version itself keeps them at.
+pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, PathBuf>)> {
     let spec = spec::effective(game);
     let mut roots = spec::resolve_roots(game, &spec)?;
 
@@ -690,17 +720,35 @@ fn apply_with(files: &[FileEntry], game: &GameEntry, content: &mut dyn FnMut(&st
         let s = spec::effective(game);
         (Vec::new(), spec::resolve_roots(game, &s).unwrap_or_default())
     });
+    // Where each file is in this version of the game: its path in the save
+    // line, or the folder bound to it.
+    let mut own = Vec::with_capacity(files.len());
+    for fe in files {
+        if game.bind.is_empty() {
+            own.push(fe.path.clone());
+        } else {
+            validate_logical(&fe.path)?;
+            own.push(crate::bind::to_local(&game.bind, &fe.path).ok_or_else(|| {
+                anyhow!(crate::tr!(
+                    "「{}」的这个版本没有放 {} 的位置",
+                    "This version of \"{}\" has no place for {}",
+                    game.name,
+                    fe.path
+                ))
+            })?);
+        }
+    }
     let adapter = game.adapter.as_deref().and_then(crate::adapters::find);
     if let Some(a) = adapter {
         // Saves an emulator numbers per PC may have to be created first.
-        let mut used: Vec<String> = files.iter().filter_map(|f| f.path.split('/').next().map(str::to_string)).collect();
+        let mut used: Vec<String> = own.iter().filter_map(|p| p.split('/').next().map(str::to_string)).collect();
         used.dedup();
         crate::emulators::prepare_restore(a, &mut roots, &used)?;
     }
     // Resolve every destination first so nothing is written if a root is missing.
     let mut plan = Vec::with_capacity(files.len());
-    for fe in files {
-        plan.push((fe, resolve_logical(&roots, &fe.path)?));
+    for (fe, path) in files.iter().zip(&own) {
+        plan.push((fe, resolve_logical(&roots, path)?));
     }
     let keep: HashSet<String> = files.iter().map(|f| f.path.to_lowercase()).collect();
     for (fe, dest) in &plan {

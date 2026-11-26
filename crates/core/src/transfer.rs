@@ -418,7 +418,7 @@ fn build(src_def: &CloudGame, meta: &SnapshotMeta, files: &BTreeMap<String, Vec<
     let src = savelib::entry_of(src_def);
     let cross = crosssaves::shared(&src, target);
     let mut plan = Plan { cross_platform: cross.is_none() && savelib::save_scope(&src) != savelib::save_scope(target), ..Plan::default() };
-    let (current, roots) = snapshot::scan(target).unwrap_or_default();
+    let (current, roots) = snapshot::scan_own(target).unwrap_or_default();
     let has_wgs_source = wgs_dir(files.keys().map(String::as_str)).is_some();
     let abs: Vec<String> = current.iter().map(|f| f.abs.to_string_lossy().into_owned()).collect();
     let target_wgs = wgs_dir(abs.iter().map(String::as_str)).map(PathBuf::from);

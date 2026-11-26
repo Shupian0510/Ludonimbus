@@ -6,7 +6,7 @@ use ludonimbus_core::cloud::{self, oauth};
 use ludonimbus_core::config::{self, CloudConfig};
 use ludonimbus_core::snapshot::{self, Trigger};
 use ludonimbus_core::sync::{self, Ctx, Resolution};
-use ludonimbus_core::{discover, games, ludusavi, paths, steam};
+use ludonimbus_core::{discover, games, join, ludusavi, paths, steam};
 use std::path::PathBuf;
 
 mod gamebackup;
@@ -42,6 +42,20 @@ enum Cmd {
     Snapshots { key: String },
     /// Restore a snapshot (current saves are protected first)
     Restore { key: String, id: String },
+    /// Show the save line a game could share with a version that keeps the
+    /// same saves in other folders, or answer
+    Join {
+        key: String,
+        /// Share that line from here on (then sync with it)
+        #[arg(long, conflicts_with_all = ["decline", "leave"])]
+        accept: bool,
+        /// Don't suggest that line again
+        #[arg(long, conflicts_with = "leave")]
+        decline: bool,
+        /// Stop sharing: back to this version's own line
+        #[arg(long)]
+        leave: bool,
+    },
     /// Show the save lines of a game, or make it follow another one on this
     /// device
     Lines {
@@ -310,6 +324,24 @@ fn run(cli: Cli) -> Result<()> {
             let ctx = Ctx::load()?;
             let g = ctx.game(&key)?;
             println!("{}", serde_json::to_string_pretty(&sync::restore(&ctx, &g, &id)?)?);
+        }
+        Cmd::Join { key, accept, decline, leave } => {
+            let ctx = Ctx::load()?;
+            let g = ctx.game(&key)?;
+            if leave {
+                println!("{}", serde_json::to_string_pretty(&join::leave(&ctx, &g)?)?);
+                return Ok(());
+            }
+            let Some(s) = join::suggestion(&ctx, &g)? else {
+                println!("没有可以共用的存档线");
+                return Ok(());
+            };
+            println!("{}", serde_json::to_string_pretty(&s)?);
+            if accept {
+                println!("{}", serde_json::to_string_pretty(&join::accept(&ctx, &g, &s)?)?);
+            } else if decline {
+                join::decline(&key, &s.def)?;
+            }
         }
         Cmd::Lines { key, shared, own, follow, name } => {
             let choice = match (shared, own, follow) {

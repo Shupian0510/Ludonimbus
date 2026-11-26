@@ -8,7 +8,7 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, spec, steam, util};
+use ludonimbus_core::{adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, spec, steam, util};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -358,6 +358,40 @@ pub async fn use_game_line(key: String, kind: String, line: Option<String>, name
     .await
 }
 
+/// The save line the game could share with a version that keeps the same
+/// saves in other folders, and which folder is which. Nothing changes.
+#[tauri::command]
+pub async fn join_suggestion(key: String) -> CmdResult<Option<join::Suggestion>> {
+    blocking(move || with_game(&key, join::suggestion)).await
+}
+
+/// What the user answered to [`join_suggestion`]: `accept` (with the
+/// suggestion) shares the line and syncs with it, `decline` (with the
+/// suggestion) never suggests it again, `leave` stops sharing.
+#[tauri::command]
+pub async fn join_answer(key: String, answer: String, suggestion: Option<join::Suggestion>) -> CmdResult<Option<Outcome>> {
+    blocking(move || {
+        if answer == "decline" {
+            let Some(s) = suggestion else { bail!("no suggestion") };
+            join::decline(&key, &s.def)?;
+            return Ok(None);
+        }
+        if watcher::runner_active(&key) {
+            bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit"));
+        }
+        let Some(_busy) = busy::begin(&key) else {
+            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
+        };
+        with_game(&key, |ctx, g| match (answer.as_str(), &suggestion) {
+            ("accept", Some(s)) => join::accept(ctx, g, s),
+            ("leave", _) => join::leave(ctx, g),
+            _ => bail!("unknown answer"),
+        })
+        .map(Some)
+    })
+    .await
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotList {
@@ -461,7 +495,7 @@ pub async fn local_files(key: String) -> CmdResult<LocalFiles> {
     blocking(move || {
         let cfg = config::load()?;
         let g = cfg.require_game(&key)?;
-        let (files, roots) = snapshot::scan(g)?;
+        let (files, roots) = snapshot::scan_own(g)?;
         let used: std::collections::HashSet<&str> = files.iter().filter_map(|f| f.logical.split('/').next()).collect();
         let mut shown: BTreeMap<String, String> = BTreeMap::new();
         for (k, v) in &roots {

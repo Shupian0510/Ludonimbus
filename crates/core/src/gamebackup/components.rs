@@ -525,7 +525,7 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
         .or_else(|| spec::install_dir(game))
         .ok_or_else(|| anyhow!(crate::tr!("不知道游戏文件夹，请先设置游戏位置", "The game's folder is unknown. Set the game location first")))?;
     let adapter = game.adapter.as_deref().and_then(adapters::find);
-    let saves: HashSet<String> = snapshot::scan(game)
+    let saves: HashSet<String> = snapshot::scan_own(game)
         .map(|(files, _)| files.iter().map(|f| path_key(&f.abs)).collect())
         .unwrap_or_default();
     let roots = match adapter {
