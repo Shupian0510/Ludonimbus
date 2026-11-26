@@ -41,6 +41,9 @@ pub struct Found {
     pub steam_cloud: bool,
     /// A store game installed through Steam.
     pub store_game: bool,
+    /// Its app id in Steam, when it is known which installed game it is:
+    /// such a game is added as one Steam installed ([`crate::steamcloud`]).
+    pub store_appid: Option<u32>,
     /// Key of the library entry for this game, when already added.
     pub added_key: Option<String>,
     /// Saves only in the registry (not supported yet).
@@ -392,13 +395,16 @@ pub fn ludusavi_scan(cfg: &AppConfig) -> Result<Vec<Found>> {
     let titles: HashSet<String> = games.iter().map(|g| g.title.clone()).collect();
     let manifest = ludusavi::manifest_info(&titles);
     let mut installed = SteamInstalled::default();
-    if let Some(r) = steam::root(cfg) {
-        for a in steam::installed_apps(&r) {
-            installed.ids.insert(a.appid);
-            installed.names.insert(match_key(&a.name));
-        }
+    let apps = steam::root(cfg).map(|r| steam::installed_apps(&r)).unwrap_or_default();
+    for a in &apps {
+        installed.ids.insert(a.appid);
+        installed.names.insert(match_key(&a.name));
     }
     let mut out = classify(&games, &manifest, &installed);
+    // Installed through Steam by name: which installed game it is.
+    for f in out.iter_mut().filter(|f| f.store_game && f.store_appid.is_none()) {
+        f.store_appid = apps.iter().find(|a| match_key(&a.name) == f.match_key).map(|a| a.appid);
+    }
     let all = installs(cfg);
     for f in out.iter_mut().filter(|f| !f.steam_cloud && !f.store_game && !f.registry_only) {
         let title = f.ludusavi_title.clone().unwrap_or_default();
@@ -430,8 +436,8 @@ pub fn classify(
         .iter()
         .map(|g| {
             let info = manifest.get(&g.title).cloned().unwrap_or_default();
-            let store_game = info.steam_id.iter().chain(&info.steam_extra).any(|id| steam_installed.ids.contains(id))
-                || steam_installed.names.contains(&match_key(&g.title));
+            let store_appid = info.steam_id.iter().chain(&info.steam_extra).copied().find(|id| steam_installed.ids.contains(id));
+            let store_game = store_appid.is_some() || steam_installed.names.contains(&match_key(&g.title));
             let lower: Vec<String> = g.files.iter().map(|(p, _)| p.to_lowercase()).collect();
             // Steam Auto-Cloud leaves this file in folders it syncs; saves under
             // Steam's userdata folder are Steam Cloud saves too. Both stay
@@ -448,6 +454,7 @@ pub fn classify(
             f.save_sample = g.files.iter().take(5).map(|(p, _)| p.clone()).collect();
             f.registry_only = g.files.is_empty() && g.has_registry;
             f.store_game = store_game;
+            f.store_appid = store_appid;
             f.steam_cloud = only_userdata || (store_game && (info.steam_cloud || auto_cloud || in_userdata));
             f
         })
@@ -958,6 +965,11 @@ mod tests {
         assert!(by("Hollow Knight").store_game && by("Hollow Knight").steam_cloud);
         assert!(by("The Witcher 3").store_game && by("The Witcher 3").steam_cloud);
         assert!(by("Ace Combat 8").store_game && by("Ace Combat 8").steam_cloud);
+        // Which installed game it is, when the manifest's ids say.
+        assert_eq!(by("Hollow Knight").store_appid, Some(367520));
+        assert_eq!(by("The Witcher 3").store_appid, Some(499450));
+        assert_eq!(by("Ace Combat 8").store_appid, None);
+        assert_eq!(by("Hades").store_appid, None);
         // Every save is in Steam's cloud folder.
         assert!(by("Celeste").steam_cloud);
         // Steam leftovers (an old Auto-Cloud marker, a copy in userdata) of a

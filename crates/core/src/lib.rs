@@ -13,6 +13,8 @@
 //! - [`playtime`] play sessions per device, totals over all devices
 //! - [`screenshots`] Steam screenshots of linked shortcuts in the cloud
 //! - [`steam`]    Steam install, accounts, non-Steam shortcuts, artwork
+//! - [`steamcloud`] games installed through Steam: backup only, taking over
+//!   from Steam Cloud and handing back
 //! - [`millennium`] Millennium install and the Ludonimbus Steam plugin
 //! - [`openlist`] the OpenList server used to reach Quark
 //! - [`games`]    high-level library operations shared by CLI / runner / app
@@ -58,6 +60,7 @@ pub mod snapshot;
 pub mod spec;
 pub mod state;
 pub mod steam;
+pub mod steamcloud;
 pub mod steamgriddb;
 pub mod switch;
 pub mod sync;

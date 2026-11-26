@@ -108,7 +108,7 @@ pub fn recognize(exe: &Path, args: &str, forced: Option<&str>) -> Option<Recogni
 
 /// Library entries of one emulator must not sync the same files twice: the
 /// whole emulator (empty `saves`) or games one by one, each game once.
-fn check_emulator_overlap(cfg: &AppConfig, adapter: &Adapter, saves: &[String]) -> Result<()> {
+pub(crate) fn check_emulator_overlap(cfg: &AppConfig, adapter: &Adapter, saves: &[String]) -> Result<()> {
     if !adapter.is_emulator() {
         return Ok(());
     }
@@ -557,6 +557,9 @@ pub fn remove(key: &str) -> Result<()> {
     if g.steam.as_ref().is_some_and(|l| l.enabled) {
         bail!(crate::tr!("请先关闭这个游戏的 Steam 自动同步（会把快捷方式恢复原样），再移除", "Turn off Steam auto-sync for this game first (this restores the shortcut), then remove it"));
     }
+    // A game Steam installed never keeps a wrapper in its launch options
+    // once it is gone from the library.
+    crate::steamcloud::give_back_options(&cfg, g)?;
     config::update(|cfg| {
         cfg.games.retain(|g| g.key != key);
         Ok(())
@@ -581,6 +584,12 @@ pub struct FoundChoice {
 pub fn add_found(f: &Found, c: FoundChoice) -> Result<GameEntry> {
     let name = if c.name.trim().is_empty() { f.name.clone() } else { c.name.trim().to_string() };
     let title = c.ludusavi_title.clone().or_else(|| f.ludusavi_title.clone());
+    // Installed through Steam: Steam Cloud keeps it, Ludonimbus backs it up.
+    if let Some(appid) = f.store_appid {
+        let cfg = config::load()?;
+        let (_, account) = crate::steamcloud::steam_account(&cfg)?;
+        return crate::steamcloud::add(&cfg, &account, appid, FoundChoice { name, ludusavi_title: title, ..c });
+    }
     if let (Some(account), Some(appid)) = (&f.steam_account, f.steam_appid) {
         return add_from_shortcut(
             account,

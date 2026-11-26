@@ -236,9 +236,83 @@ pub fn parse_manifest(
     out
 }
 
+/// The titles of the games with these Steam app ids, from the manifest that
+/// Ludusavi downloaded. A game's own id goes before another edition's
+/// (`steamExtra`).
+pub fn titles_by_steam_id(ids: &std::collections::HashSet<u32>) -> std::collections::HashMap<u32, String> {
+    let text = std::fs::read_to_string(paths::ludusavi_config_dir().join("manifest.yaml")).unwrap_or_default();
+    parse_steam_titles(&text, ids)
+}
+
+pub fn parse_steam_titles(text: &str, ids: &std::collections::HashSet<u32>) -> std::collections::HashMap<u32, String> {
+    let mut out = std::collections::HashMap::new();
+    let mut editions: Vec<(u32, String)> = Vec::new();
+    let (mut title, mut section, mut sub) = (String::new(), String::new(), String::new());
+    for line in text.lines() {
+        if line.is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            title = line.strip_suffix(':').map(unquote_key).unwrap_or_default();
+            section.clear();
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let trimmed = line.trim();
+        if indent == 2 {
+            section = trimmed.trim_end_matches(':').to_string();
+            sub.clear();
+        } else if indent == 4 {
+            sub.clear();
+            match (section.as_str(), trimmed.split_once(':')) {
+                ("steam", Some(("id", v))) => {
+                    if let Some(id) = v.trim().parse().ok().filter(|id| ids.contains(id)) {
+                        out.entry(id).or_insert_with(|| title.clone());
+                    }
+                }
+                ("id", Some((k, ""))) => sub = k.to_string(),
+                _ => {}
+            }
+        } else if indent >= 6 && section == "id" && sub == "steamExtra" {
+            if let Some(id) = trimmed.strip_prefix("- ").and_then(|v| v.trim().parse().ok()).filter(|id| ids.contains(id)) {
+                editions.push((id, title.clone()));
+            }
+        }
+    }
+    for (id, t) in editions {
+        out.entry(id).or_insert(t);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_titles_by_steam_id() {
+        let text = r#"Hollow Knight:
+  steam:
+    id: 367520
+"The Witcher 3: Wild Hunt":
+  id:
+    steamExtra:
+      - 499450
+  steam:
+    id: 292030
+The Witcher 3 GOTY:
+  steam:
+    id: 499450
+"#;
+        let ids = [367520, 499450, 1].into_iter().collect();
+        let m = parse_steam_titles(text, &ids);
+        assert_eq!(m[&367520], "Hollow Knight");
+        // The edition's own entry goes before the game that lists it.
+        assert_eq!(m[&499450], "The Witcher 3 GOTY");
+        assert!(!m.contains_key(&1) && !m.contains_key(&292030));
+        let m = parse_steam_titles(text, &[292030, 499450].into_iter().collect());
+        assert_eq!(m[&292030], "The Witcher 3: Wild Hunt");
+    }
 
     #[test]
     fn reads_manifest_fields() {

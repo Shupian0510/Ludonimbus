@@ -6,7 +6,7 @@ use ludonimbus_core::cloud::{self, oauth};
 use ludonimbus_core::config::{self, CloudConfig};
 use ludonimbus_core::snapshot::{self, Trigger};
 use ludonimbus_core::sync::{self, Ctx, Resolution};
-use ludonimbus_core::{discover, games, join, ludusavi, paths, steam};
+use ludonimbus_core::{discover, games, join, ludusavi, paths, steam, steamcloud};
 use std::path::PathBuf;
 
 mod gamebackup;
@@ -76,6 +76,10 @@ enum Cmd {
     /// Steam integration
     #[command(subcommand)]
     Steam(SteamCmd),
+    /// Games installed through Steam: backup only, taking over from Steam
+    /// Cloud, handing back
+    #[command(subcommand)]
+    SteamCloud(SteamCloudCmd),
     /// Cloud provider
     #[command(subcommand)]
     Cloud(CloudCmd),
@@ -137,6 +141,83 @@ enum SteamCmd {
     Repair { key: String },
     /// Check every linked shortcut
     Health,
+}
+
+#[derive(Subcommand)]
+enum SteamCloudCmd {
+    /// Games Steam installed, and how each stands
+    List,
+    /// Add games Steam installed (backup only)
+    Add {
+        #[arg(required = true)]
+        appids: Vec<u32>,
+    },
+    /// How a game stands with Steam Cloud
+    Status { key: String },
+    /// Let Ludonimbus keep a game's saves (Steam Cloud must be off for it)
+    TakeOver {
+        key: String,
+        /// Leave the launch options alone: the game is synced in the
+        /// background while it isn't running
+        #[arg(long)]
+        no_wrapper: bool,
+    },
+    /// Give a game back to Steam Cloud
+    HandBack { key: String },
+    /// Add every game Steam installed whose save location is known (backup only)
+    BackupAll,
+    /// Take over every game that is backup only (Steam Cloud must be off for all games)
+    TakeOverAll {
+        #[arg(long)]
+        no_wrapper: bool,
+    },
+    /// Give every game back to Steam Cloud
+    HandBackAll,
+}
+
+fn print_done(list: &[steamcloud::Done]) {
+    for d in list {
+        let key = d.key.as_deref().unwrap_or("-");
+        match &d.error {
+            None => println!("{:<10} {key}  完成", d.appid),
+            Some(e) => println!("{:<10} {key}  失败：{e}", d.appid),
+        }
+    }
+}
+
+fn steam_cloud(cmd: SteamCloudCmd) -> Result<()> {
+    match cmd {
+        SteamCloudCmd::List => {
+            for a in steamcloud::apps(&config::load()?) {
+                println!(
+                    "{:<10} {:<40} {:<8} {:<16} {}{}",
+                    a.appid,
+                    a.name,
+                    format!("{:?}", a.state),
+                    a.sync_state.unwrap_or_else(|| "-".into()),
+                    if a.cloud_enabled { "" } else { "[Steam 云已关] " },
+                    a.key.map(|k| format!("[已添加: {k}]")).unwrap_or_default()
+                );
+            }
+        }
+        SteamCloudCmd::Add { appids } => print_done(&steamcloud::add_many(&config::load()?, &appids)),
+        SteamCloudCmd::Status { key } => {
+            let cfg = config::load()?;
+            println!("{}", serde_json::to_string_pretty(&steamcloud::status(&cfg, cfg.require_game(&key)?)?)?);
+        }
+        SteamCloudCmd::TakeOver { key, no_wrapper } => {
+            let g = steamcloud::take_over(&Ctx::load()?, &key, !no_wrapper)?;
+            println!("已接管「{}」：存档由 Ludonimbus 同步", g.name);
+        }
+        SteamCloudCmd::HandBack { key } => {
+            let g = steamcloud::hand_back(&Ctx::load()?, &key)?;
+            println!("已把「{}」交还给 Steam 云：请在 Steam 里重新打开它的云存档", g.name);
+        }
+        SteamCloudCmd::BackupAll => print_done(&steamcloud::backup_all(&config::load()?)),
+        SteamCloudCmd::TakeOverAll { no_wrapper } => print_done(&steamcloud::take_over_all(&Ctx::load()?, !no_wrapper)?),
+        SteamCloudCmd::HandBackAll => print_done(&steamcloud::hand_back_all(&Ctx::load()?)),
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -367,6 +448,7 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
         }
+        Cmd::SteamCloud(cmd) => steam_cloud(cmd)?,
         Cmd::Steam(cmd) => match cmd {
             SteamCmd::Accounts => {
                 let cfg = config::load()?;

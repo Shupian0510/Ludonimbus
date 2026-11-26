@@ -252,6 +252,11 @@ pub struct GameEntry {
     /// launcher to close. `None` = the adapter's default.
     pub upload_on_game_exit: Option<bool>,
     pub steam: Option<SteamLink>,
+    /// A game installed through Steam itself (not a non-Steam shortcut,
+    /// that is [`GameEntry::steam`]): whether Steam Cloud or Ludonimbus
+    /// keeps its saves (docs/plan-v2.md, section 8; [`crate::steamcloud`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<StoreLink>,
     #[serde(default = "yes")]
     pub auto_sync: bool,
     /// Library group chosen by the user (e.g. an emulator's name for a game
@@ -317,6 +322,37 @@ pub struct OriginalShortcut {
     pub icon: String,
 }
 
+/// A game installed through Steam, in the library. Its three states: not
+/// syncing by itself (`auto_sync` off) is Steam's; [`StoreMode::Backup`]
+/// keeps versions of what Steam Cloud syncs; [`StoreMode::Managed`] syncs
+/// it like any other game, with Steam Cloud off for it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StoreLink {
+    /// The Steam account (the folder name under `userdata`).
+    pub account: String,
+    pub appid: u32,
+    pub mode: StoreMode,
+    /// The game's launch options in Steam go through the wrapper
+    /// (`"<runner>" --game <key> -- %command%`). Stays set when the game
+    /// goes back to backup only by itself: the wrapper does no harm there.
+    pub wrapper: bool,
+    /// The launch options before the wrapper was put in, given back on
+    /// hand-back. `None`: there were none.
+    pub original_options: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StoreMode {
+    /// Steam Cloud stays on; Ludonimbus stores versions and never writes
+    /// into the game's saves by itself.
+    #[default]
+    Backup,
+    /// Steam Cloud is off for the game; Ludonimbus pulls and uploads.
+    Managed,
+}
+
 impl GameEntry {
     /// Forget what was settled about this game in the cloud that is
     /// connected: another cloud knows nothing of it.
@@ -324,6 +360,13 @@ impl GameEntry {
         self.record = None;
         self.bind.clear();
         self.declined.clear();
+    }
+
+    /// A game installed through Steam whose saves Steam Cloud keeps:
+    /// Ludonimbus records their history and writes nothing into them by
+    /// itself (docs/plan-v2.md, section 8.2).
+    pub fn backup_only(&self) -> bool {
+        self.store.as_ref().is_some_and(|s| s.mode != StoreMode::Managed)
     }
 }
 

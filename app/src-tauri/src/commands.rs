@@ -8,7 +8,7 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, spec, steam, util};
+use ludonimbus_core::{adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, spec, steam, steamcloud, util};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -992,6 +992,85 @@ pub async fn steam_set_enabled(key: String, enabled: bool, close_steam: bool) ->
 #[tauri::command]
 pub async fn steam_repair(key: String, close_steam: bool) -> CmdResult<()> {
     blocking(move || with_steam_closed(close_steam, || games::steam_repair(&key))).await
+}
+
+// ---------------------------------------------------------------------------
+// Games installed through Steam (docs/plan-v2.md, section 8)
+
+/// The games Steam installed, and how each stands with Ludonimbus.
+#[tauri::command]
+pub async fn steam_cloud_apps() -> CmdResult<Vec<steamcloud::StoreApp>> {
+    blocking(|| Ok(steamcloud::apps(&config::load()?))).await
+}
+
+/// Add games Steam installed to the library, backup only.
+#[tauri::command]
+pub async fn steam_cloud_add(appids: Vec<u32>) -> CmdResult<Vec<steamcloud::Done>> {
+    blocking(move || Ok(steamcloud::add_many(&config::load()?, &appids))).await
+}
+
+#[tauri::command]
+pub async fn steam_cloud_status(key: String) -> CmdResult<steamcloud::StoreStatus> {
+    blocking(move || {
+        let cfg = config::load()?;
+        steamcloud::status(&cfg, cfg.require_game(&key)?)
+    })
+    .await
+}
+
+/// Refused while the game runs or a sync of it is busy.
+fn steam_game_free(key: &str) -> Result<busy::Guard> {
+    if watcher::runner_active(key) {
+        bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit"));
+    }
+    busy::begin(key).ok_or_else(|| anyhow!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait")))
+}
+
+/// Let Ludonimbus keep a Steam game's saves once Steam Cloud is off for it.
+/// `wrapper`: through its launch options, which needs Steam closed
+/// (`close_steam` lets Ludonimbus close and reopen it).
+#[tauri::command]
+pub async fn steam_cloud_take_over(key: String, wrapper: bool, close_steam: bool) -> CmdResult<steamcloud::StoreStatus> {
+    blocking(move || {
+        let _busy = steam_game_free(&key)?;
+        let take = || Ctx::load().and_then(|ctx| steamcloud::take_over(&ctx, &key, wrapper));
+        let entry = if wrapper { with_steam_closed(close_steam, take)? } else { take()? };
+        steamcloud::status(&config::load()?, &entry)
+    })
+    .await
+}
+
+/// Give a Steam game back to Steam Cloud (its launch options as before).
+#[tauri::command]
+pub async fn steam_cloud_hand_back(key: String, close_steam: bool) -> CmdResult<steamcloud::StoreStatus> {
+    blocking(move || {
+        let _busy = steam_game_free(&key)?;
+        let wrapped = config::load()?.require_game(&key)?.store.as_ref().is_some_and(|s| s.wrapper);
+        let hand = || Ctx::load().and_then(|ctx| steamcloud::hand_back(&ctx, &key));
+        let entry = if wrapped { with_steam_closed(close_steam, hand)? } else { hand()? };
+        steamcloud::status(&config::load()?, &entry)
+    })
+    .await
+}
+
+/// Every game Steam installed that isn't in the library yet, backup only.
+#[tauri::command]
+pub async fn steam_cloud_backup_all() -> CmdResult<Vec<steamcloud::Done>> {
+    blocking(|| Ok(steamcloud::backup_all(&config::load()?))).await
+}
+
+/// Take over every game that is backup only (Steam Cloud off for all games).
+#[tauri::command]
+pub async fn steam_cloud_take_over_all(wrapper: bool, close_steam: bool) -> CmdResult<Vec<steamcloud::Done>> {
+    blocking(move || {
+        let take = || Ctx::load().and_then(|ctx| steamcloud::take_over_all(&ctx, wrapper));
+        if wrapper {
+            with_steam_closed(close_steam, take)
+        } else {
+            take()
+        }
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

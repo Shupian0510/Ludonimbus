@@ -113,10 +113,44 @@ pub fn proton_prefix(game: &GameEntry) -> Option<PathBuf> {
     if !exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
         return None;
     }
+    // A game Steam installed: in the library it is installed in, under its
+    // own app id.
+    if let Some(store) = &game.store {
+        let apps = install_dir(game)?.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("steamapps")))?.to_path_buf();
+        return Some(apps.join("compatdata").join(store.appid.to_string()).join("pfx"));
+    }
     let link = game.steam.as_ref()?;
     static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     let root = ROOT.get_or_init(|| crate::config::load().ok().and_then(|c| crate::steam::root(&c))).clone()?;
     Some(root.join("steamapps").join("compatdata").join(link.appid.to_string()).join("pfx"))
+}
+
+/// `{steamuser}` for a game installed through Steam: the Steam account's
+/// folder on this device, `<Steam>/userdata/<account>`. Steam Cloud saves
+/// are below it (`{steamuser}/<appid>/remote/…`), and resolve on each device
+/// against its own Steam folder (docs/plan-v2.md, section 8.3).
+pub fn steam_user_dir(game: &GameEntry) -> Option<PathBuf> {
+    let store = game.store.as_ref()?;
+    Some(steam_root()?.join("userdata").join(&store.account))
+}
+
+/// Steam's folder on this device, as the configuration says. Roots are
+/// resolved for every scan, so it is read again only when the configuration
+/// file changed (or another one is used: tests switch data folders).
+fn steam_root() -> Option<PathBuf> {
+    type Seen = (PathBuf, Option<(std::time::SystemTime, u64)>, Option<PathBuf>);
+    static SEEN: std::sync::Mutex<Option<Seen>> = std::sync::Mutex::new(None);
+    let file = crate::paths::config_file();
+    let stamp = std::fs::metadata(&file).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((f, s, root)) = seen.as_ref() {
+        if *f == file && *s == stamp {
+            return root.clone();
+        }
+    }
+    let root = crate::config::load().ok().and_then(|c| crate::steam::root(&c));
+    *seen = Some((file, stamp, root.clone()));
+    root
 }
 
 /// What `{home}`, `{appdata}`, `{localappdata}` and `{documents}` are inside
@@ -251,6 +285,9 @@ pub fn resolve_roots(game: &GameEntry, spec: &SaveSpec) -> Result<BTreeMap<Strin
     // A Windows game under Proton keeps its saves in the prefix.
     if let Some(pfx) = proton_prefix(game) {
         roots.extend(prefix_roots(&pfx));
+    }
+    if let Some(dir) = steam_user_dir(game) {
+        roots.insert("steamuser".to_string(), dir);
     }
     for (name, tpl) in &spec.roots {
         let p = expand_root(tpl, &roots)?;
