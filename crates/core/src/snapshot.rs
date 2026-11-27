@@ -271,9 +271,19 @@ pub struct LocalFile {
 pub struct LocalState {
     pub files: Vec<LocalFile>,
     pub entries: Vec<FileEntry>,
+    /// The content hash of the saves as a version of the line would hold
+    /// them: the files here, and those [`LocalState::carried`].
     pub hash: String,
     pub total_size: u64,
     pub roots: BTreeMap<String, PathBuf>,
+    /// Files of the line that are not this version's (another platform's,
+    /// for a version that shares its line through a rule) and go with the
+    /// saves here unchanged, each naming the pack that holds it. Empty for
+    /// every other version.
+    pub carried: Vec<crate::cloud::v2::FileRef>,
+    /// The same, for files that have to be packed anew: their content is on
+    /// this device (they come from a version no new one may point into).
+    pub carried_files: Vec<crate::cloud::packs::LocalFile>,
 }
 
 impl LocalState {
@@ -281,9 +291,23 @@ impl LocalState {
         self.files.is_empty()
     }
 
-    /// The saves as they go into a snapshot of layout 2.
+    /// These saves with another platform's files going along (`carried`,
+    /// `files`): the hash is then that of the version they make.
+    pub fn carrying(mut self, carried: Vec<crate::cloud::v2::FileRef>, files: Vec<crate::cloud::packs::LocalFile>) -> LocalState {
+        let mut all = self.entries.clone();
+        all.extend(carried.iter().map(|f| FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }));
+        all.extend(files.iter().map(|f| FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }));
+        self.hash = content_hash(&all);
+        self.carried = carried;
+        self.carried_files = files;
+        self
+    }
+
+    /// The saves as they go into a snapshot of layout 2: those here, and
+    /// what is carried over and has to be packed anew.
     pub fn pack_files(&self) -> Vec<crate::cloud::packs::LocalFile> {
-        self.files
+        let mut out: Vec<crate::cloud::packs::LocalFile> = self
+            .files
             .iter()
             .zip(&self.entries)
             .map(|(f, e)| crate::cloud::packs::LocalFile {
@@ -293,7 +317,9 @@ impl LocalState {
                 mtime: e.mtime,
                 source: f.abs.clone(),
             })
-            .collect()
+            .collect();
+        out.extend(self.carried_files.iter().cloned());
+        out
     }
 
     /// The folders the saves are in on this device, by root name: only the
@@ -507,9 +533,12 @@ fn tidy_decoded() {
 
 /// The files of a line (`files`) this version of the game has no folder
 /// for ([`GameEntry::bind`]). None for a version whose files are the line's
-/// as they are.
+/// as they are, and none for one that shares another platform's line
+/// through a rule ([`crate::join::by_rule`]): the files its bindings don't
+/// name are that platform's, not files it lacks a place for. It leaves them
+/// out ([`crate::join::held`]).
 pub fn no_place_for(game: &GameEntry, files: &[FileEntry]) -> Vec<String> {
-    if game.bind.is_empty() {
+    if game.bind.is_empty() || crate::join::by_rule(game).is_some() {
         return Vec::new();
     }
     crate::bind::uncovered(&game.bind, files.iter().map(|f| f.path.as_str()))
@@ -676,6 +705,8 @@ pub fn local_state(game: &GameEntry) -> Result<LocalState> {
         hash,
         total_size: total,
         roots,
+        carried: Vec::new(),
+        carried_files: Vec::new(),
     })
 }
 

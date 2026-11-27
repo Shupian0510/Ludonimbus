@@ -450,6 +450,7 @@ export const saves: typeof Zh.saves = {
   makeCurrentTitle: "Make this the current save?",
   makeCurrentText: (name, device, at) => `The saves of ${name} on this device are replaced by the ones ${device} saved at ${at}; the ones here are kept first.`,
   xboxNote: "Writing into the Xbox version is experimental (the Xbox app's own cloud sync may put its saves back); the saves here are kept first.",
+  tooNew: (version) => `This save was made by version ${version} of the game, newer than here. An older game can't read a newer save: update the game here to ${version} first.`,
   madeCurrent: "Now the current save",
   undo: "Undo",
   undone: "Undone",
@@ -495,6 +496,9 @@ export const saves: typeof Zh.saves = {
 
 export const join: typeof Zh.join = {
   text: (device) => `These are the same saves as the version on ${device}. Share the progress?`,
+  textRule: (from) => `The ${from} version keeps the same saves as this one. Share the progress?`,
+  byRule: (rule) => `By the rule for ${rule}`,
+  others: (n, from) => `${n} ${plural(n, "file is", "files are")} the ${from} version's own (such as settings) and ${plural(n, "stays", "stay")} as ${plural(n, "it is", "they are")}`,
   share: "Share",
   no: "They aren't",
   shared: "Now shared",
@@ -832,6 +836,8 @@ export const game: typeof Zh.game = {
   playtimeSteam: (time) => `  of which ${time} was counted by Steam before you used Ludonimbus`,
   playtimePlatforms: "By platform",
   playtimePlatform: (name, time) => `${name}: ${time}`,
+  tooNew: (version) => `The newest save in the cloud was made by version ${version} of the game, newer than here, so it isn't brought over by itself`,
+  tooNewHint: "An older version of the game can't read a newer save. Update the game here to the same version, then make it current on the Saves tab.",
   conflictTitle: "Both this PC and the cloud have new save changes",
   conflictText: (device, at, size, files, localSize) =>
     `Latest in the cloud: saved by ${device} at ${at} (${size}). This PC: ${files} ${plural(files, "file", "files")}, ${localSize}. The one you don't pick stays under Saves.`,

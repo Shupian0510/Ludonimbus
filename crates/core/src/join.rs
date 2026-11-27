@@ -31,17 +31,31 @@
 //! other versions use, and its bindings say so ([`bind::Codec::Wgs`]).
 //! Writing into the containers is experimental and only done when the user
 //! asks for it (`sync`'s rule for syncs nobody chose).
+//!
+//! **Bindings a rule gives.** A game with a cross-platform rule
+//! (`adapters/cross-saves.yaml`, [`crosssaves`]) keeps the same save files on
+//! the rule's platforms, in the rule's folder on each. Its version on one
+//! platform is offered the line of another ([`library::lines_to_ask`]), and
+//! the bindings come from the rule, not from comparing file names: the
+//! rule's folder in the line, the rule's folder here, and only the files the
+//! rule names ([`Bind::files`]). Such a version ([`by_rule`]) shares a line
+//! that also holds files of the other platform (its settings, a Switch
+//! game's device save): those are not its files. It doesn't fetch them, has
+//! no place for them, and a version it uploads carries them over unchanged
+//! from the version it is based on (`sync`).
 
 use crate::bind::{self, Bind, Proposal};
 use crate::cloud::saves;
 use crate::cloud::{library, upgrade, Cloud, CloudGame};
 use crate::config::{self, GameEntry};
+use crate::crosssaves::{self, Rule};
 use crate::snapshot::{self, Trigger};
 use crate::sync::{self, Ctx, Gate, Outcome, Resolution};
-use crate::{logger, state, wgs};
+use crate::{logger, savelib, spec, state, switch, wgs};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Whether a version can share a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +97,19 @@ pub struct Suggestion {
     /// Files here outside the bound folders: they stay, and are no longer
     /// uploaded once the line is shared.
     pub outside: Vec<String>,
+    /// The cross-platform rule, by name, that says the line's versions keep
+    /// the same files as this one: the line is another platform's and the
+    /// bindings are the rule's. None for bindings worked out from the files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// That other platform, as it is called ("Switch", "PC"). Empty when
+    /// the line is of this version's own platform.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub from: String,
+    /// Files of the line that are the other platform's, not this version's
+    /// (its settings, a device save): they stay on the line as they are.
+    #[serde(default)]
+    pub others: usize,
 }
 
 /// A version of a save line has files this version of the game has no
@@ -141,7 +168,150 @@ fn suggest(s: Proposal, record: &str, def: &str, head: &crate::cloud::v2::IndexE
         only_here: s.only_here,
         uncovered: s.uncovered,
         outside: s.outside,
+        rule: None,
+        from: String::new(),
+        others: 0,
     }
+}
+
+/// The cross-platform rule whose bindings a version shares a line through:
+/// it has bindings, its saves follow a rule ([`crosssaves::rule_for`]), and
+/// the line's side of every binding is the rule's folder for a platform
+/// whose lines have another format than the version's own. Bindings worked
+/// out from file names ([`bind::propose`]) only ever join a line of the
+/// version's own format, so they are never taken for these.
+///
+/// Worked out, not stored: configurations and game records read and write
+/// as before, and every device comes to the same answer.
+pub fn by_rule(game: &GameEntry) -> Option<&'static Rule> {
+    if game.bind.is_empty() {
+        return None;
+    }
+    let rule = crosssaves::rule_for(game)?;
+    let own = upgrade::format_of_scope(&savelib::save_scope(game));
+    let given = |b: &Bind| b.codec.is_files() && rule.folders.keys().any(|s| upgrade::format_of_scope(s) != own && crosssaves::is_folder(rule, s, &b.canon));
+    game.bind.iter().all(given).then_some(rule)
+}
+
+/// The files among `files` (a version of the game's line) this version
+/// holds: all of them, except for a version that shares another platform's
+/// line through a rule ([`by_rule`]), which holds those its bindings name.
+pub(crate) fn held(game: &GameEntry, files: &[snapshot::FileEntry]) -> Vec<snapshot::FileEntry> {
+    match by_rule(game) {
+        Some(_) => files.iter().filter(|f| bind::to_local(&game.bind, &f.path).is_some()).cloned().collect(),
+        None => files.to_vec(),
+    }
+}
+
+/// How a platform is called where the app says which one a line is of.
+fn platform_name(scope: &str) -> String {
+    match scope {
+        "switch" => "Switch".to_string(),
+        "pc" => "PC".to_string(),
+        other => crate::adapters::find(other).map(|a| a.name.clone()).unwrap_or_else(|| other.to_string()),
+    }
+}
+
+/// The folder that holds the rule's saves among `paths` (a snapshot's, or
+/// the version's own scan) on platform `scope`, as the paths write it; the
+/// saves must all agree on one. `roots`: where the roots were on the device.
+fn rule_folder(rule: &Rule, scope: &str, paths: &[String], roots: &BTreeMap<String, String>) -> Option<String> {
+    let mut found: Option<String> = None;
+    for p in paths {
+        let root = p.split('/').next().unwrap_or_default();
+        let Some(rel) = crosssaves::relative(rule, scope, p, roots.get(root).map(String::as_str)) else { continue };
+        let dir = p.get(..p.len().checked_sub(rel.len() + 1)?)?.to_string();
+        match &found {
+            None => found = Some(dir),
+            Some(f) if f.eq_ignore_ascii_case(&dir) => {}
+            Some(_) => return None,
+        }
+    }
+    found
+}
+
+/// This version's folder for the rule's saves, among its own paths: a Switch
+/// game's save data is its `nxsave-…` root, known without any file; else
+/// where its saves are now (`paths`, `roots`: its own scan), or where the
+/// folder is on this device while it has none.
+fn rule_local(game: &GameEntry, rule: &Rule, paths: &[String], roots: &BTreeMap<String, std::path::PathBuf>) -> Option<String> {
+    let scope = savelib::save_scope(game);
+    if rule.folders.get(&scope).map(String::as_str) == Some(crosssaves::NXSAVE) {
+        return game.saves.iter().find_map(|s| {
+            let (root, _) = spec::split_pattern(s).ok()?;
+            matches!(switch::parse_root(&root.to_lowercase()), Some((switch::SaveKind::Account, _))).then_some(root)
+        });
+    }
+    let named: BTreeMap<String, String> = roots.iter().map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned())).collect();
+    if let Some(dir) = rule_folder(rule, &scope, paths, &named) {
+        return Some(dir);
+    }
+    let dir = crosssaves::folder_on_device(rule, &scope, &[], roots)?;
+    let logical = spec::tokenize(&dir, roots);
+    (logical.contains('/') && !logical.starts_with("abs/") && !logical.starts_with("drive-")).then_some(logical)
+}
+
+/// [`suggestion`] for a line of another platform that the game's rule says
+/// keeps the same files: the bindings are the rule's. `canon` and `roots`:
+/// the files of the line's newest version and where its roots were.
+#[allow(clippy::too_many_arguments)]
+fn by_the_rule(
+    game: &GameEntry,
+    rule: &Rule,
+    line: &crate::cloud::v2::Line,
+    canon: &[String],
+    roots: &BTreeMap<String, String>,
+    confirmed: Option<Vec<Bind>>,
+    record: &str,
+    def: &str,
+    head: &crate::cloud::v2::IndexEntry,
+) -> Suggestion {
+    let there = upgrade::scope_of_format(&line.format).unwrap_or_default().to_string();
+    let (files, own_roots) = snapshot::scan_own(game).unwrap_or_default();
+    let here: Vec<String> = files.into_iter().map(|f| f.logical).collect();
+    let canon_dir = rule_folder(rule, &there, canon, roots).filter(|d| crosssaves::is_folder(rule, &there, d));
+    let local_dir = rule_local(game, rule, &here, &own_roots);
+    let confirmed = confirmed.filter(|m| bind::known(m) && !m.is_empty());
+    let is_confirmed = confirmed.is_some();
+    let binds = match (confirmed, &canon_dir, &local_dir) {
+        // A user confirmed them elsewhere: with this device's own folder for
+        // the rule where it knows one.
+        (Some(map), _, _) => here_for_rule(game, rule, map, local_dir.as_deref()),
+        (None, Some(c), Some(l)) => {
+            let files = Some(rule.files.clone()).filter(|f| f != "**");
+            vec![Bind { canon: c.clone(), local: l.clone(), codec: bind::Codec::Files, files }]
+        }
+        _ => Vec::new(),
+    };
+    let fit = match (binds.is_empty(), canon_dir.is_some()) {
+        (false, _) => Fit::Ready,
+        // The line's saves aren't where the rule says.
+        (true, false) => Fit::NoMatch,
+        // Where this version's saves go isn't known before it has some.
+        (true, true) => Fit::NeedsSaves,
+    };
+    let mut p = bind::measure(&binds, canon, &here);
+    // Not this version's files: the other platform's.
+    let others = std::mem::take(&mut p.uncovered).len();
+    Suggestion { rule: Some(rule.name.clone()), from: platform_name(&there), others, ..suggest(p, record, def, head, is_confirmed, fit) }
+}
+
+/// Bindings of a rule pair confirmed on another device, with this device's
+/// own folder for the rule (`local`) where it has one: the line's folder is
+/// the same everywhere, this version's folder is this device's.
+fn here_for_rule(game: &GameEntry, rule: &Rule, map: Vec<Bind>, local: Option<&str>) -> Vec<Bind> {
+    let Some(local) = local else { return map };
+    let own = upgrade::format_of_scope(&savelib::save_scope(game));
+    map.into_iter()
+        .map(|b| {
+            let given = rule.folders.keys().any(|s| upgrade::format_of_scope(s) != own && crosssaves::is_folder(rule, s, &b.canon));
+            if given && b.codec.is_files() {
+                Bind { local: local.to_string(), ..b }
+            } else {
+                b
+            }
+        })
+        .collect()
 }
 
 /// The save line the game could share although it keeps its saves
@@ -160,12 +330,21 @@ fn suggest(s: Proposal, record: &str, def: &str, head: &crate::cloud::v2::IndexE
 /// holds an Xbox app version's containers as they are (one that began with
 /// such a version) is not suggested: those files are one PC's containers,
 /// and no other version has them.
+///
+/// A line of another platform that the game's cross-platform rule pairs it
+/// with gets the rule's bindings ([`by_the_rule`]): the rule's folder in the
+/// line's newest version, the rule's folder here, the files the rule names.
+/// The line's other files are the other platform's ([`Suggestion::others`]),
+/// not files this version lacks a folder for. Every such pair is asked once
+/// for now ([`crosssaves::verified`]).
 pub fn suggestion(ctx: &Ctx, game: &GameEntry) -> Result<Option<Suggestion>> {
     if !game.bind.is_empty() {
         return Ok(None);
     }
     let cloud = ctx.cloud()?;
     let (here, containers) = snapshot::scan_named(game).unwrap_or_default();
+    let own_format = upgrade::line_format(&CloudGame::from(game));
+    let rule = crosssaves::rule_for(game);
     let mut first: Option<Suggestion> = None;
     for (record, line, place, confirmed) in cloud.lines_to_ask(&game.key)? {
         let Some(def) = line.def.clone().filter(|d| !game.declined.contains(d)) else { continue };
@@ -174,6 +353,15 @@ pub fn suggestion(ctx: &Ctx, game: &GameEntry) -> Result<Option<Suggestion>> {
         let manifest = saves::manifest(cloud.files(), &place, &view, &head.id)?;
         let canon: Vec<String> = manifest.files.iter().map(|f| f.path.clone()).collect();
         if !wgs::user_dirs(canon.iter().map(String::as_str)).is_empty() {
+            continue;
+        }
+        if let Some(rule) = rule.filter(|_| line.format != own_format) {
+            let roots = snapshot::SnapshotMeta::of(&manifest, &game.key, None).roots;
+            let s = by_the_rule(game, rule, &line, &canon, &roots, confirmed, &record, &def, &head);
+            if s.fit == Fit::Ready {
+                return Ok(Some(s));
+            }
+            first.get_or_insert(s);
             continue;
         }
         // Bindings confirmed elsewhere that this build can use, with the
@@ -337,11 +525,23 @@ pub(crate) fn auto(cloud: &Cloud, game: &GameEntry) -> Option<GameEntry> {
     if st.line.is_some() || st.last_synced_id.is_some() || !st.pending.is_empty() || !sync::pending_metas(key).is_empty() {
         return None;
     }
+    // Nothing confirmed: this is where a rule pair known to keep the same
+    // files would join with the rule's bindings ([`crosssaves::verified`]).
+    // None is yet, so it is asked once.
     let (record, binds) = cloud.bound_line(key).ok()??;
     // A newer Ludonimbus confirmed them: this one can't use them.
     if !bind::known(&binds) {
         return None;
     }
+    // A rule pair's: this version's folder for the rule is this device's.
+    let binds = match crosssaves::rule_for(game) {
+        Some(rule) => {
+            let (files, roots) = snapshot::scan_own(game).unwrap_or_default();
+            let here: Vec<String> = files.into_iter().map(|f| f.logical).collect();
+            here_for_rule(game, rule, binds, rule_local(game, rule, &here, &roots).as_deref())
+        }
+        None => binds,
+    };
     let entry = change(key, |g| {
         g.record = Some(record.clone());
         g.bind = binds.clone();

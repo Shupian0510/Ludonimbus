@@ -22,5 +22,5 @@ Settings → "Switch" lists the paired consoles and when each last connected; an
 ## With the other versions
 
 - **Switch emulators**: the same game shares progress between the console, Ryujinx and Eden automatically.
-- **The PC version**: its save format is usually different, so the two are kept apart; for games in the rule list, "Send to…" moves saves across, see [Several versions of one game](../sync/game-versions.md#send).
+- **The PC version**: its save format is usually different, so the two are kept apart. Games in the rule list (such as Stardew Valley) can share progress, see [Several versions of one game](../sync/game-versions.md#rule).
 - A save made by a newer version of the game in an emulator may not be readable by an older version on the console: update the game on the console to the same version first.

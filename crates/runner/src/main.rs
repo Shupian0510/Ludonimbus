@@ -239,6 +239,19 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
             "Using the cloud saves writes into the Xbox version, which is experimental (the Xbox app's own cloud sync may put its saves back); the saves on this PC are kept first."
         ));
     }
+    // Saved on another platform by a newer game than the one here: said
+    // before the user chooses it.
+    let here = ludonimbus_core::sync::saves_version(game);
+    if ludonimbus_core::sync::too_new(game, here.as_deref(), &cloud.platform, cloud.game_version.as_deref()) {
+        let v = cloud.game_version.as_deref().unwrap_or_default();
+        text.push_str("\n\n");
+        text.push_str(&tr!(
+            "云端这份是游戏 {} 存的，比这里的新。旧版本的游戏读不了新版本的存档：用它之前先把这里的游戏更新到 {}。",
+            "The cloud's saves were made by version {} of the game, newer than here. An older game can't read a newer save: update the game here to {} before using them.",
+            v,
+            v
+        ));
+    }
     let req = Request::new(tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"), text, "warn")
         .button("cloud", tr!("使用云端存档", "Use cloud saves"), "a")
         .button("local", tr!("使用本机存档", "Use this PC's saves"), "x")

@@ -84,6 +84,11 @@ const snapshots: Record<string, SnapshotSummary[]> = {
     snap("01CE1", 60 * 72, "LAPTOP", "auto-exit", 5040, 3, { platform: "pc:xbox" }),
     snap("01CE0", 60 * 96, "DESKTOP-MAIN", "auto-exit", 4800, 3),
   ],
+  // The PC saved the newest with a newer game than the emulator's (see STARDEW_NX).
+  "ryujinx-0100e65002bb8000": [
+    snap("01SDV2", 60 * 2, "DESKTOP-MAIN", "auto-exit", 412000, 4, { platform: "pc", gameVersion: "1.6.15" }),
+    snap("01SDV1", 60 * 26, "Steam Deck", "auto-exit", 398000, 4, { platform: "emu:ryujinx", gameVersion: "1.6.8" }),
+  ],
 };
 
 // What each game's saves are made on, and how the app shows that (the logo
@@ -153,6 +158,7 @@ const checks: Record<string, StatusReport> = {
   "zelda-oot-longshot": report("zelda-oot-longshot", "synced", 14, 1258291),
   "fe-fortunes-weave": report("fe-fortunes-weave", "localChanged", 4, 56422),
   "bloodborne-lantern": report("bloodborne-lantern", "conflict", 16, 15309618),
+  "ryujinx-0100e65002bb8000": { ...report("ryujinx-0100e65002bb8000", "cloudNewer", 4, 398000), tooNew: "1.6.15" },
 };
 
 function game(key: string, name: string, appid: number, platform: string, exe: string, saves: string[], extra: Partial<GameView> = {}): GameView {
@@ -220,6 +226,9 @@ function cloudGame(key: string, name: string, family: string, source: CloudOnlyV
 }
 
 /** An emulator game (no artwork in the preview: shows the name instead). */
+/** A Switch emulator's Stardew Valley: its PC version's line keeps the same saves by the game's rule. */
+const STARDEW_NX = "ryujinx-0100e65002bb8000";
+
 function emuGame(key: string, name: string, emulator: string, platform: string, exe: string, saves: string[], hours: number): GameView {
   return game(key, name, 0, platform, exe, saves, {
     adapter: emulator.toLowerCase(),
@@ -332,6 +341,8 @@ if (!mockScene || mockScene === "library-sources") {
     emuGame("dolphin-gzle01", L("塞尔达传说：风之杖", "The Legend of Zelda: The Wind Waker"), "Dolphin", gcWii, dolphin, ["{emu}/GC/*/Card ?/01-GZLE-*.gci"], 22),
     emuGame("ryujinx-0100770008dd8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-0100770008dd8000}/**"], 64),
     emuGame("ryujinx-01006a800016e000", L("超级马力欧 奥德赛", "Super Mario Odyssey"), "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-01006a800016e000}/**"], 18),
+    // Its PC version's line keeps the same saves by the game's rule: asked once (join_suggestion).
+    emuGame("ryujinx-0100e65002bb8000", L("星露谷物语", "Stardew Valley"), "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-0100e65002bb8000}/**"], 9),
     // The disc image it was started with is gone: saves only.
     { ...emuGame("pcsx2-slus21115", L("大神", "Okami"), "PCSX2", L("PS2 模拟器", "PS2 emulator"), "D:\\Emulators\\PCSX2\\pcsx2-qt.exe", ["{memcards}/Mcd001.ps2"], 31), playable: false },
     emuGame("azahar-00040000001b5000", L("宝可梦 究极之日", "Pokémon Ultra Sun"), "Azahar", L("3DS 模拟器", "3DS emulator"), "D:\\Emulators\\Azahar\\azahar.exe", ["{user}/sdmc/Nintendo 3DS/*/*/title/00040000/001b5000/data/**"], 45),
@@ -627,7 +638,27 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         uncovered: [],
         outside: ["savegame/crash.dmp"],
       };
-      return delay(key === "doom-eternal" && !joinAnswered.has(key) ? s : null, 200);
+      // A Switch emulator's version and the PC version's line: the same files by the game's rule.
+      const byRule: JoinSuggestion = {
+        record: key,
+        def: "mock-pc",
+        device: "DESKTOP-MAIN",
+        platform: "pc",
+        createdAt: ago(60 * 26),
+        confirmed: false,
+        fit: "ready",
+        binds: [{ canon: "appdata/StardewValley/Saves", local: "nxsave-0100e65002bb8000" }],
+        matched: 4,
+        onlyInLine: 0,
+        onlyHere: 0,
+        uncovered: [],
+        outside: [],
+        rule: "Stardew Valley",
+        from: "PC",
+        others: 2,
+      };
+      if (joinAnswered.has(key)) return delay(null, 200);
+      return delay(key === "doom-eternal" ? s : key === STARDEW_NX ? byRule : null, 200);
     }
     case "join_answer": {
       joinAnswered.add(key);
@@ -647,7 +678,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "screenshot_reveal":
       return delay(undefined);
     case "list_snapshots":
-      return delay({ snapshots: snapshots[key] ?? [], headId: headOf(key), lastSyncedId: syncedId[key] ?? headOf(key), platforms: platformMarks });
+      return delay({
+        snapshots: snapshots[key] ?? [],
+        headId: headOf(key),
+        // The PC's newest save is too new for the emulator's game: this device is a version behind.
+        lastSyncedId: key === STARDEW_NX ? "01SDV1" : (syncedId[key] ?? headOf(key)),
+        platforms: platformMarks,
+        tooNew: key === STARDEW_NX ? ["01SDV2"] : undefined,
+      });
     case "delete_snapshot": {
       const list = snapshots[key] ?? [];
       const s = list.find((x) => x.id === args.id);

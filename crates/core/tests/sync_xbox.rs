@@ -356,7 +356,7 @@ fn strings(items: &[&str]) -> Vec<String> {
 }
 
 fn wgs_bind(canon: &str, local: &str) -> Bind {
-    Bind { canon: canon.into(), local: local.into(), codec: Codec::Wgs }
+    Bind { codec: Codec::Wgs, ..Bind::files(canon, local) }
 }
 
 #[test]

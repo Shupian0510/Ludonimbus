@@ -223,10 +223,27 @@ fn rule_of(game: &CloudGame) -> Option<String> {
 /// there (`savelib::save_scope`): `pc` → `pc`; `switch` → `nx`; anything
 /// else (a built-in rule, an emulator) → `adapter:<scope>`.
 pub fn line_format(game: &CloudGame) -> String {
-    match savelib::save_scope(&savelib::entry_of(game)).as_str() {
+    format_of_scope(&savelib::save_scope(&savelib::entry_of(game)))
+}
+
+/// The format of a line of versions with the save scope `scope`
+/// ([`line_format`]).
+pub fn format_of_scope(scope: &str) -> String {
+    match scope {
         "pc" => "pc".to_string(),
         "switch" => "nx".to_string(),
         scope => format!("adapter:{scope}"),
+    }
+}
+
+/// The save scope of the versions a line of format `format` is made by: the
+/// other way round from [`format_of_scope`]. `None` for a format no scope
+/// gives (`rule:…`).
+pub fn scope_of_format(format: &str) -> Option<&str> {
+    match format {
+        "pc" => Some("pc"),
+        "nx" => Some("switch"),
+        f => f.strip_prefix("adapter:").filter(|s| !s.is_empty()),
     }
 }
 
