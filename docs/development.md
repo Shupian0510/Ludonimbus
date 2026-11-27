@@ -189,7 +189,7 @@ scripts/             构建与发布脚本
 - [steam-plugin.md](steam-plugin.md)：Steam 插件、本机接口和一键安装
 - [plan-game-backup.md](plan-game-backup.md)：游戏本体备份（切块、去重、云端布局、恢复）和云盘测速
 - [plan-v2.md](plan-v2.md)：存储 v2（游戏、存档线、快照；绑定和编解码；版本向量；接管 Steam 云存档）和到 1.0 的路线图
-- 同步判定规则：[`crates/core/src/sync.rs`](../crates/core/src/sync.rs) 顶部的表格
+- 同步判定规则：[`crates/core/src/cloud/decide.rs`](../crates/core/src/cloud/decide.rs) 顶部的表格；本机按判定做什么（队列、替换存档、不等云盘）在 [`crates/core/src/sync/`](../crates/core/src/sync/mod.rs)，`mod.rs` 顶部写着各部分在哪个文件
 
 云端目录结构：
 
