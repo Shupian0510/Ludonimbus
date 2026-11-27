@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AccountInfo, api, CloudKind, errorText, ScreenshotMode, Settings, SteamAccount, UpdateInfo } from "../api";
 import { bytes } from "../format";
 import { SgdbKeyForm } from "./ArtPicker";
@@ -55,8 +55,14 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
   const [exitWait, setExitWait] = useState(10);
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
 
+  // Only the latest load shows: after switching clouds, a slow answer about
+  // the previous one must not overwrite the new one.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const latest = () => seq === loadSeq.current;
     const v = await api.settings();
+    if (!latest()) return;
     setS(v);
     setDeviceName(v.deviceName);
     setKeepRecent(v.retention.keepRecent);
@@ -66,8 +72,12 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
     setExitWait(v.exitWaitSecs);
     setAccount(null);
     setAccountError(null);
-    if (v.cloud.kind !== "none") api.cloudAccount().then(setAccount, (e) => setAccountError(errorText(e)));
-    api.steamAccounts().then((r) => setSteamAccounts(r.accounts), () => undefined);
+    if (v.cloud.kind !== "none")
+      api.cloudAccount().then(
+        (a) => latest() && setAccount(a),
+        (e) => latest() && setAccountError(errorText(e)),
+      );
+    api.steamAccounts().then((r) => latest() && setSteamAccounts(r.accounts), () => undefined);
   }, []);
 
   useEffect(() => {

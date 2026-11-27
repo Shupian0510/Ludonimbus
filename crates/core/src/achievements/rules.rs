@@ -35,6 +35,8 @@ use std::time::{Duration, SystemTime};
 
 const TROPHYNX_RAW: &str = "https://raw.githubusercontent.com/Imp3r1us/TrophyNX/main/romfs/games";
 const REFETCH: Duration = Duration::from_secs(7 * 24 * 3600);
+/// Largest list taken from TrophyNX (theirs are a few kilobytes).
+const LIST_MAX: u64 = 4 * 1024 * 1024;
 
 /// Switch recompilations and the game whose saves they keep.
 const RECOMP_TITLES: &[(&str, &str)] = &[
@@ -235,7 +237,10 @@ pub fn load_list(tid: &str, fetch: bool) -> Result<Option<RuleList>> {
     match agent.get(&format!("{TROPHYNX_RAW}/{tid}.json")).call() {
         Ok(r) => {
             let mut body = Vec::new();
-            std::io::Read::read_to_end(&mut r.into_reader(), &mut body)?;
+            std::io::Read::read_to_end(&mut std::io::Read::take(r.into_reader(), LIST_MAX + 1), &mut body)?;
+            if body.len() as u64 > LIST_MAX {
+                bail!("{tid}: the TrophyNX list is too large");
+            }
             let list: RuleList = serde_json::from_slice(&body).context("TrophyNX list")?;
             crate::util::atomic_write(&cache, &body)?;
             let _ = std::fs::remove_file(&none);
@@ -279,13 +284,24 @@ fn save_bases(g: &GameEntry) -> Vec<PathBuf> {
     out
 }
 
+/// A save file's path inside the save, as a list names it (`/` or `\`
+/// between folders): `None` unless it stays inside. A list may come from
+/// the network, and `..` or a drive would reach any file on this PC.
+fn save_rel(rel: &str) -> Option<String> {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_matches('/');
+    let inside = !rel.is_empty() && rel.split('/').all(|c| !c.is_empty() && c != "." && c != ".." && !c.contains(':'));
+    inside.then(|| rel.to_string())
+}
+
 /// The listed save files (paths inside the Switch save) found in the game's save folders.
 pub fn find_save_files(g: &GameEntry, rels: &[String]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    let wanted: Vec<String> = rels.iter().map(|r| r.replace('\\', "/").trim_matches('/').to_ascii_lowercase()).collect();
+    let rels: Vec<String> = rels.iter().filter_map(|r| save_rel(r)).collect();
+    let wanted: Vec<String> = rels.iter().map(|r| r.to_ascii_lowercase()).collect();
     for base in save_bases(g) {
         for (rel, low) in rels.iter().zip(&wanted) {
-            let direct = base.join(rel);
+            let direct = rel.split('/').fold(base.clone(), |p, c| p.join(c));
             if direct.is_file() {
                 if !out.contains(&direct) {
                     out.push(direct);
@@ -1123,6 +1139,31 @@ mod tests {
             saves: vec!["{install}/save/**".into()],
             ..Default::default()
         };
-        assert_eq!(find_save_files(&g, &["File0.bin".to_string(), "File1.bin".to_string()]), vec![deep]);
+        assert_eq!(find_save_files(&g, &["File0.bin".to_string(), "File1.bin".to_string()]), vec![deep.clone()]);
+        assert_eq!(find_save_files(&g, &["\\0000000000000001\\File0.bin".to_string()]), vec![deep]);
+    }
+
+    #[test]
+    fn save_files_stay_inside_the_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let install = dir.path().join("OdysseyRecomp");
+        std::fs::create_dir_all(install.join("save")).unwrap();
+        std::fs::write(install.join("OdysseyRecomp.exe"), b"x").unwrap();
+        // Next to the save folder, not in it.
+        let secret = install.join("secret.bin");
+        std::fs::write(&secret, b"x").unwrap();
+        let g = GameEntry {
+            key: "smo".into(),
+            adapter: Some("odysseyrecomp".into()),
+            exe: Some(install.join("OdysseyRecomp.exe")),
+            saves: vec!["{install}/save/**".into()],
+            ..Default::default()
+        };
+        let abs = secret.display().to_string();
+        let rels = ["../secret.bin", "..\\secret.bin", "x/../../secret.bin", abs.as_str(), abs.replace('\\', "/").as_str()].map(str::to_string);
+        assert!(find_save_files(&g, &rels).is_empty());
+        assert_eq!(save_rel("/File0.bin").as_deref(), Some("File0.bin"));
+        assert_eq!(save_rel("C:/x"), None);
+        assert_eq!(save_rel(""), None);
     }
 }

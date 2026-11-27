@@ -85,7 +85,14 @@ fn parse_xml(text: &str) -> Result<XmlSet> {
             text.replace_range(d..d + end + 2, "");
         }
     }
-    let opt = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    // A DOCTYPE line is let through, entities are not: trophy files declare
+    // none, and roxmltree bounds how deep they nest, not how much a few
+    // references to them expand to (gigabytes from a small file that came
+    // with someone's saves).
+    if text.contains("<!ENTITY") {
+        bail!("trophy file declares XML entities");
+    }
+    let opt = roxmltree::ParsingOptions { allow_dtd: true, nodes_limit: 1_000_000 };
     let doc = roxmltree::Document::parse_with_options(&text, opt)?;
     let child_text = |n: roxmltree::Node, tag: &str| {
         n.children()
@@ -749,6 +756,21 @@ mod tests {
         assert!(set.trophies[1].hidden);
         assert_eq!(set.trophies[0].grade, Some(Grade::Platinum));
         assert_eq!(set.trophies[2].name, "Boss");
+    }
+
+    #[test]
+    fn entities_are_refused_a_doctype_is_not() {
+        let with_doctype = CONF.replace("<trophyconf", "<!DOCTYPE trophyconf>\n<trophyconf");
+        assert_eq!(parse_xml(&with_doctype).unwrap().trophies.len(), 3);
+        // Two kilobytes that would expand to 50 MB (and more of the same to
+        // any size): 255 references to a long entity in each reference, and
+        // as many of those as one likes.
+        let long = "x".repeat(1000);
+        let refs = "&b;".repeat(200);
+        let laughs = format!("<?xml version=\"1.0\"?><!DOCTYPE t [<!ENTITY a \"{long}\"><!ENTITY b \"{}\">]><trophyconf><title-name>{refs}</title-name></trophyconf>", "&a;".repeat(255));
+        let started = std::time::Instant::now();
+        assert!(parse_xml(&laughs).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
     fn tropusr(entries: &[(u32, u32, u64)]) -> Vec<u8> {

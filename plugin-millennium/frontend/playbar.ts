@@ -154,6 +154,8 @@ export class PlayBarStatus {
 	private poll(): void {
 		window.clearTimeout(this.timer);
 		this.timer = undefined;
+		// The window closed without this hearing of it: stop following it.
+		if (!this.doc.defaultView || this.doc.defaultView.closed) return this.stop();
 		const appId = this.appId;
 		const run = async () => {
 			if (appId && appId === this.appId && !this.doc.hidden) {

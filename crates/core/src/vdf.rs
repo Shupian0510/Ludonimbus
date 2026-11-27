@@ -22,9 +22,18 @@ const T_FLOAT: u8 = 0x03;
 const T_U64: u8 = 0x07;
 const T_END: u8 = 0x08;
 
+/// Deepest nesting read. Steam's files go about a dozen levels deep; one
+/// nested far deeper is damaged, and reading it all would run out of stack
+/// (which ends the program instead of failing).
+const MAX_DEPTH: usize = 64;
+
+fn too_deep() -> anyhow::Error {
+    anyhow!(crate::tr!("VDF 文件嵌套太深", "The VDF file is nested too deeply"))
+}
+
 pub fn parse(bytes: &[u8]) -> Result<Value> {
     let mut pos = 0;
-    parse_map(bytes, &mut pos)
+    parse_map(bytes, &mut pos, 0)
 }
 
 fn need(b: &[u8], pos: usize, n: usize) -> Result<()> {
@@ -45,7 +54,10 @@ fn read_cstr(b: &[u8], pos: &mut usize) -> Result<Vec<u8>> {
     Ok(b[start..end].to_vec())
 }
 
-fn parse_map(b: &[u8], pos: &mut usize) -> Result<Value> {
+fn parse_map(b: &[u8], pos: &mut usize, depth: usize) -> Result<Value> {
+    if depth > MAX_DEPTH {
+        return Err(too_deep());
+    }
     let mut entries = Vec::new();
     while *pos < b.len() {
         let t = b[*pos];
@@ -55,7 +67,7 @@ fn parse_map(b: &[u8], pos: &mut usize) -> Result<Value> {
         }
         let key = read_cstr(b, pos)?;
         let val = match t {
-            T_MAP => parse_map(b, pos)?,
+            T_MAP => parse_map(b, pos, depth + 1)?,
             T_STR => Value::Str(read_cstr(b, pos)?),
             T_INT => {
                 need(b, *pos, 4)?;
@@ -220,14 +232,11 @@ fn tokenize(s: &str) -> Vec<Tok> {
     while let Some(&c) = it.peek() {
         if c.is_whitespace() {
             it.next();
-        } else if c == '/' {
-            // `//` comment
-            it.next();
-            if it.peek() == Some(&'/') {
-                for c in it.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
+        } else if c == '/' && it.clone().nth(1) == Some('/') {
+            // `//` comment (a single `/` starts an unquoted string)
+            for c in it.by_ref() {
+                if c == '\n' {
+                    break;
                 }
             }
         } else if c == '{' {
@@ -270,10 +279,13 @@ fn tokenize(s: &str) -> Vec<Tok> {
 pub fn parse_text(s: &str) -> Result<Text> {
     let toks = tokenize(s);
     let mut pos = 0;
-    Ok(Text::Map(parse_text_map(&toks, &mut pos)))
+    Ok(Text::Map(parse_text_map(&toks, &mut pos, 0)?))
 }
 
-fn parse_text_map(toks: &[Tok], pos: &mut usize) -> Vec<(String, Text)> {
+fn parse_text_map(toks: &[Tok], pos: &mut usize, depth: usize) -> Result<Vec<(String, Text)>> {
+    if depth > MAX_DEPTH {
+        return Err(too_deep());
+    }
     let mut out = Vec::new();
     while *pos < toks.len() {
         match &toks[*pos] {
@@ -290,7 +302,7 @@ fn parse_text_map(toks: &[Tok], pos: &mut usize) -> Vec<(String, Text)> {
                 match toks.get(*pos) {
                     Some(Tok::Open) => {
                         *pos += 1;
-                        out.push((key, Text::Map(parse_text_map(toks, pos))));
+                        out.push((key, Text::Map(parse_text_map(toks, pos, depth + 1)?)));
                     }
                     Some(Tok::Str(v)) => {
                         out.push((key, Text::Str(v.clone())));
@@ -301,7 +313,7 @@ fn parse_text_map(toks: &[Tok], pos: &mut usize) -> Vec<(String, Text)> {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -328,13 +340,10 @@ fn tokenize_spans(s: &str) -> Vec<Spanned> {
     while let Some(&(at, c)) = it.peek() {
         if c.is_whitespace() {
             it.next();
-        } else if c == '/' {
-            it.next();
-            if it.peek().map(|&(_, c)| c) == Some('/') {
-                for (_, c) in it.by_ref() {
-                    if c == '\n' {
-                        break;
-                    }
+        } else if c == '/' && it.clone().nth(1).map(|(_, c)| c) == Some('/') {
+            for (_, c) in it.by_ref() {
+                if c == '\n' {
+                    break;
                 }
             }
         } else if c == '{' {
@@ -397,9 +406,13 @@ enum Body {
     Block { open: usize, close: usize, children: Vec<Node> },
 }
 
-/// Read the entries of one block (the whole file at the top). Strict: a
-/// file Ludonimbus doesn't understand completely is not changed.
-fn parse_nodes(toks: &[Spanned], pos: &mut usize, top: bool) -> Result<(Vec<Node>, usize)> {
+/// Read the entries of one block (the whole file at the top, `depth` 0).
+/// Strict: a file Ludonimbus doesn't understand completely is not changed.
+fn parse_nodes(toks: &[Spanned], pos: &mut usize, depth: usize) -> Result<(Vec<Node>, usize)> {
+    if depth > MAX_DEPTH {
+        return Err(too_deep());
+    }
+    let top = depth == 0;
     let mut out = Vec::new();
     loop {
         match toks.get(*pos) {
@@ -416,7 +429,7 @@ fn parse_nodes(toks: &[Spanned], pos: &mut usize, top: bool) -> Result<(Vec<Node
                 let body = match toks.get(*pos) {
                     Some(Spanned::Open(open)) => {
                         *pos += 1;
-                        let (children, close) = parse_nodes(toks, pos, false)?;
+                        let (children, close) = parse_nodes(toks, pos, depth + 1)?;
                         Body::Block { open: *open, close, children }
                     }
                     Some(Spanned::Str(_, s, e)) => {
@@ -434,7 +447,7 @@ fn parse_nodes(toks: &[Spanned], pos: &mut usize, top: bool) -> Result<(Vec<Node
 /// Whether `s` is text KeyValues that every key has a value or a block in,
 /// with every block closed.
 pub fn text_well_formed(s: &str) -> bool {
-    parse_nodes(&tokenize_spans(s), &mut 0, true).is_ok()
+    parse_nodes(&tokenize_spans(s), &mut 0, 0).is_ok()
 }
 
 /// A string as Steam writes it in text KeyValues: `\` and `"` escaped.
@@ -458,7 +471,7 @@ pub fn text_value<'a>(doc: &'a Text, path: &[&str]) -> Option<&'a str> {
 pub fn set_text_value(text: &str, path: &[&str], value: Option<&str>) -> Result<String> {
     let Some((leaf, blocks)) = path.split_last() else { bail!("no key to change") };
     let toks = tokenize_spans(text);
-    let (top, _) = parse_nodes(&toks, &mut 0, true).map_err(|e| anyhow!(crate::tr!("文件格式无法识别（{e}）", "The file's format isn't understood ({e})")))?;
+    let (top, _) = parse_nodes(&toks, &mut 0, 0).map_err(|e| anyhow!(crate::tr!("文件格式无法识别（{e}）", "The file's format isn't understood ({e})")))?;
     // The block that holds the next key, and how deep the path exists.
     let mut level: &[Node] = &top;
     let mut holder: Option<&Node> = None;
@@ -708,5 +721,31 @@ mod tests {
         .unwrap();
         let u = t.get("users").unwrap().get("7656").unwrap();
         assert_eq!(u.get("PersonaName").unwrap().as_str(), Some("Me \"Q\""));
+    }
+
+    #[test]
+    fn deep_nesting_fails_instead_of_overflowing_the_stack() {
+        // Binary: a map in a map in a map…, two bytes a level.
+        let deep = [T_MAP, 0].repeat(200_000);
+        assert!(parse(&deep).is_err());
+        let ok = [[T_MAP, 0].repeat(MAX_DEPTH), vec![T_END; MAX_DEPTH + 1]].concat();
+        assert!(parse(&ok).is_ok());
+        // Text.
+        let deep = "\"a\" {".repeat(200_000);
+        assert!(parse_text(&deep).is_err());
+        assert!(!text_well_formed(&format!("{deep}{}", "}".repeat(200_000))));
+        assert!(set_text_value(&deep, &["a", "b"], Some("c")).is_err());
+        let ok = format!("{}\"k\" \"v\"{}", "\"a\" {".repeat(MAX_DEPTH), "}".repeat(MAX_DEPTH));
+        assert!(parse_text(&ok).is_ok() && text_well_formed(&ok));
+    }
+
+    #[test]
+    fn a_lone_slash_is_part_of_a_string() {
+        let t = parse_text("\"Path\" /usr/lib/steam // a comment\n\"Next\" \"x\"").unwrap();
+        assert_eq!(t.get("Path").unwrap().as_str(), Some("/usr/lib/steam"));
+        assert_eq!(t.get("Next").unwrap().as_str(), Some("x"));
+        // Changed in place as a whole, not leaving its first `/` behind.
+        let after = set_text_value("\"a\"\n{\n\t\"Path\"\t\t/old\n}\n", &["a", "Path"], Some("new")).unwrap();
+        assert_eq!(after, "\"a\"\n{\n\t\"Path\"\t\t\"new\"\n}\n");
     }
 }

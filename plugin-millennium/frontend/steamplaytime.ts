@@ -29,12 +29,15 @@ export class SteamPlaytime {
 	private readonly steam = new Map<number, number>();
 	/** The value this plugin last set per app id. */
 	private readonly shown = new Map<number, number>();
+	private stopped = false;
 
 	start(): void {
+		this.stopped = false;
 		this.tick();
 	}
 
 	stop(): void {
+		this.stopped = true;
 		window.clearTimeout(this.timer);
 		this.timer = undefined;
 		for (const appid of Array.from(this.shown.keys())) this.restore(appid);
@@ -52,12 +55,14 @@ export class SteamPlaytime {
 		try {
 			const raw: unknown = await backend.get_playtimes(currentAccount());
 			const v = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { apps?: Total[] } | null;
+			// Stopped while asking: leave Steam's values alone.
+			if (this.stopped) return;
 			// Ludonimbus not running: keep what is shown until it is back.
 			if (v && Array.isArray(v.apps)) this.apply(v.apps);
 		} catch {
 			/* keep what is shown */
 		}
-		this.timer = window.setTimeout(() => this.tick(), POLL_MS);
+		if (!this.stopped) this.timer = window.setTimeout(() => this.tick(), POLL_MS);
 	}
 
 	/** Exposed for tests. */

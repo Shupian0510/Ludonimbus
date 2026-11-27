@@ -74,6 +74,16 @@ struct Queue {
 
 static QUEUE: Mutex<Queue> = Mutex::new(Queue { seq: 0, events: VecDeque::new(), plugin_seen: None });
 
+/// Numbers start from the launch time, so they keep growing across restarts
+/// of the app: a plugin still holding the last run's number gets this run's
+/// unlocks, and a plugin that synced at 0 isn't stuck on `after=0`, which
+/// `api_events` reads as "just (re)loaded, start from now".
+fn seed(q: &mut Queue) {
+    if q.seq == 0 {
+        q.seq = u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0).max(1);
+    }
+}
+
 /// The achievement's icon, else the game's.
 fn icon_for(key: &str, a: &ach::Achievement) -> Option<String> {
     let own = match a.icon.as_deref() {
@@ -121,6 +131,7 @@ fn needs_fallback(seq: u64) -> bool {
 
 fn enqueue(g: &GameEntry, u: &NewUnlock, test: bool) -> Event {
     let mut q = QUEUE.lock().unwrap();
+    seed(&mut q);
     q.seq += 1;
     let ev = Event {
         seq: q.seq,
@@ -152,6 +163,7 @@ fn shown(seq: u64) -> Option<String> {
 pub fn api_events(query_after: Option<&str>) -> Result<Value> {
     let after: u64 = query_after.and_then(|s| s.parse().ok()).unwrap_or(0);
     let mut q = QUEUE.lock().unwrap();
+    seed(&mut q);
     q.plugin_seen = Some(Instant::now());
     // A plugin that just (re)loaded starts from now: old unlocks aren't replayed.
     let events: Vec<&Event> = if after == 0 { Vec::new() } else { q.events.iter().filter(|e| e.seq > after).collect() };
@@ -651,6 +663,8 @@ mod tests {
         // Nothing has polled yet: the fallback window is used right away.
         let first = enqueue(&g, &unlock("1"), false);
         assert!(needs_fallback(first.seq));
+        // Not 1: numbers continue across restarts of the app.
+        assert!(first.seq > 1_000_000_000_000);
         assert_eq!(first.appid, Some(3_000_000_001));
 
         // A plugin that (re)loads gets the current number, not old events.

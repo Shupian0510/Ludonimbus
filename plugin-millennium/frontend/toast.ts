@@ -144,8 +144,10 @@ export class AchievementToasts {
 	private async tick(): Promise<void> {
 		try {
 			const reply = parse(await backend.get_events(String(this.seq)));
-			if (!reply.error) {
+			if (!reply.error && !this.stopped) {
 				for (const ev of reply.events ?? []) await this.show(ev);
+				// Always the app's number, also when it is lower (an app from before
+				// numbers continued across restarts): what follows is then seen.
 				if (typeof reply.seq === 'number') this.seq = reply.seq;
 			}
 		} catch {
