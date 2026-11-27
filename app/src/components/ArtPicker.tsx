@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ArtKind, errorText, GameView, SgdbGame, SgdbImage } from "../api";
 import { msg, useT } from "../i18n";
 import { Button, Icon, Spinner, useUi } from "./ui";
@@ -60,14 +60,19 @@ export function ArtPicker({ gameKey, name, current, onApplied }: { gameKey: stri
     loadStatus();
   }, []);
 
+  // Only the latest search shows (the automatic one and a typed one can overlap).
+  const searchSeq = useRef(0);
   const search = async (term: string) => {
+    const seq = ++searchSeq.current;
     setGames(null);
     setError(null);
     try {
       const list = await api.sgdbSearch(term);
+      if (seq !== searchSeq.current) return;
       setGames(list);
       setGame(list[0] ?? null);
     } catch (e) {
+      if (seq !== searchSeq.current) return;
       setError(errorText(e));
       setGames([]);
     }
@@ -79,11 +84,19 @@ export function ArtPicker({ gameKey, name, current, onApplied }: { gameKey: stri
 
   useEffect(() => {
     if (!game) return setImages([]);
+    // Switching tabs quickly: a slower answer for the previous kind must not
+    // fill this one (a click would then set, say, a cover as the logo).
+    let live = true;
     setImages(null);
-    api.sgdbImages(game.id, kind).then(setImages, (e) => {
-      setError(errorText(e));
-      setImages([]);
-    });
+    api.sgdbImages(game.id, kind).then(
+      (list) => live && setImages(list),
+      (e) => {
+        if (!live) return;
+        setError(errorText(e));
+        setImages([]);
+      },
+    );
+    return () => void (live = false);
   }, [game, kind]);
 
   const apply = async (img: SgdbImage) => {

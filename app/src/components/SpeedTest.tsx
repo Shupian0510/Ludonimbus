@@ -1,11 +1,11 @@
 // Settings → Cloud speed test: how fast the current cloud uploads and downloads
 // game-backup-sized objects, and what that means for a 10 / 50 GB game.
-import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
-import { errorText, inTauri } from "../api";
+import { useState } from "react";
+import { errorText } from "../api";
 import { bytes } from "../format";
 import { etaSecs, gameBackupApi, SpeedPhase, SpeedProgress, SpeedReport } from "../gameBackupApi";
 import { msg, useT } from "../i18n";
+import { useTauriEvent } from "../useTauriEvent";
 import "../gameBackup.css";
 import { Badge, Button, Hint, Icon } from "./ui";
 
@@ -37,12 +37,7 @@ export function SpeedTestPanel({ hasCloud }: { hasCloud: boolean }) {
   const [report, setReport] = useState<SpeedReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!inTauri) return;
-    let off: (() => void) | undefined;
-    listen<SpeedProgress>("speed-test-progress", (e) => setProgress(e.payload)).then((u) => (off = u), () => undefined);
-    return () => off?.();
-  }, []);
+  useTauriEvent<SpeedProgress>("speed-test-progress", setProgress);
 
   const start = async () => {
     setRunning(true);
