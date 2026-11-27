@@ -10,7 +10,9 @@
 //!   cloud: without a tag there is nothing to compare.
 //! - Writing or removing a file through the wrapper forgets it.
 //! - Stores without a [`Store::cache_scope`] (a local folder) are passed
-//!   through.
+//!   through. A store that can name its scope only after its first request
+//!   (Google Drive right after signing in) is asked again after each listing
+//!   until it does.
 //!
 //! The files on disk are the ones 0.6 keeps (`cloud-cache/<store>/<path>`,
 //! see [`super::repo::Repo`]): a device upgraded from 0.6 already has the
@@ -22,12 +24,14 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 pub struct Cached<S: Store> {
     inner: S,
-    /// `None`: nothing is kept.
-    dir: Option<PathBuf>,
+    /// Where the folder of each scope goes (`cloud-cache`).
+    base: PathBuf,
+    /// Not set: nothing is kept (yet, see [`Cached::dir`]).
+    dir: OnceLock<PathBuf>,
     /// Path to the tag its folder's last listing showed.
     tags: Mutex<HashMap<String, String>>,
 }
@@ -45,21 +49,37 @@ fn hex(s: &str, len: usize) -> String {
 impl<S: Store> Cached<S> {
     /// Keep what is read in this device's data folder, apart for each store.
     pub fn new(inner: S) -> Self {
-        let dir = inner.cache_scope().map(|scope| paths::data_dir().join("cloud-cache").join(hex(&scope, 16)));
-        Cached { inner, dir, tags: Mutex::default() }
+        Self::under(inner, paths::data_dir().join("cloud-cache"))
+    }
+
+    /// Keep what is read in a folder of `base`, apart for each store.
+    fn under(inner: S, base: PathBuf) -> Self {
+        let cached = Cached { inner, base, dir: OnceLock::new(), tags: Mutex::default() };
+        cached.dir();
+        cached
     }
 
     /// Keep what is read in `dir`, whatever the store says about caching.
     pub fn at(inner: S, dir: impl Into<PathBuf>) -> Self {
-        Cached { inner, dir: Some(dir.into()), tags: Mutex::default() }
+        Cached { inner, base: PathBuf::new(), dir: OnceLock::from(dir.into()), tags: Mutex::default() }
     }
 
     pub fn inner(&self) -> &S {
         &self.inner
     }
 
+    /// Where files are kept, once the store names its scope. Asking again
+    /// costs no request: a store names its scope from what it already knows.
+    fn dir(&self) -> Option<&PathBuf> {
+        if let Some(dir) = self.dir.get() {
+            return Some(dir);
+        }
+        let scope = self.inner.cache_scope()?;
+        Some(self.dir.get_or_init(|| self.base.join(hex(&scope, 16))))
+    }
+
     fn file(&self, path: &str) -> Option<PathBuf> {
-        self.dir.as_ref().map(|d| d.join(format!("{}.json", hex(path, 32))))
+        self.dir().map(|d| d.join(format!("{}.json", hex(path, 32))))
     }
 
     fn forget(&self, path: &str) {
@@ -89,7 +109,7 @@ impl<S: Store> Store for Cached<S> {
 
     fn list(&self, dir: &str) -> Result<Vec<Entry>> {
         let entries = self.inner.list(dir)?;
-        if self.dir.is_some() {
+        if self.dir().is_some() {
             let mut tags = self.tags.lock().unwrap();
             // What the folder no longer has, or has without a tag, is not
             // known any more.
@@ -234,6 +254,69 @@ mod tests {
         store.read("d/x.json").unwrap();
         store.read("d/x.json").unwrap();
         assert_eq!(reads(&store), 2);
+    }
+
+    /// A store that names its scope only once it has made a request, as
+    /// Google Drive does right after signing in: the app folder's id is not
+    /// known before.
+    #[derive(Default)]
+    struct LateScope {
+        inner: Memory,
+        asked: std::sync::atomic::AtomicBool,
+    }
+
+    impl Store for LateScope {
+        fn kind(&self) -> &'static str {
+            "late"
+        }
+        fn label(&self) -> String {
+            "late".into()
+        }
+        fn check(&self) -> Result<()> {
+            Ok(())
+        }
+        fn list(&self, dir: &str) -> Result<Vec<Entry>> {
+            self.asked.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.inner.list(dir)
+        }
+        fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+            self.inner.read(path)
+        }
+        fn download(&self, path: &str, dest: &Path) -> Result<()> {
+            self.inner.download(path, dest)
+        }
+        fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+            self.inner.write(path, data)
+        }
+        fn upload(&self, path: &str, src: &Path) -> Result<()> {
+            self.inner.upload(path, src)
+        }
+        fn remove(&self, path: &str) -> Result<()> {
+            self.inner.remove(path)
+        }
+        fn cache_scope(&self) -> Option<String> {
+            self.asked.load(std::sync::atomic::Ordering::SeqCst).then(|| "late|root".to_string())
+        }
+    }
+
+    #[test]
+    fn a_scope_named_after_the_first_request_is_used_from_then_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Cached::under(LateScope::default(), tmp.path().to_path_buf());
+        store.inner().inner.put("library/g.json", b"rev 1");
+        // Read before any listing: no tag, from the cloud.
+        assert_eq!(store.read("library/g.json").unwrap().unwrap(), b"rev 1");
+        store.list("library").unwrap();
+        assert_eq!(store.read("library/g.json").unwrap().unwrap(), b"rev 1");
+        assert_eq!(store.read("library/g.json").unwrap().unwrap(), b"rev 1");
+        assert_eq!(store.inner().inner.take().read, 2);
+
+        // Kept where the next process looks, once it knows the scope too.
+        let again = Cached::under(LateScope::default(), tmp.path().to_path_buf());
+        again.inner().inner.put("library/g.json", b"rev 1");
+        again.list("library").unwrap();
+        assert_eq!(again.read("library/g.json").unwrap().unwrap(), b"rev 1");
+        assert_eq!(again.inner().inner.take().read, 0);
     }
 
     #[test]

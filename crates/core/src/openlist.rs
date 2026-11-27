@@ -386,12 +386,38 @@ pub struct Api {
     token: String,
 }
 
+/// An answer from OpenList that is not a success. It reads as before; the
+/// code is kept for [`is_session_expired`].
+#[derive(Debug)]
+struct Refused {
+    code: i64,
+    text: String,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.text)
+    }
+}
+impl std::error::Error for Refused {}
+
 /// OpenList answers HTTP 200 with `{ code, message, data }`.
 fn unwrap_reply(v: Value, what: &str) -> Result<Value> {
     if v["code"].as_i64() == Some(200) {
         return Ok(v["data"].clone());
     }
-    bail!("OpenList {what}: {}", v["message"].as_str().unwrap_or("?"))
+    Err(anyhow!(Refused {
+        code: v["code"].as_i64().unwrap_or(0),
+        text: format!("OpenList {what}: {}", v["message"].as_str().unwrap_or("?")),
+    }))
+}
+
+/// Whether OpenList turned a call down because its own sign-in (the admin
+/// token, which lasts 48 hours) is no longer valid. Code 401 is only ever
+/// OpenList's own session; a Quark sign-in that stopped working comes back
+/// with another code (see [`is_login_error`]).
+pub fn is_session_expired(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<Refused>().is_some_and(|r| r.code == 401))
 }
 
 impl Api {
@@ -577,5 +603,22 @@ mod tests {
     fn login_errors() {
         assert!(is_login_error("failed to list objs: require login [guest]"));
         assert!(!is_login_error("object not found"));
+    }
+
+    #[test]
+    fn an_expired_openlist_session_is_told_apart() {
+        let expired = unwrap_reply(json!({ "code": 401, "message": "token is expired", "data": null }), "/api/fs/list").unwrap_err();
+        assert!(is_session_expired(&expired));
+        assert!(is_session_expired(&expired.context("refresh")));
+        // It reads as before, and not like a Quark sign-in that stopped working.
+        let text = format!("{:#}", unwrap_reply(json!({ "code": 401, "message": "token is expired" }), "/api/fs/list").unwrap_err());
+        assert_eq!(text, "OpenList /api/fs/list: token is expired");
+        assert!(!is_login_error(&text));
+
+        let quark = unwrap_reply(json!({ "code": 500, "message": "failed to list objs: require login [guest]" }), "/api/fs/list").unwrap_err();
+        assert!(!is_session_expired(&quark));
+        assert!(is_login_error(&format!("{quark:#}")));
+        assert!(!is_session_expired(&anyhow!("token is expired")));
+        assert_eq!(unwrap_reply(json!({ "code": 200, "data": { "a": 1 } }), "x").unwrap(), json!({ "a": 1 }));
     }
 }
