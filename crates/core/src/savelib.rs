@@ -28,7 +28,7 @@ pub const SOLO: &str = "solo:";
 /// `switch`); a recompilation or port is alone. A game's Wii U and Switch
 /// versions are two games here: their saves don't carry over. Games whose
 /// saves are the same on several platforms have a rule in
-/// `adapters/cross-saves.yaml` ([`crosssaves`]), which joins their versions
+/// `rules/games/` ([`crosssaves`]), which joins their versions
 /// across scopes.
 pub fn save_scope(g: &GameEntry) -> String {
     match g.adapter.as_deref().and_then(adapters::find) {
@@ -525,7 +525,7 @@ mod tests {
         assert_ne!(f["oot-longshot"], f["oot-rom"]);
 
         // Stardew Valley's saves are the same files on PC and Switch
-        // (adapters/cross-saves.yaml): one game across the two platforms.
+        // (rules/games/): one game across the two platforms.
         let sdv_steam = entry("sdv", "Stardew Valley", &[], Some("Stardew Valley"), None);
         let sdv_ryujinx = with(entry("sdv-ryujinx", "星露谷物语", &["{nxsave-0100e65002bb8000}/**"], None, None), "ryujinx");
         let mut sdv_switch = CloudGame::from(&entry("nx-0100e65002bb8000", "Stardew Valley", &["{nxsave-0100e65002bb8000}/**"], None, None));

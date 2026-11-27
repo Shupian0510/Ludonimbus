@@ -11,6 +11,7 @@ The most useful contributions are new emulator and game save rules. Rules are YA
 | [`adapters/builtin.yaml`](https://github.com/Shupian0510/Ludonimbus/blob/main/adapters/builtin.yaml) | Recomps and ports |
 | [`adapters/emulators.yaml`](https://github.com/Shupian0510/Ludonimbus/blob/main/adapters/emulators.yaml) | Emulators |
 | `adapters/recomplauncher.yaml` | Generated from RecompLauncher's catalog; **don't edit it by hand**. To fix a game, write a rule with the same key in `builtin.yaml` |
+| [`rules/games/<id>.yaml`](https://github.com/Shupian0510/Ludonimbus/tree/main/rules) | One file per game that keeps the same save files on several platforms (such as the Switch and PC), so those versions can share progress |
 
 A game rule looks roughly like this:
 
@@ -29,6 +30,8 @@ Before submitting:
 - check the save location against the game's source code, official notes or [PCGamingWiki](https://www.pcgamingwiki.com/); list only saves, never the whole game folder, caches or logs;
 - say in the pull request how you checked it;
 - if you can, try adding the game with a development build.
+
+A cross-platform game rule (`rules/games/`) also needs sample saves for each platform next to it, and `ludonimbus rules check <file>` checks it; how to write one is in [rules/README.md](https://github.com/Shupian0510/Ludonimbus/blob/main/rules/README.md).
 
 How rules are matched and tested is described in the development notes under [built-in save rules](https://github.com/Shupian0510/Ludonimbus/blob/main/docs/development.md#内置存档规则).
 

@@ -1,5 +1,5 @@
 //! A game whose saves are the same files on PC and on the Switch
-//! (`adapters/cross-saves.yaml`: Stardew Valley) shares one save line
+//! (`rules/games/stardew-valley.yaml`) shares one save line
 //! between its PC version and its Switch version (an emulator here), with
 //! the bindings the rule gives, asked once (docs/plan-v2.md, section 6).
 //! Every device has its own data folder and save folders in a temporary
@@ -394,7 +394,8 @@ fn pc_first(root: &Path) {
     assert!(store.take().iter().all(|r| r.starts_with("list ") || r.starts_with("read ")));
     assert_eq!((s.record.as_str(), s.fit, s.confirmed), ("stardew", Fit::Ready, false));
     assert_eq!(s.binds, vec![Bind::some(PC, NX, "*/*")]);
-    assert_eq!((s.rule.as_deref(), s.from.as_str(), s.device.as_str()), (Some("Stardew Valley"), "PC", "P1"));
+    let name = ludonimbus_core::crosssaves::by_id("stardew-valley").unwrap().display_name();
+    assert_eq!((s.rule.as_deref(), s.from.as_str(), s.device.as_str()), (Some(name), "PC", "P1"));
     assert_eq!(s.matched, 2);
     // The PC's settings and the file beside the farms are the PC's, not
     // files this version lacks; this version's own other files stay here.

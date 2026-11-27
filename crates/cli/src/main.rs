@@ -1,6 +1,6 @@
 //! `ludonimbus` command line: scripting and troubleshooting.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use ludonimbus_core::cloud::{self, oauth};
 use ludonimbus_core::config::{self, CloudConfig};
@@ -109,6 +109,19 @@ enum Cmd {
     /// Game backups: the game's own files in the cloud
     #[command(subcommand)]
     GameBackup(gamebackup::Cmd),
+    /// Games' rules (rules/games/)
+    #[command(subcommand)]
+    Rules(RulesCmd),
+}
+
+#[derive(Subcommand)]
+enum RulesCmd {
+    /// Look over game rule files before they go in: their fields and their
+    /// sample saves (rules/README.md)
+    Check {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -455,6 +468,23 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::SteamCloud(cmd) => steam_cloud(cmd)?,
+        Cmd::Rules(RulesCmd::Check { files }) => {
+            let mut bad = 0;
+            for f in &files {
+                let c = ludonimbus_core::crosssaves::check_file(f).with_context(|| f.display().to_string())?;
+                println!("{} {}", if c.problems.is_empty() { "ok" } else { "✗ " }, f.display());
+                for n in &c.notes {
+                    println!("    {n}");
+                }
+                for p in &c.problems {
+                    println!("  ✗ {p}");
+                }
+                bad += usize::from(!c.problems.is_empty());
+            }
+            if bad > 0 {
+                bail!("{bad} of {} rule file(s) need changes", files.len());
+            }
+        }
         Cmd::Steam(cmd) => match cmd {
             SteamCmd::Accounts => {
                 let cfg = config::load()?;
