@@ -31,6 +31,8 @@ Before submitting:
 - say in the pull request how you checked it;
 - if you can, try adding the game with a development build.
 
+A cross-platform game rule (`rules/games/`) also needs sample saves for each platform next to it, and `ludonimbus rules check <file>` checks it; how to write one is in [rules/README.md](https://github.com/Shupian0510/Ludonimbus/blob/main/rules/README.md).
+
 How rules are matched and tested is described in the development notes under [built-in save rules](https://github.com/Shupian0510/Ludonimbus/blob/main/docs/development.md#内置存档规则).
 
 Save locations of regular PC games come from Ludusavi's database, which is built from PCGamingWiki. If a PC game's location is wrong, fixing it on PCGamingWiki helps every tool that uses Ludusavi.
