@@ -47,6 +47,8 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 改进：恢复存档和游戏本体时，只写到游戏的存档位置和你选的文件夹；云端被改过的版本或别人分享的存档，不能再把文件放到别处。
 - 改进：Switch 局域网连接、Google Drive 登录页和应用界面更难被局域网或本机的其他程序利用；「打开」只会打开网页和文件夹，不会运行程序。
 - 改进：备份大游戏、往 Google Drive 和百度网盘上传大文件时占用的内存更少。
+- 新增：云端缺了内容的存档版本标为「不完整」：不会被下载或设为当前，任何一台有这份内容的设备都会自动补好；补不回来的 14 天后移到「最近删除」。
+- 改进：S3 和 WebDAV 云盘一时繁忙时，稍等后自动重试。
 - 修复：断电或强制关机可能让配置文件变成空的；电脑睡眠唤醒后，两个程序可能同时修改配置，丢失改动或登录。
 - 修复：本地文件夹或 NAS 云盘读不到时被当成空的云盘。
 - 修复：百度网盘刚被替换的文件被当成不存在；Google Drive 在电脑睡眠后用了过期的登录；夸克网盘长时间运行后变成离线。
@@ -104,6 +106,8 @@ Security and reliability
 - Improved: restoring saves or game files writes only to the game's save locations and the folders you pick; a tampered version in the cloud or a shared save can no longer put files anywhere else.
 - Improved: the Switch LAN connection, the Google Drive sign-in page and the app's pages are harder for other programs on the network or this PC to abuse; "open" only opens web pages and folders and never runs a program.
 - Improved: backing up big games and uploading big files to Google Drive and Baidu Netdisk use less memory.
+- New: a save version whose content is missing in the cloud is marked "Incomplete": it is never downloaded or made current, any device that still has the content puts it back, and one that can't be completed goes to Recently deleted after 14 days.
+- Improved: S3 and WebDAV clouds that are busy for a moment are tried again after a short wait.
 - Fixed: a power cut could leave the settings file empty; after the PC woke from sleep, two programs could change the settings at once and lose a change or a sign-in.
 - Fixed: a local folder or NAS cloud that couldn't be read was taken for an empty cloud.
 - Fixed: Baidu Netdisk took a file that had just been replaced for missing; Google Drive used an expired sign-in after the PC slept; Quark went offline after running for a long time.
