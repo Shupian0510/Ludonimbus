@@ -11,9 +11,9 @@
 //!   `deviceId`, `createdAt`, `requires`) keep their meaning forever: a build
 //!   that can't restore a snapshot can still tell which one is newest.
 
-use super::store::{join, Store};
+use super::store::{is_safe_name, join, Store};
 use crate::vv::Vv;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -212,6 +212,28 @@ pub struct GameRecord {
     pub updated_by: String,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+impl GameRecord {
+    /// Refuse a record whose places in the cloud aren't plain ones: its id
+    /// and each of its folders one name, each line's path and the places it
+    /// reads relative paths with no `..`, empty segment, `\` or drive. Every
+    /// read and write of the game's saves goes where these say, and a record
+    /// is a file anyone who can write to the cloud can change.
+    pub fn check(&self) -> Result<()> {
+        let path = |p: &str| !p.is_empty() && p.split('/').all(is_safe_name);
+        let names = std::iter::once(&self.id).chain(&self.folders).find(|n| !is_safe_name(n));
+        let paths = || self.lines.iter().flat_map(|l| std::iter::once(&l.path).chain(&l.also)).find(|p| !path(p));
+        match names.or_else(paths) {
+            None => Ok(()),
+            Some(bad) => bail!(crate::tr!(
+                "云端的游戏记录 {} 里有不安全的路径：{}",
+                "The game record {} in the cloud has an unsafe path: {}",
+                self.id,
+                bad
+            )),
+        }
+    }
 }
 
 pub const SCOPE_SHARED: &str = "shared";

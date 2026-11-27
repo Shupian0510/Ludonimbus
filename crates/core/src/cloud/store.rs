@@ -5,7 +5,7 @@
 //! Paths are `/`-separated and relative to the store's root folder, e.g.
 //! `games/fe/snapshots/01J….zip`. They never start or end with `/`.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +58,25 @@ pub fn join(parts: &[&str]) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// Whether `name` can be one segment of a path: not `.` or `..`, and
+/// nothing a file system takes for another separator or a drive (`/`, `\`,
+/// `:`), nor a NUL. The names Ludonimbus gives files never have them.
+pub fn is_safe_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':', '\0'])
+}
+
+/// Refuse a path that could lead out of the store's root folder. Paths
+/// Ludonimbus makes never do, but parts of some come from files in the
+/// cloud (a game record's folders, a manifest's packs), and a cloud anyone
+/// else can write to may say anything. Empty segments are left to the
+/// stores, which skip them: they lead nowhere else.
+pub fn check_path(path: &str) -> Result<()> {
+    if !path.split('/').filter(|s| !s.is_empty()).all(is_safe_name) {
+        bail!(crate::tr!("云端的路径不安全：{path}", "Unsafe path in the cloud: {path}"));
+    }
+    Ok(())
 }
 
 /// Name of the temporary file used while uploading `path`.

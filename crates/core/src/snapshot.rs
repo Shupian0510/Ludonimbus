@@ -361,6 +361,84 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
     Ok(b.build()?)
 }
 
+/// The folders at the start of `rest` (what follows a pattern's root) that
+/// hold no wildcard: where a scan starts walking.
+fn literal(rest: &str) -> impl Iterator<Item = &str> {
+    rest.split('/').filter(|c| !c.is_empty()).take_while(|c| !has_glob_meta(c))
+}
+
+/// One save location of a game: a pattern of its spec split into its root
+/// and what follows, with the wildcard that follows the root.
+struct Location {
+    root: String,
+    rest: String,
+    matcher: GlobSet,
+}
+
+/// The save locations of a game as a scan reads them, and what is left out
+/// of them, by root. A scan ([`scan_own`]) and a restore ([`write_files`])
+/// both go by it, so a restore only writes files a scan would find.
+struct Locations {
+    saves: Vec<Location>,
+    exclude: BTreeMap<String, GlobSet>,
+}
+
+impl Locations {
+    fn of(spec: &spec::SaveSpec) -> Result<Locations> {
+        let mut excl_by_root: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for e in &spec.exclude {
+            let (root, rest) = spec::split_pattern(e)?;
+            excl_by_root.entry(root).or_default().push(rest);
+        }
+        let mut exclude = BTreeMap::new();
+        for (root, pats) in &excl_by_root {
+            exclude.insert(root.clone(), build_globset(pats)?);
+        }
+        let mut saves = Vec::with_capacity(spec.saves.len());
+        for pattern in &spec.saves {
+            let (root, rest) = spec::split_pattern(pattern)?;
+            let matcher = build_globset(std::slice::from_ref(&rest))?;
+            saves.push(Location { root, rest, matcher });
+        }
+        Ok(Locations { saves, exclude })
+    }
+
+    /// Whether the file `rel` (below the location's root) is a save there.
+    fn holds(&self, at: &Location, rel: &str) -> bool {
+        (at.rest.is_empty() || at.matcher.is_match(rel)) && !self.exclude.get(&at.root).is_some_and(|x| x.is_match(rel)) && !is_leftover(Path::new(rel))
+    }
+
+    /// Whether a scan would find the file `logical` (`root/relative path`,
+    /// a safe one) among the saves, and if so how many folders of its path
+    /// the scan follows links in: those of the longest wildcard-free start
+    /// among the locations that hold it.
+    fn find(&self, logical: &str) -> Option<usize> {
+        let (root, rel) = logical.split_once('/')?;
+        self.saves.iter().filter(|at| at.root.eq_ignore_ascii_case(root) && self.holds(at, rel)).map(|at| literal(&at.rest).count()).max()
+    }
+}
+
+/// Whether `dest`, or one of the `below` folders above it, is a link (a
+/// symbolic link or a junction). A scan doesn't follow links below where it
+/// starts walking, so a file reached through one is no save it would find,
+/// and the link may lead anywhere on the device.
+fn through_link(dest: &Path, below: usize) -> bool {
+    dest.ancestors().take(below).any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
+}
+
+/// The paths among `paths` (this version's own, `root/relative path`) a
+/// scan of this device would never find: unsafe ones, ones under none of
+/// the game's save locations, and ones left out of them. `None` for a game
+/// whose saves Ludusavi finds: it has no locations of its own to go by.
+pub fn outside_saves<'a>(game: &GameEntry, paths: impl IntoIterator<Item = &'a str>) -> Result<Option<Vec<String>>> {
+    let spec = spec::effective(game);
+    if spec.ludusavi_title.is_some() {
+        return Ok(None);
+    }
+    let wanted = Locations::of(&spec)?;
+    Ok(Some(paths.into_iter().filter(|p| validate_logical(p).is_err() || wanted.find(p).is_none()).map(str::to_string).collect()))
+}
+
 fn mtime_of(meta: &std::fs::Metadata) -> i64 {
     meta.modified()
         .ok()
@@ -579,50 +657,29 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
         bail!(crate::tr!("「{}」还没有设置存档位置", "\"{}\" has no save location yet", game.name));
     }
 
-    // Exclusions grouped by root.
-    let mut excl_by_root: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for e in &spec.exclude {
-        let (root, rest) = spec::split_pattern(e)?;
-        excl_by_root.entry(root).or_default().push(rest);
-    }
-    let mut excl_sets: BTreeMap<String, GlobSet> = BTreeMap::new();
-    for (root, pats) in &excl_by_root {
-        excl_sets.insert(root.clone(), build_globset(pats)?);
-    }
-
+    let wanted = Locations::of(&spec)?;
     let mut out: BTreeMap<String, LocalFile> = BTreeMap::new();
-    for pattern in &spec.saves {
-        let (root, rest) = spec::split_pattern(pattern)?;
-        let base = spec::resolve_root_name(&root, &roots)
+    for at in &wanted.saves {
+        let root = &at.root;
+        let base = spec::resolve_root_name(root, &roots)
             .ok_or_else(|| anyhow!(crate::tr!("无法确定根目录 {{{root}}}（游戏路径未设置？）", "Can't resolve the root {{{root}}} (is the game location set?)")))?;
         // Walk from the longest literal prefix to avoid scanning huge trees.
-        let comps: Vec<&str> = rest.split('/').filter(|c| !c.is_empty()).collect();
-        let literal: Vec<&str> = comps
-            .iter()
-            .take_while(|c| !has_glob_meta(c))
-            .copied()
-            .collect();
-        let walk_root = literal.iter().fold(base.clone(), |p, c| p.join(c));
+        let walk_root = literal(&at.rest).fold(base.clone(), |p, c| p.join(c));
         if !walk_root.exists() {
             continue;
         }
-        let matcher = build_globset(std::slice::from_ref(&rest))?;
-        let excl = excl_sets.get(&root);
         for entry in walkdir::WalkDir::new(&walk_root).follow_links(false) {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-            if !entry.file_type().is_file() || is_leftover(entry.path()) {
+            if !entry.file_type().is_file() {
                 continue;
             }
             let Some(rel) = rel_slash(&base, entry.path()) else {
                 continue;
             };
-            if !rest.is_empty() && !matcher.is_match(&rel) {
-                continue;
-            }
-            if excl.is_some_and(|x| x.is_match(&rel)) {
+            if !wanted.holds(at, &rel) {
                 continue;
             }
             let meta = match entry.metadata() {
@@ -1133,6 +1190,15 @@ fn apply_coded(files: &[FileEntry], game: &GameEntry, content: &mut dyn FnMut(&s
 /// files under this version's paths), all or nothing, and remove the files
 /// of `current` (the bound files here, under the line's paths) the version
 /// doesn't have.
+///
+/// A version comes from the cloud, from a file someone shared, from another
+/// device: its paths say where its files go, and nothing else checks them.
+/// So only files a scan here would find are written: under one of the
+/// game's save locations on this device, not left out of them, and not
+/// through a link below where the scan starts walking. Any other file is
+/// left out and named in the log; when that is every file, nothing is
+/// written. A game whose saves Ludusavi finds has no locations of its own
+/// to go by, and its files are written as they are.
 fn write_files(
     files: &[FileEntry],
     own: &[String],
@@ -1141,17 +1207,55 @@ fn write_files(
     game: &GameEntry,
     content: &mut dyn FnMut(&str, &mut File) -> Result<()>,
 ) -> Result<()> {
+    let spec = spec::effective(game);
+    let wanted = match spec.ludusavi_title {
+        Some(_) => None,
+        None => Some(Locations::of(&spec)?),
+    };
+    // Each file, and how many folders above it a link must not be in
+    // (none to check for a game Ludusavi finds the saves of).
+    let mut skipped: Vec<&str> = Vec::new();
+    let mut kept: Vec<(&FileEntry, &String, usize)> = Vec::with_capacity(files.len());
+    for (fe, path) in files.iter().zip(own) {
+        validate_logical(path)?;
+        match &wanted {
+            None => kept.push((fe, path, 0)),
+            Some(w) => match w.find(path) {
+                Some(walk) => kept.push((fe, path, path.split('/').count().saturating_sub(walk + 1))),
+                None => skipped.push(&fe.path),
+            },
+        }
+    }
     let adapter = game.adapter.as_deref().and_then(crate::adapters::find);
     if let Some(a) = adapter {
         // Saves an emulator numbers per PC may have to be created first.
-        let mut used: Vec<String> = own.iter().filter_map(|p| p.split('/').next().map(str::to_string)).collect();
+        let mut used: Vec<String> = kept.iter().filter_map(|(_, p, _)| p.split('/').next().map(str::to_string)).collect();
         used.dedup();
         crate::emulators::prepare_restore(a, &mut roots, &used)?;
     }
     // Resolve every destination first so nothing is written if a root is missing.
-    let mut plan = Vec::with_capacity(files.len());
-    for (fe, path) in files.iter().zip(own) {
-        plan.push((fe, resolve_logical(&roots, path)?));
+    let mut plan = Vec::with_capacity(kept.len());
+    for (fe, path, below) in kept {
+        let dest = resolve_logical(&roots, path)?;
+        if through_link(&dest, below) {
+            skipped.push(&fe.path);
+            continue;
+        }
+        plan.push((fe, dest));
+    }
+    if !skipped.is_empty() {
+        crate::logger::log(
+            "sync",
+            format!("{}: left out {} file(s) of the version that are not among its saves on this device: {}", game.key, skipped.len(), skipped.join(", ")),
+        );
+        if plan.is_empty() {
+            bail!(crate::tr!(
+                "这个版本的文件都不在「{}」在这台设备上的存档位置里（例如 {}），什么也没有写入",
+                "None of the version's files are among the save locations of \"{}\" on this device (such as {}), so nothing was written",
+                game.name,
+                skipped[0]
+            ));
+        }
     }
     let keep: HashSet<String> = files.iter().map(|f| f.path.to_lowercase()).collect();
     // One file per place. A scan never gives two names that differ in case
@@ -1170,9 +1274,14 @@ fn write_files(
                     .with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
             }
             let tmp = beside(dest, WRITING);
+            // A new file, never through a link something left under that name.
+            let _ = std::fs::remove_file(&tmp);
             written.push(tmp.clone());
             {
-                let mut out = File::create(&tmp)
+                let mut out = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp)
                     .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
                 content(&fe.path, &mut out)?;
                 out.flush()?;

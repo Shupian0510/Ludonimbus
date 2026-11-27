@@ -503,6 +503,21 @@ pub fn move_secrets_out_of_config() -> Result<()> {
     })
 }
 
+/// Forget what this device knows of the cloud it was connected to.
+///
+/// What each game synced last (`last_synced_*`, `counter`) stays, and so do
+/// `replaced` and the queue (`pending`): they name versions by id, and
+/// copying the old cloud over ([`migrate_previous`]) keeps the ids, so they
+/// are as true in the new cloud once it has the history. Until it has, the
+/// version they name is simply not in the line: a sync compares vectors and
+/// asks before anything is overwritten, an undo says the version isn't
+/// there, and what waits in the queue is this device's saves, uploaded to
+/// the new cloud. What goes is what was about the old cloud itself: what
+/// was cached of its lines (with the manifest a large save's next upload
+/// would build on, so the first upload to the new cloud is complete), the
+/// question of a conflict among its newest versions (the next sync asks
+/// again if the new cloud has one), the last error, and which artwork was
+/// uploaded there (the new cloud has none of it).
 fn reset_markers() -> Result<()> {
     crate::savelib::forget();
     client::forget();
@@ -510,6 +525,9 @@ fn reset_markers() -> Result<()> {
         for g in s.games.values_mut() {
             g.cloud_def_uploaded = false;
             g.last_check = None;
+            g.conflict = None;
+            g.last_error = None;
+            g.art_pushed.clear();
         }
     })
 }
@@ -558,10 +576,6 @@ pub fn switch_to(new: CloudConfig, secret: Option<&str>) -> Result<()> {
 /// the cloud is kept.
 pub fn disconnect() -> Result<()> {
     let cfg = config::load()?;
-    let is_google = |c: &CloudConfig| matches!(c, CloudConfig::GoogleDrive { .. });
-    if is_google(&cfg.cloud) || cfg.previous_cloud.as_ref().is_some_and(is_google) {
-        let _ = oauth::clear_refresh_token();
-    }
     secrets::release(&cfg.cloud, &[]);
     if let Some(p) = &cfg.previous_cloud {
         secrets::release(p, &[]);
@@ -580,10 +594,6 @@ pub fn dismiss_previous() -> Result<()> {
     let cfg = config::load()?;
     let Some(prev) = cfg.previous_cloud.clone() else { return Ok(()) };
     secrets::release(&prev, &[&cfg.cloud]);
-    // The Google sign-in is no longer needed once we moved away from Drive.
-    if matches!(prev, CloudConfig::GoogleDrive { .. }) && !matches!(cfg.cloud, CloudConfig::GoogleDrive { .. }) {
-        let _ = oauth::clear_refresh_token();
-    }
     config::update(|c| {
         c.previous_cloud = None;
         Ok(())

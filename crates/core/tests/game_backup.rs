@@ -324,6 +324,82 @@ fn pc_game_part(tmp: &Path, store: &dyn Store) {
     let fix = install::fix_paths("zelda", &m1, &to(&r1, None)).unwrap();
     assert_eq!(fix.shortcut, install::ShortcutFix::NotLinked);
     assert_eq!(config::load().unwrap().game("zelda").unwrap().exe.as_deref(), Some(r1.join("game.exe").as_path()));
+
+    // A restore that stops and goes on leaves the files that were already
+    // right alone the second time too (not downloaded again).
+    let r5 = tmp.join("restored5");
+    for f in ["game.exe", "data/big.pak"] {
+        write(&r5.join(f), &std::fs::read(root.join(f)).unwrap());
+    }
+    let cancel = AtomicBool::new(false);
+    let err = restore::restore(store, "zelda", &v7, &to(&r5, None), 2, &cancel, &|p| {
+        if p.phase == "downloading" && p.done > 600_000 {
+            cancel.store(true, Ordering::SeqCst);
+        }
+    })
+    .unwrap_err();
+    assert!(is_cancelled(&err), "{err:#}");
+    let rep = restore_to(store, "zelda", &v7, &to(&r5, None));
+    assert!(rep.resumed_chunks > 0, "{rep:?}");
+    assert_eq!((rep.kept, rep.files), (2, v7.file_count - 2), "{rep:?}");
+    same_pc_tree(&root, &r5);
+
+    // A file that is wrong after downloading (here: longer than it should
+    // be) is written again from the start.
+    let r6 = tmp.join("restored6");
+    let spoiled = AtomicBool::new(false);
+    let exe = r6.join("game.exe");
+    let (_, rep) = restore::restore(store, "zelda", &v7, &to(&r6, None), 2, &AtomicBool::new(false), &|p| {
+        if p.phase == "verifying" && !spoiled.swap(true, Ordering::SeqCst) {
+            use std::io::Write;
+            std::fs::OpenOptions::new().append(true).open(&exe).unwrap().write_all(b"trailing bytes").unwrap();
+        }
+    })
+    .unwrap();
+    assert_eq!(rep.repaired_files, 1);
+    same_pc_tree(&root, &r6);
+}
+
+/// Cleaning up never deletes chunks of a version it can't read.
+fn unreadable_versions_part(store: &dyn Store) {
+    let versions = remote::list_versions(store, "zelda").unwrap();
+    let (old, new) = (&versions[0], &versions[1]);
+    let chunks_of = |s: &Summary| -> HashSet<String> {
+        remote::read_manifest(store, "zelda", s).unwrap().components.into_iter().flat_map(|c| c.chunks).map(|c| c.h).collect()
+    };
+    let only_old: Vec<String> = chunks_of(old).difference(&chunks_of(new)).cloned().collect();
+    assert!(!only_old.is_empty());
+    let all_there = || {
+        let present = remote::list_chunks(store).unwrap();
+        only_old.iter().all(|h| present.contains_key(h))
+    };
+    let gc = || remote::collect_garbage(store, ("d-a", "PC-a"), None, &|_, _| {}).unwrap();
+    let dir = "gamebackup/games/zelda/versions";
+    let (summary_path, manifest_path) = (format!("{dir}/{}.json", old.id), format!("{dir}/{}.manifest", old.id));
+    let (summary, manifest) = (store.read(&summary_path).unwrap().unwrap(), store.read(&manifest_path).unwrap().unwrap());
+
+    // A summary that can't be read: the version isn't listed, its chunks stay.
+    store.write(&summary_path, b"{ not json").unwrap();
+    assert_eq!(remote::list_versions(store, "zelda").unwrap().len(), 1);
+    let report = gc();
+    assert!(!report.postponed && all_there(), "{report:?}");
+    // Its manifest can't be read either: nothing is deleted, and it says which.
+    store.write(&manifest_path, b"damaged").unwrap();
+    let report = gc();
+    assert!(report.postponed && report.reason.as_deref().is_some_and(|r| r.contains(&old.id)), "{report:?}");
+    assert!(all_there());
+    store.write(&summary_path, &summary).unwrap();
+    store.write(&manifest_path, &manifest).unwrap();
+
+    // A manifest from a newer Ludonimbus may keep chunks where this one doesn't look.
+    let newer = format!("{dir}/01ZZZZZZZZZZZZZZZZZZZZZZZZ.manifest");
+    store.write(&newer, &zstd::bulk::compress(br#"{"format": 99, "parts": []}"#, 3).unwrap()).unwrap();
+    assert!(gc().postponed);
+    store.remove(&newer).unwrap();
+
+    let report = gc();
+    assert_eq!((report.postponed, report.deleted_chunks), (false, 0), "{report:?}");
+    chunks_match_versions(store);
 }
 
 // ---------------------------------------------------------------------------
@@ -555,6 +631,7 @@ fn game_backup_end_to_end() {
     std::fs::create_dir_all(tmp.path().join("cloud")).unwrap();
     let store = LocalFolder::new(tmp.path().join("cloud"));
     pc_game_part(tmp.path(), &store);
+    unreadable_versions_part(&store);
     emulator_part(tmp.path(), &store);
     settings_file_part(tmp.path(), &store);
 

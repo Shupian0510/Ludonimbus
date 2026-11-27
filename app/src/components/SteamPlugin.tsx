@@ -1,8 +1,8 @@
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, inTauri, SteamPluginProgress, SteamPluginStatus } from "../api";
+import { api, errorText, SteamPluginProgress, SteamPluginStatus } from "../api";
 import { bytes } from "../format";
 import { msg, useT } from "../i18n";
+import { useTauriEvent } from "../useTauriEvent";
 import { Badge, Button, Hint, Icon, useUi } from "./ui";
 
 export const MILLENNIUM_URL = "https://github.com/SteamClientHomebrew/Millennium";
@@ -31,15 +31,8 @@ export function useSteamPlugin() {
 
   useEffect(() => {
     load();
-    if (!inTauri) return;
-    let off: (() => void) | undefined;
-    let gone = false;
-    listen<SteamPluginProgress>("steam-plugin-progress", (e) => setProgress(e.payload)).then((u) => (gone ? u() : (off = u)));
-    return () => {
-      gone = true;
-      off?.();
-    };
   }, [load]);
+  useTauriEvent<SteamPluginProgress>("steam-plugin-progress", setProgress);
 
   const ready = !!st && st.millennium === "installed" && st.pluginInstalled && st.pluginEnabled;
   const needsMillennium = !!st && st.millennium !== "installed";

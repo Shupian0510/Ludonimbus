@@ -19,6 +19,10 @@
 //! exit the upload is waited for a few seconds; the rest goes on in the
 //! tray app or in a process of its own (`--finish`) and the wrapper exits.
 //!
+//! Asked to stop (Steam's "Stop"; Linux: SIGTERM) before the game starts,
+//! the wrapper doesn't start it. Once the game runs, the game ends by itself
+//! and the saves are uploaded as usual.
+//!
 //! Questions are system dialogs on the desktop and a full-screen window on
 //! handhelds (`ludonimbus-app --prompt`, see `core::prompt`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -51,15 +55,17 @@ fn main() {
     log(format!("args: {args:?}"));
     // Linux: Steam's "Exit game" signals the whole tree; finish uploading first.
     process::defer_termination();
-    let finishing = args.iter().position(|a| a == FINISH_ARG).and_then(|i| args.get(i + 1));
-    let code = match finishing {
+    let code = match finishing(&args) {
         // Nobody looks at this process: no windows, only the log.
         Some(key) => finish(key),
         None => match run(&args) {
             Ok(c) => c,
             Err(e) => {
                 log(format!("fatal: {e:#}"));
-                tell("Ludonimbus", &format!("{e:#}"), "error");
+                // Asked to stop: nobody waits for a message.
+                if !process::termination_requested() {
+                    tell("Ludonimbus", &format!("{e:#}"), "error");
+                }
                 1
             }
         },
@@ -69,10 +75,31 @@ fn main() {
     std::process::exit(code);
 }
 
+/// The game of `--finish <key>`. Only the wrapper's own arguments count,
+/// the ones before `--`: what follows is the game's command, which may have
+/// a `--finish` of its own.
+fn finishing(args: &[String]) -> Option<&str> {
+    let own = &args[..args.iter().position(|a| a == "--").unwrap_or(args.len())];
+    own.iter().position(|a| a == FINISH_ARG).and_then(|i| own.get(i + 1)).map(String::as_str)
+}
+
 struct Launch {
     exe: PathBuf,
     args: Vec<String>,
+    /// Set for the game: `NAME=value` words in front of the command.
+    envs: Vec<(String, String)>,
     work_dir: PathBuf,
+}
+
+/// Split `NAME=value` words off the front of a command: the environment
+/// a shell would give the program. Launch options written by older versions
+/// put the wrapper in front of them (`<wrapper> -- MANGOHUD=1 %command%`),
+/// so they reach the wrapper as part of the command.
+fn split_envs(cmd: Vec<String>) -> (Vec<(String, String)>, Vec<String>) {
+    let is_name = |n: &str| n.chars().next().is_some_and(|c| c == '_' || c.is_ascii_alphabetic()) && n.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+    let n = cmd.iter().take_while(|w| w.split_once('=').is_some_and(|(name, _)| is_name(name))).count();
+    let envs = cmd[..n].iter().filter_map(|w| w.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    (envs, cmd[n..].to_vec())
 }
 
 fn parse_args(args: &[String]) -> Result<(String, Option<Vec<String>>)> {
@@ -306,6 +333,20 @@ fn retrying(
     Ok(out)
 }
 
+/// Sleep for `d`, unless this process is asked to stop meanwhile (Linux:
+/// SIGTERM): `false` then.
+fn sleep_unless_stopped(d: Duration) -> bool {
+    let end = Instant::now() + d;
+    while !process::termination_requested() {
+        let now = Instant::now();
+        if now >= end {
+            return true;
+        }
+        std::thread::sleep((end - now).min(Duration::from_millis(100)));
+    }
+    false
+}
+
 /// Sleep for `d`, unless the waiting is given up meanwhile: `false` then.
 fn pause(d: Duration, gate: &Gate) -> bool {
     let end = Instant::now() + d;
@@ -414,7 +455,8 @@ impl Notice for prompt::Window {
 /// Wait for the sync before launch up to `budget`. Past it, a sync that
 /// checks or uploads is given up, and one that downloads a newer version
 /// is waited for while `notice` (when it shows one) offers to stop waiting.
-/// Replacing the saves is always waited for; it is quick.
+/// A wrapper asked to stop gives it up too. Replacing the saves is always
+/// waited for; it is quick.
 fn wait_before_launch<T: Send + 'static>(
     worker: Worker<T>,
     budget: Duration,
@@ -428,6 +470,10 @@ fn wait_before_launch<T: Send + 'static>(
     let mut shown: Option<Box<dyn Notice>> = None;
     let mut asked = false;
     loop {
+        // Asked to stop (Steam's "Stop"): no game to wait for.
+        if process::termination_requested() {
+            break;
+        }
         match worker.gate.phase() {
             phase @ Phase::Downloading { .. } => {
                 if !asked {
@@ -540,6 +586,10 @@ fn download_notice(game: &GameEntry, phase: Phase) -> Option<Box<dyn Notice>> {
 
 /// The wrapper didn't wait for the sync before launch.
 fn not_waited(key: &str, budget: Duration) {
+    // It was asked to stop: the game isn't started ([`stopped_before_launch`]).
+    if process::termination_requested() {
+        return;
+    }
     log(format!("{key}: no answer from the cloud within {} s; starting the game", budget.as_secs()));
     let reason = tr!(
         "启动前 {} 秒内没等到云盘，这一局结束后再同步",
@@ -549,22 +599,65 @@ fn not_waited(key: &str, budget: Duration) {
     let _ = ludonimbus_core::state::update_game(key, |g| g.last_error = Some(reason));
 }
 
+/// Whether the wrapper was asked to stop before the game started (Steam's
+/// "Stop" while it syncs or asks; Linux: SIGTERM). The game isn't started
+/// then. A sync before launch that wasn't waited for was given up: it
+/// changes no save file any more, and an upload it may still be at is never
+/// half a version when it is cut off, so the process may exit.
+fn stopped_before_launch(key: &str) -> bool {
+    let stop = process::termination_requested();
+    if stop {
+        log(format!("{key}: asked to stop before the game started; not starting it"));
+    }
+    stop
+}
+
 // ------------------------------------------------------------ hand-over
 
 /// Leave the rest of the sync after playing to someone else, so the wrapper
 /// can exit (and Steam stops counting the game as running): the tray app
-/// when it runs, else a process of its own. `false` when neither can take
+/// when it runs, else a process of its own (also beside the headless agent
+/// of Deck Game Mode, which doesn't do it). `false` when neither can take
 /// it; the wrapper waits for the upload then.
 fn hand_over(key: &str) -> bool {
     if let Err(e) = sync::owe(key) {
         log(format!("{key}: can't note the upload for later ({e:#})"));
         return false;
     }
-    if catchup::app_running() {
+    if catchup::desktop_app_running() {
         log(format!("{key}: the tray app finishes the upload"));
         return true;
     }
     spawn_finisher(key)
+}
+
+/// How long a sync handed over gets to stop before the wrapper exits anyway.
+const STOP_AFTER_HAND_OVER: Duration = Duration::from_secs(5);
+
+/// Stop the sync after playing of this process once it is handed over, so
+/// the process exits at a safe point. Given up, it doesn't start replacing
+/// save files and takes no step after the one under way; replacing them is
+/// waited for, however long (it is quick and on this device, and cut off it
+/// would leave the saves half old, half new). Then it has up to `max` to
+/// end. An upload still under way when the process exits is never half a
+/// version: packs go up first and the manifest last, the version stays in
+/// the queue (written there manifest last, in one step), and whoever took
+/// over waits for this process's lock before going on. [`Poll::Pending`]
+/// when it didn't end in time.
+fn stop_after_hand_over<T: Send + 'static>(worker: Worker<T>, max: Duration) -> Poll<T> {
+    let end = loop {
+        if worker.gate.give_up() {
+            break worker.wait(max);
+        }
+        match worker.wait(POLL) {
+            Poll::Pending => {}
+            ended => break ended,
+        }
+    };
+    if !matches!(end, Poll::Pending) {
+        worker.join();
+    }
+    end
 }
 
 /// Start `ludonimbus-run --finish <key>` as a process that outlives this
@@ -662,7 +755,8 @@ fn spawn_finisher(key: &str) -> bool {
 /// `ludonimbus-run --finish <key>`: the sync after playing a wrapper handed
 /// over, tried again for about 10 minutes, then what the wrapper would have
 /// done after it. No windows: a conflict is only noted, and the game's next
-/// launch asks.
+/// launch asks. Asked to stop (Linux: SIGTERM, say when the session ends),
+/// it stops after the try under way: what is still owed stays noted.
 fn finish(key: &str) -> i32 {
     log(format!("{key}: finishing the sync after playing"));
     let mut pauses = FINISH_PAUSES.iter();
@@ -685,12 +779,20 @@ fn finish(key: &str) -> i32 {
             break;
         }
         match pauses.next() {
-            Some(&s) => std::thread::sleep(Duration::from_secs(s)),
+            Some(&s) if sleep_unless_stopped(Duration::from_secs(s)) => {}
+            Some(_) => {
+                log(format!("{key}: asked to stop; the tray app or the game's next sync does the rest"));
+                return 0;
+            }
             None => {
                 log(format!("{key}: not done yet; the tray app or the game's next sync does the rest"));
                 break;
             }
         }
+    }
+    // The rest can wait for another time.
+    if process::termination_requested() {
+        return 0;
     }
     if let Ok(ctx) = Ctx::load() {
         if let Ok(game) = ctx.game(key) {
@@ -768,6 +870,10 @@ impl RunningLock {
 
     /// "preLaunch", "playing" or "uploading". The first "playing" marks the
     /// start of the play session.
+    ///
+    /// The marker is replaced in one step: written in place, it is empty for
+    /// a moment, and a reader that catches that moment would take this
+    /// wrapper for one that was terminated and sync the game while it runs.
     fn phase(&self, phase: &str) {
         if phase == "playing" && self.started.get().is_none() {
             self.started.set(Some(chrono::Utc::now()));
@@ -776,7 +882,9 @@ impl RunningLock {
         if let Some(t) = self.started.get() {
             v["startedAt"] = serde_json::json!(t);
         }
-        let _ = std::fs::write(&self.path, v.to_string());
+        if let Err(e) = util::atomic_write(&self.path, v.to_string().as_bytes()) {
+            log(format!("can't write {} ({e:#})", self.path.display()));
+        }
     }
 
     /// Mark the session as recorded so the tray app doesn't count it again.
@@ -830,14 +938,14 @@ fn run(args: &[String]) -> Result<i32> {
     recheck_steam_cloud(&ctx, &mut game);
     let lock = RunningLock::create(&key);
 
-    let launch = match explicit {
+    let launch = match explicit.map(split_envs) {
         // Steam's %command% (Linux): Steam already changed to the shortcut's
         // start folder, and the command may begin with Proton or a tool
         // such as gamemoderun, not with the game.
-        Some(cmd) if !cmd.is_empty() => {
+        Some((envs, cmd)) if !cmd.is_empty() => {
             let exe = PathBuf::from(&cmd[0]);
             let work_dir = std::env::current_dir().unwrap_or_else(|_| exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(".")));
-            Launch { exe, args: cmd[1..].to_vec(), work_dir }
+            Launch { exe, args: cmd[1..].to_vec(), envs, work_dir }
         }
         _ => {
             ensure_exe(&mut game)?;
@@ -848,7 +956,7 @@ fn run(args: &[String]) -> Result<i32> {
                 .filter(|d| d.is_dir())
                 .or_else(|| exe.parent().map(Path::to_path_buf))
                 .unwrap_or_else(|| PathBuf::from("."));
-            Launch { exe, args: util::split_args(&game.args), work_dir }
+            Launch { exe, args: util::split_args(&game.args), envs: Vec::new(), work_dir }
         }
     };
 
@@ -887,6 +995,10 @@ fn run(args: &[String]) -> Result<i32> {
                 None
             }
         };
+        // Asked to stop meanwhile: no questions either.
+        if stopped_before_launch(&key) {
+            return Ok(0);
+        }
         match first {
             None => {}
             Some(Ok(Outcome::Conflict { local_files, local_size, cloud })) => {
@@ -960,11 +1072,21 @@ fn run(args: &[String]) -> Result<i32> {
         None
     };
 
-    log(format!("{key}: launching {} {:?}", launch.exe.display(), launch.args));
+    // Steam's "Stop" during the sync before launch, or the questions
+    // (Linux: SIGTERM): the game isn't started.
+    if stopped_before_launch(&key) {
+        return Ok(0);
+    }
+    if launch.envs.is_empty() {
+        log(format!("{key}: launching {} {:?}", launch.exe.display(), launch.args));
+    } else {
+        log(format!("{key}: launching {} {:?} with {:?}", launch.exe.display(), launch.args, launch.envs));
+    }
     lock.phase("playing");
     let code = process::launch_and_wait(
         &launch.exe,
         &launch.args,
+        &launch.envs,
         &launch.work_dir,
         &spec.wait_for,
         on_game_exit,
@@ -995,10 +1117,13 @@ fn run(args: &[String]) -> Result<i32> {
         let result = match wait_after_exit(start_sync(&ctx, &game, Resolution::Auto, Trigger::AutoExit, true), budget) {
             AfterExit::Finished(out) => Some(out),
             AfterExit::Lost => Some(Err(anyhow!(tr!("退出后的同步意外中止了", "The sync after playing stopped unexpectedly")))),
-            // An upload cut off when this process exits is never half a
-            // version, and the version stays in the queue.
-            AfterExit::Running(_) if hand_over(&key) => {
+            AfterExit::Running(w) if hand_over(&key) => {
                 handed_over = true;
+                match stop_after_hand_over(w, STOP_AFTER_HAND_OVER) {
+                    Poll::Ready(out) => log(format!("{key}: stopped after the hand-over: {:?}", out.map_err(|e| format!("{e:#}")))),
+                    Poll::Lost => log(format!("{key}: the sync after playing ended without a result")),
+                    Poll::Pending => log(format!("{key}: still uploading; whoever took over goes on from what got through")),
+                }
                 None
             }
             AfterExit::Running(w) => {
@@ -1242,6 +1367,60 @@ mod tests {
             AfterExit::Finished(v) => assert_eq!(v, "done"),
             _ => panic!("expected it to be waited for"),
         }
+    }
+
+    fn words(s: &str) -> Vec<String> {
+        s.split_whitespace().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn only_the_wrappers_own_finish_counts() {
+        assert_eq!(finishing(&words("--finish celeste")), Some("celeste"));
+        assert_eq!(finishing(&words("--game celeste")), None);
+        // The game's own `--finish`, after `--`.
+        assert_eq!(finishing(&words("--game celeste -- /games/celeste --finish now")), None);
+        assert_eq!(finishing(&words("--game celeste -- --finish")), None);
+        assert_eq!(finishing(&words("--finish")), None);
+    }
+
+    #[test]
+    fn variables_in_front_of_the_command_are_the_games_environment() {
+        let (envs, cmd) = split_envs(words("MANGOHUD=1 DXVK_HUD=fps,frametimes gamemoderun /proton run game.exe A=B"));
+        assert_eq!(envs, vec![("MANGOHUD".to_string(), "1".to_string()), ("DXVK_HUD".to_string(), "fps,frametimes".to_string())]);
+        assert_eq!(cmd, words("gamemoderun /proton run game.exe A=B"));
+        // A program is never taken for a variable.
+        for cmd in ["/opt/a=b/game", r"C:\Games\a=b\game.exe", "=x game", "1X=2 game"] {
+            assert_eq!(split_envs(words(cmd)), (Vec::new(), words(cmd)), "{cmd}");
+        }
+        assert_eq!(split_envs(words("FOO=")), (vec![("FOO".to_string(), String::new())], Vec::new()));
+    }
+
+    #[test]
+    fn a_sync_handed_over_stops_at_a_safe_point() {
+        // Uploading: it stops at its next step.
+        let start = Instant::now();
+        assert!(matches!(stop_after_hand_over(fake(&[(Phase::Uploading, 5000)]), ms(2000)), Poll::Ready("stopped")));
+        assert!(start.elapsed() < ms(1000));
+        // Replacing the saves is waited for, then it stops before the next step.
+        let worker = fake(&[(downloading(), 20), (Phase::Applying, 600), (Phase::Uploading, 5000)]);
+        let gate = worker.gate.clone();
+        let start = Instant::now();
+        while gate.phase() != Phase::Applying {
+            assert!(start.elapsed() < ms(5000), "it never got to replacing the saves");
+            std::thread::sleep(ms(2));
+        }
+        let start = Instant::now();
+        assert!(matches!(stop_after_hand_over(worker, ms(2000)), Poll::Ready("stopped")));
+        assert!(start.elapsed() >= ms(300), "the saves were being replaced");
+        assert!(gate.given_up());
+        // Work that doesn't stop (an upload under way) gets `max`, no more.
+        let busy = Worker::start(|_: &Gate| {
+            std::thread::sleep(ms(3000));
+            "done"
+        });
+        let start = Instant::now();
+        assert!(matches!(stop_after_hand_over(busy, ms(100)), Poll::Pending));
+        assert!(start.elapsed() < ms(1000));
     }
 
     #[test]

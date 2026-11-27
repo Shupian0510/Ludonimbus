@@ -1,10 +1,10 @@
-import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { AccountInfo, api, BaiduDeviceCode, CloudConfig, errorText, MigrateProgress, OpenListInfo, S3Config, Settings, WebDavConfig } from "../api";
 import { bytes } from "../format";
 import { Messages, msg, useI18n, useT } from "../i18n";
 import { BAIDU_AUTHORIZATIONS_URL, docsUrl } from "../links";
 import { scene, sceneIs } from "../scene";
+import { useTauriEvent } from "../useTauriEvent";
 import { Button, Hint, Menu, PathChoice, PathField, Toggle, useUi } from "./ui";
 
 type Preset<T> = { label: string; apply: (c: T) => T; hint: string };
@@ -345,11 +345,7 @@ export function BaiduOption({ settings, done }: { settings: Settings; done: (msg
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let off: (() => void) | undefined;
-    listen<BaiduDeviceCode>("baidu-device-code", (e) => setCode(e.payload)).then((u) => (off = u), () => undefined);
-    return () => off?.();
-  }, []);
+  useTauriEvent<BaiduDeviceCode>("baidu-device-code", setCode);
 
   const folder = appName.trim() || settings.baiduAppName;
   const pageUrl = (c: BaiduDeviceCode) => `${c.verificationUrl}${c.verificationUrl.includes("?") ? "&" : "?"}code=${c.userCode}`;
@@ -450,11 +446,7 @@ export function MigrateBanner({ settings, done }: { settings: Settings; done: (m
   const [progress, setProgress] = useState<MigrateProgress | null>(null);
   const [running, setRunning] = useState(false);
 
-  useEffect(() => {
-    let off: (() => void) | undefined;
-    listen<MigrateProgress>("cloud-migrate-progress", (e) => setProgress(e.payload)).then((u) => (off = u), () => undefined);
-    return () => off?.();
-  }, []);
+  useTauriEvent<MigrateProgress>("cloud-migrate-progress", setProgress);
 
   const prev = settings.previousCloud;
   if (!prev) return null;
@@ -718,10 +710,8 @@ export function QuarkOption({ settings, done }: { settings: Settings; done: (msg
 
   useEffect(() => {
     api.openlistStatus().then(setInfo, () => setInfo(null));
-    let off: (() => void) | undefined;
-    listen<{ done: number; total: number }>("openlist-progress", (e) => setProgress(e.payload)).then((u) => (off = u), () => undefined);
-    return () => off?.();
   }, []);
+  useTauriEvent<{ done: number; total: number }>("openlist-progress", setProgress);
 
   const confirmSwitch = async () => {
     if (settings.cloud.kind === "none" || current) return true;

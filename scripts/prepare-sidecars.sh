@@ -6,7 +6,7 @@
 #   app/src-tauri/plugin/ludonimbus.star             Steam plugin, built by build-plugin.ps1
 #
 # Usage:
-#   scripts/prepare-sidecars.sh                       debug build, download Ludusavi if missing
+#   scripts/prepare-sidecars.sh                       debug build; Ludusavi from its checksum-verified release
 #   scripts/prepare-sidecars.sh --release             release build
 #   scripts/prepare-sidecars.sh --ludusavi <file>     use a Ludusavi binary you already have
 #   scripts/prepare-sidecars.sh --stand-ins           compile checks only (CI): empty files
@@ -42,33 +42,41 @@ echo "Building ludonimbus-run ($profile, $triple)..."
 cargo "${cargo_args[@]}"
 cp "${CARGO_TARGET_DIR:-$root/target}/$profile/ludonimbus-run" "$bin/ludonimbus-run-$triple"
 
+sha256() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
 out="$bin/ludusavi-$triple"
 if [ -n "$ludusavi" ]; then
   cp "$ludusavi" "$out"
 elif [ "$stand_ins" = 1 ]; then
   [ -s "$out" ] || { : > "$out"; echo "WARNING: empty stand-in for Ludusavi (compile checks only, not for a release)"; }
-elif [ ! -s "$out" ]; then
+else
   case "$(uname -s)" in
     Linux) os=linux; sum=$LUDUSAVI_SHA256_LINUX ;;
     Darwin) os=mac; sum=$LUDUSAVI_SHA256_MAC ;;
     *) echo "Unsupported system: $(uname -s)" >&2; exit 1 ;;
   esac
-  url="https://github.com/mtkennerly/ludusavi/releases/download/v$LUDUSAVI_VERSION/ludusavi-v$LUDUSAVI_VERSION-$os.tar.gz"
+  # The release archive stays next to the sidecars. Every run checks it
+  # against the pinned SHA-256 and unpacks Ludusavi from it again, so a
+  # damaged copy or one of another version is downloaded again, never shipped.
+  archive="$bin/ludusavi-$os.tar.gz"
+  if [ ! -f "$archive" ] || [ "$(sha256 "$archive")" != "$sum" ]; then
+    url="https://github.com/mtkennerly/ludusavi/releases/download/v$LUDUSAVI_VERSION/ludusavi-v$LUDUSAVI_VERSION-$os.tar.gz"
+    echo "Downloading Ludusavi v$LUDUSAVI_VERSION from $url"
+    curl -fsSL "$url" -o "$archive.part"
+    got="$(sha256 "$archive.part")"
+    if [ "$got" != "$sum" ]; then
+      rm -f "$archive.part"
+      echo "Ludusavi download checksum mismatch: $got" >&2
+      exit 1
+    fi
+    mv -f "$archive.part" "$archive"
+  fi
+  echo "SHA256 verified: $sum"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
-  echo "Downloading Ludusavi v$LUDUSAVI_VERSION from $url"
-  curl -fsSL "$url" -o "$tmp/ludusavi.tar.gz"
-  if command -v sha256sum >/dev/null; then
-    got="$(sha256sum "$tmp/ludusavi.tar.gz" | cut -d' ' -f1)"
-  else
-    got="$(shasum -a 256 "$tmp/ludusavi.tar.gz" | cut -d' ' -f1)"
-  fi
-  if [ "$got" != "$sum" ]; then
-    echo "Ludusavi download checksum mismatch: $got" >&2
-    exit 1
-  fi
-  echo "SHA256 verified: $got"
-  tar -xzf "$tmp/ludusavi.tar.gz" -C "$tmp"
+  tar -xzf "$archive" -C "$tmp"
   cp "$tmp/ludusavi" "$out"
 fi
 chmod +x "$bin/ludonimbus-run-$triple" "$out"

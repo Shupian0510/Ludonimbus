@@ -524,13 +524,12 @@ pub struct GameView {
 }
 
 fn item(a: &Achievement, r: Option<&Record>) -> ItemView {
-    let local = a.icon.as_deref().filter(|i| !is_web(i));
     ItemView {
         id: a.id.clone(),
         name: a.name.clone(),
         description: a.description.clone(),
         icon_url: a.icon.clone().filter(|i| is_web(i)),
-        has_icon: local.is_some_and(|p| Path::new(p).is_file()),
+        has_icon: local_icon(a).is_some(),
         hidden: a.hidden,
         points: a.points,
         grade: a.grade,
@@ -592,11 +591,16 @@ pub fn view(key: &str) -> GameView {
 
 /// The local icon file of an achievement, if any.
 pub fn icon_path(key: &str, id: &str) -> Option<PathBuf> {
-    let db = load_db(key);
-    let a = db.find(id)?;
-    let p = a.icon.as_deref().filter(|i| !is_web(i))?;
-    let p = PathBuf::from(p);
-    p.is_file().then_some(p)
+    local_icon(load_db(key).find(id)?)
+}
+
+/// An achievement's icon on this PC. Only an image: the path was written by
+/// this PC's own scan of the trophy files (the cloud's copy of the
+/// definitions has no local paths), and an image is all it may point at.
+fn local_icon(a: &Achievement) -> Option<PathBuf> {
+    let p = PathBuf::from(a.icon.as_deref().filter(|i| !is_web(i))?);
+    let image = matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("png" | "jpg" | "jpeg" | "webp" | "ico"));
+    (image && p.is_file()).then_some(p)
 }
 
 /// Largest icon file sent as a `data:` URL.

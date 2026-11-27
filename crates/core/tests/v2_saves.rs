@@ -1033,6 +1033,51 @@ fn a_borrowed_pack_cleaned_up_meanwhile_is_put_back() {
     assert_eq!(names(&q), BTreeSet::from([format!("{}.json", second.id), format!("{}.zip", second.id)]));
 }
 
+#[test]
+fn a_borrowed_pack_that_cannot_be_put_back_takes_the_manifest_with_it() {
+    let store = Memory::new();
+    let place = place();
+    let mut a = Device::new("d-a", "Desktop");
+    a.large_save(1);
+    let first = a.push_at(&store, &place, tick());
+    a.save("saves/world/region0", &bytes(77, 1024));
+    let view = a.open(&store, &place);
+    let second = a.make(&place, &view, &[first.vv.clone()], Some(first.id.clone()), tick());
+    let q = a.queue();
+    saves::stage(&second, &a.files(), &q).unwrap();
+    // While it waits, another device cleans up the first version and its
+    // pack, and a file it takes from that pack changes here.
+    store.remove(&v2::manifest_path(place.dir(), &first.id)).unwrap();
+    store.remove(&v2::pack_path(GAME, &first.id)).unwrap();
+    a.save("saves/world/region1", &bytes(78, 1024));
+    a.open(&store, &place);
+    let index = store.peek(&v2::index_path(place.dir()));
+    let files = a.files();
+    store.take();
+    let err = saves::publish(&store, &place, &mut a.cache, &second, &q, &files, a.id).unwrap_err();
+    assert_eq!(packs::missing_pack(&err), Some(&packs::MissingPack { pack: first.id.clone() }));
+    // Its pack, its manifest, a look at the packs, the manifest taken away
+    // again; nothing uploaded in vain, the index as it was.
+    assert_eq!(store.take(), counts(1, 0, 0, 1, 1, 1));
+    assert!(store.peek(&v2::manifest_path(place.dir(), &second.id)).is_none());
+    assert_eq!(store.peek(&v2::index_path(place.dir())), index);
+    assert_complete(&store, &place);
+    assert!(names(&q).contains(&format!("{}.json", second.id)));
+
+    // With the file as it was, the pack is put back and the version is
+    // published after all.
+    a.save("saves/world/region1", &bytes(11, 1024));
+    a.open(&store, &place);
+    let files = a.files();
+    saves::publish(&store, &place, &mut a.cache, &second, &q, &files, a.id).unwrap();
+    assert_complete(&store, &place);
+    let b = Device::new("d-b", "Deck");
+    let view = saves::open(&store, &place, &mut LineCache::default()).unwrap();
+    let dest = b.dest("x");
+    saves::fetch(&store, &place, &view, &second, None, &dest, &b.staging()).unwrap();
+    assert_eq!(tree(&dest), tree(&a.root()));
+}
+
 // ---------------------------------------------------------------- cloud of 0.6
 
 #[test]
@@ -1512,18 +1557,15 @@ fn clean_up_follows_retention_but_never_in_a_folder_of_0_6() {
     assert!(!in_old.is_empty(), "retention would take old snapshots too");
     assert!(plan.delete.contains(&h.s[0].id));
 
-    // Another device keeps s1 right after this one listed the line.
+    // Another device keeps s1 right after this one listed the line: a kept
+    // save stays, whatever the listing said.
     let pin = v2::pin_path(h.place.dir(), &h.s[0].id);
     let meanwhile = Meanwhile::new(store, h.place.dir(), vec![(pin.clone(), b"{\"name\":\"late\"}".to_vec())]);
     let cleaned = clean(&meanwhile, &h, &mut cache).unwrap();
     assert!(meanwhile.done.load(Ordering::SeqCst), "the pin was written");
-
-    // Of what retention named, only what is in layout 2; its pin goes too.
-    let expect: Vec<String> = plan.delete.iter().filter(|id| !in_old.contains(id)).cloned().collect();
-    assert_eq!(cleaned.snapshots, expect);
-    assert_eq!(cleaned.snapshots, [h.s[0].id.clone()]);
-    assert!(store.peek(&v2::manifest_path(h.place.dir(), &h.s[0].id)).is_none());
-    assert!(store.peek(&pin).is_none());
+    assert!(cleaned.snapshots.is_empty());
+    assert!(store.peek(&v2::manifest_path(h.place.dir(), &h.s[0].id)).is_some());
+    assert!(store.peek(&pin).is_some());
 
     // "Recently deleted": what has been there 30 days goes, in both layouts.
     assert_eq!(cleaned.purged, [h.s[2].id.clone(), h.old[0].clone()]);
@@ -1553,6 +1595,16 @@ fn clean_up_follows_retention_but_never_in_a_folder_of_0_6() {
     }
     assert_complete(store, &h.place);
 
+    // Kept no more: of what retention named, only what is in layout 2 goes.
+    saves::unkeep(store, &h.place, &h.s[0].id).unwrap();
+    let cleaned = clean(store, &h, &mut cache).unwrap();
+    let expect: Vec<String> = plan.delete.iter().filter(|id| !in_old.contains(id)).cloned().collect();
+    assert_eq!(cleaned.snapshots, expect);
+    assert_eq!(cleaned.snapshots, [h.s[0].id.clone()]);
+    assert!(store.peek(&v2::manifest_path(h.place.dir(), &h.s[0].id)).is_none());
+    assert!(cleaned.purged.is_empty() && cleaned.packs.is_empty());
+    assert_complete(store, &h.place);
+
     // Run again: nothing more to do.
     let again = clean(store, &h, &mut cache).unwrap();
     assert_eq!(again, saves::Cleaned::default());
@@ -1578,7 +1630,7 @@ fn an_interrupted_clean_up_carries_on() {
     assert_eq!(reference.take().remove, 0, "a second run has nothing to remove");
 
     // Every remove the clean-up made, broken off in turn.
-    let removes = (cleaned.snapshots.len() * 2 + 2 + 1 + cleaned.packs.len()) as u32;
+    let removes = (cleaned.snapshots.len() + 2 + 1 + cleaned.packs.len()) as u32;
     for at in 1..=removes {
         let store = copy(&h.store);
         assert!(clean(&Flaky::new(&store, Kind::Remove, at), &h, &mut LineCache::default()).is_err(), "{at}");

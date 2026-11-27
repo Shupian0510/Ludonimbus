@@ -118,3 +118,40 @@ pub fn install_runner() -> std::io::Result<()> {
     }
     Ok(())
 }
+
+/// For tests of this crate that set environment variables (`LUDONIMBUS_HOME`
+/// and the like). The tests of a crate run on threads of one process, and
+/// they all share its environment: holding this, a test has it to itself,
+/// and once it is dropped the variables it set are back as they were.
+#[cfg(test)]
+pub(crate) struct TestEnv {
+    old: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl TestEnv {
+    pub(crate) fn new() -> TestEnv {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        TestEnv { old: Vec::new(), _lock: LOCK.lock().unwrap_or_else(|e| e.into_inner()) }
+    }
+
+    pub(crate) fn set(&mut self, name: &'static str, value: impl AsRef<std::ffi::OsStr>) {
+        if !self.old.iter().any(|(n, _)| *n == name) {
+            self.old.push((name, std::env::var_os(name)));
+        }
+        std::env::set_var(name, value);
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestEnv {
+    fn drop(&mut self) {
+        for (name, value) in self.old.drain(..).rev() {
+            match value {
+                Some(v) => std::env::set_var(name, v),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}

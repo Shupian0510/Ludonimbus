@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use rand::distributions::{Alphanumeric, DistString};
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
@@ -89,49 +89,35 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
         }
         match listener.accept() {
             Ok((stream, _)) => {
-                stream.set_nonblocking(false)?;
-                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-                let mut reader = BufReader::new(stream.try_clone()?);
+                // Whatever reaches the port and isn't this sign-in's answer is
+                // answered and otherwise ignored: any program or web page on
+                // this PC can connect, and must neither end the sign-in nor
+                // put anything of its own on the page.
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
                 let mut line = String::new();
-                reader.read_line(&mut line)?;
-                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
-                let parsed = url::Url::parse(&format!("http://127.0.0.1{path}"))?;
-                let get = |k: &str| {
-                    parsed
-                        .query_pairs()
-                        .find(|(n, _)| n == k)
-                        .map(|(_, v)| v.into_owned())
-                };
-                let (ok, msg) = if let Some(err) = get("error") {
-                    (false, crate::tr!("登录被取消或失败：{err}", "Sign-in was cancelled or failed: {err}"))
-                } else if get("state").as_deref() != Some(state.as_str()) {
-                    (false, crate::tr!("回调校验失败，请重试", "The sign-in callback didn't match. Please try again"))
-                } else if get("code").is_some() {
-                    (true, crate::tr!("Google Drive 已连接，可以关闭此页面并回到 Ludonimbus。", "Google Drive is connected. You can close this page and go back to Ludonimbus."))
-                } else {
-                    // e.g. /favicon.ico
-                    let mut s = stream;
-                    let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                    continue;
-                };
-                let body = format!(
-                    "<!doctype html><meta charset=utf-8><title>Ludonimbus</title>\
-                     <body style=\"font-family:system-ui;background:#171a21;color:#c7d5e0;display:grid;place-items:center;height:100vh;margin:0\">\
-                     <div style=\"text-align:center\"><h2>{}</h2><p>{}</p></div>",
-                    if ok { crate::tr!("✅ 完成", "✅ Done") } else { crate::tr!("⚠️ 未完成", "⚠️ Not finished") },
-                    msg
-                );
+                let read = stream.try_clone().and_then(|s| BufReader::new(s).take(8 * 1024).read_line(&mut line));
+                let answer = if read.is_ok() { callback(&line, &state) } else { Callback::Other };
                 let mut s = stream;
-                let _ = write!(
-                    s,
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                if !ok {
-                    bail!(msg);
+                match answer {
+                    Callback::Other => {
+                        // e.g. /favicon.ico
+                        let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    }
+                    Callback::Mismatch => {
+                        // An old sign-in's tab, say: this one goes on.
+                        page(&mut s, false, &crate::tr!("回调校验失败，请重试", "The sign-in callback didn't match. Please try again"));
+                    }
+                    Callback::Denied(err) => {
+                        let msg = crate::tr!("登录被取消或失败：{err}", "Sign-in was cancelled or failed: {err}");
+                        page(&mut s, false, &msg);
+                        bail!(msg);
+                    }
+                    Callback::Code(code) => {
+                        page(&mut s, true, &crate::tr!("Google Drive 已连接，可以关闭此页面并回到 Ludonimbus。", "Google Drive is connected. You can close this page and go back to Ludonimbus."));
+                        break code;
+                    }
                 }
-                break get("code").unwrap_or_default();
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(100));
@@ -162,6 +148,53 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
         .to_string();
     let email = resp["id_token"].as_str().and_then(email_from_id_token);
     Ok(Authorized { refresh_token, email })
+}
+
+/// What a request to the loopback port is, for the sign-in with `state`.
+#[derive(Debug, PartialEq)]
+enum Callback {
+    /// Not an answer to a sign-in (a favicon, a stray connection).
+    Other,
+    /// An answer, but not to this sign-in.
+    Mismatch,
+    /// Google says the user cancelled, or the sign-in failed.
+    Denied(String),
+    Code(String),
+}
+
+/// Read the request line of a request to the loopback port. Only the answer
+/// that carries this sign-in's `state` counts, whatever else it says.
+fn callback(request_line: &str, state: &str) -> Callback {
+    let target = request_line.split_whitespace().nth(1).unwrap_or("/");
+    let Ok(parsed) = url::Url::parse(&format!("http://127.0.0.1{target}")) else { return Callback::Other };
+    let get = |k: &str| parsed.query_pairs().find(|(n, _)| n == k).map(|(_, v)| v.into_owned());
+    match (get("state"), get("error"), get("code")) {
+        (Some(s), Some(e), _) if s == state => Callback::Denied(e),
+        (Some(s), None, Some(c)) if s == state && !c.is_empty() => Callback::Code(c),
+        (None, None, None) => Callback::Other,
+        _ => Callback::Mismatch,
+    }
+}
+
+/// Text for the page shown in the browser: never markup, whoever wrote it.
+fn html_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+}
+
+fn page(s: &mut impl Write, ok: bool, msg: &str) {
+    let body = format!(
+        "<!doctype html><meta charset=utf-8><title>Ludonimbus</title>\
+         <body style=\"font-family:system-ui;background:#171a21;color:#c7d5e0;display:grid;place-items:center;height:100vh;margin:0\">\
+         <div style=\"text-align:center\"><h2>{}</h2><p>{}</p></div>",
+        if ok { crate::tr!("✅ 完成", "✅ Done") } else { crate::tr!("⚠️ 未完成", "⚠️ Not finished") },
+        html_text(msg)
+    );
+    let _ = write!(
+        s,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
 }
 
 fn email_from_id_token(token: &str) -> Option<String> {
@@ -251,5 +284,31 @@ mod tests {
         let unticked = json!({ "scope": "openid https://www.googleapis.com/auth/userinfo.email" });
         assert!(!grants_drive(&unticked));
         assert!(grants_drive(&json!({ "access_token": "x" })));
+    }
+
+    #[test]
+    fn only_this_sign_ins_answer_counts() {
+        let st = "Zq3abcdefghijklmnopqrstu";
+        let line = |q: &str| format!("GET /?{q} HTTP/1.1\r\n");
+        assert_eq!(callback(&line(&format!("state={st}&code=4/0Ab&scope=x")), st), Callback::Code("4/0Ab".into()));
+        assert_eq!(callback(&line(&format!("error=access_denied&state={st}")), st), Callback::Denied("access_denied".into()));
+        // Another page on this PC can't end the sign-in: without the state,
+        // or with another one, an error or a code is not this sign-in's.
+        assert_eq!(callback(&line("error=%3Cscript%3Ealert(1)%3C/script%3E"), st), Callback::Mismatch);
+        assert_eq!(callback(&line("state=guess&error=x"), st), Callback::Mismatch);
+        assert_eq!(callback(&line("state=guess&code=y"), st), Callback::Mismatch);
+        assert_eq!(callback(&line(&format!("state={st}&code=")), st), Callback::Mismatch);
+        assert_eq!(callback("GET /favicon.ico HTTP/1.1\r\n", st), Callback::Other);
+        assert_eq!(callback("", st), Callback::Other);
+        assert_eq!(callback("GET http://[bad HTTP/1.1", st), Callback::Other);
+    }
+
+    #[test]
+    fn pages_show_text_not_markup() {
+        let mut out = Vec::new();
+        page(&mut out, false, "Sign-in failed: <script>alert('x')</script> & \"more\"");
+        let html = String::from_utf8(out).unwrap();
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt; &amp; &quot;more&quot;"));
     }
 }

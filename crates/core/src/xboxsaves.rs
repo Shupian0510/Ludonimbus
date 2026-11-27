@@ -16,7 +16,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
+/// One game in `adapters/xbox-saves.yaml` (built into the program). Unknown
+/// fields are refused, so a misspelt one fails the tests.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rule {
     pub name: String,
     pub package: String,
