@@ -4,7 +4,7 @@
 #   app/src-tauri/plugin/ludonimbus.star                 (Steam plugin, built by build-plugin.ps1)
 #
 # Usage:
-#   ./scripts/prepare-sidecars.ps1                         # debug build, download Ludusavi if missing
+#   ./scripts/prepare-sidecars.ps1                         # debug build; Ludusavi from its checksum-verified release
 #   ./scripts/prepare-sidecars.ps1 -Release                # release build
 #   ./scripts/prepare-sidecars.ps1 -LudusaviPath C:\Downloads\ludusavi.exe
 param(
@@ -31,21 +31,32 @@ Copy-Item (Join-Path $root "target/$profile/ludonimbus-run.exe") (Join-Path $bin
 $ludusaviOut = Join-Path $bin "ludusavi-$triple.exe"
 if ($LudusaviPath) {
     Copy-Item $LudusaviPath $ludusaviOut -Force
-} elseif (-not (Test-Path $ludusaviOut)) {
-    $url = "https://github.com/mtkennerly/ludusavi/releases/download/v$LudusaviVersion/ludusavi-v$LudusaviVersion-win64.zip"
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("ludusavi-" + [guid]::NewGuid())
-    New-Item -ItemType Directory $tmp | Out-Null
-    Write-Host "Downloading Ludusavi v$LudusaviVersion from $url"
-    Invoke-WebRequest $url -OutFile (Join-Path $tmp "ludusavi.zip")
-    $hash = (Get-FileHash (Join-Path $tmp "ludusavi.zip") -Algorithm SHA256).Hash.ToLower()
-    if ($LudusaviSha256 -and $hash -ne $LudusaviSha256.ToLower()) {
-        Remove-Item $tmp -Recurse -Force
-        throw "Ludusavi download checksum mismatch: $hash"
+} else {
+    if (-not $LudusaviSha256) { throw "-LudusaviSha256 is required (or give the program with -LudusaviPath)" }
+    $want = $LudusaviSha256.ToLower()
+    # The release archive stays next to the sidecars. Every run checks it
+    # against the pinned SHA-256 and unpacks Ludusavi from it again, so a
+    # damaged copy or one of another version is downloaded again, never shipped.
+    $zip = Join-Path $bin "ludusavi-win64.zip"
+    if (-not (Test-Path $zip) -or (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $want) {
+        $url = "https://github.com/mtkennerly/ludusavi/releases/download/v$LudusaviVersion/ludusavi-v$LudusaviVersion-win64.zip"
+        Write-Host "Downloading Ludusavi v$LudusaviVersion from $url"
+        Invoke-WebRequest $url -OutFile "$zip.part"
+        $hash = (Get-FileHash "$zip.part" -Algorithm SHA256).Hash.ToLower()
+        if ($hash -ne $want) {
+            Remove-Item "$zip.part" -Force
+            throw "Ludusavi download checksum mismatch: $hash"
+        }
+        Move-Item "$zip.part" $zip -Force
     }
-    Write-Host "SHA256 verified: $hash"
-    Expand-Archive (Join-Path $tmp "ludusavi.zip") -DestinationPath $tmp
-    Copy-Item (Join-Path $tmp "ludusavi.exe") $ludusaviOut -Force
-    Remove-Item $tmp -Recurse -Force
+    Write-Host "SHA256 verified: $want"
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("ludusavi-" + [guid]::NewGuid())
+    try {
+        Expand-Archive $zip -DestinationPath $tmp
+        Copy-Item (Join-Path $tmp "ludusavi.exe") $ludusaviOut -Force
+    } finally {
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 & (Join-Path $PSScriptRoot "build-plugin.ps1")
 

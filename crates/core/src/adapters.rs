@@ -23,8 +23,11 @@ pub enum Kind {
     Emulator,
 }
 
+/// One rule in `adapters/*.yaml`. Unknown fields are refused, here and in
+/// the parts below, so a misspelt one fails the tests instead of being
+/// ignored. The files are built into the program: no other version reads them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Adapter {
     pub key: String,
     pub name: String,
@@ -110,7 +113,7 @@ pub struct Adapter {
 
 /// Places read from a settings file.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PathsFrom {
     /// The settings file, `{root}/…`.
     pub file: String,
@@ -127,7 +130,7 @@ pub struct PathsFrom {
 
 /// A launcher that builds the game on this PC.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Build {
     /// The program to open to build it, `{root}/…`.
     #[serde(default)]
@@ -139,7 +142,7 @@ pub struct Build {
 
 /// Add-on folders, each with a description file listing the games it is for.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Packs {
     /// `{root}/…` holding the add-ons.
     pub dir: String,
@@ -188,7 +191,7 @@ impl Adapter {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Matcher {
     /// Exe file names, or paths relative to the folder `{install}` stands for
     /// (`game/xc2.exe`). `*` matches any characters within one name.
@@ -240,14 +243,14 @@ fn one_or_many<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Quiesce {
     #[serde(default)]
     pub absent: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Relocate {
     pub exe: String,
     #[serde(default)]
