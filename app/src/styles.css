@@ -2308,6 +2308,12 @@ details.scan-group[open] > summary {
   gap: 4px;
   cursor: help;
 }
+/* A short note beside the status, with its "?" (the newest save is incomplete). */
+.actionbar-status .status-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 
 /* Screenshots tab */
 .shots-panel {

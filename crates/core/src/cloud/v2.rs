@@ -27,6 +27,7 @@ pub const SUPPORTED: &[&str] = &[];
 pub const FORMAT_FILE: &str = "format.json";
 pub const INDEX_FILE: &str = "index.json";
 pub const PIN_SUFFIX: &str = ".pin.json";
+pub const MARK_SUFFIX: &str = ".incomplete.json";
 
 /// Fields this build doesn't know.
 pub type Extra = serde_json::Map<String, serde_json::Value>;
@@ -132,6 +133,12 @@ pub fn manifest_path(line_dir: &str, id: &str) -> String {
 
 pub fn pin_path(line_dir: &str, id: &str) -> String {
     join(&[line_dir, &format!("{id}{PIN_SUFFIX}")])
+}
+
+/// Where the mark of a snapshot that is missing a pack is ([`Mark`]):
+/// beside its pin, in the line's first folder.
+pub fn mark_path(line_dir: &str, id: &str) -> String {
+    join(&[line_dir, &format!("{id}{MARK_SUFFIX}")])
 }
 
 pub fn index_path(line_dir: &str) -> String {
@@ -445,6 +452,7 @@ impl Manifest {
             origin: self.origin.clone(),
             requires: self.requires.clone(),
             pin: None,
+            incomplete: None,
             extra,
         }
     }
@@ -476,6 +484,44 @@ pub struct Pin {
 pub struct PinRef {
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub tag: String,
+}
+
+// ----------------------------------------------------------------------- mark
+
+/// `<snapshot id>.incomplete.json`: a snapshot a pack of which is not in the
+/// cloud (docs/plan-v2.md, section 3.4). One fact, one file: while it is
+/// there no device takes the snapshot, and the device that puts the pack
+/// back removes it. It shows in the line's listing, so every device learns
+/// of it from the request a sync makes anyway; what it says is kept in the
+/// index ([`MarkRef`]) the way a pin's name is.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Mark {
+    /// The packs that were not in the cloud.
+    #[serde(default)]
+    pub missing: Vec<String>,
+    /// When a device first found them missing: the snapshot is let go some
+    /// days later if nobody can put them back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<DateTime<Utc>>,
+    /// The device that found it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_id: String,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// A mark as an index or a local cache remembers it: valid while the mark
+/// file's tag in the folder listing is still `tag`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkRef {
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<DateTime<Utc>>,
     #[serde(default)]
     pub tag: String,
 }
@@ -537,6 +583,9 @@ pub struct IndexEntry {
     /// Set when the user keeps this snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin: Option<PinRef>,
+    /// Set while the snapshot is marked as missing a pack ([`Mark`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incomplete: Option<MarkRef>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -548,6 +597,11 @@ impl IndexEntry {
 
     pub fn unsupported(&self) -> Vec<String> {
         unknown(&self.requires)
+    }
+
+    /// Marked as missing a pack: no device takes it until the pack is back.
+    pub fn is_incomplete(&self) -> bool {
+        self.incomplete.is_some()
     }
 
     /// Locked on a device running 0.6. Once the migration has run, the pin

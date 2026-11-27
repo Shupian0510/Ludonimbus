@@ -847,11 +847,12 @@ fn staged_snapshots_wait_on_the_device_and_go_up_as_they_were() {
     assert!(names(&q).contains(&format!("{}.json", y.id)));
 
     // Unstaging takes exactly that snapshot's files: its manifest, its
-    // packs and the notes that they were sent.
+    // packs and the notes that they were sent and that its manifest was in
+    // the cloud.
     let before = names(&q);
     saves::unstage(&q, &y).unwrap();
     let gone: BTreeSet<String> = before.difference(&names(&q)).cloned().collect();
-    let of_y = [".json", ".zip", "-2.zip", ".sent", "-2.sent"].map(|end| format!("{}{end}", y.id));
+    let of_y = [".json", ".zip", "-2.zip", ".sent", "-2.sent", ".shown"].map(|end| format!("{}{end}", y.id));
     assert_eq!(gone, BTreeSet::from(of_y));
     assert_eq!(saves::staged(&q).unwrap(), [w.clone(), x.clone()]);
     saves::unstage(&q, &y).unwrap();
@@ -988,20 +989,27 @@ fn a_borrowed_pack_cleaned_up_meanwhile_is_put_back() {
     let second = a.make(&place, &view, std::slice::from_ref(&first.vv), Some(first.id.clone()), tick());
     let (files, q) = (a.files(), a.queue());
     saves::stage(&second, &files, &q).unwrap();
-    // Another device's clean-up takes the pack while this one uploads.
+    // The pack goes while this one uploads (deleted outside Ludonimbus: the
+    // first version still uses it).
     store.remove(&v2::pack_path(GAME, &first.id)).unwrap();
     a.open(&store, &place);
     store.take();
     saves::publish(&store, &place, &mut a.cache, &second, &q, &files, a.id).unwrap();
-    assert_eq!(store.take(), counts(1, 0, 0, 2, 2, 0));
+    // The look at the packs; the manifest of the first version, which uses
+    // the pack too; the pack put back with what is found of it; the first
+    // version marked, because the file it had and this one doesn't is
+    // nowhere; manifest and index.
+    assert_eq!(store.take(), counts(1, 1, 0, 3, 2, 0));
     assert_complete(&store, &place);
     let b = Device::new("d-b", "Deck");
     let view = saves::open(&store, &place, &mut LineCache::default()).unwrap();
+    assert!(view.get(&first.id).unwrap().is_incomplete());
+    assert!(!view.get(&second.id).unwrap().is_incomplete());
     let dest = b.dest("x");
     saves::fetch(&store, &place, &view, &second, None, &dest, &b.staging()).unwrap();
     assert_eq!(tree(&dest), tree(&a.root()));
     // Its scratch folder is gone; the staged files are all still there.
-    assert_eq!(names(&q), BTreeSet::from([format!("{}.json", second.id), format!("{}.zip", second.id)]));
+    assert_eq!(names(&q), BTreeSet::from([format!("{}.json", second.id), format!("{}.zip", second.id), format!("{}.shown", second.id)]));
 }
 
 #[test]

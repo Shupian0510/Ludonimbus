@@ -510,6 +510,10 @@ pub struct SnapshotList {
     /// can't load ([`sync::too_new`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     too_new: Vec<String>,
+    /// Versions made on this PC that couldn't be uploaded complete
+    /// ([`sync::unsent`]): listed once, as this PC's, until dismissed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unsent: Vec<state::Unsent>,
 }
 
 /// The ids among `list` that [`sync::too_new`] says this device's saves of
@@ -627,9 +631,36 @@ pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
         list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
         let platforms = platform_marks(&ctx.cfg, list.iter().map(|s| s.platform.as_str()));
         let too_new = too_new_ids(&ctx.cfg, &key, &list);
-        Ok(SnapshotList { snapshots: list, head_id: head, last_synced_id: state::game(&key).last_synced_id, platforms, too_new })
+        let unsent = sync::unsent(&key);
+        Ok(SnapshotList { snapshots: list, head_id: head, last_synced_id: state::game(&key).last_synced_id, platforms, too_new, unsent })
     })
     .await
+}
+
+/// Save what a version that couldn't be uploaded complete brought itself
+/// (`sync::export_unsent`) as a zip where the user picks. `None` when no
+/// place was picked.
+#[tauri::command]
+pub async fn export_unsent(key: String, id: String) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let Some(dest) = rfd::FileDialog::new()
+            .set_title(ludonimbus_core::tr!("导出存档", "Export a save"))
+            .set_file_name(format!("{id}.zip"))
+            .add_filter("zip", &["zip"])
+            .save_file()
+        else {
+            return Ok(None);
+        };
+        sync::export_unsent(&key, &id, &dest)?;
+        Ok(Some(dest.display().to_string()))
+    })
+    .await
+}
+
+/// Stop listing a version that couldn't be uploaded complete.
+#[tauri::command]
+pub async fn dismiss_unsent(key: String, id: String) -> CmdResult<()> {
+    blocking(move || sync::dismiss_unsent(&key, &id)).await
 }
 
 #[tauri::command]

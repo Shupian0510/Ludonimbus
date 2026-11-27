@@ -42,7 +42,7 @@
 //! | [`open`], nothing new | 1 list per folder of the line |
 //! | [`open`], new snapshots | the same + 1 read (the index) |
 //! | [`publish`], all files in the snapshot's own packs | 1 upload per pack + 2 writes (manifest, index) |
-//! | [`publish`], some files taken from older packs | the same + 1 list |
+//! | [`publish`], some files taken from older packs | the same + 1 list (+ what putting back a pack found gone costs, see [`put_back`]) |
 //! | [`manifest`] | 1 read |
 //! | [`fetch`] | 1 download per pack that holds a wanted file |
 //! | [`keep`] | 1 write; renaming a kept save 1 read + 1 write |
@@ -52,6 +52,10 @@
 //! | [`untrash`] | 1 read + 1 write + 1 remove (+ 1 list in a folder of 0.6) |
 //! | [`purge`] | 1 read + 1 remove (+ 1 remove in a folder of 0.6: the zip) |
 //! | [`clean`] | see there |
+//! | [`mark`], [`unmark`] | 1 write; 1 remove |
+//! | [`put_back`] | 1 list per game folder (none when the caller has listed them), 1 read per manifest that may share a pack or hold its content, 1 download per pack content is taken from or a mark is checked against, 1 upload per pack put back |
+//! | [`repair_queued`] | 1 list per game folder; when a pack is gone, as [`put_back`] without uploading |
+//! | [`retire`] | 1 read + 1 write + 2 removes (manifest, mark) |
 //!
 //! In a line of several folders, [`keep`] (renaming), [`untrash`] and
 //! [`purge`] are told only the snapshot's id, so they look for the pin or
@@ -83,7 +87,7 @@ use super::line::{self, LineCache, LineView};
 use super::packs::{self, LocalFile};
 use super::retention::{self, DeviceBase};
 use super::store::{join, Entry, Store};
-use super::v2::{self, GameRecord, IndexEntry, Info, Line, Manifest, Origin, Pin};
+use super::v2::{self, FileRef, GameRecord, IndexEntry, Info, Line, Manifest, Origin, Pin};
 use crate::vv::Vv;
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
@@ -117,6 +121,20 @@ fn check_id(id: &str) -> Result<()> {
 /// of several packs that broke off goes on with the ones still missing.
 fn sent_mark(dir: &Path, pack: &str) -> PathBuf {
     dir.join(format!("{pack}.sent"))
+}
+
+/// Beside a staged snapshot once [`publish`] has written its manifest into
+/// the cloud, even if it took it away again: another device may have read
+/// it in between, and kept what it said. From then on the manifest stays as
+/// it is ([`repair_queued`] no longer changes where its files are).
+fn shown_mark(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.shown"))
+}
+
+/// Whether [`publish`] ever wrote the manifest of the staged snapshot `id`
+/// into the cloud.
+pub fn was_shown(dir: &Path, id: &str) -> bool {
+    shown_mark(dir, id).is_file()
 }
 
 /// The packs `manifest` brings itself (`<id>`, `<id>-2`, ...), in the order
@@ -368,6 +386,7 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
         remove_local(&dir.join(format!("{pack}.zip")))?;
         let _ = std::fs::remove_file(sent_mark(dir, &pack));
     }
+    let _ = std::fs::remove_file(shown_mark(dir, &manifest.id));
     Ok(())
 }
 
@@ -382,12 +401,15 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
 ///    whole);
 /// 2. write the manifest into [`Place::dir`]: from here on the snapshot
 ///    exists;
-/// 3. [`packs::verify`] with `files`: a pack this manifest borrows that
-///    another device cleaned up meanwhile is put back. `files` are the save
-///    files as they are now, for that case only: [`packs::build`] takes only
-///    those whose size and hash are still what the manifest says, so the
-///    files of an upload that waited may be passed too (pass none when
-///    [`packs::borrows`] says the snapshot borrows nothing);
+/// 3. a look at the packs ([`packs::gone_since`]): a pack this manifest
+///    borrows that another device cleaned up meanwhile is put back with
+///    `files`, whole for the other snapshots of the line that use it as far
+///    as `files` have theirs; one of those that misses a file of it then is
+///    marked. `files` are the save files as they are now, for that case
+///    only: [`packs::build`] takes only those whose size and hash are still
+///    what the manifest says, so the files of an upload that waited may be
+///    passed too (pass none when [`packs::borrows`] says the snapshot
+///    borrows nothing);
 /// 4. add the manifest to `cache` and write the index.
 ///
 /// The snapshot is published only when every step went through: its
@@ -445,15 +467,44 @@ pub fn publish(store: &dyn Store, place: &Place, cache: &mut LineCache, manifest
             let _ = std::fs::write(sent_mark(dir, pack), b"");
         }
     }
+    let _ = std::fs::write(shown_mark(dir, &manifest.id), b"");
     line::write_manifest(store, home, manifest)?;
-    // A folder of its own: a pack put back is built under its own name, which
-    // may be the name of another snapshot's zip waiting in `dir`.
-    let scratch = dir.join(format!("verify-{}", ulid::Ulid::new()));
-    let verified = packs::verify(store, &place.folders, manifest, files, &scratch);
-    let _ = std::fs::remove_dir_all(&scratch);
-    if let Err(e) = verified {
-        let _ = store.remove(&v2::manifest_path(home, &manifest.id));
-        return Err(e);
+    let verified = (|| -> Result<Vec<(String, String)>> {
+        let (missing, present) = packs::gone_since(store, &place.folders, manifest)?;
+        if missing.is_empty() {
+            return Ok(Vec::new());
+        }
+        // A folder of its own: a pack put back is built under its own name,
+        // which may be the name of another snapshot's zip waiting in `dir`.
+        let work = Workspace::new(dir)?;
+        let view = line_view_of(cache);
+        let lines = [(place, &view)];
+        let sources = Sources { local: files, zips: &[] };
+        let restored = restore_packs(store, &lines, place, manifest, &missing, sources, Some(&present), &work, device_id, Utc::now())?;
+        match restored.lost.first() {
+            // One of its own: the caller still has it as a zip and uploads
+            // it again; anything else is gone.
+            Some(pack) if packs::is_own(pack, &manifest.id) => {
+                bail!(crate::tr!("本机没有内容包 {pack} 需要的文件", "This device doesn't have the files the content pack {pack} needs"))
+            }
+            Some(pack) => Err(packs::MissingPack { pack: pack.clone() }.into()),
+            None => Ok(restored.marked),
+        }
+    })();
+    match verified {
+        Err(e) => {
+            let _ = store.remove(&v2::manifest_path(home, &manifest.id));
+            return Err(e);
+        }
+        // Snapshots of the line that take files from a pack put back that
+        // weren't found: marked, as the cache now says too.
+        Ok(marked) => {
+            for (_, id) in marked {
+                if let Some(e) = cache.snapshots.get_mut(&id) {
+                    e.incomplete = Some(v2::MarkRef::default());
+                }
+            }
+        }
     }
     cache.insert(manifest);
     line::write_index(store, home, cache, device_id)
@@ -476,6 +527,588 @@ pub fn manifest(store: &dyn Store, place: &Place, view: &LineView, id: &str) -> 
 pub fn fetch(store: &dyn Store, place: &Place, view: &LineView, manifest: &Manifest, only: Option<&[String]>, dest: &Path, staging: &Path) -> Result<()> {
     let dir = place.dir_of(view, &manifest.id).ok_or_else(not_found)?;
     packs::read(store, &place.folders, dir, manifest, only, dest, staging)
+}
+
+// ------------------------------------------------------- incomplete versions
+//
+// docs/plan-v2.md, section 3.4, "引用的包被删了怎么办". A snapshot a pack of
+// which is gone is marked ([`mark`]): no device takes it while the mark is
+// there. Whoever has the content puts the pack back ([`put_back`]) and takes
+// the mark away ([`unmark`]); one nobody can repair is let go ([`retire`]).
+
+/// The days a version can stay marked before any device's clean-up lets it
+/// go, when nobody could put its packs back.
+pub const INCOMPLETE_DAYS: i64 = 14;
+
+/// The reason a version let go by [`retire`] has in "recently deleted".
+pub const RETIRED: &str = "incomplete";
+
+/// Mark the snapshot `id` of the line as missing `missing` (packs): one
+/// write into the line's first folder, and the cache says so at once.
+/// `since` is when it was first found; a mark that is there already keeps
+/// its time.
+pub fn mark(store: &dyn Store, place: &Place, cache: &mut LineCache, id: &str, missing: &[String], device_id: &str, now: DateTime<Utc>) -> Result<()> {
+    check_id(id)?;
+    let home = writable(place)?;
+    let since = cache.snapshots.get(id).and_then(|e| e.incomplete.as_ref()).and_then(|m| m.since).unwrap_or(now);
+    let mark = v2::Mark { missing: missing.to_vec(), since: Some(since), device_id: device_id.to_string(), extra: v2::Extra::new() };
+    line::write_mark(store, home, id, &mark)?;
+    if let Some(entry) = cache.snapshots.get_mut(id) {
+        // The tag is not known until the next listing, which reads the mark
+        // once more.
+        entry.incomplete = Some(v2::MarkRef { missing: mark.missing, since: mark.since, tag: String::new() });
+    }
+    Ok(())
+}
+
+/// Take the mark of `id` away: its packs are all in the cloud again.
+pub fn unmark(store: &dyn Store, place: &Place, cache: &mut LineCache, id: &str) -> Result<()> {
+    check_id(id)?;
+    line::remove_mark(store, writable(place)?, id)?;
+    if let Some(entry) = cache.snapshots.get_mut(id) {
+        entry.incomplete = None;
+    }
+    Ok(())
+}
+
+/// A view of what `cache` knows, for looking up snapshots by the packs they
+/// use. It doesn't know which folder holds each manifest.
+fn line_view_of(cache: &LineCache) -> LineView {
+    LineView { snapshots: cache.snapshots.values().cloned().collect(), ..LineView::default() }
+}
+
+/// The manifest of `id` of `view`, from the folder that holds it; from the
+/// line's folders in order when the view doesn't say. `None` when it is
+/// gone.
+fn manifest_of(store: &dyn Store, place: &Place, view: &LineView, id: &str) -> Result<Option<Manifest>> {
+    if let Some(dir) = place.dir_of(view, id) {
+        return line::read_manifest(store, dir, id);
+    }
+    for dir in &place.dirs {
+        if let Some(m) = line::read_manifest(store, dir, id)? {
+            return Ok(Some(m));
+        }
+    }
+    Ok(None)
+}
+
+/// The snapshots of `lines` other than `except` that take files from
+/// `pack`: the line each is in (its position in `lines`), its id, and the
+/// files it takes from the pack (with the paths, sizes and hashes its
+/// manifest gives them). What a pack put back has to hold to be whole for
+/// all of them. Their manifests are read; the store keeps what it read once.
+fn sharing(store: &dyn Store, lines: &[(&Place, &LineView)], pack: &str, except: &str) -> Result<Vec<(usize, String, Vec<FileRef>)>> {
+    let mut out = Vec::new();
+    for (n, (place, view)) in lines.iter().enumerate() {
+        for s in view.snapshots.iter().filter(|s| s.id != except && s.packs.iter().any(|p| p == pack)) {
+            if let Some(m) = manifest_of(store, place, view, &s.id)? {
+                out.push((n, s.id.clone(), packs::files_in(&m, pack)));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// What [`restore_packs`] did.
+#[derive(Debug, Default)]
+struct Restored {
+    /// Packs put back.
+    repaired: Vec<String>,
+    /// Packs that stay gone: what the snapshot takes from them was found
+    /// nowhere.
+    lost: Vec<String>,
+    /// Other snapshots that take a file from a pack put back that was found
+    /// nowhere, marked now: the line's first folder, and the id.
+    marked: Vec<(String, String)>,
+    /// Other snapshots that were marked for a pack put back, whole now: their
+    /// marks are gone.
+    unmarked: Vec<(String, String)>,
+}
+
+/// Put back `missing`, packs of `manifest` (in the line `place`) that are
+/// gone, each under its own name: with every file `manifest` takes from it,
+/// and every file the other snapshots of `lines` take from it that is found
+/// too ([`find_content`]), so the pack is whole for as many of them as can
+/// be. A pack is put back only when everything `manifest` takes from it is
+/// found. Another snapshot that takes a file from it that wasn't found is
+/// marked ([`v2::Mark`]): a pack that is there but lacks one of its files
+/// is broken in a way no listing shows.
+#[allow(clippy::too_many_arguments)]
+fn restore_packs(
+    store: &dyn Store,
+    lines: &[(&Place, &LineView)],
+    place: &Place,
+    manifest: &Manifest,
+    missing: &BTreeSet<String>,
+    sources: Sources<'_>,
+    present: Option<&BTreeSet<String>>,
+    work: &Workspace,
+    device_id: &str,
+    now: DateTime<Utc>,
+) -> Result<Restored> {
+    let Some(home) = place.folders.first() else {
+        bail!(crate::tr!("这个游戏在云端没有文件夹", "This game has no folder in the cloud"));
+    };
+    let listed;
+    let present = match present {
+        Some(p) => p,
+        None => {
+            listed = packs::present_in(store, &place.folders)?;
+            &listed
+        }
+    };
+    let skip = BTreeSet::from([manifest.id.clone()]);
+    let mut out = Restored::default();
+    for pack in missing {
+        let mine = packs::files_in(manifest, pack);
+        let others = sharing(store, lines, pack, &manifest.id)?;
+        // Each path once; a file another snapshot gives other contents than
+        // this one can't be in the same pack, and that snapshot stays out.
+        let mut wanted: BTreeMap<String, FileRef> = mine.iter().map(|f| (f.path.clone(), f.clone())).collect();
+        for f in others.iter().flat_map(|(_, _, files)| files) {
+            wanted.entry(f.path.clone()).or_insert_with(|| f.clone());
+        }
+        let wanted: Vec<FileRef> = wanted.into_values().collect();
+        let found = find_content(store, &wanted, sources, lines, present, &skip, manifest.created_at, work)?;
+        let held = |f: &FileRef| found.iter().any(|l| l.path == f.path && l.size == f.size && l.hash == f.hash);
+        if !mine.iter().all(held) {
+            out.lost.push(pack.clone());
+            continue;
+        }
+        let files: Vec<FileRef> = wanted.into_iter().filter(|f| held(f)).collect();
+        packs::rebuild(store, home, manifest, pack, &files, &found, work.path())?;
+        out.repaired.push(pack.clone());
+        for (n, id, theirs) in others {
+            let (their_place, their_view) = lines[n];
+            let Some(entry) = their_view.get(&id) else { continue };
+            if writable(their_place).is_err() {
+                continue;
+            }
+            let whole = theirs.iter().all(held);
+            // Whole now, where this pack was all its mark named and its
+            // other packs are there: its mark goes.
+            let only_this = entry.incomplete.as_ref().is_some_and(|m| m.missing.iter().all(|p| p == pack));
+            if whole && only_this && entry.packs.iter().all(|p| p == pack || present.contains(p)) {
+                line::remove_mark(store, their_place.dir(), &id)?;
+                out.unmarked.push((their_place.dir().to_string(), id));
+            } else if !whole && !entry.is_incomplete() {
+                let mark = v2::Mark { missing: vec![pack.clone()], since: Some(now), device_id: device_id.to_string(), extra: v2::Extra::new() };
+                line::write_mark(store, their_place.dir(), &id, &mark)?;
+                out.marked.push((their_place.dir().to_string(), id));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Whether `pack`, which the cloud lists, holds every file `manifest` takes
+/// from it as the manifest has it: downloaded and looked at. For a snapshot
+/// that is marked although its packs are all there (another device put one
+/// back meanwhile, maybe only partly).
+fn holds_all(store: &dyn Store, place: &Place, view: &LineView, manifest: &Manifest, pack: &str, work: &Workspace) -> Result<bool> {
+    let files = packs::files_in(manifest, pack);
+    let refs: Vec<&FileRef> = files.iter().collect();
+    let dir = place.dir_of(view, &manifest.id).unwrap_or(place.dir());
+    let into = work.path().join(format!("check-{}", ulid::Ulid::new()));
+    let checked = packs::take(store, &place.folders, dir, manifest, pack, &refs, &into, work.path());
+    let _ = std::fs::remove_dir_all(&into);
+    match checked {
+        Ok(()) => Ok(true),
+        Err(e) if super::is_unavailable(&e) => Err(e),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Where the content of a pack that is gone may still be on this device.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sources<'a> {
+    /// The save files as they are now.
+    pub local: &'a [LocalFile],
+    /// Zips: packs waiting to be uploaded, copies kept in local-backups.
+    pub zips: &'a [PathBuf],
+}
+
+/// A folder of its own for content taken out of zips and packs, removed
+/// again when dropped.
+pub struct Workspace(PathBuf);
+
+impl Workspace {
+    pub fn new(staging: &Path) -> Result<Workspace> {
+        let dir = staging.join(format!("repair-{}", ulid::Ulid::new()));
+        std::fs::create_dir_all(&dir).with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", dir.display()))?;
+        Ok(Workspace(dir))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Workspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// The snapshots of `lines` whose packs may hold content, the ones made
+/// closest to `near` first: none that is marked itself, nor one this build
+/// can't read, nor the snapshots in `skip`.
+fn candidates<'a>(lines: &'a [(&'a Place, &'a LineView)], skip: &BTreeSet<String>, near: DateTime<Utc>) -> Vec<(&'a Place, &'a LineView, &'a IndexEntry)> {
+    let mut out: Vec<(&Place, &LineView, &IndexEntry)> = lines
+        .iter()
+        .flat_map(|(place, view)| view.snapshots.iter().map(move |s| (*place, *view, s)))
+        .filter(|(_, _, s)| !skip.contains(&s.id) && !s.is_incomplete() && s.unsupported().is_empty())
+        .collect();
+    out.sort_by_key(|(_, _, s)| (s.created_at - near).num_seconds().unsigned_abs());
+    out
+}
+
+/// Find content for `wanted` (files of a snapshot, with their paths, sizes
+/// and hashes): what has the same size and hash, in this order (section 3.4,
+/// the chain of repair):
+///
+/// 1. the save files on this device now;
+/// 2. the zips on this device (`sources.zips`);
+/// 3. another pack of the game in the cloud, found through the manifests of
+///    the snapshots of `lines` (read one by one, the closest in time to
+///    `near` first, until everything is found) and downloaded whole. Only
+///    packs in `present` (the packs the cloud has) are tried.
+///
+/// Returns what was found, each under the path `wanted` gives it, its bytes
+/// in `sources.local` or in `work`. Files found nowhere are left out.
+#[allow(clippy::too_many_arguments)]
+pub fn find_content(
+    store: &dyn Store,
+    wanted: &[FileRef],
+    sources: Sources<'_>,
+    lines: &[(&Place, &LineView)],
+    present: &BTreeSet<String>,
+    skip: &BTreeSet<String>,
+    near: DateTime<Utc>,
+    work: &Workspace,
+) -> Result<Vec<LocalFile>> {
+    let mut found: Vec<LocalFile> = Vec::new();
+    let mut open: Vec<&FileRef> = Vec::new();
+    for f in wanted {
+        if !open.iter().any(|o| o.path == f.path) {
+            open.push(f);
+        }
+    }
+    let same = |a: &FileRef, size: u64, hash: &str| a.size == size && a.hash == hash && !hash.is_empty();
+    let as_found = |f: &FileRef, source: PathBuf| LocalFile { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime, source };
+
+    // 1. The saves here.
+    open.retain(|f| match sources.local.iter().find(|l| same(f, l.size, &l.hash)) {
+        Some(l) => {
+            found.push(as_found(f, l.source.clone()));
+            false
+        }
+        None => true,
+    });
+
+    // 2. Zips on this device.
+    for (n, zip) in sources.zips.iter().enumerate() {
+        if open.is_empty() {
+            break;
+        }
+        let held = packs::zip_contents(zip);
+        let mut take: Vec<(&FileRef, &FileRef)> = Vec::new();
+        for f in &open {
+            if let Some(h) = held.iter().find(|h| same(f, h.size, &h.hash)) {
+                take.push((f, h));
+            }
+        }
+        if take.is_empty() {
+            continue;
+        }
+        let into = work.path().join(format!("zip-{n}"));
+        let mut entries: Vec<&FileRef> = take.iter().map(|(_, h)| *h).collect();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        entries.dedup_by(|a, b| a.path == b.path);
+        if packs::unzip(zip, &entries, &into).is_err() {
+            continue;
+        }
+        for (f, h) in take {
+            found.push(as_found(f, packs_local(&into, &h.path)));
+        }
+        open.retain(|f| !found.iter().any(|l| l.path == f.path));
+    }
+
+    // 3. Other packs in the cloud.
+    if open.is_empty() {
+        return Ok(found);
+    }
+    let mut plan: Vec<(&Place, &LineView, Manifest, String, Vec<(FileRef, FileRef)>)> = Vec::new();
+    for (place, view, s) in candidates(lines, skip, near) {
+        if open.is_empty() {
+            break;
+        }
+        // Only a snapshot with a pack that is there can help; one of 0.6
+        // keeps its zip beside its manifest.
+        let legacy = place.dir_of(view, &s.id).is_some_and(|d| v2::legacy_key(d).is_some());
+        if !legacy && !s.packs.iter().any(|p| present.contains(p)) {
+            continue;
+        }
+        let Some(m) = manifest_of(store, place, view, &s.id)? else { continue };
+        if !m.unsupported().is_empty() {
+            continue;
+        }
+        let mut by_pack: BTreeMap<String, Vec<(FileRef, FileRef)>> = BTreeMap::new();
+        open.retain(|f| {
+            let hit = m.files.iter().find(|c| same(f, c.size, &c.hash) && (legacy || present.contains(c.pack.as_deref().unwrap_or(&m.id))));
+            match hit {
+                Some(c) => {
+                    by_pack.entry(c.pack.clone().unwrap_or_else(|| m.id.clone())).or_default().push(((*f).clone(), c.clone()));
+                    false
+                }
+                None => true,
+            }
+        });
+        for (pack, files) in by_pack {
+            plan.push((place, view, m.clone(), pack, files));
+        }
+    }
+    for (n, (place, view, m, pack, files)) in plan.into_iter().enumerate() {
+        let dir = place.dir_of(view, &m.id).unwrap_or(place.dir());
+        let into = work.path().join(format!("pack-{n}"));
+        let mut entries: Vec<&FileRef> = files.iter().map(|(_, c)| c).collect();
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        entries.dedup_by(|a, b| a.path == b.path);
+        match packs::take(store, &place.folders, dir, &m, &pack, &entries, &into, work.path()) {
+            Ok(()) => {
+                for (f, c) in &files {
+                    found.push(as_found(f, packs_local(&into, &c.path)));
+                }
+            }
+            // No connection is not "nowhere": the caller tries again later.
+            Err(e) if super::is_unavailable(&e) => return Err(e),
+            Err(_) => {}
+        }
+    }
+    Ok(found)
+}
+
+/// Where a file unpacked under `base` is.
+fn packs_local(base: &Path, canonical: &str) -> PathBuf {
+    canonical.split('/').fold(base.to_path_buf(), |p, c| p.join(c))
+}
+
+/// What became of a snapshot a pack of which was gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Repair {
+    /// Every pack it names is in the cloud (again, or still).
+    Complete,
+    /// These packs were put back, whole for every snapshot that uses them.
+    Repaired(Vec<String>),
+    /// These packs are gone and their content was found nowhere.
+    Lost(Vec<String>),
+}
+
+/// Make a snapshot in the cloud whole again: its packs that are gone are put
+/// back (a manifest in the cloud never changes, so the packs are what is
+/// repaired), each under its own name, with what it takes from it and as
+/// much as is found of what the other snapshots of `lines` take from it.
+/// The content comes from [`find_content`]. A pack is put back only when
+/// everything this snapshot takes from it is found; another snapshot that
+/// misses a file of it then is marked.
+///
+/// A snapshot that is marked although its packs are all listed (the mark
+/// names them) is looked at more closely: the packs its mark names are
+/// downloaded, and one that lacks a file it takes from it counts as gone.
+/// So a mark goes only when the snapshot is known to be whole.
+///
+/// `lines` are all the game's lines (packs belong to the game), `place` the
+/// line of `manifest`. `present` is what the caller listed of the game's
+/// `packs/` folders; without it they are listed here (one listing each).
+/// `device_id` and `now` go into the marks it writes.
+#[allow(clippy::too_many_arguments)]
+pub fn put_back(
+    store: &dyn Store,
+    lines: &[(&Place, &LineView)],
+    place: &Place,
+    manifest: &Manifest,
+    present: Option<&BTreeSet<String>>,
+    sources: Sources<'_>,
+    staging: &Path,
+    device_id: &str,
+    now: DateTime<Utc>,
+) -> Result<Repair> {
+    if manifest.v < v2::LAYOUT || !manifest.unsupported().is_empty() {
+        // A snapshot of 0.6 keeps its zip beside its manifest; one written
+        // with features this build doesn't know may keep its files otherwise.
+        return Ok(Repair::Complete);
+    }
+    let listed;
+    let present = match present {
+        Some(p) => p,
+        None => {
+            listed = packs::present_in(store, &place.folders)?;
+            &listed
+        }
+    };
+    let work = Workspace::new(staging)?;
+    let mut missing: BTreeSet<String> = manifest.packs().into_iter().filter(|p| !present.contains(p)).collect();
+    let view = lines.iter().find(|(p, _)| p.dir() == place.dir()).map(|(_, v)| *v).cloned().unwrap_or_default();
+    // A mark that doesn't say which packs: all of them are looked at.
+    let suspect: Vec<String> = match view.get(&manifest.id).and_then(|e| e.incomplete.as_ref()) {
+        Some(m) if m.missing.is_empty() => manifest.packs().into_iter().collect(),
+        Some(m) => m.missing.clone(),
+        None => Vec::new(),
+    };
+    for pack in suspect.iter().filter(|p| present.contains(*p) && manifest.packs().contains(*p)) {
+        if !holds_all(store, place, &view, manifest, pack, &work)? {
+            missing.insert(pack.clone());
+        }
+    }
+    if missing.is_empty() {
+        return Ok(Repair::Complete);
+    }
+    let restored = restore_packs(store, lines, place, manifest, &missing, sources, Some(present), &work, device_id, now)?;
+    Ok(match restored.lost.is_empty() {
+        true => Repair::Repaired(restored.repaired),
+        false => Repair::Lost(restored.lost),
+    })
+}
+
+/// Make a snapshot waiting on this device whole before it is uploaded, when
+/// a pack it borrows is gone (it waited longer than the cloud keeps what it
+/// builds on, or what it builds on left the line). Nobody has seen it yet,
+/// so it may change ([`was_shown`] must be false):
+///
+/// - a file found with the same path, size and hash in a pack the cloud has
+///   (through the manifests of `lines`) is taken from there: nothing to
+///   upload;
+/// - any other file is looked for as [`find_content`] does and packed anew
+///   into a pack of its own (`<id>` when it has none yet, else the next
+///   `<id>-<n>`), built into `dir` beside the others, uploaded with them.
+///
+/// Returns the snapshot as it is to be uploaded now (written into `dir` by
+/// the caller), or `None` when nothing it borrows is gone. A file found
+/// nowhere is a [`packs::MissingPack`] and nothing changes.
+#[allow(clippy::too_many_arguments)]
+pub fn repair_queued(
+    store: &dyn Store,
+    lines: &[(&Place, &LineView)],
+    place: &Place,
+    manifest: &Manifest,
+    sources: Sources<'_>,
+    dir: &Path,
+    staging: &Path,
+) -> Result<Option<Manifest>> {
+    let borrowed: BTreeSet<String> = manifest.packs().into_iter().filter(|p| !packs::is_own(p, &manifest.id)).collect();
+    if borrowed.is_empty() {
+        return Ok(None);
+    }
+    let present = packs::present_in(store, &place.folders)?;
+    let gone: BTreeSet<String> = borrowed.into_iter().filter(|p| !present.contains(p)).collect();
+    if gone.is_empty() {
+        return Ok(None);
+    }
+    let wanted: Vec<FileRef> = manifest.files.iter().filter(|f| f.pack.as_ref().is_some_and(|p| gone.contains(p))).cloned().collect();
+
+    // Taken from packs that are there, by reference.
+    let skip = BTreeSet::from([manifest.id.clone()]);
+    let mut repointed: BTreeMap<String, String> = BTreeMap::new();
+    for (place_c, view, s) in candidates(lines, &skip, manifest.created_at) {
+        if repointed.len() == wanted.len() {
+            break;
+        }
+        if !s.packs.iter().any(|p| present.contains(p) && !gone.contains(p)) {
+            continue;
+        }
+        let Some(m) = manifest_of(store, place_c, view, &s.id)? else { continue };
+        if m.v < v2::LAYOUT || !m.unsupported().is_empty() {
+            continue;
+        }
+        for f in &wanted {
+            if repointed.contains_key(&f.path) {
+                continue;
+            }
+            if let Some(c) = m.files.iter().find(|c| c.path == f.path && c.size == f.size && c.hash == f.hash) {
+                let pack = c.pack.clone().unwrap_or_else(|| m.id.clone());
+                if present.contains(&pack) && !gone.contains(&pack) {
+                    repointed.insert(f.path.clone(), pack);
+                }
+            }
+        }
+    }
+
+    // The rest from wherever it still is, into a pack of its own.
+    let rest: Vec<FileRef> = wanted.iter().filter(|f| !repointed.contains_key(&f.path)).cloned().collect();
+    let work = Workspace::new(staging)?;
+    let found = find_content(store, &rest, sources, lines, &present, &skip, manifest.created_at, &work)?;
+    if let Some(f) = rest.iter().find(|f| !found.iter().any(|l| l.path == f.path)) {
+        let pack = f.pack.clone().unwrap_or_default();
+        return Err(packs::MissingPack { pack }.into());
+    }
+    let own = own_packs(manifest);
+    let new_pack = match own.iter().any(|p| p == &manifest.id) {
+        false => manifest.id.clone(),
+        true => {
+            let highest = own.iter().filter_map(|p| p.strip_prefix(&format!("{}-", manifest.id))?.parse::<u32>().ok()).max().unwrap_or(1);
+            format!("{}-{}", manifest.id, highest + 1)
+        }
+    };
+    let mut out = manifest.clone();
+    for f in out.files.iter_mut() {
+        if let Some(pack) = repointed.get(&f.path) {
+            f.pack = Some(pack.clone());
+        } else if rest.iter().any(|r| r.path == f.path) {
+            f.pack = (new_pack != manifest.id).then(|| new_pack.clone());
+        }
+    }
+    // What the packs it uses hold, as far as known: the ones that are gone
+    // no longer, the new one just what it holds.
+    if let Some(sizes) = out.extra.get_mut(packs::PACK_SIZES).and_then(|v| v.as_object_mut()) {
+        sizes.retain(|pack, _| !gone.contains(pack));
+        if !rest.is_empty() {
+            sizes.insert(new_pack.clone(), rest.iter().map(|f| f.size).sum::<u64>().into());
+        }
+    }
+    if !rest.is_empty() {
+        let _ = std::fs::remove_file(sent_mark(dir, &new_pack));
+        packs::build(&out, &new_pack, &found, dir)?;
+    }
+    Ok(Some(out))
+}
+
+/// Let go of a version nobody could make whole (section 3.4): into "recently
+/// deleted", with the reason [`RETIRED`], so heads and decisions move on; it
+/// is purged after [`super::TRASH_DAYS`] like any deleted version, and can
+/// be put back until then. Its mark goes with it.
+///
+/// Refused (an error) for a kept save (the user decides about it), for one
+/// in a folder of 0.6 (0.6 takes the newest there for the current progress)
+/// and when the line has no other version that isn't marked: a line with
+/// nothing else keeps it, marked. [`can_retire`] says which.
+pub fn retire(store: &dyn Store, place: &Place, view: &LineView, id: &str, by: &str, now: DateTime<Utc>) -> Result<()> {
+    if !can_retire(place, view, id) {
+        bail!(crate::tr!("这个版本不能移到「最近删除」", "This version can't be moved to Recently deleted"));
+    }
+    let dir = place.dir_of(view, id).ok_or_else(not_found)?;
+    let meta = store.read(&v2::manifest_path(dir, id))?.ok_or_else(not_found)?;
+    if !serde_json::from_slice::<Manifest>(&meta).is_ok_and(|m| m.id == id) {
+        bail!(crate::tr!("这个版本的清单读不懂", "Can't understand this version's manifest"));
+    }
+    store.write(&v2::trash_path(dir, id), &record_bytes(now, by, Some(RETIRED), &meta)?)?;
+    store.remove(&v2::manifest_path(dir, id))?;
+    let _ = line::remove_mark(store, place.dir(), id);
+    Ok(())
+}
+
+/// Whether [`retire`] may let go of `id`: it is in the view, not kept, not in
+/// a folder of 0.6, and the line has another version that is not marked.
+pub fn can_retire(place: &Place, view: &LineView, id: &str) -> bool {
+    retirable(place, view, id, &BTreeSet::new(), &[])
+}
+
+/// [`can_retire`], where the snapshots in `incomplete` count as marked too
+/// and those in `gone` are no longer there.
+fn retirable(place: &Place, view: &LineView, id: &str, incomplete: &BTreeSet<String>, gone: &[String]) -> bool {
+    let Some(entry) = view.get(id) else { return false };
+    let legacy = place.dir_of(view, id).is_none_or(|d| v2::legacy_key(d).is_some());
+    let whole = |s: &&IndexEntry| s.id != id && !s.is_incomplete() && !incomplete.contains(&s.id) && !gone.contains(&s.id);
+    entry.pin.is_none() && !legacy && view.snapshots.iter().any(|s| whole(&s))
 }
 
 // ----------------------------------------------------------------- kept saves
@@ -530,22 +1163,28 @@ pub struct Trashed {
     pub deleted_by: String,
     /// The line folder it was deleted from.
     pub dir: String,
+    /// Why, when the user didn't delete it: [`RETIRED`].
+    pub reason: Option<String>,
 }
 
 /// Delete a version the way the user does: into "recently deleted".
 ///
 /// Refused, with a message for the user, for a head of the line (the other
 /// devices would be asked about a version that is gone) and for a kept save
-/// (stop keeping it first). An error when the view doesn't have it.
+/// (stop keeping it first). An error when the view doesn't have it. A head
+/// that is marked as missing a pack is no newest version for anyone and may
+/// go; the newest complete one then counts as the head.
 ///
 /// The record first (`{deletedAt, deletedBy, meta}` in
 /// [`v2::trash_path`] of the folder the manifest is in, `meta` being the
 /// manifest exactly as it is in the cloud, unknown fields included), then
 /// the manifest is removed: an interruption leaves the version in the
-/// history rather than nowhere. Its packs stay where they are.
+/// history rather than nowhere. Its packs stay where they are; its mark, if
+/// it had one, goes.
 pub fn trash(store: &dyn Store, place: &Place, view: &LineView, id: &str, by: &str, now: DateTime<Utc>) -> Result<()> {
     let entry = view.get(id).ok_or_else(not_found)?;
-    if view.head_entries().any(|h| h.id == id) {
+    let head = |v: &LineView| v.head_entries().any(|h| h.id == id);
+    if (head(view) && !entry.is_incomplete()) || head(&view.usable()) {
         bail!(crate::tr!("不能删除最新版本", "The latest version can't be deleted"));
     }
     if entry.pin.is_some() {
@@ -558,8 +1197,12 @@ pub fn trash(store: &dyn Store, place: &Place, view: &LineView, id: &str, by: &s
     }
     // The record first: an interruption leaves the version in the history
     // rather than nowhere.
-    store.write(&v2::trash_path(dir, id), &record_bytes(now, by, &meta)?)?;
-    store.remove(&v2::manifest_path(dir, id))
+    store.write(&v2::trash_path(dir, id), &record_bytes(now, by, None, &meta)?)?;
+    store.remove(&v2::manifest_path(dir, id))?;
+    if entry.is_incomplete() && v2::legacy_key(place.dir()).is_none() {
+        line::remove_mark(store, place.dir(), id)?;
+    }
+    Ok(())
 }
 
 /// What is in "recently deleted" for this line, newest deletion first.
@@ -595,7 +1238,7 @@ pub fn trashed(store: &dyn Store, place: &Place) -> Result<Vec<Trashed>> {
             if snapshot.vv.is_empty() && !snapshot.is_side() {
                 snapshot.vv = line::legacy_vv(dir, snapshot.created_at);
             }
-            out.push(Trashed { snapshot, deleted_at: record.deleted_at, deleted_by: record.deleted_by, dir: dir.clone() });
+            out.push(Trashed { snapshot, deleted_at: record.deleted_at, deleted_by: record.deleted_by, dir: dir.clone(), reason: record.reason });
         }
     }
     out.sort_by_key(|a| std::cmp::Reverse(a.deleted_at));
@@ -677,6 +1320,10 @@ struct Record {
     deleted_at: DateTime<Utc>,
     #[serde(default)]
     deleted_by: String,
+    /// Why, when it wasn't the user ([`RETIRED`]). 0.6 doesn't know the
+    /// field and ignores it.
+    #[serde(default)]
+    reason: Option<String>,
     meta: Manifest,
 }
 
@@ -692,12 +1339,16 @@ fn record_id(e: &Entry) -> Option<&str> {
 /// A record with `meta` exactly as the manifest is in the cloud, so putting
 /// it back writes the same bytes: unknown fields, their order and the way it
 /// was written all stay.
-fn record_bytes(deleted_at: DateTime<Utc>, by: &str, meta: &[u8]) -> Result<Vec<u8>> {
-    let mut out = Vec::with_capacity(meta.len() + 96);
+fn record_bytes(deleted_at: DateTime<Utc>, by: &str, reason: Option<&str>, meta: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(meta.len() + 128);
     out.extend_from_slice(b"{\"deletedAt\":");
     out.extend(serde_json::to_vec(&deleted_at)?);
     out.extend_from_slice(b",\"deletedBy\":");
     out.extend(serde_json::to_vec(by)?);
+    if let Some(reason) = reason {
+        out.extend_from_slice(b",\"reason\":");
+        out.extend(serde_json::to_vec(reason)?);
+    }
     out.extend_from_slice(b",\"meta\":");
     out.extend_from_slice(meta);
     out.push(b'}');
@@ -798,6 +1449,27 @@ pub struct Cleaned {
     pub purged: Vec<String>,
     /// Packs nothing uses any more.
     pub packs: Vec<String>,
+    /// Snapshots found missing a pack, marked now.
+    pub marked: Vec<String>,
+    /// Snapshots that were missing a pack and are whole again: their packs
+    /// were put back, or are there again.
+    pub repaired: Vec<String>,
+    /// Snapshots nobody could make whole, moved to "recently deleted"
+    /// ([`retire`]).
+    pub retired: Vec<String>,
+}
+
+/// What [`clean_with`] may use to put back a pack that is gone.
+#[derive(Clone, Copy)]
+pub struct Repairs<'a> {
+    /// The save files on this device, read only when a version needs them.
+    pub local: &'a dyn Fn() -> Vec<LocalFile>,
+    /// Zips on this device ([`Sources::zips`]).
+    pub zips: &'a [PathBuf],
+    /// Where content is unpacked and packs are built.
+    pub staging: &'a Path,
+    /// This device's name, for "recently deleted".
+    pub device_name: &'a str,
 }
 
 /// Clean up one game: `lines` are all its save lines (packs belong to the
@@ -830,7 +1502,14 @@ pub struct Cleaned {
 ///    wrote a manifest in between keeps its packs (section 3.4, rule 2).
 ///    No pack is deleted while a manifest or a record of "recently deleted"
 ///    can't be understood: which packs it uses is unknown.
-/// 4. The index of a line is written again only if reading it said so
+/// 4. Versions missing a pack (section 3.4), from what steps 1 and 3 read
+///    anyway: a snapshot of layout 2 whose index entry names a pack none of
+///    the listings of step 3 has, or one with a mark. [`put_back`] tries to
+///    make it whole (with `repairs`; without, nothing is put back). Whole:
+///    its mark goes. Not: it is marked ([`mark`]), and let go ([`retire`])
+///    when it has been marked for [`INCOMPLETE_DAYS`], or at once when this
+///    device wrote it (it had its chance), unless [`can_retire`] says no.
+/// 5. The index of a line is written again only if reading it said so
 ///    ([`LineView::needs_index`]); entries for manifests that are gone do no
 ///    harm and disappear with the next upload.
 ///
@@ -840,9 +1519,11 @@ pub struct Cleaned {
 /// its pin (two when its manifest is not in the line's first folder); one
 /// read more per version purged from a folder of 0.6; and, when a pack is
 /// about to be deleted, the lines' listings and their trash folders' once
-/// more (plus a read per record that wasn't there the first time). Meant to
-/// run at most about once a day per game, after an upload or in the
-/// background, never before playing.
+/// more (plus a read per record that wasn't there the first time). Finding
+/// a version that misses a pack costs nothing more; only then are its
+/// manifest and the ones that may hold its content read, and the mark
+/// written. Meant to run at most about once a day per game, after an upload
+/// or in the background, never before playing.
 ///
 /// An error part way leaves the cloud consistent: every step only removes
 /// what the steps before made unused. Run again, it carries on.
@@ -853,6 +1534,20 @@ pub fn clean(
     grace: chrono::Duration,
     now: DateTime<Utc>,
     device_id: &str,
+) -> Result<Cleaned> {
+    clean_with(store, lines, policy, grace, now, device_id, None)
+}
+
+/// [`clean`], putting back what a version misses from `repairs` where that
+/// is found (step 4).
+pub fn clean_with(
+    store: &dyn Store,
+    lines: &mut [Open<'_>],
+    policy: &retention::Policy,
+    grace: chrono::Duration,
+    now: DateTime<Utc>,
+    device_id: &str,
+    repairs: Option<Repairs<'_>>,
 ) -> Result<Cleaned> {
     let mut cleaned = Cleaned::default();
     // The packs of whatever is left, and whether something couldn't be read,
@@ -883,6 +1578,9 @@ pub fn clean(
                     continue;
                 }
                 store.remove(&v2::manifest_path(dir, &id))?;
+                if view.get(&id).is_some_and(IndexEntry::is_incomplete) {
+                    line::remove_mark(store, place.dir(), &id)?;
+                }
                 l.cache.snapshots.remove(&id);
                 cleaned.snapshots.push(id.clone());
                 gone.insert(id);
@@ -891,12 +1589,12 @@ pub fn clean(
             blind = true;
         }
         used.extend(view.snapshots.iter().filter(|s| !gone.contains(&s.id)).flat_map(|s| s.packs.iter().cloned()));
-        views.push(view);
+        views.push((view, gone));
     }
 
     // 2. "Recently deleted" that has been there long enough.
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for (l, view) in lines.iter().zip(&views) {
+    for (l, (view, _)) in lines.iter().zip(&views) {
         for dir in &l.place.dirs {
             let legacy = v2::legacy_key(dir).is_some();
             for (id, record) in read_trash(store, dir, &mut seen)? {
@@ -924,8 +1622,11 @@ pub fn clean(
         }
     }
     let mut candidates: Vec<(String, String)> = Vec::new();
+    // Every pack the game has, for step 4.
+    let mut present: BTreeSet<String> = BTreeSet::new();
     for folder in &folders {
         let listing = store.list(&v2::packs_dir(folder))?;
+        present.extend(listing.iter().filter(|e| !e.is_dir).filter_map(|e| e.name.strip_suffix(".zip")).map(str::to_string));
         candidates.extend(packs::unused(&listing, &used, now, grace).into_iter().map(|p| (folder.clone(), p)));
     }
     if !candidates.is_empty() && !blind {
@@ -948,12 +1649,85 @@ pub fn clean(
         if !blind {
             for (folder, pack) in candidates.into_iter().filter(|(_, p)| !used.contains(p)) {
                 store.remove(&v2::pack_path(&folder, &pack))?;
+                present.remove(&pack);
                 cleaned.packs.push(pack);
             }
         }
     }
 
-    // 4. The indexes that need it.
+    // 4. Versions that miss a pack.
+    let mut broken: Vec<(usize, String, bool)> = Vec::new();
+    for (n, (l, (view, gone))) in lines.iter().zip(&views).enumerate() {
+        for s in view.snapshots.iter().filter(|s| !gone.contains(&s.id) && s.unsupported().is_empty()) {
+            // A snapshot of 0.6 keeps its zip beside its manifest.
+            if l.place.dir_of(view, &s.id).is_none_or(|d| v2::legacy_key(d).is_some()) {
+                continue;
+            }
+            let lacking = s.packs.iter().any(|p| !present.contains(p));
+            if lacking || s.is_incomplete() {
+                broken.push((n, s.id.clone(), lacking));
+            }
+        }
+    }
+    if !broken.is_empty() {
+        let refs: Vec<(&Place, &LineView)> = lines.iter().map(|l| l.place).zip(views.iter().map(|(v, _)| v)).collect();
+        let mut local: Option<Vec<LocalFile>> = None;
+        // Those nobody could make whole, and whether their time is up.
+        let mut lost: Vec<(usize, String, bool)> = Vec::new();
+        for (n, id, lacking) in broken {
+            let (place, view) = refs[n];
+            let Some(entry) = view.get(&id) else { continue };
+            let marked = entry.incomplete.clone();
+            let outcome = match repairs {
+                Some(r) => match manifest_of(store, place, view, &id)? {
+                    Some(m) => {
+                        let local = local.get_or_insert_with(|| (r.local)());
+                        put_back(store, &refs, place, &m, Some(&present), Sources { local, zips: r.zips }, r.staging, device_id, now)?
+                    }
+                    None => continue,
+                },
+                None if lacking => Repair::Lost(entry.packs.iter().filter(|p| !present.contains(*p)).cloned().collect()),
+                // Marked, and its packs are listed: whether they are whole
+                // takes a look this clean-up can't take.
+                None => continue,
+            };
+            if writable(place).is_err() {
+                continue;
+            }
+            let cache = &mut *lines[n].cache;
+            match outcome {
+                Repair::Complete | Repair::Repaired(_) => {
+                    if marked.is_some() {
+                        unmark(store, place, cache, &id)?;
+                    }
+                    cleaned.repaired.push(id);
+                }
+                Repair::Lost(missing) => {
+                    if marked.is_none() {
+                        mark(store, place, cache, &id, &missing, device_id, now)?;
+                        cleaned.marked.push(id.clone());
+                    }
+                    let since = marked.and_then(|m| m.since).unwrap_or(now);
+                    // Its writer had its chance when it is this device.
+                    let due = (now - since).num_days() >= INCOMPLETE_DAYS || entry.device_id == device_id;
+                    lost.push((n, id, due));
+                }
+            }
+        }
+        let lost_ids: BTreeSet<String> = lost.iter().map(|(_, id, _)| id.clone()).collect();
+        let by = repairs.map_or(device_id, |r| r.device_name);
+        for (n, id, due) in lost {
+            let (place, view) = refs[n];
+            let others_lost: BTreeSet<String> = lost_ids.iter().filter(|x| **x != id && !cleaned.retired.contains(x)).cloned().collect();
+            if due && retirable(place, view, &id, &others_lost, &cleaned.retired) {
+                retire(store, place, view, &id, by, now)?;
+                lines[n].cache.snapshots.remove(&id);
+                cleaned.retired.push(id);
+            }
+        }
+    }
+
+    // 5. The indexes that need it.
     for (n, l) in lines.iter().enumerate() {
         if needs_index[n] && v2::legacy_key(l.place.dir()).is_none() {
             line::write_index(store, l.place.dir(), &*l.cache, device_id)?;

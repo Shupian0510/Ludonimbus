@@ -3,7 +3,7 @@
 // newest of every other save line come first; everything else is folded
 // away under "automatic saves". One action per row: make it the current one.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, OtherSave, Overview, PlatformMark, PlatformMarks, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot } from "../api";
+import { api, errorText, GameView, OtherSave, Overview, PlatformMark, PlatformMarks, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot, UnsentSave } from "../api";
 import { bytes, dateTime, outcomeText, relTime, triggerLabel } from "../format";
 import { msg, useT } from "../i18n";
 import { ApplyDialog, membersOf } from "./SaveLibrary";
@@ -221,6 +221,18 @@ export function Saves({
     }
   };
 
+  /** A version this PC couldn't upload complete: what it has of it, as a zip. */
+  const exportUnsent = async (u: UnsentSave) => {
+    try {
+      const p = await api.exportUnsent(game.key, u.id);
+      if (p) ui.toast(msg().saves.exported(p));
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    }
+  };
+
+  const dismissUnsent = (u: UnsentSave) => act(() => api.dismissUnsent(game.key, u.id));
+
   /** Take in a save someone exported: it shows among the kept ones, and nothing else changes. */
   const importShared = async () => {
     try {
@@ -264,20 +276,50 @@ export function Saves({
   if (overview.cloud.kind === "none") return <Empty icon="cloud" title={v.noCloud} />;
   if (error) return <div className="banner banner-bad">{error}</div>;
   if (!data) return <div className="muted pad">{v.loading}</div>;
-  if (data.snapshots.length === 0 && others.saves.length === 0) return <Empty icon="cloud" title={v.empty} />;
+  const unsent = cloudOnly ? [] : (data.unsent ?? []);
+  if (data.snapshots.length === 0 && others.saves.length === 0 && unsent.length === 0) return <Empty icon="cloud" title={v.empty} />;
 
   const more = (s: SnapshotSummary, isHead: boolean): MenuItem[] => {
     const items: MenuItem[] = [];
+    // Nothing can be taken from a version that misses a pack.
+    const missing = s.incomplete ? v.incompleteNoUse : undefined;
     if (!cloudOnly) items.push({ label: v.rename, icon: "edit", onClick: () => rename(s) });
     items.push({ label: open === s.id ? v.hideFiles : v.showFiles, icon: "folder", onClick: () => toggle(s.id) });
-    items.push({ label: v.export, icon: "download", onClick: () => exportZip(s) });
-    if (canSend) items.push({ label: v.sendTo, icon: "transfer", onClick: () => setSending(s) });
+    items.push({ label: v.export, icon: "download", disabled: !!missing, title: missing, onClick: () => exportZip(s) });
+    if (canSend) items.push({ label: v.sendTo, icon: "transfer", disabled: !!missing, title: missing, onClick: () => setSending(s) });
     if (!cloudOnly) {
-      const why = s.locked ? v.deleteKept : isHead ? v.deleteNewest : undefined;
+      // An incomplete newest version is nobody's current progress, and may go.
+      const why = s.locked ? v.deleteKept : isHead && !s.incomplete ? v.deleteNewest : undefined;
       items.push({ label: v.delete, icon: "trash", danger: true, divider: true, disabled: !!why, title: why, onClick: () => remove(s) });
     }
     return items;
   };
+
+  /** A version this PC made and couldn't upload complete: listed as this PC's, once, until dismissed. */
+  const unsentRow = (u: UnsentSave) => (
+    <div key={`unsent/${u.id}`} className="save side">
+      <div className="save-row">
+        <div className="save-main" title={dateTime(u.createdAt)}>
+          <PlatformTag mark={marks[u.platform ?? ""]} />
+          <span className="save-when">
+            <b>{relTime(u.createdAt)}</b>
+            <Badge tone="warn">{v.unsent}</Badge>
+            <Hint text={v.unsentHint} />
+          </span>
+          <span className="device mine">{overview.deviceName}</span>
+          <span className="muted save-size">{bytes(u.totalSize)}</span>
+        </div>
+        <div className="save-actions">
+          <Button small onClick={() => exportUnsent(u)}>
+            {v.export}
+          </Button>
+          <button className="icon-btn" title={v.dismiss} onClick={() => dismissUnsent(u)}>
+            <Icon name="x" size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   // A save with the same content as the one this PC is at is that save.
   const currentHash = data.snapshots.find((s) => s.id === current)?.contentHash;
@@ -287,27 +329,53 @@ export function Saves({
     const mine = s.deviceId === overview.deviceId;
     const named = s.locked && !!s.comment;
     const id = other ? `${other.line}/${s.id}` : s.id;
+    const incomplete = !!s.incomplete;
+    const main = (
+      <>
+        <PlatformTag mark={marks[s.platform ?? ""]} />
+        <span className="save-when">
+          <b>{named ? s.comment : relTime(s.createdAt)}</b>
+          {(named || s.comment) && <span className="muted">{named ? relTime(s.createdAt) : s.comment}</span>}
+          {other && <Badge tone="muted">{other.shared ? v.sharedLine : other.name || v.ownLine}</Badge>}
+          {isSide(s) && !isShared(s) && <Badge tone="muted">{v.replaced}</Badge>}
+          {incomplete ? (
+            <>
+              <Badge tone="warn">{v.incomplete}</Badge>
+              <Hint text={v.incompleteHint} />
+            </>
+          ) : (
+            isHead && !isCurrent && !cloudOnly && <Badge tone="info">{v.newest}</Badge>
+          )}
+        </span>
+        <span className={`device${mine ? " mine" : ""}`}>{s.deviceName}</span>
+        <span className="muted save-size">{bytes(s.totalSize)}</span>
+      </>
+    );
+    const title = `${dateTime(s.createdAt)} · ${triggerLabel(s.trigger)}`;
     return (
-      <div key={id} className={`save${isSide(s) && !isShared(s) ? " side" : ""}${open === s.id && !other ? " open" : ""}`}>
+      <div key={id} className={`save${(isSide(s) && !isShared(s)) || incomplete ? " side" : ""}${open === s.id && !other ? " open" : ""}`}>
         <div className="save-row">
-          <button className="save-main" onClick={() => !other && toggle(s.id)} disabled={!!other} title={`${dateTime(s.createdAt)} · ${triggerLabel(s.trigger)}`}>
-            <PlatformTag mark={marks[s.platform ?? ""]} />
-            <span className="save-when">
-              <b>{named ? s.comment : relTime(s.createdAt)}</b>
-              {(named || s.comment) && <span className="muted">{named ? relTime(s.createdAt) : s.comment}</span>}
-              {other && <Badge tone="muted">{other.shared ? v.sharedLine : other.name || v.ownLine}</Badge>}
-              {isSide(s) && !isShared(s) && <Badge tone="muted">{v.replaced}</Badge>}
-              {isHead && !isCurrent && !cloudOnly && <Badge tone="info">{v.newest}</Badge>}
-            </span>
-            <span className={`device${mine ? " mine" : ""}`}>{s.deviceName}</span>
-            <span className="muted save-size">{bytes(s.totalSize)}</span>
-          </button>
+          {incomplete ? (
+            // Its "?" can't be inside a button; its files are in "More".
+            <div className="save-main" title={title}>
+              {main}
+            </div>
+          ) : (
+            <button className="save-main" onClick={() => !other && toggle(s.id)} disabled={!!other} title={title}>
+              {main}
+            </button>
+          )}
           <div className="save-actions">
             {isCurrent ? (
               <Badge tone="ok">{v.current}</Badge>
             ) : (
               !cloudOnly && (
-                <Button small onClick={() => makeCurrent({ s, other })} disabled={disabled} title={disabled ? v.running : undefined}>
+                <Button
+                  small
+                  onClick={() => makeCurrent({ s, other })}
+                  disabled={disabled || incomplete}
+                  title={incomplete ? v.incompleteNoUse : disabled ? v.running : undefined}
+                >
                   {v.makeCurrent}
                 </Button>
               )
@@ -352,6 +420,7 @@ export function Saves({
 
   return (
     <div className="saves">
+      {unsent.map(unsentRow)}
       {top.map(row)}
       <div className="saves-foot">
         {auto.length > 0 && (
@@ -386,7 +455,15 @@ export function Saves({
                   <PlatformTag mark={marks[d.snapshot.platform ?? ""]} />
                   <span className="save-when">
                     <b>{relTime(d.snapshot.createdAt)}</b>
-                    <Badge tone="muted">{v.daysLeft(daysLeft(d))}</Badge>
+                    {d.reason === "incomplete" ? (
+                      // Why it is here comes first; how long it stays is in the "?".
+                      <>
+                        <Badge tone="warn">{v.retired}</Badge>
+                        <Hint text={v.retiredHint(daysLeft(d))} />
+                      </>
+                    ) : (
+                      <Badge tone="muted">{v.daysLeft(daysLeft(d))}</Badge>
+                    )}
                   </span>
                   <span className="device">{d.snapshot.deviceName}</span>
                   <span className="muted save-size">{bytes(d.snapshot.totalSize)}</span>

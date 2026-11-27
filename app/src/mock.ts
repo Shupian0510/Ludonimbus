@@ -20,6 +20,7 @@ import type {
   SteamCloudDone,
   SteamCloudStatus,
   TrashedSnapshot,
+  UnsentSave,
 } from "./api";
 
 // Sample data in the preview's language (?lang=, the saved choice, or the browser's).
@@ -94,6 +95,13 @@ const snapshots: Record<string, SnapshotSummary[]> = {
 
 // Played on the Xbox app, to send to its Steam version (`mockInstalls`); not in the docs screenshots.
 if (!mockScene) snapshots["doom-eternal"] = [snap("01DOOM1", 90, "DESKTOP-MAIN", "auto-exit", 2140000, 12, { platform: "pc:xbox" })];
+// Versions missing a content pack (not in the docs screenshots): Slay the Spire's newest one, from the laptop,
+// is marked incomplete; one of its older ones was let go for it. Hades has a version this PC couldn't upload complete.
+const unsent: Record<string, UnsentSave[]> = {};
+if (!mockScene) {
+  snapshots["slay-the-spire"].unshift(snap("01STS3", 40, "LAPTOP", "auto-exit", 49100, 6, { incomplete: true }));
+  unsent.hades = [{ id: "01HADX", createdAt: ago(60 * 30), totalSize: 2304000, fileCount: 5, platform: "pc:steam", at: ago(12) }];
+}
 
 // What each game's saves are made on, and how the app shows that (the logo
 // is the program's own icon when this PC has it).
@@ -109,7 +117,7 @@ const platformMarks: PlatformMarks = {
 for (const [k, list] of Object.entries(snapshots)) for (const s of list) s.platform ??= mockPlatforms[k] ?? "pc";
 
 // The save this PC is at, where it isn't the newest one; the line each game follows here.
-const syncedId: Record<string, string> = { "bloodborne-lantern": "01BB1" };
+const syncedId: Record<string, string> = { "bloodborne-lantern": "01BB1", "slay-the-spire": "01STS2" };
 const lineOf: Record<string, string> = {};
 const joinAnswered = new Set<string>();
 const undoTo: Record<string, string> = {};
@@ -140,6 +148,11 @@ function mockLines(key: string): SaveLine[] {
 const trash: Record<string, TrashedSnapshot[]> = {
   "zelda-oot-longshot": [{ snapshot: snap("01OOT0", 60 * 24 * 6, "DESKTOP-MAIN", "auto-exit", 790000, 10), deletedAt: ago(60 * 24 * 2), deletedBy: "DESKTOP-MAIN" }],
 };
+if (!mockScene) {
+  trash["slay-the-spire"] = [
+    { snapshot: snap("01STS0", 60 * 24 * 20, "LAPTOP", "auto-exit", 45000, 6), deletedAt: ago(60 * 24 * 3), deletedBy: "LAPTOP", reason: "incomplete" },
+  ];
+}
 
 function report(key: string, status: StatusReport["status"], files: number, size: number): StatusReport {
   const list = snapshots[key] ?? [];
@@ -164,6 +177,7 @@ const checks: Record<string, StatusReport> = {
   "bloodborne-lantern": report("bloodborne-lantern", "conflict", 16, 15309618),
   "ryujinx-0100e65002bb8000": { ...report("ryujinx-0100e65002bb8000", "cloudNewer", 4, 398000), tooNew: "1.6.15" },
 };
+if (!mockScene) checks["slay-the-spire"] = { ...report("slay-the-spire", "synced", 6, 48200), incomplete: true };
 
 function game(key: string, name: string, appid: number, platform: string, exe: string, saves: string[], extra: Partial<GameView> = {}): GameView {
   return {
@@ -731,7 +745,13 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         lastSyncedId: key === STARDEW_NX ? "01SDV1" : (syncedId[key] ?? headOf(key)),
         platforms: platformMarks,
         tooNew: key === STARDEW_NX ? ["01SDV2"] : undefined,
+        unsent: unsent[key],
       });
+    case "export_unsent":
+      return delay(`C:\\Users\\me\\Desktop\\${args.id}.zip`);
+    case "dismiss_unsent":
+      unsent[key] = (unsent[key] ?? []).filter((u) => u.id !== args.id);
+      return delay(undefined);
     case "delete_snapshot": {
       const list = snapshots[key] ?? [];
       const s = list.find((x) => x.id === args.id);
