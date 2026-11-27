@@ -12,7 +12,9 @@
 //! cloud can't be reached it simply stays; the next sync uploads what waits
 //! before it does anything else. The device counts as synced to a version
 //! from the moment it is in the queue, so playing on while offline builds
-//! one version on the other.
+//! one version on the other. A version leaves the queue once its manifest
+//! and every pack it names are in the cloud; one that can never be complete
+//! any more is set aside on this device ([`set_aside`]).
 //!
 //! **Nothing is lost by a sync.** Before saves on this device are replaced,
 //! they go to the cloud as a snapshot kept beside the history, unless the
@@ -682,32 +684,123 @@ fn unqueue(key: &str, m: &Manifest) -> Result<()> {
     state::update_game(key, |g| g.pending.retain(|x| x != &m.id))
 }
 
-/// Upload one waiting version and make it part of its line. It stays in the
-/// queue ([`unqueue`]).
-fn publish_queued(cloud: &Cloud, line: &mut OpenLine, m: &mut Manifest, from_06: bool) -> Result<()> {
-    let key = line.key.clone();
-    let dir = queue_dir(&key);
-    // Another process of this device may have uploaded it meanwhile.
-    if line.view.get(&m.id).is_none() {
-        if settle_queued(m, &line.place, &line.view) || from_06 {
-            util::atomic_write(&dir.join(format!("{}.json", m.id)), &serde_json::to_vec(m)?)?;
-            // The device counts as synced to this version since it was made.
-            let _ = state::update_game(&key, |g| {
-                if g.last_synced_id.as_deref() == Some(m.id.as_str()) {
-                    g.last_synced_vv = m.vv.clone();
+/// The save files of a game on this device, for putting back a pack that a
+/// waiting version borrows and another device cleaned up while it waited
+/// ([`saves::publish`]). Read when a version first needs them, then kept
+/// for the rest of the queue.
+struct FilesHere<'a> {
+    key: &'a str,
+    game: Option<&'a GameEntry>,
+    /// `None` until read; `Some(None)` when there is nothing to go by: the
+    /// game isn't on this device, its saves can't be scanned right now, or
+    /// none are found (a drive that isn't there, a game installed anew).
+    read: Option<Option<Vec<packs::LocalFile>>>,
+}
+
+impl<'a> FilesHere<'a> {
+    fn new(key: &'a str, game: Option<&'a GameEntry>) -> Self {
+        FilesHere { key, game, read: None }
+    }
+
+    /// Files scanned a moment ago.
+    fn scanned(key: &'a str, files: Vec<packs::LocalFile>) -> Self {
+        FilesHere { key, game: None, read: Some((!files.is_empty()).then_some(files)) }
+    }
+
+    fn get(&mut self) -> Option<&[packs::LocalFile]> {
+        if self.read.is_none() {
+            let game = match self.game {
+                Some(g) => Some(g.clone()),
+                None => config::load().ok().and_then(|c| c.game(self.key).cloned()),
+            };
+            let files = game.and_then(|g| match snapshot::local_state(&g) {
+                Ok(local) => Some(local.pack_files()).filter(|f| !f.is_empty()),
+                Err(e) => {
+                    log(format!("{}: the saves here can't be read to check what waits for the cloud: {e:#}", self.key));
+                    None
                 }
             });
+            self.read = Some(files);
         }
-        saves::publish(cloud.files(), &line.place, &mut line.cache, m, &dir, &[], cloud.device_id())?;
-        // A backup made by hand is a kept save from the start.
-        if m.trigger == Trigger::Manual.as_str() {
-            let name = m.extra.get(COMMENT).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let pin = Pin { name, created_at: Some(m.created_at), device_id: m.device_id.clone(), ..Pin::default() };
-            line::write_pin(cloud.files(), line.place.dir(), &m.id, &pin)?;
-        }
-        add_to_view(&mut line.view, [m.summary()]);
-        log(format!("{key}: uploaded {} ({})", m.id, m.trigger));
+        self.read.as_ref().and_then(|f| f.as_deref())
     }
+
+    /// Whether the saves here were read and are what the error says lacks:
+    /// a borrowed pack that is gone, with its content not on this device
+    /// either. Uploading the version again can't help then.
+    fn lost(&self, e: &anyhow::Error) -> bool {
+        packs::missing_pack(e).is_some() && matches!(self.read, Some(Some(_)))
+    }
+}
+
+/// Upload one waiting version and make it part of its line. It stays in the
+/// queue ([`unqueue`]).
+///
+/// It is part of the line once its manifest is in the cloud and every pack
+/// it names is there too ([`saves::publish`]). A version whose manifest got
+/// into the cloud earlier while it is still waiting here (an upload that
+/// broke off after the manifest, or one whose packs couldn't be checked) is
+/// published again: that ends in the same state and checks the packs, so it
+/// never leaves the queue with a pack missing.
+fn publish_queued(cloud: &Cloud, line: &mut OpenLine, m: &mut Manifest, from_06: bool, here: &mut FilesHere) -> Result<()> {
+    let key = line.key.clone();
+    let dir = queue_dir(&key);
+    // Another process of this device uploaded it meanwhile and took it off
+    // the queue.
+    if !dir.join(format!("{}.json", m.id)).is_file() {
+        return Ok(());
+    }
+    let seen = line.view.get(&m.id).cloned();
+    // Once its manifest is in the cloud it doesn't change any more.
+    if seen.is_none() && (settle_queued(m, &line.place, &line.view) || from_06) {
+        util::atomic_write(&dir.join(format!("{}.json", m.id)), &serde_json::to_vec(m)?)?;
+        // The device counts as synced to this version since it was made.
+        let _ = state::update_game(&key, |g| {
+            if g.last_synced_id.as_deref() == Some(m.id.as_str()) {
+                g.last_synced_vv = m.vv.clone();
+            }
+        });
+    }
+    let files = match packs::borrows(m) {
+        true => here.get().unwrap_or_default(),
+        false => &[],
+    };
+    saves::publish(cloud.files(), &line.place, &mut line.cache, m, &dir, files, cloud.device_id())?;
+    // A backup made by hand is a kept save from the start.
+    if m.trigger == Trigger::Manual.as_str() && seen.as_ref().is_none_or(|s| s.pin.is_none()) {
+        let name = m.extra.get(COMMENT).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let pin = Pin { name, created_at: Some(m.created_at), device_id: m.device_id.clone(), ..Pin::default() };
+        line::write_pin(cloud.files(), line.place.dir(), &m.id, &pin)?;
+    }
+    add_to_view(&mut line.view, [m.summary()]);
+    log(format!("{key}: uploaded {} ({})", m.id, m.trigger));
+    Ok(())
+}
+
+/// A waiting version that can never be complete: a pack it borrows was
+/// cleaned up while it waited, and its content is not on this device any
+/// more either (the saves changed since). Its manifest is not in the cloud
+/// ([`saves::publish`] took it away again). It leaves the queue for the
+/// copies kept on this device ([`keep_local_copy`]), with what it brought
+/// itself, so that it no longer holds up the versions after it or every
+/// sync of the game. This device's base is then a version the line doesn't
+/// have: the next decision sees the saves here as changes no newest version
+/// has, and asks before anything is overwritten.
+fn set_aside(line: &mut OpenLine, m: &Manifest, e: &anyhow::Error) -> Result<()> {
+    let key = line.key.clone();
+    keep_local_copy(&key, m)?;
+    unqueue(&key, m)?;
+    // Nothing more builds on it.
+    if std::fs::read(base_file(&key)).ok().and_then(|b| serde_json::from_slice::<Manifest>(&b).ok()).is_some_and(|b| b.id == m.id) {
+        remember_base(&key, None);
+    }
+    if let Some(i) = line.view.snapshots.iter().position(|s| s.id == m.id) {
+        line.view.snapshots.remove(i);
+        line.view.places.remove(i);
+        add_to_view(&mut line.view, std::iter::empty());
+    }
+    line.cache.snapshots.remove(&m.id);
+    log(format!("{key}: {} can't be uploaded any more ({e:#}); it is kept on this device in local-backups", m.id));
     Ok(())
 }
 
@@ -741,16 +834,27 @@ fn ready_to_write(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>) 
     Ok(())
 }
 
-/// Upload everything of this game that waits in the queue.
-fn flush(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>) -> Result<usize> {
+/// Upload everything of this game that waits in the queue. `here` are the
+/// save files on this device when the caller scanned them a moment ago
+/// (they are read when needed otherwise). A version that can never be
+/// complete is set aside ([`set_aside`]) and the rest go on.
+fn flush(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>, here: Option<Vec<packs::LocalFile>>) -> Result<usize> {
     let waiting = queued(&line.key);
     if waiting.is_empty() {
         return Ok(0);
     }
     ready_to_write(cloud, line, game)?;
+    let key = line.key.clone();
+    let mut here = match here {
+        Some(files) => FilesHere::scanned(&key, files),
+        None => FilesHere::new(&key, game),
+    };
     let n = waiting.len();
     for (mut m, old) in waiting {
-        let done = publish_queued(cloud, line, &mut m, old).and_then(|_| unqueue(&line.key, &m));
+        let done = match publish_queued(cloud, line, &mut m, old, &mut here) {
+            Err(e) if here.lost(&e) => set_aside(line, &m, &e),
+            other => other.and_then(|_| unqueue(&line.key, &m)),
+        };
         if done.is_err() {
             line.remember();
         }
@@ -768,7 +872,7 @@ pub fn upload_pending(cloud: &Cloud, m: &SnapshotMeta) -> Result<()> {
     let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
     ready_to_write(cloud, &mut line, None)?;
-    let done = publish_queued(cloud, &mut line, &mut manifest, old);
+    let done = publish_queued(cloud, &mut line, &mut manifest, old, &mut FilesHere::new(key, None));
     line.remember();
     done
 }
@@ -790,7 +894,7 @@ pub fn flush_pending(cloud: &Cloud, key: &str) -> Result<usize> {
     }
     let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
-    flush(cloud, &mut line, None)
+    flush(cloud, &mut line, None, None)
 }
 
 /// What a new snapshot is, beyond its files.
@@ -1028,7 +1132,9 @@ fn clean(ctx: &Ctx, cloud: &Cloud, key: &str) -> Result<saves::Cleaned> {
         Some(record) => record.lines.iter().map(|l| Place::of(record, l)).collect(),
         None => return Ok(saves::Cleaned::default()),
     };
-    let devices = cloud.list_devices().unwrap_or_default();
+    // Without the other devices' records nobody knows what they synced last:
+    // cleaning up then could take the version each of them builds on.
+    let devices = cloud.list_devices()?;
     // This device's own place on each line: the games here that sync it.
     let state = state::load();
     let own = |dir: &str| state.games.values().find(|g| g.line.as_ref().is_some_and(|l| l.dir() == dir)).and_then(|g| g.last_synced_id.clone());
@@ -1505,7 +1611,7 @@ impl<'a> Session<'a> {
             return Ok(Outcome::Queued { id, reason: GaveUp.to_string() });
         }
         self.gate.set_phase(Phase::Uploading);
-        match flush(self.cloud, &mut self.line, Some(self.game)) {
+        match flush(self.cloud, &mut self.line, Some(self.game), Some(local.pack_files())) {
             Ok(_) => Ok(Outcome::Uploaded { id }),
             Err(e) if must_wait(&e) => {
                 log(format!("{}: queued {id} ({e:#})", self.key()));
@@ -1534,7 +1640,7 @@ impl<'a> Session<'a> {
             return Ok(Some(manifest.id));
         }
         self.gate.set_phase(Phase::Uploading);
-        match flush(self.cloud, &mut self.line, Some(self.game)) {
+        match flush(self.cloud, &mut self.line, Some(self.game), Some(local.pack_files())) {
             Ok(_) => {
                 log(format!("{}: protected local saves as {} ({})", self.key(), manifest.id, manifest.trigger));
                 Ok(Some(manifest.id))
@@ -1795,7 +1901,7 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
         if !queued(&game.key).is_empty() {
             gate.set_phase(Phase::Uploading);
         }
-        if let Err(e) = flush(cloud, &mut s.line, Some(game)) {
+        if let Err(e) = flush(cloud, &mut s.line, Some(game), None) {
             if must_wait(&e) {
                 return offline(ctx, game, trigger, e);
             }
@@ -2049,7 +2155,7 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
         }
         Err(e) => return Err(e),
     };
-    flush(cloud, &mut s.line, Some(game))?;
+    flush(cloud, &mut s.line, Some(game), None)?;
     let local = with_carried(Some(cloud), game, Some((&s.line.place, &s.line.view)), true, local)?;
     let same = s.line.view.snapshots.iter().rev().find(|x| x.content_hash == local.hash).map(|x| x.id.clone());
     let outcome = if let Some(id) = same {
@@ -2074,7 +2180,7 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
-    flush(cloud, &mut s.line, Some(game))?;
+    flush(cloud, &mut s.line, Some(game), None)?;
     let local = s.local()?;
     let pulled = s.pull(&local, id)?;
     // Make the restored content the head so the next sync keeps it.
@@ -2108,7 +2214,7 @@ pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl F
     let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
-    flush(cloud, &mut s.line, Some(game))?;
+    flush(cloud, &mut s.line, Some(game), None)?;
     if let Ok(local) = s.local() {
         s.protect(&local, Trigger::PreRestore)?;
     }
@@ -2205,7 +2311,7 @@ pub fn export_snapshot(ctx: &Ctx, game: &GameEntry, id: &str, dest: &std::path::
 /// first step of following another one.
 pub(crate) fn flush_queue(cloud: &Cloud, game: &GameEntry) -> Result<()> {
     let mut line = cloud.open(&game.key)?;
-    flush(cloud, &mut line, Some(game))?;
+    flush(cloud, &mut line, Some(game), None)?;
     Ok(())
 }
 
@@ -2367,7 +2473,7 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
-    flush(cloud, &mut s.line, Some(game))?;
+    flush(cloud, &mut s.line, Some(game), None)?;
     let Some((_, place)) = cloud.other_lines(&game.key)?.into_iter().find(|(l, _)| l.id == line) else {
         bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
     };
@@ -2450,7 +2556,7 @@ pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outco
     let mut carried: (Option<Origin>, Option<Manifest>) = (None, None);
     if !staying {
         let mut old = cloud.open(key)?;
-        flush(cloud, &mut old, Some(game))?;
+        flush(cloud, &mut old, Some(game), None)?;
         // Another platform's files go along to the line it continues on.
         local = with_carried(Some(cloud), game, Some((&old.place, &old.view)), true, local)?;
         if to != library::MAIN_LINE && !matches!(choice, LineChoice::Independent { .. }) && !cloud.lines_of(key)?.iter().any(|l| l.id == to) {
