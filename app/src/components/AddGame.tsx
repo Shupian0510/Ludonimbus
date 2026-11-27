@@ -688,7 +688,7 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
     const adapter = await api.detectAdapter(exe).catch(() => null);
     setRule(adapter);
     setName(adapter?.name ?? nameFromExe(exe));
-    setGame({ name: adapter?.name ?? nameFromExe(exe), exe, install: exe.replace(/[\/][^\/]*$/, "") });
+    setGame({ name: adapter?.name ?? nameFromExe(exe), exe, install: exe.replace(/[\\/][^\\/]*$/, "") });
   };
 
   const add = async (n: string, saves: string[], title: string | null) => {

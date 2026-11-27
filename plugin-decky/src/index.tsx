@@ -3,13 +3,24 @@
 // that's running (or was last started), with sync now, the conflict choice
 // and newer saves from another version of the game, all with the controller,
 // and the saves in the cloud with "make current".
-import { callable, definePlugin, toaster } from "@decky/api";
-import { ButtonItem, PanelSection, PanelSectionRow, Router, staticClasses } from "@decky/ui";
-import { useCallback, useEffect, useState } from "react";
+import { callable, definePlugin, toaster, useQuickAccessVisible as apiQuickAccessVisible } from "@decky/api";
+import { ButtonItem, PanelSection, PanelSectionRow, Router, staticClasses, useQuickAccessVisible as uiQuickAccessVisible } from "@decky/ui";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FaCloud } from "react-icons/fa";
 
 type Reply<T> = { ok: boolean; status: number; body: T & { error?: string } };
 const request = callable<[method: string, path: string], Reply<any>>("request");
+
+/** Whether the quick access menu is open (older loaders: @decky/ui's copy). */
+const useQuickAccessVisible: () => boolean = apiQuickAccessVisible ?? uiQuickAccessVisible ?? (() => true);
+
+/**
+ * How often the status is read while the menu is open. It's cheap: the app
+ * asks the cloud at most once a minute (`FRESH_SECS`). The version list and
+ * newer saves always ask the cloud, so they are read only when the panel
+ * opens, after an action, and when a sync has changed something.
+ */
+const POLL_MS = 5000;
 
 interface Status {
   managed: boolean;
@@ -110,6 +121,7 @@ function currentAppId(): number | null {
 let lastAppId: number | null = null;
 
 function Panel() {
+  const visible = useQuickAccessVisible();
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [newer, setNewer] = useState<Newer | null>(null);
@@ -118,31 +130,60 @@ function Panel() {
   if (appid) lastAppId = appid;
   const t = TEXT[status?.lang === "zh-CN" ? "zh-CN" : "en"];
 
+  // The game shown now: answers about the one before are dropped.
+  const shown = useRef(appid);
+  useEffect(() => {
+    shown.current = appid;
+    return () => void (shown.current = null);
+  }, [appid]);
+  // When the version list and newer saves are read again (see POLL_MS).
+  const wantDetails = useRef(true);
+  const detailsFor = useRef("");
+
   const load = useCallback(async () => {
     if (!appid) return;
     const r = await request("GET", `/v1/steam/apps/${appid}?refresh=1`);
+    if (shown.current !== appid) return;
     if (!r.ok) {
       setError(r.status === 0 ? TEXT.en.notRunning : r.body?.error ?? String(r.status));
       return;
     }
     setError(null);
     setStatus(r.body);
-    if (r.body.managed) {
-      const [n, s] = await Promise.all([request("GET", `/v1/games/${r.body.key}/newer`), request("GET", `/v1/games/${r.body.key}/snapshots`)]);
-      setNewer(n.ok ? n.body : null);
-      setSnapshots(s.ok ? (s.body.snapshots as Snapshot[]).filter((x) => x.trigger !== "pre-restore" && x.trigger !== "conflict-keep").slice(0, 8) : null);
-    }
+    const s = r.body as Status;
+    // Not while a sync runs: it is read when it has finished (lastSyncAt changes).
+    if (!s.managed || s.phase !== "idle") return;
+    const mark = `${s.key}|${s.lastSyncAt}|${s.status}`;
+    if (!wantDetails.current && mark === detailsFor.current) return;
+    wantDetails.current = false;
+    detailsFor.current = mark;
+    const [n, v] = await Promise.all([request("GET", `/v1/games/${s.key}/newer`), request("GET", `/v1/games/${s.key}/snapshots`)]);
+    if (shown.current !== appid) return;
+    setNewer(n.ok ? n.body : null);
+    setSnapshots(v.ok ? (v.body.snapshots as Snapshot[]).filter((x) => x.trigger !== "pre-restore" && x.trigger !== "conflict-keep").slice(0, 8) : null);
   }, [appid]);
 
+  // Only while the menu is open; one request at a time.
   useEffect(() => {
-    load();
-    const id = setInterval(load, 4000);
+    if (!visible || !appid) return;
+    wantDetails.current = true;
+    let running = false;
+    const tick = () => {
+      if (running) return;
+      running = true;
+      load()
+        .catch(() => undefined)
+        .finally(() => (running = false));
+    };
+    tick();
+    const id = setInterval(tick, POLL_MS);
     return () => clearInterval(id);
-  }, [load]);
+  }, [visible, appid, load]);
 
   const post = async (path: string, ok: string) => {
     const r = await request("POST", path);
     toaster.toast({ title: "Ludonimbus", body: r.ok ? ok : r.body?.error ?? String(r.status) });
+    wantDetails.current = true;
     load();
   };
 
