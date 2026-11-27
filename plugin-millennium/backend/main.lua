@@ -1,22 +1,51 @@
 -- Ludonimbus Steam plugin backend.
 --
 -- Talks to the Ludonimbus desktop app (running in the tray) through its local
--- API. The app writes the port and a per-launch token to
--- %APPDATA%\Ludonimbus\agent.json; it is read again on every call, so a
--- restarted app is picked up without reloading Steam. The plugin holds no
--- cloud credentials and does no syncing itself.
+-- API. The app writes the port and a per-launch token to agent.json in its
+-- data folder (%APPDATA%\Ludonimbus on Windows, ~/.config/Ludonimbus on
+-- Linux); it is read again on every call, so a restarted app is picked up
+-- without reloading Steam. The plugin holds no cloud credentials and does no
+-- syncing itself.
 
 local http       = require("http")
 local json       = require("json")
 local logger     = require("logger")
 local millennium = require("millennium")
 
-local function agent_file()
+local function set(value)
+    return value ~= nil and value ~= ""
+end
+
+-- The same folder as `paths::data_dir()` in crates/core: LUDONIMBUS_HOME,
+-- else the system's config folder (dirs::config_dir) + "Ludonimbus".
+local function data_dir()
+    local home = os.getenv("LUDONIMBUS_HOME")
+    if set(home) and home:match("%S") then
+        return home
+    end
     local appdata = os.getenv("APPDATA")
-    if not appdata or appdata == "" then
+    if set(appdata) then
+        return appdata .. "\\Ludonimbus"
+    end
+    -- Linux: XDG_CONFIG_HOME when it is an absolute path, else ~/.config.
+    local xdg = os.getenv("XDG_CONFIG_HOME")
+    if set(xdg) and xdg:sub(1, 1) == "/" then
+        return xdg .. "/Ludonimbus"
+    end
+    local user = os.getenv("HOME")
+    if set(user) then
+        return user .. "/.config/Ludonimbus"
+    end
+    return nil
+end
+
+local function agent_file()
+    local dir = data_dir()
+    if not dir then
         return nil
     end
-    return appdata .. "\\Ludonimbus\\agent.json"
+    local sep = dir:find("\\", 1, true) and "\\" or "/"
+    return dir .. sep .. "agent.json"
 end
 
 local function read_agent()
