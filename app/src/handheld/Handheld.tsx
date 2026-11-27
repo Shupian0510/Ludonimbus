@@ -423,6 +423,7 @@ function Game({
           ]}
         >
           {game && !isCurrent(picked) && <p className="muted">{t.saves.makeCurrentText(game.name, picked.deviceName, dateTime(picked.createdAt))}</p>}
+          {game && !isCurrent(picked) && (data?.tooNew ?? []).includes(picked.id) && <p className="muted">{t.saves.tooNew(picked.gameVersion ?? "?")}</p>}
           {game && !isCurrent(picked) && note && <p className="muted">{note}</p>}
         </Dialog>
       )}

@@ -14,7 +14,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：Steam 商店装的游戏也能加进来。「只备份」给 Steam 云存档再留一份带历史的备份；「接管」以后由 Ludonimbus 同步，可以和其他平台、其他设备共用进度。
 - 新增：独立存档。一台设备可以存自己的进度，不和其他设备共用；别的设备可以跟随它。
 - 新增：Xbox 应用（Game Pass）的版本可以和 Steam 版共用进度。写入 Xbox 版是实验性的，只在你自己选择时才写。
-- 新增：Switch 游戏的存档可以在 Ryujinx 和 Eden 之间通用。
+- 新增：Switch 游戏的存档可以在 Ryujinx 和 Eden 之间通用。规则列表里的游戏（比如星露谷物语），Switch 版和 PC 版也能共用进度：第一次问一次；另一个平台用更新版本的游戏存的档不会自动换过来。
 - 改进：同步更快，在慢的云盘上尤其明显：启动前检查通常只要一次请求。启动前最多等云端 10 秒；退出后上传超过 10 秒就转到后台继续，不用等着。
 - 改进：判断哪一份更新不再看电脑的时钟。两台设备各有进度时一定会问你，不会悄悄覆盖。
 - 改进：大存档只上传变化了的文件；上传中断后从断的地方接着传。
@@ -54,7 +54,7 @@ Saves and sync
 - New: games installed from the Steam store can be added too. "Backup only" keeps a second copy of what Steam Cloud syncs, with history; after "Take over", Ludonimbus syncs the game, so it can share progress with other platforms and other devices.
 - New: a device's own saves. A device can keep its own progress instead of sharing with the others, and another device can follow it.
 - New: the Xbox app (Game Pass) version can share progress with the Steam version. Writing into the Xbox version is experimental and happens only when you choose it.
-- New: saves of Switch games work in both Ryujinx and Eden.
+- New: saves of Switch games work in both Ryujinx and Eden. For games in the rule list (such as Stardew Valley), the Switch and PC versions can share progress too: you're asked once, and a save made by a newer version of the game on the other platform isn't brought over by itself.
 - Improved: sync is faster, most of all on slow clouds: the check before launch usually takes one request. A launch waits for the cloud for at most 10 seconds; an upload that takes longer than 10 seconds after exit carries on in the background.
 - Improved: which save is newer is no longer decided by the PC's clock. When two devices both have progress you are always asked; nothing is overwritten silently.
 - Improved: large saves upload only the files that changed, and an interrupted upload continues where it stopped.

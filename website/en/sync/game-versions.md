@@ -26,6 +26,7 @@ When you add a game, Ludonimbus first works out which game it is, then looks in 
 
 - **Shared without asking**: the same game on the same platform on several devices; the same Switch game on a console and in the emulators; PC versions that keep their saves in the same place.
 - **Asked once**: the same game, with its saves in a different place, such as another store's version.
+- **Asked once, by a rule**: for games in the rule list (such as Stardew Valley), the Switch version (on a console or in an emulator) and the PC version keep the same files, see ["The Switch and PC versions"](#rule) below.
 - **Kept apart**: versions with different save formats (a PC version and a console version, with no rule saying they're interchangeable). They are still on one card, each with its own progress, and you can move saves by hand with ["Send to…"](#send).
 
 Games that only have the same name, and can't be told to be the same game, are not merged.
@@ -46,6 +47,16 @@ Once confirmed on one device, the same version on your other devices joins witho
 Nothing is asked while this version has no saves on this PC yet: play it once and save first.
 
 To go back, click "Keep apart from the other versions" in the "This PC" menu of the version strip.
+
+## The Switch and PC versions {#rule}
+
+Some games keep the same files on the Switch and on PC, and Ludonimbus's rule list says which games and where their saves are. For these games, the Switch version (in an emulator or on a console) and the PC version can share one progress.
+
+- You're asked the first time: "The PC version keeps the same saves as this one. Share the progress?" (on the PC version, it names the Switch version). The "?" says which game's rule it is and how many files match.
+- Only the save files the rule names are shared. Each platform's own files, such as settings, stay where they are and aren't replaced.
+- An older version of a game can't read a newer save. A save made by a newer version of the game on the other platform isn't brought over by itself: the game page says so; update the game to the same version, then make the save current on the Saves tab.
+
+A console's version syncs through a PC, see [Switch console](../platforms/switch.md).
 
 ## The Xbox app's version (experimental) {#xbox}
 

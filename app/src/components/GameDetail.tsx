@@ -288,6 +288,11 @@ export function GameDetail({
             </div>
           </div>
         )}
+        {check?.tooNew && check.status === "cloudNewer" && (
+          <div className="banner banner-info">
+            <Icon name="warn" /> {g.tooNew(check.tooNew)} <Hint text={g.tooNewHint} />
+          </div>
+        )}
         {check?.message && check.status !== "conflict" && (
           <div className={`banner ${check.status === "offline" ? "banner-info" : "banner-bad"}`}>
             <Icon name="warn" /> {check.message}

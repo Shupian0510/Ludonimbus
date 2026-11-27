@@ -90,7 +90,7 @@ export function Saves({
   const t = useT();
   const v = t.saves;
   const [data, setData] = useState<SnapshotList | null>(null);
-  const [others, setOthers] = useState<{ saves: OtherSave[]; platforms: PlatformMarks }>({ saves: [], platforms: {} });
+  const [others, setOthers] = useState<{ saves: OtherSave[]; platforms: PlatformMarks; tooNew?: string[] }>({ saves: [], platforms: {} });
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [meta, setMeta] = useState<Record<string, SnapshotMeta>>({});
@@ -170,16 +170,20 @@ export function Saves({
     const steamToo = !!game.store && game.store.mode !== "managed";
     // Writing into the Xbox app's containers is experimental.
     const note = steamToo ? t.steamCloud.restoreNote : game.xboxContainers ? v.xboxNote : null;
+    // Saved on another platform by a newer game than the one here.
+    const tooNew = (data?.tooNew ?? []).includes(s.id) || (others.tooNew ?? []).includes(s.id) ? v.tooNew(s.gameVersion ?? "?") : null;
     const ok = await ui.confirm({
       title: v.makeCurrentTitle,
-      text: note ? (
-        <>
-          <p>{text}</p>
-          <p className="muted">{note}</p>
-        </>
-      ) : (
-        text
-      ),
+      text:
+        note || tooNew ? (
+          <>
+            <p>{text}</p>
+            {tooNew && <p className="muted">{tooNew}</p>}
+            {note && <p className="muted">{note}</p>}
+          </>
+        ) : (
+          text
+        ),
       confirm: v.makeCurrent,
     });
     if (!ok) return;

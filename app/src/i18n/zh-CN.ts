@@ -456,6 +456,7 @@ export const saves = {
   makeCurrentTitle: "设为当前？",
   makeCurrentText: (name: string, device: string, at: string) => `「${name}」在这台设备上的存档会换成 ${device} 在 ${at} 的这一份，现在的会先保留。`,
   xboxNote: "写入 Xbox 版是实验性的（Xbox 应用的云同步可能把存档换回去），这里现在的存档会先保留一份。",
+  tooNew: (version: string) => `这份存档是游戏 ${version} 存的，比这里的新。旧版本的游戏读不了新版本的存档：先把这里的游戏更新到 ${version}。`,
   madeCurrent: "已设为当前",
   undo: "撤销",
   undone: "已撤销",
@@ -502,6 +503,9 @@ export const saves = {
 /** 游戏页上「和另一个版本共用存档」的那一行（docs/plan-v2.md 第 6 节「问一次」）。 */
 export const join = {
   text: (device: string) => `和 ${device} 上的版本是同一份存档。共用进度？`,
+  textRule: (from: string) => `${from} 版和这个版本的存档是通用的。共用进度？`,
+  byRule: (rule: string) => `按「${rule}」的规则`,
+  others: (n: number, from: string) => `${n} 个文件是 ${from} 版自己的（比如设置），不会改动`,
   share: "共用",
   no: "不是",
   shared: "已共用",
@@ -838,6 +842,8 @@ export const game = {
   playtimeSteam: (time: string) => `　其中 ${time}是开始使用 Ludonimbus 之前 Steam 记录的`,
   playtimePlatforms: "按平台",
   playtimePlatform: (name: string, time: string) => `${name}：${time}`,
+  tooNew: (version: string) => `云端最新的存档是游戏 ${version} 存的，比这里的新，不会自动换过来`,
+  tooNewHint: "旧版本的游戏读不了新版本的存档。先把这里的游戏更新到同一个版本，再到「存档」里把它设为当前。",
   conflictTitle: "本机和云端都有新的存档改动",
   conflictText: (device: string, at: string, size: string, files: number, localSize: string) =>
     `云端最新：${device} 于 ${at} 保存（${size}）。本机：${files} 个文件，${localSize}。没选的那份也会留在「存档」里。`,

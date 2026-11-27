@@ -313,8 +313,10 @@ export function JoinRow({ gameKey, name, disabled, onChanged }: { gameKey: strin
     }
   };
   const detail = [
+    ...(s.rule ? [j.byRule(s.rule)] : []),
     ...s.binds.map((b) => b.local),
     j.matched(s.matched),
+    ...(s.rule && s.others ? [j.others(s.others, s.from ?? "")] : []),
     ...(s.outside.length > 0 ? [j.outside(s.outside.length), ...s.outside.slice(0, 5)] : []),
     ...(s.confirmed ? [j.confirmed] : []),
   ].join("\n");
@@ -323,7 +325,7 @@ export function JoinRow({ gameKey, name, disabled, onChanged }: { gameKey: strin
     <div className="banner banner-info join-row">
       <Icon name="link" />
       <span>
-        {j.text(s.device)} <Hint text={detail} />
+        {s.rule && s.from ? j.textRule(s.from) : j.text(s.device)} <Hint text={detail} />
       </span>
       <Button small kind="primary" onClick={() => answer("accept")} disabled={disabled} title={disabled ? t.savelib.running : undefined}>
         {j.share}

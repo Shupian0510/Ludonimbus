@@ -493,6 +493,23 @@ pub struct SnapshotList {
     last_synced_id: Option<String>,
     /// How to show each platform the versions name.
     platforms: BTreeMap<String, PlatformMark>,
+    /// The versions saved on another platform by a newer game than the one
+    /// that wrote the saves here, which the game's rule says an older game
+    /// can't load ([`sync::too_new`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    too_new: Vec<String>,
+}
+
+/// The ids among `list` that [`sync::too_new`] says this device's saves of
+/// the game `key` can't take as they are. Nothing is read unless the game's
+/// rule says an older game can't load a newer save.
+fn too_new_ids<'a>(cfg: &config::AppConfig, key: &str, list: impl IntoIterator<Item = &'a SnapshotSummary>) -> Vec<String> {
+    let Some(g) = cfg.game(key) else { return Vec::new() };
+    let Some(here) = sync::saves_version(g) else { return Vec::new() };
+    list.into_iter()
+        .filter(|s| sync::too_new(g, Some(&here), &s.platform, s.game_version.as_deref()))
+        .map(|s| s.id.clone())
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -520,6 +537,9 @@ pub async fn game_line_members(key: String) -> CmdResult<LineList> {
 pub struct OtherSaves {
     saves: Vec<sync::OtherSave>,
     platforms: BTreeMap<String, PlatformMark>,
+    /// As [`SnapshotList::too_new`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    too_new: Vec<String>,
 }
 
 /// The newest version of each save line of the game this device doesn't
@@ -530,7 +550,8 @@ pub async fn other_saves(key: String) -> CmdResult<OtherSaves> {
         with_game(&key, |ctx, g| {
             let saves = sync::other_saves(ctx, g)?;
             let platforms = platform_marks(&ctx.cfg, saves.iter().map(|s| s.snapshot.platform.as_str()));
-            Ok(OtherSaves { saves, platforms })
+            let too_new = too_new_ids(&ctx.cfg, &key, saves.iter().map(|s| &s.snapshot));
+            Ok(OtherSaves { saves, platforms, too_new })
         })
     })
     .await
@@ -585,11 +606,13 @@ pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
         let head = sync::mainline_head(&list).map(|h| h.id);
         list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         let platforms = platform_marks(&ctx.cfg, list.iter().map(|s| s.platform.as_str()));
+        let too_new = too_new_ids(&ctx.cfg, &key, &list);
         Ok(SnapshotList {
             snapshots: list,
             head_id: head,
             last_synced_id: state::game(&key).last_synced_id,
             platforms,
+            too_new,
         })
     })
     .await

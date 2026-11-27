@@ -79,6 +79,8 @@ export interface SnapshotList {
   headId: string | null;
   lastSyncedId: string | null;
   platforms: PlatformMarks;
+  /** Versions saved on another platform by a newer game than the one that wrote the saves here, which an older game can't load. */
+  tooNew?: string[];
 }
 
 /** One version of a game on one device, on a save line. */
@@ -130,6 +132,8 @@ export interface StatusReport {
   lastSyncAt: string | null;
   pending: number;
   checkedAt: string;
+  /** The game version that saved the newest version on another platform, when it is newer than here and an older game can't load it: not taken by itself. */
+  tooNew?: string;
 }
 
 export interface ConflictInfo {
@@ -635,6 +639,12 @@ export interface JoinSuggestion {
   uncovered: string[];
   /** Files here that stay outside and are no longer uploaded once shared. */
   outside: string[];
+  /** The cross-platform rule, by name, when the line is another platform's and the bindings are the rule's. */
+  rule?: string;
+  /** That platform ("Switch", "PC"). */
+  from?: string;
+  /** Files of the line that are that platform's own (settings and the like): they stay as they are. */
+  others?: number;
 }
 
 /**
@@ -734,7 +744,7 @@ export const api = {
   backup: (key: string, comment: string) => invoke<Outcome>("backup_game", { key, comment }),
   lines: (key: string) => invoke<SaveLine[]>("game_lines", { key }),
   lineMembers: (key: string) => invoke<{ lines: SaveLine[]; platforms: PlatformMarks }>("game_line_members", { key }),
-  otherSaves: (key: string) => invoke<{ saves: OtherSave[]; platforms: PlatformMarks }>("other_saves", { key }),
+  otherSaves: (key: string) => invoke<{ saves: OtherSave[]; platforms: PlatformMarks; tooNew?: string[] }>("other_saves", { key }),
   /** Take back the last time saves of the cloud replaced the ones here. */
   undoReplace: (key: string) => invoke<Outcome>("undo_replace", { key }),
   /** Make a version of another save line the progress here. */
