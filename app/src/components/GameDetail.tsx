@@ -62,7 +62,7 @@ export function GameDetail({
   useEffect(() => {
     const target = sceneIs("game-files")
       ? () => document.getElementById("game-backup")
-      : sceneIs("game-screenshots", "game-achievements")
+      : sceneIs("game-screenshots", "game-achievements", "versions")
         ? () => document.querySelector(".detail-body .tabs")
         : null;
     if (!target) return;
