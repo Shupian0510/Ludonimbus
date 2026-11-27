@@ -245,6 +245,18 @@ pub struct GameEntry {
     pub roots: BTreeMap<String, String>,
     /// Resolve saves through Ludusavi's database instead of patterns.
     pub ludusavi_title: Option<String>,
+    /// The save locations of `ludusavi_title` in Ludusavi's database, as
+    /// patterns like `saves` (worked out on this device from the database's
+    /// rules, [`crate::games::ludusavi_saves`]). A scan still asks Ludusavi;
+    /// a restore writes only files under these, the user's own `saves`, or
+    /// files a scan finds now. Patterns the user adds stay in `saves`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ludusavi_saves: Vec<String>,
+    /// What `ludusavi_saves` were worked out from (Ludusavi's version and
+    /// database, the title, the game's folders here), so they are worked
+    /// out again once that changes. `None`: not yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ludusavi_from: Option<String>,
     /// Upload when the game process exits instead of waiting for the
     /// launcher to close. `None` = the adapter's default.
     pub upload_on_game_exit: Option<bool>,

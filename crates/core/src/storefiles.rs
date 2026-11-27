@@ -87,6 +87,14 @@ pub fn of_version_in(game: &GameEntry, files: Vec<PathBuf>, local_app_data: Opti
     }
 }
 
+/// The folder of an Xbox app version's own containers on this device, which
+/// [`of_version`] adds when Ludusavi doesn't name them. `None` for any
+/// other version, or before the Xbox app made the package's data folder.
+pub fn own_containers(game: &GameEntry) -> Option<PathBuf> {
+    let Kind::Xbox(package) = kind(game) else { return None };
+    xbox::package_data_dir(&dirs::data_local_dir()?, &package).map(|own| own.join("SystemAppData").join("wgs"))
+}
+
 /// The package folder name (lowercase) when `path` is in an Xbox app
 /// game's containers: `…\Packages\<package folder>\SystemAppData\wgs\…`.
 fn container_package(path: &Path) -> Option<String> {

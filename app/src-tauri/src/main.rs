@@ -105,6 +105,13 @@ fn main() {
                     }
                 }
             });
+            // Save locations from Ludusavi's database for the games it finds
+            // the saves of: filled in once, and again when it changed.
+            std::thread::spawn(|| {
+                if let Err(e) = ludonimbus_core::games::refresh_ludusavi_saves(None) {
+                    ludonimbus_core::logger::log("sync", format!("the save locations from Ludusavi's database were not updated: {e:#}"));
+                }
+            });
             let handle = app.handle().clone();
             std::thread::spawn(move || steam_plugin::refresh_installed(&handle));
             std::thread::spawn(|| {
