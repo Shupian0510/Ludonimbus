@@ -27,8 +27,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -428,7 +429,7 @@ impl BaiduPan {
     }
 
     pub fn token(&self) -> Token {
-        self.token.lock().unwrap().clone()
+        self.token.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// The app folder (`/apps/<app name>`), the root of this store.
@@ -441,7 +442,8 @@ impl BaiduPan {
     /// netdisk (docs/plan-game-backup.md, section 10). Error numbers in
     /// `expected` come back as `Ok` for the caller to inspect.
     pub fn xpan(&self, endpoint: &str, params: &[(&str, &str)], form: Option<&[(&str, &str)]>, expected: &[i64]) -> Result<Value> {
-        self.call(expected, |t| {
+        // A form changes something (copy, move…) and is not sent twice.
+        self.call_with(form.is_none(), expected, |t| {
             let url = self.api_url(endpoint, params, t);
             match form {
                 Some(f) => self.agent.post(&url).send_form(f),
@@ -486,7 +488,7 @@ impl BaiduPan {
             }
         };
         let at = new.access_token.clone();
-        *self.token.lock().unwrap() = new;
+        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = new;
         Ok(at)
     }
 
@@ -494,11 +496,32 @@ impl BaiduPan {
     /// errors and retrying briefly when rate limited. Error numbers listed in
     /// `expected` are returned as `Ok` for the caller to inspect.
     fn call(&self, expected: &[i64], f: impl Fn(&str) -> Result<ureq::Response, ureq::Error>) -> Result<Value> {
+        self.call_with(true, expected, f)
+    }
+
+    /// [`Self::call`]. With `again`, a call the server turns away with an
+    /// HTTP error for the moment (429, 5xx) is also sent again, as long as it
+    /// asks for a short wait ([`super::gdrive::retry_wait`]): only for calls
+    /// that do the same when they arrive twice. A rate-limit error number
+    /// means the call was not carried out, so that is retried for any call.
+    fn call_with(&self, again: bool, expected: &[i64], f: impl Fn(&str) -> Result<ureq::Response, ureq::Error>) -> Result<Value> {
         let mut forced = false;
         let mut tries = 0;
+        let mut busy = 0;
         loop {
             let token = self.access_token(false)?;
-            let v = json_of(f(&token))?;
+            let res = f(&token);
+            if let Err(ureq::Error::Status(code, r)) = &res {
+                if again && super::gdrive::busy_status(*code) {
+                    if let Some(wait) = super::gdrive::retry_wait(busy, r.header("Retry-After"), chrono::Utc::now()) {
+                        busy += 1;
+                        logger::log("baidu", format!("HTTP {code}; trying again in {} ms", wait.as_millis()));
+                        std::thread::sleep(wait);
+                        continue;
+                    }
+                }
+            }
+            let v = json_of(res)?;
             let code = errno(&v);
             if code == 0 || expected.contains(&code) {
                 return Ok(v);
@@ -566,20 +589,20 @@ impl BaiduPan {
     fn ensure_parents(&self, path: &str) -> Result<()> {
         let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let parent = segs[..segs.len().saturating_sub(1)].join("/");
-        if self.known_dirs.lock().unwrap().contains(&parent) {
+        if self.known_dirs.lock().unwrap_or_else(|e| e.into_inner()).contains(&parent) {
             return Ok(());
         }
         if self.list_full(&self.full(&parent))?.is_none() {
             for i in 0..segs.len() {
                 let dir = segs[..i].join("/");
-                if self.known_dirs.lock().unwrap().contains(&dir) {
+                if self.known_dirs.lock().unwrap_or_else(|e| e.into_inner()).contains(&dir) {
                     continue;
                 }
                 self.mkdir(&self.full(&dir))?;
-                self.known_dirs.lock().unwrap().insert(dir);
+                self.known_dirs.lock().unwrap_or_else(|e| e.into_inner()).insert(dir);
             }
         }
-        let mut known = self.known_dirs.lock().unwrap();
+        let mut known = self.known_dirs.lock().unwrap_or_else(|e| e.into_inner());
         for i in 0..segs.len() {
             known.insert(segs[..i].join("/"));
         }
@@ -587,7 +610,7 @@ impl BaiduPan {
     }
 
     fn upload_host(&self, full: &str, uploadid: &str) -> String {
-        if let Some((h, until)) = self.upload_host.lock().unwrap().clone() {
+        if let Some((h, until)) = self.upload_host.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             if Instant::now() < until {
                 return h;
             }
@@ -616,26 +639,36 @@ impl BaiduPan {
                 .map(str::to_string)?;
             let secs = v["expire"].as_u64().unwrap_or(60).max(30);
             let server = if server.contains("://") { server } else { format!("https://{server}") };
-            *self.upload_host.lock().unwrap() = Some((server.clone(), Instant::now() + Duration::from_secs(secs)));
+            *self.upload_host.lock().unwrap_or_else(|e| e.into_inner()) = Some((server.clone(), Instant::now() + Duration::from_secs(secs)));
             Some(server)
         });
         host.unwrap_or(fallback)
     }
 
-    fn put(&self, path: &str, data: &[u8]) -> Result<()> {
-        if data.is_empty() {
+    fn put(&self, path: &str, body: Body) -> Result<()> {
+        if body.len() == 0 {
             bail!(crate::tr!("百度网盘不能上传空文件", "Baidu Netdisk can't upload empty files"));
         }
         self.ensure_parents(path)?;
         let full = self.full(path);
-        let blocks: Vec<String> = data.chunks(SLICE).map(|c| hex(&Md5::digest(c))).collect();
+        let sent = self.send(&full, body);
+        // Whatever the outcome, the id a listing gave for this path may be
+        // gone now: a finished upload (also a rapid one) puts a new file
+        // there, and one that failed may have got as far.
+        self.fs_ids.lock().unwrap_or_else(|e| e.into_inner()).remove(&full);
+        sent
+    }
+
+    /// The upload itself: precreate, the slices the server asks for, create.
+    fn send(&self, full: &str, body: Body) -> Result<()> {
+        let blocks = body.blocks()?;
         let block_list = serde_json::to_string(&blocks)?;
-        let size = data.len().to_string();
+        let size = body.len().to_string();
         let pre = self.call(&[], |t| {
             self.agent
                 .post(&self.api_url("/rest/2.0/xpan/file", &[("method", "precreate")], t))
                 .send_form(&[
-                    ("path", full.as_str()),
+                    ("path", full),
                     ("size", size.as_str()),
                     ("isdir", "0"),
                     ("autoinit", "1"),
@@ -655,20 +688,21 @@ impl BaiduPan {
             Some(a) => a.iter().filter_map(|x| x.as_u64().map(|n| n as usize)).collect(),
             None => (0..blocks.len()).collect(),
         };
-        let host = self.upload_host(&full, &uploadid);
+        let host = self.upload_host(full, &uploadid);
         for i in todo {
-            let chunk = data.chunks(SLICE).nth(i).ok_or_else(|| anyhow!(crate::tr!("百度网盘要求了不存在的分片 {i}", "Baidu Netdisk asked for a slice that doesn't exist: {i}")))?;
+            let chunk = body.slice(i)?.ok_or_else(|| anyhow!(crate::tr!("百度网盘要求了不存在的分片 {i}", "Baidu Netdisk asked for a slice that doesn't exist: {i}")))?;
             let seq = i.to_string();
             let boundary = format!("----Ludonimbus{}", ulid::Ulid::new());
-            let mut body = Vec::with_capacity(chunk.len() + 256);
-            body.extend_from_slice(
+            let mut form = Vec::with_capacity(chunk.len() + 256);
+            form.extend_from_slice(
                 format!(
                     "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"blob\"\r\nContent-Type: application/octet-stream\r\n\r\n"
                 )
                 .as_bytes(),
             );
-            body.extend_from_slice(chunk);
-            body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+            form.extend_from_slice(&chunk);
+            drop(chunk);
+            form.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
             let v = self.call(&[], |t| {
                 let url = url::Url::parse_with_params(
                     &format!("{host}/rest/2.0/pcs/superfile2"),
@@ -676,7 +710,7 @@ impl BaiduPan {
                         ("method", "upload"),
                         ("type", "tmpfile"),
                         ("access_token", t),
-                        ("path", full.as_str()),
+                        ("path", full),
                         ("uploadid", uploadid.as_str()),
                         ("partseq", seq.as_str()),
                     ],
@@ -686,7 +720,7 @@ impl BaiduPan {
                 self.bulk
                     .post(&url)
                     .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
-                    .send_bytes(&body)
+                    .send_bytes(&form)
             })?;
             if let Some(md5) = v["md5"].as_str() {
                 if !md5.eq_ignore_ascii_case(&blocks[i]) {
@@ -694,11 +728,12 @@ impl BaiduPan {
                 }
             }
         }
-        self.call(&[], |t| {
+        // Not sent twice: a create that went through used up the upload id.
+        self.call_with(false, &[], |t| {
             self.agent
                 .post(&self.api_url("/rest/2.0/xpan/file", &[("method", "create")], t))
                 .send_form(&[
-                    ("path", full.as_str()),
+                    ("path", full),
                     ("size", size.as_str()),
                     ("isdir", "0"),
                     ("rtype", "3"),
@@ -706,18 +741,17 @@ impl BaiduPan {
                     ("block_list", block_list.as_str()),
                 ])
         })?;
-        self.fs_ids.lock().unwrap().remove(&full);
         Ok(())
     }
 
     /// fs_id of a file, from the last listing or by listing its folder.
     fn fs_id(&self, full: &str) -> Result<Option<u64>> {
-        if let Some(id) = self.fs_ids.lock().unwrap().get(full) {
+        if let Some(id) = self.fs_ids.lock().unwrap_or_else(|e| e.into_inner()).get(full) {
             return Ok(Some(*id));
         }
         let (dir, _) = full.rsplit_once('/').unwrap_or(("/", full));
         let Some(items) = self.list_full(dir)? else { return Ok(None) };
-        let mut ids = self.fs_ids.lock().unwrap();
+        let mut ids = self.fs_ids.lock().unwrap_or_else(|e| e.into_inner());
         for it in &items {
             if let (Some(p), Some(id)) = (it["path"].as_str(), it["fs_id"].as_u64()) {
                 ids.insert(p.to_string(), id);
@@ -727,9 +761,37 @@ impl BaiduPan {
     }
 
     /// Open a download stream; `None` when the file does not exist.
+    ///
+    /// The id the last listing gave is gone when the file was replaced since
+    /// (by this device or another one), or deleted. Which of the two it was
+    /// only a listing can tell, so the folder is listed again and the new id
+    /// tried. The file is reported missing only when that listing doesn't
+    /// have it: "missing" makes a sync decide things.
     fn open(&self, path: &str, agent: &ureq::Agent) -> Result<Option<ureq::Response>> {
         let full = self.full(path);
+        let known = self.fs_ids.lock().unwrap_or_else(|e| e.into_inner()).get(&full).copied();
+        if let Some(id) = known {
+            if let Some(r) = self.open_id(id, agent)? {
+                return Ok(Some(r));
+            }
+            self.fs_ids.lock().unwrap_or_else(|e| e.into_inner()).remove(&full);
+        }
         let Some(id) = self.fs_id(&full)? else { return Ok(None) };
+        match self.open_id(id, agent)? {
+            Some(r) => Ok(Some(r)),
+            None => {
+                self.fs_ids.lock().unwrap_or_else(|e| e.into_inner()).remove(&full);
+                Err(anyhow!(Unavailable(crate::tr!(
+                    "百度网盘列出了 {path}，但没有给出下载地址，稍后再试",
+                    "Baidu Netdisk lists {path} but gave no download link for it; try again later"
+                ))))
+            }
+        }
+    }
+
+    /// Open the download of the file with this id; `None` when Baidu has no
+    /// such file (any more).
+    fn open_id(&self, id: u64, agent: &ureq::Agent) -> Result<Option<ureq::Response>> {
         let ids = format!("[{id}]");
         let v = self.call(&[-9, 31190, -3], |t| {
             self.agent
@@ -745,11 +807,7 @@ impl BaiduPan {
         } else {
             None
         };
-        let Some(dlink) = dlink else {
-            // Stale id (the file was replaced since the listing).
-            self.fs_ids.lock().unwrap().remove(&full);
-            return Ok(None);
-        };
+        let Some(dlink) = dlink else { return Ok(None) };
         let token = self.access_token(false)?;
         let sep = if dlink.contains('?') { '&' } else { '?' };
         match agent.get(&format!("{dlink}{sep}access_token={token}")).call() {
@@ -765,6 +823,66 @@ impl BaiduPan {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// What [`BaiduPan::put`] sends: bytes already in memory, or a file read a
+/// slice at a time, so a big upload never sits in memory whole.
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    Bytes(&'a [u8]),
+    /// The file and its length when the upload started.
+    File(&'a Path, u64),
+}
+
+impl Body<'_> {
+    fn len(&self) -> u64 {
+        match self {
+            Body::Bytes(b) => b.len() as u64,
+            Body::File(_, len) => *len,
+        }
+    }
+
+    fn unreadable(path: &Path) -> String {
+        crate::tr!("无法读取 {}", "Can't read {}", path.display())
+    }
+
+    /// The MD5 of every 4 MB slice: the block list Baidu wants first.
+    fn blocks(&self) -> Result<Vec<String>> {
+        match self {
+            Body::Bytes(b) => Ok(b.chunks(SLICE).map(|c| hex(&Md5::digest(c))).collect()),
+            Body::File(path, len) => {
+                let mut f = std::fs::File::open(path).with_context(|| Self::unreadable(path))?;
+                let mut buf = vec![0u8; SLICE];
+                let mut out = Vec::new();
+                let mut left = *len;
+                while left > 0 {
+                    let n = left.min(SLICE as u64) as usize;
+                    // Fails when the file got shorter since the upload began.
+                    f.read_exact(&mut buf[..n]).with_context(|| Self::unreadable(path))?;
+                    out.push(hex(&Md5::digest(&buf[..n])));
+                    left -= n as u64;
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    /// Slice `i` (4 MB, the last one shorter); `None` past the end.
+    fn slice(&self, i: usize) -> Result<Option<Cow<'_, [u8]>>> {
+        match self {
+            Body::Bytes(b) => Ok(b.chunks(SLICE).nth(i).map(Cow::Borrowed)),
+            Body::File(path, len) => {
+                let start = i as u64 * SLICE as u64;
+                if start >= *len {
+                    return Ok(None);
+                }
+                let mut buf = vec![0u8; (*len - start).min(SLICE as u64) as usize];
+                let mut f = std::fs::File::open(path).with_context(|| Self::unreadable(path))?;
+                f.seek(SeekFrom::Start(start)).and_then(|_| f.read_exact(&mut buf)).with_context(|| Self::unreadable(path))?;
+                Ok(Some(Cow::Owned(buf)))
+            }
+        }
+    }
 }
 
 impl Store for BaiduPan {
@@ -792,7 +910,7 @@ impl Store for BaiduPan {
 
     fn list(&self, dir: &str) -> Result<Vec<Entry>> {
         let Some(items) = self.list_full(&self.full(dir))? else { return Ok(Vec::new()) };
-        let mut ids = self.fs_ids.lock().unwrap();
+        let mut ids = self.fs_ids.lock().unwrap_or_else(|e| e.into_inner());
         Ok(items
             .iter()
             .filter_map(|it| {
@@ -834,13 +952,14 @@ impl Store for BaiduPan {
     }
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
-        self.put(path, data)
+        self.put(path, Body::Bytes(data))
     }
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
-        // Saves are small (a few MB); reading them whole keeps slicing simple.
-        let data = std::fs::read(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
-        self.put(path, &data)
+        // Read a slice at a time: a content pack can be as big as the
+        // biggest save file it holds.
+        let len = std::fs::metadata(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?.len();
+        self.put(path, Body::File(src, len))
     }
 
     fn remove(&self, path: &str) -> Result<()> {
@@ -853,7 +972,7 @@ impl Store for BaiduPan {
                 .post(&self.api_url("/rest/2.0/xpan/file", &[("method", "filemanager"), ("opera", "delete")], t))
                 .send_form(&[("async", "0"), ("filelist", list.as_str())])
         })?;
-        self.fs_ids.lock().unwrap().remove(&full);
+        self.fs_ids.lock().unwrap_or_else(|e| e.into_inner()).remove(&full);
         let failed = v["info"]
             .as_array()
             .and_then(|a| a.iter().map(errno).find(|&c| c != 0 && c != -9))
