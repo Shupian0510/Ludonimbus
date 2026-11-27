@@ -2,11 +2,13 @@
 //! Steam plugin never start two syncs of the same game at once.
 
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
-fn set() -> &'static Mutex<HashSet<String>> {
+/// The set stays whole when a thread panicked while holding it (every change
+/// is one insert or remove), so a panic never leaves a game marked busy.
+fn set() -> MutexGuard<'static, HashSet<String>> {
     static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    SET.get_or_init(|| Mutex::new(HashSet::new()))
+    SET.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Marks a game as syncing until dropped.
@@ -14,18 +16,15 @@ pub struct Guard(String);
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        if let Ok(mut s) = set().lock() {
-            s.remove(&self.0);
-        }
+        set().remove(&self.0);
     }
 }
 
 /// `None` when the game is already being synced.
 pub fn begin(key: &str) -> Option<Guard> {
-    let mut s = set().lock().ok()?;
-    s.insert(key.to_string()).then(|| Guard(key.to_string()))
+    set().insert(key.to_string()).then(|| Guard(key.to_string()))
 }
 
 pub fn is_busy(key: &str) -> bool {
-    set().lock().map(|s| s.contains(key)).unwrap_or(false)
+    set().contains(key)
 }
