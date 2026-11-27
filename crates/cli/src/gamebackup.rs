@@ -340,7 +340,9 @@ pub fn run(cmd: Cmd) -> Result<()> {
             remote::delete_version(store, &key, &version)?;
             let gc = remote::collect_garbage(store, (&cfg.device.id, &cfg.device.name), Some(&key), &|_, _| {})?;
             lock.release()?;
-            if gc.postponed {
+            if let Some(reason) = gc.reason.as_deref().filter(|_| gc.postponed) {
+                println!("已删除 {version}；不再使用的数据块下次再清理：{reason}");
+            } else if gc.postponed {
                 println!("已删除 {version}；有设备正在备份，不再使用的数据块下次再清理");
             } else {
                 println!("已删除 {version}，清理了 {} 个数据块（{}）", gc.deleted_chunks, human(gc.freed_bytes));

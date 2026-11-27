@@ -118,7 +118,7 @@ git merge origin/main
 
 | 时机 | 检查内容 | 位置 |
 |---|---|---|
-| 每个 PR、每次推送到 `dev` / `main` | 各处版本号一致、当前版本有双语更新日志、进 `main` 的 PR 来自允许的分支（`meta`）；Windows 和 Linux 上的 Rust 测试、前端构建、桌面应用能编译（`test`、`linux`，只改文档时跳过）；汇总成 `ok` | [`ci.yml`](../.github/workflows/ci.yml) |
+| 每个 PR、每次推送到 `dev` / `main` | 各处版本号一致、当前版本有双语更新日志、进 `main` 的 PR 来自允许的分支、文档站能构建（`meta`）；Windows 和 Linux 上的 Rust 测试、前端构建、桌面应用能编译并通过它自己的测试，Linux 上还检查并构建 Decky 插件（`test`、`linux`，只改文档时跳过）；汇总成 `ok` | [`ci.yml`](../.github/workflows/ci.yml) |
 | 推送到 `dev` / `main`，`ok` 通过后 | 开发版：Windows 安装包、Linux 下载包、Decky 插件 | `ci.yml` 的 `windows-build`、`linux-build` |
 | 手动运行 Release | 候选版：和正式版一样构建，不签名、不发布 | [`release.yml`](../.github/workflows/release.yml) |
 | 推送 `v*` 标签 | 标签与版本号一致、更新日志双语齐全，然后编译、代码签名（配置了 SignPath 时）、生成更新签名、发布 Release 和 `latest.json` | `release.yml` |

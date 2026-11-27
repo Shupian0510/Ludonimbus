@@ -367,7 +367,15 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
     // The manifest first: without it the zips left by an interruption are
     // not a snapshot.
     remove_local(&dir.join(format!("{}.json", manifest.id)))?;
-    let _ = std::fs::remove_file(dir.join(format!("{}.json.lntmp", manifest.id)));
+    // What a write of the manifest cut short left: `<id>.json.lntmp` from
+    // older versions, `<id>.json.<pid>-<n>.lntmp` from `util::atomic_write`.
+    let prefix = format!("{}.json.", manifest.id);
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with(&prefix) && name.ends_with(".lntmp") {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
     for pack in own_packs(manifest) {
         remove_local(&dir.join(format!("{pack}.zip")))?;
         let _ = std::fs::remove_file(sent_mark(dir, &pack));
