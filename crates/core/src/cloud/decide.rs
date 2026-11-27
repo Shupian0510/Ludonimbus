@@ -21,6 +21,7 @@
 //! |---|---|---|
 //! | unchanged | the head is the base | nothing |
 //! | unchanged | the head contains the base | pull it |
+//! | any | the base is gone from the line and contains every head | push, built on the heads and the base |
 //! | unchanged | the head lacks changes the base has | conflict: the head, or the saves here |
 //! | changed | the head is the base | push, built on the base |
 //! | changed | a head that is not the base | conflict: the head, or the saves here |
@@ -42,6 +43,25 @@
 //! Pulling would overwrite it, and pushing would put it in front of what the
 //! other devices made without anyone choosing. So the user is asked, with
 //! the saves here as a candidate, although they did not change.
+//!
+//! **The base is newer than every head.** What this device synced last left
+//! the line, and its vector contains every head's: the heads are older
+//! versions of what the saves here grew from (the base was let go because a
+//! pack of it was gone, section 3.4, or the cloud lost it). Nothing of
+//! another device's is overwritten by pushing, so the saves here are pushed
+//! on top of the heads and the base, without a question.
+//!
+//! **Incomplete versions.** A snapshot marked as missing a pack
+//! ([`super::v2::Mark`]) plays no part here: [`decide`] works on
+//! [`LineView::usable`]. It is no head, nothing to pull and nothing to
+//! adopt. A device whose saves grew from it (its base) pushes on top of it
+//! as on top of any version that left the line (the row above), so its new
+//! version contains it. A device that never had it pushes on what it had;
+//! should the incomplete one be repaired later, the two are a fork like any
+//! other and the user chooses once. One that is let go is in "recently
+//! deleted" and counts for nothing. [`settle`] is not limited this way: a
+//! version the user makes current is built on every head, the incomplete
+//! ones included, and so ends them.
 //!
 //! **Several heads with different contents.** Somebody has to choose, on
 //! whichever device syncs next. The saves here are one more candidate unless
@@ -133,8 +153,14 @@ pub enum Action {
 }
 
 /// What to do about one save line on this device: the table at the top of
-/// this file.
+/// this file. Snapshots marked as missing a pack are left out
+/// ([`LineView::usable`]).
 pub fn decide(local: &Local, line: &LineView) -> Action {
+    let usable = line.usable();
+    decide_on(local, &usable)
+}
+
+fn decide_on(local: &Local, line: &LineView) -> Action {
     let heads: Vec<&IndexEntry> = line.head_entries().collect();
     let Some(&head) = heads.last() else {
         return match local.content_hash {
@@ -174,6 +200,14 @@ pub fn decide(local: &Local, line: &LineView) -> Action {
             (!known, known)
         }
     };
+
+    // The base left the line, and every head is older than it.
+    if let Some(base) = local.base.as_ref().filter(|b| !contained && line.get(&b.id).is_none()) {
+        let vv = base_vv(base, line);
+        if !vv.is_empty() && heads.iter().all(|h| vv.contains(&h.vv)) {
+            return settle(local, line);
+        }
+    }
 
     if forked {
         let stands_for_local = heads.iter().any(|h| h.content_hash == mine) || (!changed && contained);
@@ -268,7 +302,7 @@ impl Status {
             Action::Adopt { .. } => Status::Synced,
             Action::Pull { .. } if saves_here => Status::CloudNewer,
             Action::Pull { .. } => Status::CanRestore,
-            Action::Push { .. } if line.heads.is_empty() => Status::NotUploaded,
+            Action::Push { .. } if line.usable().heads.is_empty() => Status::NotUploaded,
             Action::Push { .. } => Status::LocalChanged,
             Action::Conflict { .. } => Status::Conflict,
         }

@@ -64,6 +64,19 @@ export interface SnapshotSummary {
   head?: boolean;
   /** Kept beside the history (the saves a restore replaced). */
   side?: boolean;
+  /** A content pack of it is missing from the cloud: never taken, and not offered as the current one, until it is back. */
+  incomplete?: boolean;
+}
+
+/** A version made on this PC that couldn't be uploaded complete (a pack it built on was gone, its files nowhere any more). Its own files stay on this PC. */
+export interface UnsentSave {
+  id: string;
+  createdAt: string;
+  totalSize: number;
+  fileCount: number;
+  platform?: string;
+  /** When it was taken off the upload queue. */
+  at: string;
 }
 
 /** How a platform is shown: its name, and the program's own logo when it is on this PC. */
@@ -81,6 +94,8 @@ export interface SnapshotList {
   platforms: PlatformMarks;
   /** Versions saved on another platform by a newer game than the one that wrote the saves here, which an older game can't load. */
   tooNew?: string[];
+  /** Versions made on this PC that couldn't be uploaded complete, until dismissed. */
+  unsent?: UnsentSave[];
 }
 
 /** One version of a game on one device, on a save line. */
@@ -111,6 +126,8 @@ export interface TrashedSnapshot {
   deletedAt: string;
   /** Device it was deleted on. */
   deletedBy: string;
+  /** Why, when the user didn't delete it: `incomplete` (a content pack was missing and nobody could put it back). */
+  reason?: string;
 }
 
 export interface SnapshotMeta extends Omit<SnapshotSummary, "fileCount"> {
@@ -134,6 +151,8 @@ export interface StatusReport {
   checkedAt: string;
   /** The game version that saved the newest version on another platform, when it is newer than here and an older game can't load it: not taken by itself. */
   tooNew?: string;
+  /** The line's newest version misses a content pack in the cloud: no device takes it until it is back; `status` leaves it out. */
+  incomplete?: boolean;
 }
 
 export interface ConflictInfo {
@@ -801,6 +820,10 @@ export const api = {
   exportSnapshot: (key: string, id: string) => invoke<string | null>("export_snapshot", { key, id }),
   /** Take in a .lnsave file the user picks, beside the game's history; its id, or null when cancelled. */
   importSharedSave: (key: string) => invoke<string | null>("import_shared_save", { key }),
+  /** Save the files a version that couldn't be uploaded complete has on this PC as a zip; the path, or null when cancelled. */
+  exportUnsent: (key: string, id: string) => invoke<string | null>("export_unsent", { key, id }),
+  /** Stop listing a version that couldn't be uploaded complete (its local copy stays). */
+  dismissUnsent: (key: string, id: string) => invoke<void>("dismiss_unsent", { key, id }),
   localFiles: (key: string) =>
     invoke<{ files: LocalFile[]; roots: Record<string, string> }>("local_files", { key }),
   openPath: (path: string) => invoke<void>("open_path", { path }),

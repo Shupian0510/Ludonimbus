@@ -16,6 +16,14 @@
 //! and every pack it names are in the cloud; one that can never be complete
 //! any more is set aside on this device ([`set_aside`]).
 //!
+//! **Versions that miss a pack** (docs/plan-v2.md, section 3.4). One found
+//! when it is fetched is marked in the cloud ([`cloud::saves::mark`]) and
+//! the decision made again without it; no device takes it while it is
+//! marked. After playing, this device puts back what the marked versions it
+//! wrote, or whose saves it has, lack ([`repair_marked`]); one it wrote and
+//! can't repair goes to 「最近删除」. A device whose base changed tells the
+//! others at once when the save is large ([`tell_base`]).
+//!
 //! **Nothing is lost by a sync.** Before saves on this device are replaced,
 //! they go to the cloud as a snapshot kept beside the history, unless the
 //! cloud already has the same content. Two devices that both played are a
@@ -170,6 +178,11 @@ pub struct StatusReport {
     /// doesn't take it, and the app says so before the user does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub too_new: Option<String>,
+    /// The line's newest version is marked as missing a content pack: no
+    /// device takes it until the pack is back ([`cloud::saves::mark`]), and
+    /// `status` is worked out without it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -305,6 +318,20 @@ fn base_vv(st: &GameState, view: &LineView) -> Vv {
 
 fn local_of(local: &LocalState, st: &GameState) -> Local {
     Local { content_hash: (!local.is_empty()).then(|| local.hash.clone()), base: st.base() }
+}
+
+/// A device whose saves are still the version it synced last, while that
+/// version is marked as missing a pack, holds on to them: it has what the
+/// cloud lacks, and puts the pack back after playing ([`repair_marked`]).
+/// [`decide`] leaves marked versions out and would see a base that left the
+/// line, so it says to upload the same saves again; nothing happens instead.
+fn holding(action: Action, local: &Local, view: &LineView) -> Action {
+    let Some(base) = &local.base else { return action };
+    let marked = view.get(&base.id).is_some_and(IndexEntry::is_incomplete);
+    if matches!(action, Action::Push { .. }) && marked && local.content_hash.as_deref() == Some(base.content_hash.as_str()) {
+        return Action::Nothing;
+    }
+    action
 }
 
 /// Where the saves of a game come from, for the manifest's `platform`.
@@ -609,6 +636,38 @@ pub fn pending_zips(key: &str, id: &str) -> Vec<PathBuf> {
     }
 }
 
+/// The snapshots the versions of `key` waiting on this device take files
+/// from (the ones they were built on): the device record names them, so
+/// that the cloud keeps them for this device until those versions are
+/// uploaded ([`cloud::DeviceInstall::borrows`]).
+pub fn queued_bases(key: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (m, _) in queued(key) {
+        if let Some(parent) = m.parent.as_ref().filter(|_| packs::borrows(&m)) {
+            if !out.contains(parent) {
+                out.push(parent.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The zips on this device that may hold the content of a pack that is gone
+/// from the cloud: what waits in the queue, and the copies in local-backups.
+fn repair_zips(key: &str) -> Vec<PathBuf> {
+    let zips = |dir: PathBuf| -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> =
+            std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "zip")).collect();
+        // The newest first: the likeliest to hold what a recent version had.
+        out.sort();
+        out.reverse();
+        out
+    };
+    let mut out = zips(queue_dir(key));
+    out.extend(zips(paths::local_backups_dir().join(key)));
+    out
+}
+
 /// The games with versions waiting for the cloud.
 pub fn pending_keys() -> Vec<String> {
     std::fs::read_dir(paths::pending_dir())
@@ -627,10 +686,7 @@ fn add_to_view(view: &mut LineView, entries: impl IntoIterator<Item = IndexEntry
     }
     all.sort_by(|a, b| a.0.created_at.cmp(&b.0.created_at).then_with(|| a.0.id.cmp(&b.0.id)));
     let (snapshots, places): (Vec<IndexEntry>, Vec<usize>) = all.into_iter().unzip();
-    let heads = {
-        let main: Vec<(usize, &IndexEntry)> = snapshots.iter().enumerate().filter(|(_, s)| !s.is_side()).collect();
-        vv::heads(&main, |(_, s)| &s.vv).into_iter().map(|k| main[k].0).collect()
-    };
+    let heads = line::heads_of(&snapshots);
     view.snapshots = snapshots;
     view.places = places;
     view.heads = heads;
@@ -740,6 +796,35 @@ impl<'a> FilesHere<'a> {
     }
 }
 
+/// Whether a waiting version that borrows packs may find one gone: it was
+/// made longer ago than the cloud keeps what it builds on for this device
+/// ([`BASE_DAYS`]; the device synced its base before it made the version),
+/// or the version it was built on is no longer in the line, or is marked as
+/// missing a pack.
+fn waited_too_long(m: &Manifest, view: &LineView) -> bool {
+    let base = m.parent.as_deref().and_then(|p| view.get(p));
+    Utc::now() - m.created_at > Duration::days(BASE_DAYS) || base.is_none_or(IndexEntry::is_incomplete)
+}
+
+/// The game's other save lines besides `here`, each read. Packs belong to
+/// the game, so a pack put back has to be whole for the snapshots of every
+/// line. Only on the rare ways that put packs back: one listing per line,
+/// and its index.
+fn other_lines_of(cloud: &Cloud, here: &Place) -> Result<Vec<(Place, LineView)>> {
+    let library = cloud.library()?;
+    let Some(record) = library::resolve(&library.records, &here.game) else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    for l in &record.lines {
+        let place = Place::of(record, l);
+        if place.dir() == here.dir() {
+            continue;
+        }
+        let view = cloud.peek(&place)?;
+        out.push((place, view));
+    }
+    Ok(out)
+}
+
 /// Upload one waiting version and make it part of its line. It stays in the
 /// queue ([`unqueue`]).
 ///
@@ -749,6 +834,16 @@ impl<'a> FilesHere<'a> {
 /// broke off after the manifest, or one whose packs couldn't be checked) is
 /// published again: that ends in the same state and checks the packs, so it
 /// never leaves the queue with a pack missing.
+///
+/// A version that borrows packs and waited longer than the cloud keeps what
+/// it builds on for this device ([`BASE_DAYS`]), or whose base left the line
+/// or is marked as missing a pack, is made whole before it goes up
+/// ([`saves::repair_queued`]): what it takes from a pack that is gone is
+/// taken from another pack that has it, or packed anew from wherever it
+/// still is. A pack found gone after the manifest was written (another
+/// device cleaned it up in that moment) is put back whole from the same
+/// places ([`saves::put_back`]) and the version published again. Content
+/// found nowhere is a [`packs::MissingPack`].
 fn publish_queued(cloud: &Cloud, line: &mut OpenLine, m: &mut Manifest, from_06: bool, here: &mut FilesHere) -> Result<()> {
     let key = line.key.clone();
     let dir = queue_dir(&key);
@@ -768,11 +863,41 @@ fn publish_queued(cloud: &Cloud, line: &mut OpenLine, m: &mut Manifest, from_06:
             }
         });
     }
-    let files = match packs::borrows(m) {
-        true => here.get().unwrap_or_default(),
-        false => &[],
+    let borrows = packs::borrows(m);
+    if borrows && seen.is_none() && !saves::was_shown(&dir, &m.id) && waited_too_long(m, &line.view) {
+        let local = here.get().unwrap_or_default().to_vec();
+        let zips = repair_zips(&key);
+        let others = other_lines_of(cloud, &line.place)?;
+        let mut lines: Vec<(&Place, &LineView)> = vec![(&line.place, &line.view)];
+        lines.extend(others.iter().map(|(p, v)| (p, v)));
+        let sources = saves::Sources { local: &local, zips: &zips };
+        if let Some(whole) = saves::repair_queued(cloud.files(), &lines, &line.place, m, sources, &dir, &paths::staging_dir())? {
+            log(format!("{key}: {} took files from packs that are gone; it takes them from elsewhere now", m.id));
+            *m = whole;
+            util::atomic_write(&dir.join(format!("{}.json", m.id)), &serde_json::to_vec(m)?)?;
+        }
+    }
+    let files = match borrows {
+        true => here.get().unwrap_or_default().to_vec(),
+        false => Vec::new(),
     };
-    saves::publish(cloud.files(), &line.place, &mut line.cache, m, &dir, files, cloud.device_id())?;
+    match saves::publish(cloud.files(), &line.place, &mut line.cache, m, &dir, &files, cloud.device_id()) {
+        Ok(()) => {}
+        Err(e) if packs::missing_pack(&e).is_some() => {
+            // The manifest was in the cloud for a moment, and stays as it is:
+            // the packs are put back whole.
+            let zips = repair_zips(&key);
+            let others = other_lines_of(cloud, &line.place)?;
+            let mut lines: Vec<(&Place, &LineView)> = vec![(&line.place, &line.view)];
+            lines.extend(others.iter().map(|(p, v)| (p, v)));
+            let sources = saves::Sources { local: &files, zips: &zips };
+            match saves::put_back(cloud.files(), &lines, &line.place, m, None, sources, &paths::staging_dir(), cloud.device_id(), Utc::now())? {
+                saves::Repair::Lost(_) => return Err(e),
+                _ => saves::publish(cloud.files(), &line.place, &mut line.cache, m, &dir, &files, cloud.device_id())?,
+            }
+        }
+        Err(e) => return Err(e),
+    }
     // A backup made by hand is a kept save from the start.
     if m.trigger == Trigger::Manual.as_str() && seen.as_ref().is_none_or(|s| s.pin.is_none()) {
         let name = m.extra.get(COMMENT).and_then(|v| v.as_str()).unwrap_or_default().to_string();
@@ -785,16 +910,31 @@ fn publish_queued(cloud: &Cloud, line: &mut OpenLine, m: &mut Manifest, from_06:
 }
 
 /// A waiting version that can never be complete: a pack it borrows was
-/// cleaned up while it waited, and its content is not on this device any
-/// more either (the saves changed since). Its manifest is not in the cloud
-/// ([`saves::publish`] took it away again). It leaves the queue for the
-/// copies kept on this device ([`keep_local_copy`]), with what it brought
-/// itself, so that it no longer holds up the versions after it or every
-/// sync of the game. This device's base is then a version the line doesn't
-/// have: the next decision sees the saves here as changes no newest version
-/// has, and asks before anything is overwritten.
+/// cleaned up while it waited, and its content is nowhere any more, not in
+/// the saves here (they changed since), the zips on this device or another
+/// pack in the cloud. Its manifest is not in the cloud ([`saves::publish`]
+/// took it away again). It leaves the queue for the copies kept on this
+/// device ([`keep_local_copy`]), with what it brought itself, so that it no
+/// longer holds up the versions after it or every sync of the game, and the
+/// game's saves tab lists it once ([`unsent`]). This device's base is then a
+/// version the line doesn't have: the next decision builds on it when the
+/// line has nothing newer, and asks when it has.
 fn set_aside(line: &mut OpenLine, m: &Manifest, e: &anyhow::Error) -> Result<()> {
     let key = line.key.clone();
+    let note = state::Unsent {
+        id: m.id.clone(),
+        created_at: m.created_at,
+        total_size: m.total_size,
+        file_count: m.files.len(),
+        platform: m.platform.clone(),
+        at: Utc::now(),
+    };
+    // Noted first: the copies kept on this device let go of the oldest, and
+    // this one may be old.
+    state::update_game(&key, |g| {
+        g.unsent.retain(|u| u.id != note.id);
+        g.unsent.push(note);
+    })?;
     keep_local_copy(&key, m)?;
     unqueue(&key, m)?;
     // Nothing more builds on it.
@@ -1111,16 +1251,17 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &Cloud, game: &GameEntry) {
     }
 }
 
-/// What each device synced last on the line in `dir`, this device included.
-fn device_bases(ctx: &Ctx, devices: &[cloud::DeviceInfo], dir: &str, own: Option<&str>) -> Vec<retention::DeviceBase> {
+/// What each device synced last on the line in `dir`, this device included,
+/// and what the versions waiting on each take files from.
+fn device_bases(ctx: &Ctx, devices: &[cloud::DeviceInfo], dir: &str, own: &[String]) -> Vec<retention::DeviceBase> {
     let mut out: Vec<retention::DeviceBase> = devices
         .iter()
         .filter(|d| d.id != ctx.cfg.device.id)
-        .flat_map(|d| d.installs.iter().filter(move |i| i.dir == dir).filter_map(|i| i.synced.clone()).map(move |s| (d, s)))
+        .flat_map(|d| d.installs.iter().filter(move |i| i.dir == dir).flat_map(|i| i.synced.iter().chain(&i.borrows).cloned()).map(move |s| (d, s)))
         .map(|(d, snapshot)| retention::DeviceBase { device_id: d.id.clone(), snapshot, seen_at: d.last_seen })
         .collect();
-    if let Some(id) = own {
-        out.push(retention::DeviceBase { device_id: ctx.cfg.device.id.clone(), snapshot: id.to_string(), seen_at: Utc::now() });
+    for id in own {
+        out.push(retention::DeviceBase { device_id: ctx.cfg.device.id.clone(), snapshot: id.clone(), seen_at: Utc::now() });
     }
     out
 }
@@ -1140,16 +1281,32 @@ fn clean(ctx: &Ctx, cloud: &Cloud, key: &str) -> Result<saves::Cleaned> {
     // Without the other devices' records nobody knows what they synced last:
     // cleaning up then could take the version each of them builds on.
     let devices = cloud.list_devices()?;
-    // This device's own place on each line: the games here that sync it.
+    // This device's own place on each line: the games here that sync it,
+    // and what their waiting versions take files from.
     let state = state::load();
-    let own = |dir: &str| state.games.values().find(|g| g.line.as_ref().is_some_and(|l| l.dir() == dir)).and_then(|g| g.last_synced_id.clone());
+    let own = |dir: &str| -> Vec<String> {
+        let mut out = Vec::new();
+        for (k, g) in state.games.iter().filter(|(_, g)| g.line.as_ref().is_some_and(|l| l.dir() == dir)) {
+            out.extend(g.last_synced_id.clone());
+            out.extend(queued_bases(k));
+        }
+        out
+    };
     let mut caches: Vec<cloud::line::LineCache> = places.iter().map(|_| Default::default()).collect();
     let mut lines: Vec<saves::Open<'_>> = places
         .iter()
         .zip(caches.iter_mut())
-        .map(|(place, cache)| saves::Open { place, cache, bases: device_bases(ctx, &devices, place.dir(), own(place.dir()).as_deref()) })
+        .map(|(place, cache)| saves::Open { place, cache, bases: device_bases(ctx, &devices, place.dir(), &own(place.dir())) })
         .collect();
-    saves::clean(cloud.files(), &mut lines, &retention::Policy::from(&ctx.cfg.retention), Duration::days(packs::GRACE_DAYS), Utc::now(), cloud.device_id())
+    // What a version that misses a pack may get it back from: the saves
+    // here (read only then), and the zips this device keeps.
+    let local = || ctx.cfg.game(key).and_then(|g| snapshot::local_state(g).ok()).map(|l| l.pack_files()).unwrap_or_default();
+    let zips = repair_zips(key);
+    let staging = paths::staging_dir();
+    let repairs = saves::Repairs { local: &local, zips: &zips, staging: &staging, device_name: ctx.device().1 };
+    let policy = retention::Policy::from(&ctx.cfg.retention);
+    let now = Utc::now();
+    saves::clean_with(cloud.files(), &mut lines, &policy, Duration::days(packs::GRACE_DAYS), now, cloud.device_id(), Some(repairs))
 }
 
 /// [`clean`], about once a day per game. Never fails a sync.
@@ -1171,8 +1328,14 @@ fn clean_if_due(ctx: &Ctx, cloud: &Cloud, key: &str) {
         Err(e) => log(format!("{key}: looking at the folder of 0.6 failed: {e:#}")),
     }
     match clean(ctx, cloud, key) {
-        Ok(c) if c.snapshots.is_empty() && c.purged.is_empty() && c.packs.is_empty() => {}
-        Ok(c) => log(format!("{key}: cleaned up {} old versions, {} deleted long ago, {} unused packs", c.snapshots.len(), c.purged.len(), c.packs.len())),
+        Ok(c) => {
+            if !(c.snapshots.is_empty() && c.purged.is_empty() && c.packs.is_empty()) {
+                log(format!("{key}: cleaned up {} old versions, {} deleted long ago, {} unused packs", c.snapshots.len(), c.purged.len(), c.packs.len()));
+            }
+            if !(c.marked.is_empty() && c.repaired.is_empty() && c.retired.is_empty()) {
+                log(format!("{key}: versions missing a pack: marked {:?}, whole again {:?}, let go {:?}", c.marked, c.repaired, c.retired));
+            }
+        }
         Err(e) => log(format!("{key}: cleaning up failed: {e:#}")),
     }
     let _ = state::update_game(key, |g| g.cleaned_at = Some(Utc::now()));
@@ -1591,6 +1754,17 @@ impl<'a> Session<'a> {
         if shot.base.is_none() && !shot.side {
             shot.base = base_manifest(self.key(), &state::game(self.key()), local.total_size);
         }
+        // Nothing is taken from a version that misses a pack, nor from one
+        // of this line that left it (let go because it missed one, or
+        // deleted): what it took from others may be gone too. A version of
+        // the line the game came from (choosing another line) is fine.
+        let gone = |b: &Manifest| match self.line.view.get(&b.id) {
+            Some(e) => e.is_incomplete(),
+            None => b.line == self.line.place.line,
+        };
+        if shot.base.as_ref().is_some_and(gone) {
+            shot.base = None;
+        }
         let manifest = stage_local(self.ctx, self.game, &self.line.place, &self.line.view, local, &shot)?;
         let id = manifest.id.clone();
         if launching && self.cloud.is_legacy().unwrap_or(false) {
@@ -1655,6 +1829,9 @@ impl<'a> Session<'a> {
                 "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
             ));
         }
+        if target.is_incomplete() {
+            bail!(incomplete_error());
+        }
         let back = self.protect(local, Trigger::PreRestore)?;
         self.gate.check()?;
         let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
@@ -1681,12 +1858,42 @@ impl<'a> Session<'a> {
             .and_then(|_| if self.gate.start_applying() { Ok(()) } else { Err(GaveUp.into()) })
             .and_then(|_| snapshot::apply_dir(&files, &wanted, self.game));
         let _ = std::fs::remove_dir_all(&work);
+        if let Some(missing) = result.as_ref().err().and_then(packs::missing_pack) {
+            let pack = missing.pack.clone();
+            note_missing(self.cloud, &self.line.place, &mut self.line.cache, Some(&mut self.line.view), id, &pack);
+            self.line.remember();
+        }
         result?;
         mark_synced(self.key(), id, &target.vv, &target.content_hash, &target.device_name, self.ctx.device().0)?;
         remember_base(self.key(), Some(&manifest));
         note_replaced(self.key(), back, id, &target.device_name);
         log(format!("{}: pulled {id} from {}", self.key(), target.device_name));
         Ok(Outcome::Pulled { id: id.to_string(), device: target.device_name.clone(), created_at: target.created_at })
+    }
+
+    /// [`Session::pull`] as a sync nobody chose for does it: a version that
+    /// turns out to miss a pack is marked, and the decision is made again
+    /// without it. That may be another version to pull (an older complete
+    /// one this device doesn't have yet); anything else waits for the next
+    /// sync, and the saves here stay as they are.
+    fn pull_or_hold(&mut self, local: &LocalState, id: &str, loc: &Local) -> Result<Outcome> {
+        let mut id = id.to_string();
+        let mut tried: Vec<String> = Vec::new();
+        loop {
+            match self.pull(local, &id) {
+                Err(e) if packs::missing_pack(&e).is_some() && tried.len() < 3 => {
+                    log(format!("{}: {id} can't be fetched ({e:#}); the saves here stay", self.key()));
+                    tried.push(id.clone());
+                    let seen = with_queue(&self.line.view, &self.line.place, self.key());
+                    match holding(decide::decide(loc, &seen), loc, &seen) {
+                        Action::Pull { id: next } if !tried.contains(&next) => id = next,
+                        _ if local.is_empty() => return Ok(Outcome::NothingToSave),
+                        _ => return Ok(Outcome::UpToDate),
+                    }
+                }
+                other => return other,
+            }
+        }
     }
 
     /// After [`Session::pull`] of a version that is not the one newest
@@ -1764,7 +1971,14 @@ fn keep_local_copy(key: &str, manifest: &Manifest) -> Result<()> {
         }
     }
     std::fs::write(dir.join(format!("{}.json", manifest.id)), serde_json::to_vec_pretty(manifest)?)?;
-    let mut kept: Vec<_> = std::fs::read_dir(&dir)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "json")).collect();
+    // What couldn't be uploaded complete stays until the user dismisses it.
+    let unsent: Vec<String> = state::game(key).unsent.into_iter().map(|u| format!("{}.json", u.id)).collect();
+    let mut kept: Vec<_> = std::fs::read_dir(&dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .filter(|p| !p.file_name().is_some_and(|n| unsent.iter().any(|u| n == u.as_str())))
+        .collect();
     kept.sort();
     while kept.len() > 10 {
         let json = kept.remove(0);
@@ -1778,6 +1992,156 @@ fn keep_local_copy(key: &str, manifest: &Manifest) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn incomplete_error() -> anyhow::Error {
+    anyhow!(crate::tr!(
+        "这个版本不完整：云端缺少它的内容包，暂时不能使用",
+        "This version is incomplete: a content pack of it is missing from the cloud, so it can't be used for now"
+    ))
+}
+
+/// A version of the line turned out to miss `pack` when it was fetched:
+/// mark it in the cloud ([`saves::mark`]), so no device tries to take it
+/// again, and say so in `cache` and `view`. Nothing is written to a cloud
+/// this build may not write; the next fetch finds it again then.
+fn note_missing(cloud: &Cloud, place: &Place, cache: &mut cloud::line::LineCache, view: Option<&mut LineView>, id: &str, pack: &str) {
+    if !cloud.access().is_ok_and(|a| a == v2::Access::ReadWrite) {
+        return;
+    }
+    match saves::mark(cloud.files(), place, cache, id, &[pack.to_string()], cloud.device_id(), Utc::now()) {
+        Ok(()) => {
+            let mark = cache.snapshots.get(id).and_then(|e| e.incomplete.clone());
+            if let Some(entry) = view.and_then(|v| v.snapshots.iter_mut().find(|s| s.id == id)) {
+                entry.incomplete = mark.or_else(|| Some(v2::MarkRef { missing: vec![pack.to_string()], ..Default::default() }));
+            }
+            log(format!("{id} misses the content pack {pack}; marked, no device takes it until the pack is back"));
+        }
+        Err(e) => log(format!("{id} misses the content pack {pack}; marking it failed: {e:#}")),
+    }
+}
+
+/// Put back what the versions of the line marked as missing a pack lack,
+/// when this device is likely to have it: it wrote them, or its saves are
+/// exactly one of them (section 3.4). The content is looked for in the saves
+/// here, the zips this device keeps and the game's other packs
+/// ([`saves::put_back`]); a version made whole loses its mark. One this
+/// device wrote and can't make whole is let go ([`saves::retire`]): its
+/// writer had its chance. No request at all while nothing in the line is
+/// marked. After playing only.
+fn repair_marked(cloud: &Cloud, line: &mut OpenLine, local: &LocalState) -> Result<()> {
+    let me = cloud.device_id().to_string();
+    let targets: Vec<IndexEntry> = line
+        .view
+        .snapshots
+        .iter()
+        .filter(|s| s.is_incomplete() && (s.device_id == me || (!local.is_empty() && s.content_hash == local.hash)))
+        .cloned()
+        .collect();
+    if targets.is_empty() || cloud.access()? != v2::Access::ReadWrite {
+        return Ok(());
+    }
+    let others = other_lines_of(cloud, &line.place)?;
+    let files = local.pack_files();
+    let zips = repair_zips(&line.key);
+    let mut changed = false;
+    for t in targets {
+        let outcome = {
+            let Ok(manifest) = saves::manifest(cloud.files(), &line.place, &line.view, &t.id) else { continue };
+            let mut lines: Vec<(&Place, &LineView)> = vec![(&line.place, &line.view)];
+            lines.extend(others.iter().map(|(p, v)| (p, v)));
+            let sources = saves::Sources { local: &files, zips: &zips };
+            saves::put_back(cloud.files(), &lines, &line.place, &manifest, None, sources, &paths::staging_dir(), &me, Utc::now())?
+        };
+        match outcome {
+            saves::Repair::Complete | saves::Repair::Repaired(_) => {
+                saves::unmark(cloud.files(), &line.place, &mut line.cache, &t.id)?;
+                log(format!("{}: {} is whole again", line.key, t.id));
+                changed = true;
+            }
+            saves::Repair::Lost(missing) if t.device_id == me && saves::can_retire(&line.place, &line.view, &t.id) => {
+                saves::retire(cloud.files(), &line.place, &line.view, &t.id, cloud.device_name(), Utc::now())?;
+                line.cache.snapshots.remove(&t.id);
+                log(format!("{}: {} misses {missing:?}, found nowhere; moved to Recently deleted", line.key, t.id));
+                changed = true;
+            }
+            saves::Repair::Lost(_) => {}
+        }
+    }
+    if changed {
+        cloud.reopen(line)?;
+    }
+    Ok(())
+}
+
+/// Tell the other devices at once which version this device builds on now
+/// (its record, `devices/<id>.json`, section 3.5), when that changed and
+/// the game's saves are large enough for the next upload to take files from
+/// it: retention keeps that version for this device by what the record
+/// says, and the record is otherwise rewritten every few hours only. Small
+/// saves are always uploaded whole; for them nothing is written.
+fn tell_base(ctx: &Ctx, cloud: &Cloud, key: &str, before: Option<&str>, view: &LineView, local_size: u64) {
+    let st = state::game(key);
+    let Some(now) = st.last_synced_id.as_deref() else { return };
+    if before == Some(now) {
+        return;
+    }
+    let size = view.get(now).map_or(0, |e| e.total_size).max(local_size);
+    if size <= packs::Policy::default().full_below {
+        return;
+    }
+    if cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
+        let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
+    }
+}
+
+/// The versions of `key` this device couldn't upload complete and set aside
+/// ([`set_aside`]), oldest first, while their copy is in local-backups and
+/// the user hasn't dismissed them.
+pub fn unsent(key: &str) -> Vec<state::Unsent> {
+    let dir = paths::local_backups_dir().join(key);
+    let mut out: Vec<state::Unsent> = state::game(key).unsent.into_iter().filter(|u| dir.join(format!("{}.json", u.id)).is_file()).collect();
+    out.sort_by_key(|u| u.created_at);
+    out
+}
+
+/// Stop listing a version [`unsent`] lists. Its copy stays in local-backups
+/// with the others, until newer ones take its place.
+pub fn dismiss_unsent(key: &str, id: &str) -> Result<()> {
+    state::update_game(key, |g| g.unsent.retain(|u| u.id != id))
+}
+
+/// Save what a version [`unsent`] lists brought itself as a zip at `dest`:
+/// `files/<path>` and a `snapshot.json` that lists those files only. The
+/// files it took from the pack that was gone are not there; it is not a
+/// version to restore. Returns how many files it holds.
+pub fn export_unsent(key: &str, id: &str, dest: &Path) -> Result<usize> {
+    if !v2::is_snapshot_id(id) {
+        bail!(crate::tr!("无效的版本编号：{id}", "Invalid version id: {id}"));
+    }
+    let dir = paths::local_backups_dir().join(key);
+    let bytes =
+        std::fs::read(dir.join(format!("{id}.json"))).map_err(|_| anyhow!(crate::tr!("本机没有这个版本了", "This version is no longer on this device")))?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)?;
+    let work = saves::Workspace::new(&paths::staging_dir())?;
+    let mut have: Vec<FileRef> = Vec::new();
+    for pack in manifest.packs().into_iter().filter(|p| packs::is_own(p, &manifest.id)) {
+        let zip = dir.join(format!("{pack}.zip"));
+        if !zip.is_file() {
+            continue;
+        }
+        let held = packs::zip_contents(&zip);
+        let refs: Vec<&FileRef> = held.iter().collect();
+        packs::unzip(&zip, &refs, work.path())?;
+        have.extend(held);
+    }
+    let mut meta = SnapshotMeta::of(&manifest, key, None);
+    meta.files.retain(|f| have.iter().any(|h| h.path == f.path));
+    if meta.files.is_empty() {
+        bail!(crate::tr!("这个版本在本机没有留下文件", "None of this version's files are left on this device"));
+    }
+    snapshot::zip_dir(work.path(), &meta, dest)?;
+    Ok(meta.files.len())
 }
 
 /// When the cloud is unreachable: after playing, keep the new saves in the
@@ -1891,10 +2255,23 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
         gate.set_phase(Phase::Checking);
     }
     let local = s.local()?;
+    // A version of the line that misses a pack, which this device can make
+    // whole: after playing, before deciding, so it counts again.
+    if !launching {
+        if let Err(e) = repair_marked(cloud, &mut s.line, &local) {
+            if must_wait(&e) {
+                return offline(ctx, game, trigger, e);
+            }
+            log(format!("{}: putting back what a version misses failed: {e:#}", game.key));
+        }
+        gate.check()?;
+    }
     let st = state::game(&game.key);
+    let before = st.last_synced_id.clone();
+    let local_size = local.total_size;
     let seen = with_queue(&s.line.view, &s.line.place, &game.key);
     let loc = local_of(&local, &st);
-    let mut action = decide::decide(&loc, &seen);
+    let mut action = holding(decide::decide(&loc, &seen), &loc, &seen);
     if game.backup_only() && resolution == Resolution::Auto {
         action = backup_only(&game.key, action, &loc, &seen);
     }
@@ -1926,8 +2303,9 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
         (_, Resolution::UseCloud) => {
             // The version the user was shown as the cloud's, while it still
             // is a newest version.
-            let shown = st.conflict.as_ref().map(|c| c.cloud_id.clone()).filter(|id| s.line.view.head_entries().any(|h| &h.id == id));
-            let Some(target) = shown.or_else(|| other_side(&s.line.view, &local.hash)) else {
+            let usable = s.line.view.usable();
+            let shown = st.conflict.as_ref().map(|c| c.cloud_id.clone()).filter(|id| usable.head_entries().any(|h| &h.id == id));
+            let Some(target) = shown.or_else(|| other_side(&usable, &local.hash)) else {
                 bail!(crate::tr!("云端还没有这个游戏的存档", "The cloud has no saves of this game yet"));
             };
             let pulled = s.pull(&local, &target)?;
@@ -1943,10 +2321,15 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
             let local = s.over_all(local)?;
             s.push(&local, Shot { bases, parent, trigger: Some(Trigger::SyncNow), comment, ..Shot::default() }, launching)?
         }
-        (Action::Pull { id }, Resolution::Auto) => s.pull(&local, &id)?,
+        (Action::Pull { id }, Resolution::Auto) => s.pull_or_hold(&local, &id, &loc)?,
         (Action::Push { bases, parent }, Resolution::Auto) => s.push(&local, Shot { bases, parent, trigger: Some(trigger), ..Shot::default() }, launching)?,
         (Action::Conflict { candidates, local_is_candidate }, Resolution::Auto) => s.conflict(&local, &candidates, local_is_candidate, trigger)?,
     };
+    // The version this device builds on changed: for a large save the other
+    // devices are told now, not hours later.
+    if !gate.given_up() {
+        tell_base(ctx, cloud, &game.key, before.as_deref(), &s.line.view, local_size);
+    }
     // Keep launching fast: bookkeeping happens after playing, not before.
     // And after the saves: what this device tells the others about itself
     // (which version it is at) is then true, and a cloud nobody has used
@@ -2035,6 +2418,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
         pending: st.pending.len(),
         checked_at: Utc::now(),
         too_new: None,
+        incomplete: false,
     };
     let local = match snapshot::local_state(game) {
         Ok(l) => l,
@@ -2083,6 +2467,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
     };
     report.local_hash = Some(local.hash.clone());
     report.snapshot_count = view.snapshots.len();
+    report.incomplete = view.newest_is_incomplete();
     report.head = view.heads.last().and_then(|&i| view.snapshots.get(i)).map(|s| SnapshotSummary::of(s, true));
     if let Some(head) = &report.head {
         // Only read when the rule says an older game can't load a newer save.
@@ -2092,7 +2477,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
         }
     }
     let loc = local_of(&local, &st);
-    let action = decide::decide(&loc, &view);
+    let action = holding(decide::decide(&loc, &view), &loc, &view);
     report.status = decide::Status::of(&action, &loc, &view).into();
     report
 }
@@ -2162,9 +2547,12 @@ pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game), None)?;
     let local = s.local()?;
+    let before = state::game(&game.key).last_synced_id;
     let pulled = s.pull(&local, id)?;
     // Make the restored content the head so the next sync keeps it.
-    Ok(s.make_current(id, Trigger::Restore, false)?.unwrap_or(pulled))
+    let outcome = s.make_current(id, Trigger::Restore, false)?.unwrap_or(pulled);
+    tell_base(ctx, cloud, &game.key, before.as_deref(), &s.line.view, local.total_size);
+    Ok(outcome)
 }
 
 /// What [`undo`] would take back: the last time saves of the cloud replaced
@@ -2250,7 +2638,12 @@ pub fn deleted_snapshots(ctx: &Ctx, game: &GameEntry) -> Result<Vec<cloud::Trash
     let place = cloud.place(&game.key)?;
     Ok(saves::trashed(cloud.files(), &place)?
         .into_iter()
-        .map(|t| cloud::TrashedSnapshot { snapshot: SnapshotSummary::of(&t.snapshot, false), deleted_at: t.deleted_at, deleted_by: t.deleted_by })
+        .map(|t| cloud::TrashedSnapshot {
+            snapshot: SnapshotSummary::of(&t.snapshot, false),
+            deleted_at: t.deleted_at,
+            deleted_by: t.deleted_by,
+            reason: t.reason,
+        })
         .collect())
 }
 
@@ -2447,7 +2840,8 @@ pub fn other_saves(ctx: &Ctx, game: &GameEntry) -> Result<Vec<OtherSave>> {
     let cloud = ctx.cloud()?;
     let mut out = Vec::new();
     for (line, place) in cloud.other_lines(&game.key)? {
-        let view = cloud.peek(&place)?;
+        // A newest version that misses a pack is nothing to take.
+        let view = cloud.peek(&place)?.usable();
         let Some(head) = view.head() else { continue };
         out.push(OtherSave {
             line: line.id.clone(),
@@ -2473,7 +2867,7 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     let Some((_, place)) = cloud.other_lines(&game.key)?.into_iter().find(|(l, _)| l.id == line) else {
         bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
     };
-    let view = cloud.peek(&place)?;
+    let mut view = cloud.peek(&place)?;
     let target = view.get(id).cloned().ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
     if !target.unsupported().is_empty() {
         bail!(crate::tr!(
@@ -2481,7 +2875,11 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
             "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
         ));
     }
+    if target.is_incomplete() {
+        bail!(incomplete_error());
+    }
     let local = s.local()?;
+    let before = state::game(&game.key).last_synced_id;
     let back = s.protect(&local, Trigger::PreRestore)?;
     let manifest = saves::manifest(cloud.files(), &place, &view, id)?;
     let all = SnapshotMeta::of(&manifest, &game.key, None).files;
@@ -2494,6 +2892,11 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     let result =
         saves::fetch(cloud.files(), &place, &view, &manifest, only.as_deref(), &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
     let _ = std::fs::remove_dir_all(&work);
+    if let Some(missing) = result.as_ref().err().and_then(packs::missing_pack) {
+        let pack = missing.pack.clone();
+        let mut cache = cloud::line::LineCache { snapshots: view.snapshots.iter().map(|s| (s.id.clone(), s.clone())).collect(), ..Default::default() };
+        note_missing(cloud, &place, &mut cache, Some(&mut view), id, &pack);
+    }
     result?;
     log(format!("{}: took {id} of the line {line} ({})", game.key, target.device_name));
     let after = s.local()?;
@@ -2504,6 +2907,7 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     if let Outcome::Uploaded { id: made } | Outcome::Queued { id: made, .. } = &outcome {
         note_replaced(&game.key, back, made, &target.device_name);
     }
+    tell_base(ctx, cloud, &game.key, before.as_deref(), &s.line.view, after.total_size);
     best_effort_housekeeping(ctx, cloud, game);
     Ok(outcome)
 }

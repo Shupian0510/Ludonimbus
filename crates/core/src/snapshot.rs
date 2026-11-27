@@ -157,6 +157,10 @@ pub struct SnapshotSummary {
     /// Kept beside the history, never the newest version.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub side: bool,
+    /// Marked as missing a content pack in the cloud: never taken, and not
+    /// offered as the current one, until the pack is back.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
 }
 
 /// The absolute folders of the device that made a snapshot. Layout 2 has no
@@ -191,6 +195,7 @@ impl SnapshotSummary {
             platform: entry.platform.clone(),
             head,
             side: entry.is_side(),
+            incomplete: entry.is_incomplete(),
         }
     }
 }
@@ -243,6 +248,7 @@ impl From<&SnapshotMeta> for SnapshotSummary {
             platform: String::new(),
             head: false,
             side: !m.trigger.is_mainline(),
+            incomplete: false,
         }
     }
 }

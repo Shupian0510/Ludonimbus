@@ -129,6 +129,28 @@ pub struct GameState {
     pub newer_dismissed: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replaced: Option<Replaced>,
+    /// Versions made here that couldn't be uploaded complete
+    /// ([`crate::sync`]'s set-aside), until the user dismisses them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unsent: Vec<Unsent>,
+}
+
+/// A version made on this device that couldn't be uploaded complete: a pack
+/// it took files from was gone from the cloud, and their content was nowhere
+/// any more. What it brought itself is kept in local-backups; the game's
+/// saves tab shows it once, until the user dismisses it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Unsent {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
+    pub total_size: u64,
+    #[serde(default)]
+    pub file_count: usize,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub platform: String,
+    /// When it was taken off the queue.
+    pub at: DateTime<Utc>,
 }
 
 fn is_zero(n: &u64) -> bool {

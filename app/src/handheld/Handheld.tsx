@@ -292,6 +292,8 @@ function Game({
         <b>{named ? s.comment : dateTime(s.createdAt)}</b>
         {isCurrent(s) ? (
           <Badge tone="ok">{t.saves.current}</Badge>
+        ) : s.incomplete ? (
+          <Badge tone="warn">{t.saves.incomplete}</Badge>
         ) : (s.head ?? s.id === data?.headId) && game ? (
           <Badge tone="info">{t.saves.newest}</Badge>
         ) : (
@@ -416,13 +418,21 @@ function Game({
           onClose={() => setPicked(null)}
           buttons={[
             ...(game && !isCurrent(picked)
-              ? [{ b: "a" as Button, label: t.saves.makeCurrent, onPress: () => makeCurrent(picked), disabled: game.running }]
+              ? [{ b: "a" as Button, label: t.saves.makeCurrent, onPress: () => makeCurrent(picked), disabled: game.running || !!picked.incomplete }]
               : []),
-            { b: "x", label: t.saves.sendTo, onPress: () => (setApplying({ source: gameKey, sourceName: name, snapshot: picked }), setPicked(null)) },
+            {
+              b: "x",
+              label: t.saves.sendTo,
+              onPress: () => (setApplying({ source: gameKey, sourceName: name, snapshot: picked }), setPicked(null)),
+              disabled: !!picked.incomplete,
+            },
             { b: "b", label: h.cancel, onPress: () => setPicked(null) },
           ]}
         >
-          {game && !isCurrent(picked) && <p className="muted">{t.saves.makeCurrentText(game.name, picked.deviceName, dateTime(picked.createdAt))}</p>}
+          {picked.incomplete && <p className="muted">{t.saves.incompleteHint}</p>}
+          {game && !isCurrent(picked) && !picked.incomplete && (
+            <p className="muted">{t.saves.makeCurrentText(game.name, picked.deviceName, dateTime(picked.createdAt))}</p>
+          )}
           {game && !isCurrent(picked) && (data?.tooNew ?? []).includes(picked.id) && <p className="muted">{t.saves.tooNew(picked.gameVersion ?? "?")}</p>}
           {game && !isCurrent(picked) && note && <p className="muted">{note}</p>}
         </Dialog>
