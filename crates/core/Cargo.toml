@@ -36,7 +36,7 @@ zstd = { version = "0.13", default-features = false }
 flate2 = "1"
 ico = "0.6"
 # The Switch client's LAN connection (nxlan.rs): HTTPS with a self-signed certificate.
-tiny_http = { version = "0.12", features = ["ssl-rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rcgen = "0.13"
 
 [target.'cfg(unix)'.dependencies]
