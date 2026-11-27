@@ -14,16 +14,19 @@ const achievementBars = new Map<Document, AchievementsBar>();
 const toasts = new AchievementToasts();
 const steamPlaytime = new SteamPlaytime();
 
+/** Stop what runs for a window: its timers, observers and injected items. */
+function detach(doc: Document): void {
+	bars.get(doc)?.stop();
+	bars.delete(doc);
+	achievementBars.get(doc)?.stop();
+	achievementBars.delete(doc);
+}
+
 function attach(name: string | undefined, doc: Document | undefined): void {
 	// Only the desktop library window ("SP Desktop_uid0"), not Big Picture.
 	if (!name?.startsWith('SP Desktop') || !doc?.body || bars.has(doc)) return;
-	for (const [old, bar] of bars) {
-		if (!old.defaultView || old.defaultView.closed) {
-			bar.stop();
-			bars.delete(old);
-			achievementBars.get(old)?.stop();
-			achievementBars.delete(old);
-		}
+	for (const old of Array.from(bars.keys())) {
+		if (!old.defaultView || old.defaultView.closed) detach(old);
 	}
 	const bar = new PlayBarStatus(doc);
 	bars.set(doc, bar);
@@ -31,6 +34,8 @@ function attach(name: string | undefined, doc: Document | undefined): void {
 	const achievements = new AchievementsBar(doc);
 	achievementBars.set(doc, achievements);
 	achievements.start();
+	// The window closes (Steam to the tray): stop now, not at the next window.
+	doc.defaultView?.addEventListener('unload', () => detach(doc), { once: true });
 }
 
 /** Windows that already existed when the plugin loaded. */
@@ -69,5 +74,11 @@ export default definePlugin(() => {
 		title: t().label,
 		icon: <div style={{ width: 16, height: 16 }}>☁</div>,
 		content: <QuickAccess />,
+		// The plugin is unloaded: nothing keeps running, Steam's playtimes come back.
+		onDismount: () => {
+			for (const doc of Array.from(bars.keys())) detach(doc);
+			toasts.stop();
+			steamPlaytime.stop();
+		},
 	};
 });

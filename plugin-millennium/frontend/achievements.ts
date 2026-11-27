@@ -167,15 +167,24 @@ function when(iso: string): string {
 	return d.toLocaleDateString(lang === 'zh-CN' ? 'zh-CN' : undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/** Local icons as data URLs, the most recently used ones (a few games' worth). */
 const icons = new Map<string, string>();
+const MAX_ICONS = 400;
 
 async function localIcon(key: string, id: string): Promise<string | null> {
 	const k = `${key}/${id}`;
-	if (icons.has(k)) return icons.get(k)!;
+	const known = icons.get(k);
+	if (known !== undefined) {
+		// Map order is insertion order: move it to the end (most recent).
+		icons.delete(k);
+		icons.set(k, known);
+		return known;
+	}
 	try {
 		const v = parse(await backend.get_achievement_icon(key, id)) as unknown as { dataUrl?: string };
 		if (v.dataUrl) {
 			icons.set(k, v.dataUrl);
+			while (icons.size > MAX_ICONS) icons.delete(icons.keys().next().value as string);
 			return v.dataUrl;
 		}
 	} catch {
@@ -257,6 +266,8 @@ export class AchievementsBar {
 
 	private poll(): void {
 		window.clearTimeout(this.timer);
+		// The window closed without this hearing of it: stop following it.
+		if (!this.doc.defaultView || this.doc.defaultView.closed) return this.stop();
 		if (this.appId && !this.doc.hidden) this.load(this.appId);
 		if (this.observer) this.timer = window.setTimeout(() => this.poll(), POLL_MS);
 	}

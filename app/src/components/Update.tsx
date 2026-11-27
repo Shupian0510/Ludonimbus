@@ -1,8 +1,8 @@
-import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
-import { api, errorText, inTauri, UpdateInfo } from "../api";
+import { useState } from "react";
+import { api, errorText, UpdateInfo } from "../api";
 import { bytes } from "../format";
 import { currentLang, useT } from "../i18n";
+import { useTauriEvent } from "../useTauriEvent";
 import { Button, Modal, useUi } from "./ui";
 
 /**
@@ -23,12 +23,7 @@ export function UpdateDialog({ info, onClose }: { info: UpdateInfo; onClose: () 
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
 
-  useEffect(() => {
-    if (!inTauri) return;
-    let un: (() => void) | undefined;
-    listen<{ downloaded: number; total: number | null }>("update-progress", (e) => setProgress(e.payload)).then((u) => (un = u));
-    return () => un?.();
-  }, []);
+  useTauriEvent<{ downloaded: number; total: number | null }>("update-progress", setProgress);
 
   const install = async () => {
     setInstalling(true);

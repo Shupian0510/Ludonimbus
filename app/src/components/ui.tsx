@@ -504,19 +504,29 @@ export function UiProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 10000 : tone === "bad" ? 9000 : 4500);
   }, []);
 
+  // The open dialog. A new one replaces it, and the replaced one counts as
+  // cancelled: its caller must not wait forever.
+  const asking = useRef<Ask | null>(null);
+  const show = useCallback((a: Ask) => {
+    const before = asking.current;
+    asking.current = a;
+    setAsk(a);
+    before?.resolve(null);
+  }, []);
+
   const confirm = useCallback<UiApi["confirm"]>(
     (o) =>
       new Promise((resolve) =>
-        setAsk({ title: o.title, text: o.text, confirm: o.confirm ?? msg().common.ok, danger: o.danger, resolve: (v) => resolve(v !== null) }),
+        show({ title: o.title, text: o.text, confirm: o.confirm ?? msg().common.ok, danger: o.danger, resolve: (v) => resolve(v !== null) }),
       ),
-    [],
+    [show],
   );
 
   const prompt = useCallback<UiApi["prompt"]>(
     (o) =>
       new Promise((resolve) => {
         setInput(o.value ?? "");
-        setAsk({
+        show({
           title: o.title,
           text: o.text,
           confirm: o.confirm ?? msg().common.ok,
@@ -524,7 +534,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
           resolve,
         });
       }),
-    [],
+    [show],
   );
 
   // One object for the provider's lifetime: pages list `ui` in effect
@@ -533,8 +543,11 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({ toast, confirm, prompt }), [toast, confirm, prompt]);
 
   const close = (v: string | null) => {
-    ask?.resolve(v);
+    const a = asking.current;
+    if (!a) return;
+    asking.current = null;
     setAsk(null);
+    a.resolve(v);
   };
 
   return (
