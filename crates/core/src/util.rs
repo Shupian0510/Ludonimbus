@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 /// Write a file atomically: write a temporary file beside it, flush it to
 /// the disk, then rename it over the target. Readers see the old content or
@@ -71,15 +72,46 @@ fn create_temp(path: &Path, private: bool) -> std::io::Result<(PathBuf, std::fs:
 
 /// Rename `from` over `to`. On Windows a program that has `to` open (a
 /// virus scanner, the search indexer, another process reading it) makes the
-/// rename fail for a moment; it is tried again for up to a second.
+/// rename fail while it has it: tried again for up to about five seconds
+/// ([`retrying`]).
 fn rename_retrying(from: &Path, to: &Path) -> std::io::Result<()> {
-    let mut tries = 0;
+    retrying(Duration::from_secs(5), || match std::fs::rename(from, to) {
+        // While another writer replaces `to`, Windows can also say that a
+        // file isn't there; ours still is, so it is the moment, not the file.
+        Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::NotFound && from.exists() => Err(busy(e)),
+        res => res,
+    })
+}
+
+/// Read a file another program may be replacing ([`atomic_write`]): on
+/// Windows, opening it at the moment it is replaced, or while a virus
+/// scanner has it, fails for a moment with "access denied" or a sharing
+/// violation. Tried again for up to about two seconds. A file that isn't
+/// there is reported at once (`ErrorKind::NotFound`).
+pub fn read_retrying(path: &Path) -> std::io::Result<Vec<u8>> {
+    retrying(Duration::from_secs(2), || std::fs::read(path))
+}
+
+/// An error [`retrying`] tries again after.
+fn busy(e: std::io::Error) -> std::io::Error {
+    std::io::Error::from_raw_os_error(e.raw_os_error().filter(|c| matches!(c, 5 | 32 | 33)).unwrap_or(32))
+}
+
+/// Run `op` until it succeeds, fails for another reason than a file some
+/// other program has open (Windows: access denied, sharing violation, lock
+/// violation), or `budget` is spent. Each wait is a little longer than the
+/// last and partly random, so programs waiting on the same file don't keep
+/// trying at the same moment (with a fixed wait, eight writers of one file
+/// took turns failing for more than a second).
+fn retrying<T>(budget: Duration, mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    use rand::Rng;
+    let start = std::time::Instant::now();
+    let mut wait_ms = 5u64;
     loop {
-        match std::fs::rename(from, to) {
-            // Access denied, sharing violation, lock violation.
-            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32 | 33)) && tries < 20 => {
-                tries += 1;
-                std::thread::sleep(std::time::Duration::from_millis(50));
+        match op() {
+            Err(e) if cfg!(windows) && matches!(e.raw_os_error(), Some(5 | 32 | 33)) && start.elapsed() < budget => {
+                std::thread::sleep(Duration::from_millis(rand::thread_rng().gen_range(wait_ms / 2..=wait_ms)));
+                wait_ms = (wait_ms * 2).min(200);
             }
             res => return res,
         }
@@ -399,7 +431,7 @@ mod tests {
                     let body = vec![b'a' + i; 64 * 1024];
                     for _ in 0..20 {
                         atomic_write(&path, &body).unwrap();
-                        let seen = std::fs::read(&*path).unwrap();
+                        let seen = read_retrying(&path).unwrap();
                         assert_eq!(seen.len(), body.len());
                         assert!(seen.iter().all(|&b| b == seen[0]), "two writes mixed");
                     }

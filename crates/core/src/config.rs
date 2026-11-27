@@ -403,7 +403,8 @@ fn read_file() -> Result<Option<AppConfig>> {
     if !path.exists() {
         return Ok(None);
     }
-    let text = std::fs::read_to_string(&path).with_context(|| crate::tr!("无法读取配置文件 {}", "Can't read the configuration file {}", path.display()))?;
+    let bytes = util::read_retrying(&path).with_context(|| crate::tr!("无法读取配置文件 {}", "Can't read the configuration file {}", path.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
     let cfg: AppConfig =
         serde_json::from_str(&text).with_context(|| crate::tr!("配置文件格式错误 {}", "The configuration file is malformed: {}", path.display()))?;
     // Every program reads the configuration first, so this keeps texts made
