@@ -135,6 +135,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '一键加入 Steam', link: '/steam/add-to-steam' },
         { text: '封面与 SteamGridDB', link: '/steam/artwork' },
         { text: '在 Steam 里显示云存档状态', link: '/steam/status-in-steam' },
+        { text: 'Steam 装的游戏', link: '/steam/steam-cloud' },
       ],
     },
     {
@@ -150,7 +151,8 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
       text: '同步与存档',
       items: [
         { text: '同步怎样工作', link: '/sync/how-it-works' },
-        { text: '版本历史', link: '/sync/versions' },
+        { text: '存档', link: '/sync/versions' },
+        { text: '同一个游戏的几个版本', link: '/sync/game-versions' },
         { text: '存档冲突', link: '/sync/conflicts' },
         { text: '离线游玩', link: '/sync/offline' },
         { text: '多台设备', link: '/sync/devices' },
@@ -162,6 +164,14 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '模拟器', link: '/supported/emulators' },
         { text: '重编译 / 移植游戏', link: '/supported/recomps' },
         { text: 'PC 游戏（Ludusavi）', link: '/supported/pc-games' },
+      ],
+    },
+    {
+      text: '其他平台',
+      items: [
+        { text: '掌机和手柄界面', link: '/platforms/handheld' },
+        { text: 'Linux 和 Steam Deck（预览）', link: '/platforms/linux' },
+        { text: 'Switch 主机（预览）', link: '/platforms/switch' },
       ],
     },
     {
@@ -221,6 +231,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Add to Steam', link: '/en/steam/add-to-steam' },
         { text: 'Artwork and SteamGridDB', link: '/en/steam/artwork' },
         { text: 'Cloud status inside Steam', link: '/en/steam/status-in-steam' },
+        { text: 'Games Steam installed', link: '/en/steam/steam-cloud' },
       ],
     },
     {
@@ -236,7 +247,8 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
       text: 'Sync and saves',
       items: [
         { text: 'How sync works', link: '/en/sync/how-it-works' },
-        { text: 'Version history', link: '/en/sync/versions' },
+        { text: 'Saves', link: '/en/sync/versions' },
+        { text: 'Several versions of one game', link: '/en/sync/game-versions' },
         { text: 'Conflicts', link: '/en/sync/conflicts' },
         { text: 'Playing offline', link: '/en/sync/offline' },
         { text: 'Multiple devices', link: '/en/sync/devices' },
@@ -248,6 +260,14 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Emulators', link: '/en/supported/emulators' },
         { text: 'Recomps and ports', link: '/en/supported/recomps' },
         { text: 'PC games (Ludusavi)', link: '/en/supported/pc-games' },
+      ],
+    },
+    {
+      text: 'Other platforms',
+      items: [
+        { text: 'Handhelds and the controller view', link: '/en/platforms/handheld' },
+        { text: 'Linux and Steam Deck (preview)', link: '/en/platforms/linux' },
+        { text: 'Switch console (preview)', link: '/en/platforms/switch' },
       ],
     },
     {

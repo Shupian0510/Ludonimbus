@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
+import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, playtimePlatforms, SaveCandidate, StatusReport } from "../api";
 import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
@@ -11,7 +11,7 @@ import { PlatformFolders } from "./PlatformFolders";
 import { StatusBadge } from "./Library";
 import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
-import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Saves } from "./Saves";
 import { ApplyDialog, familyOf, JoinRow, UndoRow, VersionBar } from "./SaveLibrary";
@@ -307,8 +307,7 @@ export function GameDetail({
           <div className="banner banner-info not-here">
             <Icon name="locate" />
             <div>
-              <b>{!game.exe ? g.notHere.noExe : !game.exeExists ? g.notHere.moved : g.notHere.noFile}</b>
-              <p>{g.notHere.hint}</p>
+              <b>{!game.exe ? g.notHere.noExe : !game.exeExists ? g.notHere.moved : g.notHere.noFile}</b> <Hint text={g.notHere.hint} />
             </div>
             <Button small onClick={findExe}>
               {g.findAuto}
@@ -320,8 +319,7 @@ export function GameDetail({
           <div className="banner banner-info not-here">
             <Icon name="transfer" />
             <div>
-              <b>{t.savelib.newerTitle(newer.label)}</b>
-              <p>{t.savelib.newerText(newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))}</p>
+              <b>{t.savelib.newerTitle(newer.label)}</b> <Hint text={t.savelib.newerText(newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))} />
             </div>
             <Button small kind="primary" onClick={() => setApplyNewer(true)}>
               {t.savelib.applyHere}
@@ -376,6 +374,11 @@ export function GameDetail({
               <div className="panel-head">
                 <Icon name="steam" />
                 <h3>{g.steamTitle}</h3>
+                {game.steam ? (
+                  <Hint text={g.steamHint} />
+                ) : (
+                  game.health.state !== "noSteam" && <Hint text={game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe} />
+                )}
                 {game.steam && (
                   <Toggle
                     checked={game.steam.enabled}
@@ -394,20 +397,12 @@ export function GameDetail({
                   {g.repair}
                 </Button>
               )}
-              {game.steam && (
-                <p className="muted small">{g.steamHint}</p>
-              )}
               {!game.steam && game.health.state !== "noSteam" && (
-                <>
-                  <p className="muted small">
-                    {game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe}
-                  </p>
-                  <div className="row">
-                    <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
-                      {g.addSteam}
-                    </Button>
-                  </div>
-                </>
+                <div className="row">
+                  <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
+                    {g.addSteam}
+                  </Button>
+                </div>
               )}
               {game.steam?.created && (
                 <div className="row">
@@ -423,6 +418,7 @@ export function GameDetail({
             <div className="panel-head">
               <Icon name="locate" />
               <h3>{g.location}</h3>
+              {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && <Hint text={g.xboxHelper} />}
               {game.exe && (game.exeExists ? <Badge tone="ok">{g.ok}</Badge> : <Badge tone="warn">{g.missing}</Badge>)}
             </div>
             {game.exe && !game.exeExists && (
@@ -443,17 +439,13 @@ export function GameDetail({
               )}
             </PathField>
             {xboxProtected && game.exeExists && (
-              <>
-                <p className="health health-warn">{g.xboxProtected}</p>
-                <div className="row">
-                  <Button small kind="primary" icon="check" onClick={switchToXboxHelper}>
-                    {g.useHelper}
-                  </Button>
-                </div>
-              </>
-            )}
-            {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && (
-              <p className="muted small">{g.xboxHelper}</p>
+              <div className="row">
+                <span className="health health-warn">{g.xboxProtectedShort}</span>
+                <Hint text={g.xboxProtected} />
+                <Button small kind="primary" icon="check" onClick={switchToXboxHelper}>
+                  {g.useHelper}
+                </Button>
+              </div>
             )}
             {(!game.exe || !game.exeExists) && (
               <PlatformFolders
@@ -532,13 +524,18 @@ export function GameDetail({
   );
 }
 
-/** Per-device breakdown shown when hovering the playtime. */
+/** Shown when hovering the playtime: per device, and per platform when there are several. */
 function playtimeTip(game: GameView): string {
   const g = msg().game;
   const lines = [g.playtimeTitle];
   for (const d of game.playtime.devices) {
     lines.push(g.playtimeDevice(d.deviceName, duration(d.secs), d.thisDevice));
     if (d.steamMinutes) lines.push(g.playtimeSteam(duration(d.steamMinutes * 60)));
+  }
+  const platforms = playtimePlatforms(game.playtime);
+  if (platforms.length > 0) {
+    lines.push("", g.playtimePlatforms);
+    for (const [name, secs] of platforms) lines.push(g.playtimePlatform(name, duration(secs)));
   }
   return lines.join("\n");
 }
@@ -695,11 +692,13 @@ function Config({
                 <option key={n} value={n} />
               ))}
             </datalist>
-            <span className="muted small">{t.source.fieldHint}</span>
+            <Hint text={t.source.fieldHint} />
           </div>
         </label>
         <label>
-          <span>{c.autoSync}</span>
+          <span>
+            {c.autoSync} <Hint text={c.autoSyncHint} />
+          </span>
           <div className="row">
             <Toggle
               checked={game.autoSync}
@@ -707,29 +706,26 @@ function Config({
                 api.updateGame(game.key, { autoSync: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
               }
             />
-            <span className="muted small">{c.autoSyncHint}</span>
           </div>
         </label>
         <label>
           <span>{c.uploadWhen}</span>
-          <div>
-            <div className="row">
-              <Toggle
-                checked={game.uploadOnGameExit}
-                disabled={!game.hasGameProcess}
-                onChange={(v) =>
-                  api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
-                }
-              />
-              <span>{c.uploadOnExit}</span>
-            </div>
-            <p className="muted small">
-              {game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess}
-            </p>
+          <div className="row">
+            <Toggle
+              checked={game.uploadOnGameExit}
+              disabled={!game.hasGameProcess}
+              onChange={(v) =>
+                api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
+              }
+            />
+            <span>{c.uploadOnExit}</span>
+            <Hint text={game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess} />
           </div>
         </label>
         <label>
-          <span>{c.saves}</span>
+          <span>
+            {c.saves} <Hint text={c.savesHint} />
+          </span>
           <div className="field-stack">
             <textarea
               className="input mono"
@@ -746,7 +742,6 @@ function Config({
                 {c.addFolder}
               </Button>
             </div>
-            <span className="muted small">{c.savesHint}</span>
           </div>
         </label>
         <label>

@@ -23,7 +23,7 @@ import {
 import { msg, useT } from "../i18n";
 import { duration } from "./SpeedTest";
 import { withSteamClosed } from "./steamAction";
-import { Badge, Button, Icon, Modal, Spinner, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Modal, Spinner, useUi } from "./ui";
 
 const startJob = (kind: BackupJob["kind"], target: string | null = null): BackupJob => ({
   kind,
@@ -186,6 +186,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
       <div className="panel-head">
         <Icon name="upload" />
         <h3>{c.title}</h3>
+        <Hint text={c.intro} />
         {info.hasCloud && badge}
       </div>
 
@@ -201,7 +202,6 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
               </Button>
             </div>
           )}
-          {!latest && <p className="muted small">{c.intro}</p>}
           {info.error && <div className="health health-warn">{c.cloudError(info.error)}</div>}
 
           <div className="row">
@@ -332,8 +332,8 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                   <option value={0}>{c.keepAll}</option>
                 </select>
                 <span className="muted small">{info.keep === 0 ? "" : c.keepUnit}</span>
+                <Hint text={c.keepHint} />
               </div>
-              <div className="muted small">{c.keepHint}</div>
             </div>
           )}
 
@@ -341,7 +341,9 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
             <div className="gb-versions">
               {info.byParts ? (
                 <>
-                  <b className="small">{c.parts}</b>
+                  <b className="small">
+                    {c.parts} <Hint text={info.firmwareAvailable ? `${c.partsHint}\n\n${c.firmwareHint}` : c.partsHint} />
+                  </b>
                   {(["program", "content", "config"] as PartKind[]).map((k) => (
                     <label key={k} className="row gb-check-inline">
                       <input type="checkbox" checked={!info.skip.includes(k)} disabled={busy} onChange={(e) => toggleSkip(k, e.target.checked)} />
@@ -354,15 +356,14 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                       <span className="small">{c.firmware}</span>
                     </label>
                   )}
-                  {info.firmwareAvailable && <div className="muted small">{c.firmwareHint}</div>}
-                  <div className="muted small">{c.partsHint}</div>
                 </>
               ) : (
                 <div className="muted small">{c.wholeFolder}</div>
               )}
 
-              <b className="small">{c.extra}</b>
-              <div className="muted small">{c.extraHint}</div>
+              <b className="small">
+                {c.extra} <Hint text={c.extraHint} />
+              </b>
               {info.extraContent.map((p) => (
                 <div key={p} className="row">
                   <code className="path grow">{p}</code>
@@ -398,10 +399,10 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
                 </Button>
               </div>
 
-              <b className="small">{c.excludeTitle}</b>
-              <div className="muted small">{c.excludeHint}</div>
+              <b className="small">
+                {c.excludeTitle} <Hint text={`${c.excludeHint}\n\n${c.defaults(info.defaultExclude.join("  "))}`} />
+              </b>
               <textarea className="input" rows={3} value={excludeText} onChange={(e) => setExcludeText(e.target.value)} />
-              <div className="muted small">{c.defaults(info.defaultExclude.join("  "))}</div>
               <div className="row">
                 <Button
                   small

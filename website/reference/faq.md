@@ -8,7 +8,7 @@
 
 ### 两台电脑都玩过，存档冲突了怎么办？
 
-启动游戏前会弹窗让你选择使用云端还是本机的那份。两份都会保存在版本历史里，选错了也可以随时恢复。见[存档冲突](../sync/conflicts.md)。
+启动游戏前会弹窗让你选择使用云端还是本机的那份。两份都会留在游戏的「存档」页签里，选错了随时可以设回去。见[存档冲突](../sync/conflicts.md)。
 
 ### 能用百度网盘、阿里云盘或夸克吗？
 
@@ -46,9 +46,9 @@
 
 在每个游戏的详情页关闭「Steam 自动同步」，Steam 快捷方式会恢复成原来的样子。云端的存档和版本都会保留。见[下载与安装 → 卸载](../guide/install.md#uninstall)。
 
-### 支持 macOS 或 Linux 吗？
+### 支持 macOS、Linux 或 Steam Deck 吗？
 
-目前只支持 Windows。
+Windows 10 / 11 是主要平台。从 1.0 开始有 Linux 和 Steam Deck 版（预览），见 [Linux 和 Steam Deck](../platforms/linux.md)。macOS 暂时不支持。
 
 ## 故障排查
 

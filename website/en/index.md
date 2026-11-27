@@ -48,7 +48,7 @@ features:
     linkText: Recompiled game saves
   - icon: 🕘
     title: Version history
-    details: Every version records the time, device and trigger. Restore it, export it as a zip, lock it or add a note. Manual backups are kept forever.
+    details: Every save records the time, the device and where it came from. Make it current, keep it, name it or export it for a friend. Old automatic saves are cleaned up; kept saves stay.
     link: /en/sync/versions
     linkText: Version history
   - icon: 🤝

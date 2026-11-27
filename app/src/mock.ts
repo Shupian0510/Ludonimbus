@@ -248,6 +248,15 @@ const playtime: Record<string, PlaytimeSummary> = {
   "zelda-oot-longshot": devicePlaytime(16.5, 4.2, 12),
   "fe-fortunes-weave": devicePlaytime(7.3, 0, 0),
   "bloodborne-lantern": devicePlaytime(31, 9.5, 20),
+  // Played as two versions: the time per platform shows with the total.
+  celeste: {
+    ...devicePlaytime(9, 3.5, 0),
+    platforms: [
+      { platform: "pc:steam", secs: 9 * 3600 },
+      { platform: "pc", secs: 3.5 * 3600 },
+    ],
+    platformNames: { "pc:steam": "Steam", pc: "PC" },
+  },
 };
 
 const overview: Overview = {
@@ -761,8 +770,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":
       return delay([
-        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(1) },
-        { id: "d-laptop", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(300) },
+        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(1), layout: 2 },
+        { id: "d-laptop", name: "LAPTOP", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(300), layout: 2 },
+        // Still on 0.6: its record says no layout.
+        { id: "d-handheld", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.6.2", lastSeen: ago(60 * 26) },
       ]);
     case "nx_status":
     case "nx_set_enabled":

@@ -54,7 +54,7 @@ Ludonimbus/games/<游戏>/game.json         游戏信息
 Ludonimbus/games/<游戏>/snapshots/*.zip   每个版本一个 zip
 ```
 
-每个版本都是普通的 zip，即使不用 Ludonimbus 也能拿回存档。旧的自动版本会自动清理，手动备份和锁定的版本永久保留。
+存档放在普通的 zip 里（不超过 16 MB 的存档，每一份就是一个完整的 zip），即使不用 Ludonimbus 也能拿回来。旧的自动存档会自动清理，保留的存档一直留着。
 
 ## 多台电脑
 

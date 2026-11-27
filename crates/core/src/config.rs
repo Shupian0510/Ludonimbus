@@ -82,10 +82,16 @@ pub struct Onboarding {
     pub usage: Vec<String>,
 }
 
+/// The configuration's version. 2 since 1.0: a game may say which save line
+/// it shares and through which folders. Older versions of Ludonimbus read a
+/// newer file as it is and leave out what they don't know when they write
+/// it.
+pub const VERSION: u32 = 2;
+
 impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
-            version: 1,
+            version: VERSION,
             device: DeviceConfig::generate(),
             cloud: CloudConfig::None,
             steam: SteamConfig::default(),
@@ -407,8 +413,31 @@ fn read_file() -> Result<Option<AppConfig>> {
     Ok(Some(cfg))
 }
 
+/// The first time this version changes a configuration an older one wrote,
+/// that file is kept next to it as `config.v1.json`: what to put back when
+/// going back to the older version (docs/plan-v2.md, 12.4). Kept once, and
+/// never changed afterwards.
+fn keep_older(path: &std::path::Path) {
+    let copy = path.with_file_name("config.v1.json");
+    if copy.exists() {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else { return };
+    let older = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("version").and_then(|n| n.as_u64()))
+        .is_some_and(|n| n < u64::from(VERSION));
+    if older {
+        let _ = std::fs::write(copy, text);
+    }
+}
+
 fn write_file(cfg: &AppConfig) -> Result<()> {
-    util::atomic_write(&paths::config_file(), &serde_json::to_vec_pretty(cfg)?)
+    let path = paths::config_file();
+    keep_older(&path);
+    let mut cfg = cfg.clone();
+    cfg.version = VERSION;
+    util::atomic_write(&path, &serde_json::to_vec_pretty(&cfg)?)
 }
 
 /// Load the configuration, creating (and persisting) defaults on first run so

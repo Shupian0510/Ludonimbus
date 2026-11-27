@@ -39,8 +39,11 @@ Use cases: [cloud saves for non-Steam games](https://shupian0510.github.io/Ludon
 - **Status right inside Steam**: the play bar of a game's page shows "up to date", "uploading", "conflict" and so on, and you can sync with one click. Optional; Ludonimbus sets it up in one click.
 - **Deleting a game doesn't lose its saves**: saves are tracked relative to the game folder. After reinstalling, moving the game or switching PCs, they come back on the first launch.
 - **Emulator updates don't break sync**: a new version extracted into a new folder is found automatically; if a Steam shortcut is edited or recreated, Ludonimbus offers a one-click repair.
-- **Version history**: every version records the time, device and trigger. Restore it, export it as a zip, lock it or add a note. Old versions are cleaned up automatically; manual backups are kept forever.
-- **Conflicts keep both sides**: when two PCs both changed the saves, you choose which one to use, and the other stays in the version history.
+- **Version history**: every sync leaves a save with its time, device and source. Make any of them current (with undo), star one to keep it, name it, or export it for a friend. Old automatic saves are cleaned up; kept saves stay.
+- **One card per game, progress shared automatically**: the Steam version, the Xbox app's version and one in an emulator sit on one card, and versions whose saves have the same format share one progress.
+- **Games from the Steam store too**: keep a second copy of what Steam Cloud syncs, with history, or take a game over so its Steam version shares progress with other platforms and other devices.
+- **A device can play its own game**: a device can keep its own progress instead of sharing with the others.
+- **Conflicts keep both sides**: when two devices both changed the saves, you choose which one to use, and the other is kept. Which one is newer is never decided by the PC's clock.
 - **Works offline**: if the cloud can't be reached, the game starts anyway. Saves are kept on the PC and uploaded once you're back online.
 - **Add games without hunting for saves**: "Add game → Scan this PC" lists non-Steam games in Steam, games installed by Epic / GOG / Xbox, games with saves inside emulators, folders you point it at, and any of the thousands of PC games that already have saves on this PC, ready to tick and add in bulk. Games Steam Cloud already syncs are listed apart, so nothing is managed twice. For games it doesn't recognise, "play and find": start the game, save once, and Ludonimbus lists the folders that were just written to.
 - **Finds where games are installed**: for games found only by their saves, Ludonimbus looks for the game program in the install folders of Epic, GOG, Xbox, EA, Ubisoft and other stores; if it can't, you can pick from those install folders directly.
@@ -51,7 +54,7 @@ Use cases: [cloud saves for non-Steam games](https://shupian0510.github.io/Ludon
 
 ## Download and install
 
-**Requirements**: Windows 10 / 11 (64-bit) with Steam installed.
+**Requirements**: Windows 10 / 11 (64-bit) with Steam installed. Linux and Steam Deck (preview): see the [documentation](https://shupian0510.github.io/Ludonimbus/en/platforms/linux.html).
 
 1. Download `Ludonimbus_x.y.z_x64-setup.exe` from [Releases](https://github.com/Shupian0510/Ludonimbus/releases/latest).
 2. Run the installer. It installs for the current user and doesn't need administrator rights.
@@ -141,7 +144,7 @@ start the game and wait until it and its launcher have fully exited
 upload the new saves as a new version
 ```
 
-With auto-sync on, the Steam shortcut first starts `ludonimbus-run`, a small Ludonimbus program that syncs before and after the game; the shortcut's name, icon, artwork and play time stay the same. Each version is an append-only, immutable zip snapshot that records the device, the time and the previous version, so any sync can be undone.
+With auto-sync on, the Steam shortcut first starts `ludonimbus-run`, a small Ludonimbus program that syncs before and after the game; the shortcut's name, icon, artwork and play time stay the same. A save, once uploaded, is never changed; it records the device, the time and which save it follows, so any sync can be undone.
 
 ## Privacy and security
 
@@ -164,7 +167,7 @@ It uploads, but it doesn't pull before launch. With Ludonimbus in the tray, it n
 <details>
 <summary><b>I played on two PCs and the saves conflict. What do I do?</b></summary>
 
-Before the game starts, a dialog asks whether to use the cloud's saves or this PC's. Both are kept in the version history, so even if you pick the wrong one you can restore the other at any time.
+Before the game starts, a dialog asks whether to use the cloud's saves or this PC's. Both stay on the game's Saves tab, so even if you pick the wrong one you can make the other current at any time.
 </details>
 
 <details>
@@ -182,7 +185,7 @@ They can be added to Steam. An Xbox game's own program is protected by Windows a
 <details>
 <summary><b>Why does the scan say Steam Cloud already syncs some games?</b></summary>
 
-Those games are installed in Steam right now and Steam Cloud already syncs them, so Ludonimbus doesn't need to. If you uninstall one from Steam and play it on another store instead, it shows up under "Ready to add".
+Those games are installed in Steam right now and Steam Cloud already syncs them. Usually there's no need to add them; tick one if you want a backup with history, or want it to share progress with other platforms and other devices. See the [documentation](https://shupian0510.github.io/Ludonimbus/en/steam/steam-cloud.html).
 </details>
 
 <details>
@@ -194,13 +197,13 @@ After you connect the new cloud, Settings asks whether to copy the saves from th
 <details>
 <summary><b>What should I do before uninstalling Ludonimbus?</b></summary>
 
-Turn off "Steam auto-sync" on each game's page, and the Steam shortcuts go back to how they were. Your saves and versions stay in the cloud; reinstall Ludonimbus and connect the same cloud later to get them back.
+Turn off "Steam auto-sync" on each game's page, and the Steam shortcuts go back to how they were; for Steam games you took over, click "Give back to Steam" first. Your saves and versions stay in the cloud; reinstall Ludonimbus and connect the same cloud later to get them back.
 </details>
 
 <details>
-<summary><b>Does it support macOS or Linux?</b></summary>
+<summary><b>Does it support macOS, Linux or the Steam Deck?</b></summary>
 
-Only Windows for now.
+Windows 10 / 11 is the main platform. Since 1.0 there is a Linux and Steam Deck version (preview); see the [documentation](https://shupian0510.github.io/Ludonimbus/en/platforms/linux.html). macOS isn't supported yet.
 </details>
 
 More questions and troubleshooting: [FAQ and troubleshooting](https://shupian0510.github.io/Ludonimbus/en/reference/faq.html).
@@ -223,6 +226,10 @@ More questions and troubleshooting: [FAQ and troubleshooting](https://shupian051
 - [x] Scan games with saves inside emulators and add them one by one, even without Steam shortcuts
 - [x] One-click Quark with a QR code (experimental)
 - [x] English interface, a first-run guide, documentation in Chinese and English
+- [x] One card for the several versions of a game; versions with the same save format share progress (1.0)
+- [x] Taking over Steam Cloud; a device's own saves (1.0)
+- [x] Faster sync: usually one request before launch, uploads finish in the background (1.0)
+- [x] A controller view; Linux and Steam Deck (preview); the Switch console syncing through a PC (preview) (1.0)
 
 **Later**
 

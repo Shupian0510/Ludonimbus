@@ -109,17 +109,18 @@ export function GameAchievements({ gameKey }: { gameKey: string }) {
         <p className="muted small">
           {view.sourceLabel && a.from(view.sourceLabel + (view.title ? ` · ${view.title}` : ""))}
           {view.checkedAt && ` · ${a.checked(relTime(view.checkedAt))}`}
+          {noNames && (
+            <>
+              {" "}
+              <Hint text={a.noNames} />
+            </>
+          )}
         </p>
         {view.lastError && <p className="health health-warn">{view.lastError}</p>}
-        {noNames && <p className="muted small">{a.noNames}</p>}
         <div className="ach-popup">
           <Toggle checked={view.popup} onChange={setPopup} />
-          <div>
-            <div>{a.popup}</div>
-            <div className="muted small">
-              {a.popupHint} {a.popupHints[view.source] ?? ""}
-            </div>
-          </div>
+          <span>{a.popup}</span>
+          <Hint text={`${a.popupHint} ${a.popupHints[view.source] ?? ""}`.trim()} />
         </div>
       </section>
       {view.items.length === 0 ? (
@@ -236,8 +237,8 @@ function LinkSource({ gameKey, onLinked }: { gameKey: string; onLinked: (v: Achi
         <div className="panel-head">
           <Icon name="star" />
           <h3>{a.noSource}</h3>
+          <Hint text={a.noSourceHint} />
         </div>
-        <p className="muted small">{a.noSourceHint}</p>
         {candidates === null && <Spinner />}
         {candidates && candidates.length > 0 && (
           <>
@@ -261,16 +262,16 @@ function LinkSource({ gameKey, onLinked }: { gameKey: string; onLinked: (v: Achi
           <Button small icon="folder" onClick={pick} disabled={working}>
             {a.pickFile}
           </Button>
+          <Hint text={a.pickFileHint} />
         </div>
-        <p className="muted small">{a.pickFileHint}</p>
       </section>
 
       <section className="panel">
         <div className="panel-head">
           <Icon name="star" />
           <h3>{a.ra}</h3>
+          <Hint text={a.raHint} />
         </div>
-        <p className="muted small">{a.raHint}</p>
         {settings && !settings.raConnected ? (
           <p className="muted small">{a.raNeedsAccount}</p>
         ) : (

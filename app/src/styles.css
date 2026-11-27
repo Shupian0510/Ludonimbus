@@ -2378,7 +2378,7 @@ details.scan-group[open] > summary {
 .ach .panel-head .grow { flex: 1; }
 .ach-progress { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin: 4px 0 8px; }
 .ach-progress > div { height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
-.ach-popup { display: flex; gap: 12px; align-items: flex-start; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ach-popup { display: flex; gap: 8px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .ach-list { display: flex; flex-direction: column; background: var(--panel); border-radius: var(--radius); overflow: hidden; }
 .ach-row { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .ach-row:last-child { border-bottom: 0; }
