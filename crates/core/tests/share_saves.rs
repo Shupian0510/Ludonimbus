@@ -267,6 +267,40 @@ fn a_shared_save_goes_beside_the_friends_history() {
     let junk = dir.path().join("junk.lnsave");
     fs::write(&junk, b"not a zip").unwrap();
     assert!(ben.import(&junk).is_err());
+
+    // A file made to drop files where no save of the game is, whole and as
+    // its hashes say: beside the game's program, in the Startup folder.
+    let crafted = |name: &str, files: &[(&str, &str, Option<u64>)]| {
+        let mut zip = BTreeMap::new();
+        let mut info: serde_json::Value = serde_json::from_slice(&inside["share.json"]).unwrap();
+        let mut list = Vec::new();
+        for (path, data, size) in files {
+            zip.insert(format!("files/{path}"), data.as_bytes().to_vec());
+            let hash = blake3::hash(data.as_bytes()).to_hex().to_string();
+            list.push(serde_json::json!({ "path": path, "size": size.unwrap_or(data.len() as u64), "hash": hash, "mtime": 0 }));
+        }
+        info["files"] = serde_json::Value::Array(list);
+        zip.insert("share.json".to_string(), serde_json::to_vec(&info).unwrap());
+        let path = dir.path().join(format!("{name}.lnsave"));
+        write_zip(&path, &zip);
+        path
+    };
+    let dropper = crafted(
+        "dropper",
+        &[
+            ("install/saves/slot1.sav", "a farm", None),
+            ("install/version.dll", "not a save", None),
+            ("appdata/Microsoft/Windows/Start Menu/Programs/Startup/run.bat", "not a save", None),
+        ],
+    );
+    let refused = ben.import(&dropper).unwrap_err().to_string();
+    assert!(refused.contains("install/version.dll"), "{refused}");
+    // Sizes that add up past what a number holds, and a file longer than
+    // it says: refused, not a crash, and not read whole.
+    let huge = crafted("huge", &[("install/saves/a.sav", "a", Some(1 << 63)), ("install/saves/b.sav", "b", Some(1 << 63))]);
+    assert!(ben.import(&huge).is_err());
+    let longer = crafted("longer", &[("install/saves/slot1.sav", "much longer than it says", Some(4))]);
+    assert!(ben.import(&longer).is_err());
     assert_eq!(ben.versions().len(), before);
     assert_eq!(carl.versions().iter().map(|s| s.id.clone()).collect::<Vec<_>>(), vec![own]);
 }

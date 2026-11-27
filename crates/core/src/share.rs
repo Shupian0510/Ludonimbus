@@ -127,23 +127,40 @@ fn same_game(share: &Share, game: &GameEntry) -> bool {
 }
 
 /// The files of the shared save this version of the game has no folder
-/// for: outside its bindings, or under a root none of its saves are in.
-fn no_place(share: &Share, game: &GameEntry) -> Vec<String> {
+/// for: outside its bindings, or where a scan of its saves here would never
+/// find them. The file comes from someone else, and its paths are where its
+/// files would go once it is made current.
+fn no_place(share: &Share, game: &GameEntry) -> Result<Vec<String>> {
     let mut out = snapshot::no_place_for(game, &share.files);
-    // What this version would scan: the roots its own saves are under.
-    let roots = snapshot::scan(game).map(|(_, roots)| roots).unwrap_or_default();
-    if roots.is_empty() {
-        return out;
-    }
-    for f in &share.files {
-        let local = if game.bind.is_empty() { Some(f.path.clone()) } else { crate::bind::to_local(&game.bind, &f.path) };
-        let Some(local) = local else { continue };
-        let root = local.split('/').next().unwrap_or_default();
-        if !roots.keys().any(|r| r.eq_ignore_ascii_case(root)) && !out.contains(&f.path) {
-            out.push(f.path.clone());
+    // Each file where this version keeps it.
+    let own: Vec<(&str, String)> = share
+        .files
+        .iter()
+        .filter_map(|f| {
+            let local = if game.bind.is_empty() { Some(f.path.clone()) } else { crate::bind::to_local(&game.bind, &f.path) };
+            Some((f.path.as_str(), local?))
+        })
+        .collect();
+    let outside = match snapshot::outside_saves(game, own.iter().map(|(_, l)| l.as_str()))? {
+        Some(outside) => outside,
+        // Ludusavi finds the saves: only the roots can be checked.
+        None => {
+            let roots = snapshot::scan(game).map(|(_, roots)| roots).unwrap_or_default();
+            if roots.is_empty() {
+                return Ok(out);
+            }
+            own.iter()
+                .filter(|(_, l)| !roots.keys().any(|r| r.eq_ignore_ascii_case(l.split('/').next().unwrap_or_default())))
+                .map(|(_, l)| l.clone())
+                .collect()
+        }
+    };
+    for (path, local) in &own {
+        if outside.contains(local) && !out.iter().any(|o| o == path) {
+            out.push(path.to_string());
         }
     }
-    out
+    Ok(out)
 }
 
 /// Take the shared save at `path` into the line of `game`: a version beside
@@ -154,7 +171,7 @@ pub fn import(ctx: &Ctx, game: &GameEntry, path: &Path) -> Result<SnapshotMeta> 
     if !same_game(&share, game) {
         bail!(crate::tr!("这份存档是「{}」的，不是「{}」的", "This save is of {}, not of {}", share.name, game.name));
     }
-    let alien = no_place(&share, game);
+    let alien = no_place(&share, game)?;
     if !alien.is_empty() {
         bail!(crate::tr!(
             "这份存档和这个版本的存档格式不一样：{} 个文件在这里没有对应的位置（如 {}）",
@@ -163,16 +180,19 @@ pub fn import(ctx: &Ctx, game: &GameEntry, path: &Path) -> Result<SnapshotMeta> 
             alien[0]
         ));
     }
-    if share.files.iter().map(|f| f.size).sum::<u64>() > MAX_BYTES {
+    // The sizes are what the file says: added up without wrapping around.
+    let total = share.files.iter().try_fold(0u64, |sum, f| sum.checked_add(f.size));
+    if total.is_none_or(|t| t > MAX_BYTES) {
         bail!(crate::tr!("这份存档太大了", "This save is too large"));
     }
 
-    // Every file, whole and as its hash says.
+    // Every file, whole and as its hash says. No more than a byte past the
+    // size it is said to have is read: that is enough to tell it isn't.
     let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(|_| damaged())?;
     let mut files = Vec::with_capacity(share.files.len());
     for f in &share.files {
-        let mut data = Vec::with_capacity(f.size as usize);
-        archive.by_name(&format!("files/{}", f.path)).map_err(|_| damaged())?.take(MAX_BYTES).read_to_end(&mut data).map_err(|_| damaged())?;
+        let mut data = Vec::new();
+        archive.by_name(&format!("files/{}", f.path)).map_err(|_| damaged())?.take(f.size + 1).read_to_end(&mut data).map_err(|_| damaged())?;
         if data.len() as u64 != f.size || blake3::hash(&data).to_hex().as_str() != f.hash {
             return Err(damaged());
         }
