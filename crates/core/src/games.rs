@@ -5,9 +5,10 @@ use crate::cloud::CloudGame;
 use crate::config::{self, AppConfig, GameEntry, OriginalShortcut, SteamLink};
 use crate::discover::Found;
 use crate::emulators::{self, EmuGame};
-use crate::{localart, paths, steam, util};
+use crate::{localart, ludusavi, paths, spec, steam, util};
 use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub fn slugify(name: &str) -> String {
@@ -312,6 +313,7 @@ pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<Gam
         cfg.games.push(entry.clone());
         Ok(entry)
     })
+    .map(added)
 }
 
 /// Add a game that is not in Steam (or linked later).
@@ -363,6 +365,7 @@ pub fn add_custom_with(
         cfg.games.push(entry.clone());
         Ok(entry)
     })
+    .map(added)
 }
 
 /// Recreate a game known to the cloud on this device.
@@ -387,7 +390,8 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
             e.source = cg.source.clone();
             e.game = cg.game.clone();
             Ok(())
-        });
+        })
+        .map(added);
     }
     config::update(|cfg| {
         if cfg.game(&cg.key).is_some() {
@@ -422,6 +426,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
         cfg.games.push(entry.clone());
         Ok(entry)
     })
+    .map(added)
 }
 
 /// What kind of program a game runs on, for the library's source badges
@@ -493,6 +498,130 @@ pub fn update_game(key: &str, f: impl FnOnce(&mut GameEntry) -> Result<()>) -> R
         let g = cfg.game_mut(key).ok_or_else(|| anyhow!(crate::tr!("找不到游戏 {key}", "Game {key} not found")))?;
         f(g)?;
         Ok(g.clone())
+    })
+}
+
+/// The save locations from Ludusavi's database of a game whose saves
+/// Ludusavi finds ([`GameEntry::ludusavi_saves`]), for a restore to go by:
+/// the ones kept with the game, worked out again (and kept, when the game
+/// is in the library) once what they come from changed. That is Ludusavi's
+/// version or database, the title, or the game's folders on this device.
+/// `Err` says why there are none.
+pub fn ludusavi_saves(game: &GameEntry) -> std::result::Result<Vec<String>, String> {
+    let Some(title) = game.ludusavi_title.as_deref() else { return Err("it has no title in Ludusavi's database".into()) };
+    let kept = |why: String| if game.ludusavi_saves.is_empty() { Err(why) } else { Ok(game.ludusavi_saves.clone()) };
+    let Some(manifest) = ludusavi::manifest_stamp() else { return kept("Ludusavi's database isn't on this device yet".into()) };
+    let places = match places_of(game, ludusavi::stores()) {
+        Ok(p) => p,
+        Err(e) => return kept(format!("its folders on this device aren't known ({e:#})")),
+    };
+    let stamp = ludusavi::saves_stamp(&manifest, title, &places);
+    let patterns = match game.ludusavi_from.as_deref() == Some(stamp.as_str()) {
+        true => game.ludusavi_saves.clone(),
+        false => {
+            let files = ludusavi::game_files(&HashSet::from([title.to_string()]));
+            let found = derive(game, title, files.get(title), &places);
+            // A restore may be of a copy of the entry changed for it.
+            let listed = config::load().is_ok_and(|c| c.game(&game.key).is_some_and(|g| g.ludusavi_title == game.ludusavi_title));
+            if listed {
+                if let Err(e) = keep(vec![(game.key.clone(), title.to_string(), found.clone(), stamp)]) {
+                    crate::logger::log("sync", format!("{}: the save locations from Ludusavi's database were not kept: {e:#}", game.key));
+                }
+            }
+            found.unwrap_or_else(|| game.ludusavi_saves.clone())
+        }
+    };
+    match patterns.is_empty() {
+        true => Err(format!("Ludusavi's database has no save locations of \"{title}\" for this device")),
+        false => Ok(patterns),
+    }
+}
+
+/// Work out and keep the save locations from Ludusavi's database
+/// ([`ludusavi_saves`]) of the games whose saves Ludusavi finds that don't
+/// have them yet, or whose came from something that changed since; `only`:
+/// of that game. Reads the database once. Says how many changed.
+pub fn refresh_ludusavi_saves(only: Option<&str>) -> Result<usize> {
+    let cfg = config::load()?;
+    let wanted: Vec<&GameEntry> = cfg.games.iter().filter(|g| g.ludusavi_title.is_some() && only.is_none_or(|k| g.key == k)).collect();
+    if wanted.is_empty() {
+        return Ok(0);
+    }
+    let Some(manifest) = ludusavi::manifest_stamp() else { return Ok(0) };
+    let stores = ludusavi::stores();
+    let mut todo = Vec::new();
+    for g in wanted {
+        let title = g.ludusavi_title.clone().unwrap_or_default();
+        match places_of(g, stores.clone()) {
+            Ok(places) => {
+                let stamp = ludusavi::saves_stamp(&manifest, &title, &places);
+                if g.ludusavi_from.as_deref() != Some(stamp.as_str()) {
+                    todo.push((g, title, places, stamp));
+                }
+            }
+            Err(e) => crate::logger::log("sync", format!("{}: no save locations from Ludusavi's database: its folders aren't known ({e:#})", g.key)),
+        }
+    }
+    if todo.is_empty() {
+        return Ok(0);
+    }
+    let files = ludusavi::game_files(&todo.iter().map(|(_, title, _, _)| title.clone()).collect());
+    keep(todo.into_iter().map(|(g, title, places, stamp)| (g.key.clone(), title.clone(), derive(g, &title, files.get(&title), &places), stamp)).collect())
+}
+
+/// [`refresh_ludusavi_saves`] for a game just added, which a failure
+/// doesn't undo.
+pub(crate) fn added(entry: GameEntry) -> GameEntry {
+    if entry.ludusavi_title.is_some() {
+        if let Err(e) = refresh_ludusavi_saves(Some(&entry.key)) {
+            crate::logger::log("sync", format!("{}: no save locations from Ludusavi's database yet: {e:#}", entry.key));
+        }
+    }
+    entry
+}
+
+fn places_of(game: &GameEntry, stores: Vec<(String, PathBuf)>) -> Result<ludusavi::Places> {
+    let spec = spec::effective(game);
+    let roots = spec::resolve_roots(game, &spec)?;
+    Ok(ludusavi::Places::of(game, roots, stores))
+}
+
+/// The save locations of `game` from its title's entry in Ludusavi's
+/// database, with an Xbox app version's own containers (a scan adds them
+/// when the database doesn't name them, see [`crate::storefiles`]). `None`
+/// when the database doesn't have the title.
+fn derive(game: &GameEntry, title: &str, files: Option<&ludusavi::GameFiles>, places: &ludusavi::Places) -> Option<Vec<String>> {
+    let mut out = ludusavi::save_patterns(files?, title, places);
+    out.extend(crate::storefiles::own_containers(game).and_then(|dir| ludusavi::folder_pattern(&dir, &places.roots)));
+    Some(ludusavi::tidy(out))
+}
+
+/// Keep worked-out save locations with their games: `(key, title,
+/// patterns, stamp)`, `None` patterns when the database no longer has the
+/// title (the ones kept stay). Skips a game whose title changed meanwhile.
+/// Says how many changed.
+fn keep(found: Vec<(String, String, Option<Vec<String>>, String)>) -> Result<usize> {
+    config::update(|cfg| {
+        let mut changed = 0;
+        for (key, title, patterns, stamp) in found {
+            let Some(g) = cfg.game_mut(&key).filter(|g| g.ludusavi_title.as_deref() == Some(title.as_str())) else { continue };
+            let first = g.ludusavi_from.is_none();
+            g.ludusavi_from = Some(stamp);
+            let Some(patterns) = patterns else {
+                crate::logger::log("sync", format!("{key}: Ludusavi's database doesn't have \"{title}\"; its save locations stay as they were"));
+                continue;
+            };
+            if patterns.is_empty() && first {
+                crate::logger::log("sync", format!("{key}: Ludusavi's database has no save locations of \"{title}\" for this device"));
+            } else if patterns != g.ludusavi_saves {
+                crate::logger::log("sync", format!("{key}: save locations from Ludusavi's database for \"{title}\": {}", patterns.join(", ")));
+            }
+            if patterns != g.ludusavi_saves {
+                changed += 1;
+                g.ludusavi_saves = patterns;
+            }
+        }
+        Ok(changed)
     })
 }
 
@@ -602,6 +731,7 @@ pub fn add_found(f: &Found, c: FoundChoice) -> Result<GameEntry> {
         }
         Ok(())
     })
+    .map(added)
 }
 
 /// Add one game found in an emulator's data folder: the emulator rule with

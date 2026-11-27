@@ -245,7 +245,7 @@ pub fn add(cfg: &AppConfig, account: &str, appid: u32, choice: FoundChoice, kept
         None if choice.saves.is_empty() => titles(&[&app]).remove(&appid),
         None => None,
     };
-    insert(account, &app, title, choice, mode_for(&root, account, appid, kept_by_steam))
+    insert(account, &app, title, choice, mode_for(&root, account, appid, kept_by_steam)).map(games::added)
 }
 
 /// The state a game Steam installed is added in: Steam Cloud keeps its
@@ -317,7 +317,7 @@ pub fn add_many(cfg: &AppConfig, appids: &[u32]) -> Vec<Done> {
     let all = steam::installed_apps(&root);
     let wanted: Vec<&InstalledApp> = all.iter().filter(|a| appids.contains(&a.appid)).collect();
     let mut titles = titles(&wanted);
-    appids
+    let done = appids
         .iter()
         .map(|&appid| {
             let result = match all.iter().find(|a| a.appid == appid) {
@@ -326,7 +326,12 @@ pub fn add_many(cfg: &AppConfig, appids: &[u32]) -> Vec<Done> {
             };
             Done::of(appid, None, result)
         })
-        .collect()
+        .collect();
+    // The save locations of all of them, with one read of Ludusavi's database.
+    if let Err(e) = games::refresh_ludusavi_saves(None) {
+        log(format!("no save locations from Ludusavi's database yet: {e:#}"));
+    }
+    done
 }
 
 /// Every game Steam installed that isn't in the library yet ("all backup

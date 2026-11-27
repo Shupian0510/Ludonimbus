@@ -367,8 +367,12 @@ struct Locations {
 
 impl Locations {
     fn of(spec: &spec::SaveSpec) -> Result<Locations> {
+        Locations::new(&spec.saves, &spec.exclude)
+    }
+
+    fn new(patterns: &[String], excluded: &[String]) -> Result<Locations> {
         let mut excl_by_root: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for e in &spec.exclude {
+        for e in excluded {
             let (root, rest) = spec::split_pattern(e)?;
             excl_by_root.entry(root).or_default().push(rest);
         }
@@ -376,8 +380,8 @@ impl Locations {
         for (root, pats) in &excl_by_root {
             exclude.insert(root.clone(), build_globset(pats)?);
         }
-        let mut saves = Vec::with_capacity(spec.saves.len());
-        for pattern in &spec.saves {
+        let mut saves = Vec::with_capacity(patterns.len());
+        for pattern in patterns {
             let (root, rest) = spec::split_pattern(pattern)?;
             let matcher = build_globset(std::slice::from_ref(&rest))?;
             saves.push(Location { root, rest, matcher });
@@ -408,17 +412,57 @@ fn through_link(dest: &Path, below: usize) -> bool {
     dest.ancestors().take(below).any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
 }
 
+/// The save locations a version of `game` may be written to on this device
+/// (see [`write_files`]). For a game whose saves Ludusavi finds, those of
+/// its title in Ludusavi's database ([`crate::games::ludusavi_saves`]) and
+/// the user's own; a file a scan finds there now is one too, which the
+/// caller checks. `None` when that game has none: Ludusavi's database isn't
+/// on this device, or it has nothing for the title here. The log says why,
+/// and its files are written as they are.
+fn restore_locations(game: &GameEntry, spec: &spec::SaveSpec) -> Result<Option<Locations>> {
+    if spec.ludusavi_title.is_none() {
+        return Locations::of(spec).map(Some);
+    }
+    match crate::games::ludusavi_saves(game) {
+        Ok(mut patterns) => {
+            patterns.extend(spec.saves.iter().cloned());
+            Locations::new(&patterns, &spec.exclude).map(Some)
+        }
+        Err(why) => {
+            crate::logger::log("sync", format!("{}: where its files go is not checked: {why}", game.key));
+            Ok(None)
+        }
+    }
+}
+
+/// The files a scan found (`current`) by where they are, to compare places
+/// the way this system compares file names.
+fn places_of(current: &[LocalFile]) -> HashSet<String> {
+    current.iter().map(|f| crate::util::norm_path(&f.abs.to_string_lossy())).collect()
+}
+
+/// Whether the file `logical` is at one of the places in `found` (from
+/// [`places_of`]).
+fn found_at(found: &HashSet<String>, roots: &BTreeMap<String, PathBuf>, logical: &str) -> bool {
+    !found.is_empty() && resolve_logical(roots, logical).is_ok_and(|p| found.contains(&crate::util::norm_path(&p.to_string_lossy())))
+}
+
 /// The paths among `paths` (this version's own, `root/relative path`) a
 /// scan of this device would never find: unsafe ones, ones under none of
-/// the game's save locations, and ones left out of them. `None` for a game
-/// whose saves Ludusavi finds: it has no locations of its own to go by.
+/// the game's save locations, and ones left out of them. For a game whose
+/// saves Ludusavi finds, the locations are those of its title in
+/// Ludusavi's database, and a file a scan finds now is never outside. `None`
+/// when that game has no locations to go by ([`restore_locations`]).
 pub fn outside_saves<'a>(game: &GameEntry, paths: impl IntoIterator<Item = &'a str>) -> Result<Option<Vec<String>>> {
     let spec = spec::effective(game);
-    if spec.ludusavi_title.is_some() {
-        return Ok(None);
-    }
-    let wanted = Locations::of(&spec)?;
-    Ok(Some(paths.into_iter().filter(|p| validate_logical(p).is_err() || wanted.find(p).is_none()).map(str::to_string).collect()))
+    let Some(wanted) = restore_locations(game, &spec)? else { return Ok(None) };
+    let (found, roots) = match spec.ludusavi_title {
+        Some(_) => scan_own(game).map(|(files, roots)| (places_of(&files), roots)).unwrap_or_default(),
+        None => Default::default(),
+    };
+    Ok(Some(
+        paths.into_iter().filter(|p| validate_logical(p).is_err() || (wanted.find(p).is_none() && !found_at(&found, &roots, p))).map(str::to_string).collect(),
+    ))
 }
 
 fn mtime_of(meta: &std::fs::Metadata) -> i64 {
@@ -1130,8 +1174,10 @@ fn apply_coded(files: &[FileEntry], game: &GameEntry, content: &mut dyn FnMut(&s
 /// game's save locations on this device, not left out of them, and not
 /// through a link below where the scan starts walking. Any other file is
 /// left out and named in the log; when that is every file, nothing is
-/// written. A game whose saves Ludusavi finds has no locations of its own
-/// to go by, and its files are written as they are.
+/// written. A game whose saves Ludusavi finds goes by the save locations of
+/// its title in Ludusavi's database, and a file the scan before the restore
+/// found is written where it is. When that game has no locations, its
+/// files are written as they are ([`restore_locations`]).
 fn write_files(
     files: &[FileEntry],
     own: &[String],
@@ -1141,12 +1187,14 @@ fn write_files(
     content: &mut dyn FnMut(&str, &mut File) -> Result<()>,
 ) -> Result<()> {
     let spec = spec::effective(game);
-    let wanted = match spec.ludusavi_title {
-        Some(_) => None,
-        None => Some(Locations::of(&spec)?),
+    let wanted = restore_locations(game, &spec)?;
+    // Where the files Ludusavi finds now are.
+    let found = match (&wanted, &spec.ludusavi_title) {
+        (Some(_), Some(_)) => places_of(&current),
+        _ => HashSet::new(),
     };
     // Each file, and how many folders above it a link must not be in
-    // (none to check for a game Ludusavi finds the saves of).
+    // (none to check for a file a scan found where it is).
     let mut skipped: Vec<&str> = Vec::new();
     let mut kept: Vec<(&FileEntry, &String, usize)> = Vec::with_capacity(files.len());
     for (fe, path) in files.iter().zip(own) {
@@ -1155,6 +1203,7 @@ fn write_files(
             None => kept.push((fe, path, 0)),
             Some(w) => match w.find(path) {
                 Some(walk) => kept.push((fe, path, path.split('/').count().saturating_sub(walk + 1))),
+                None if found_at(&found, &roots, path) => kept.push((fe, path, 0)),
                 None => skipped.push(&fe.path),
             },
         }

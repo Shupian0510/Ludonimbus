@@ -185,8 +185,5 @@ fn which_paths_a_scan_would_find() {
     ];
     let outside = snapshot::outside_saves(&game, paths.iter().copied()).unwrap().unwrap();
     assert_eq!(outside, paths[4..]);
-
-    // Ludusavi finds this one's saves: it has no locations to go by.
-    let ludusavi = GameEntry { saves: Vec::new(), ludusavi_title: Some("Hades".into()), ..game.clone() };
-    assert!(snapshot::outside_saves(&ludusavi, paths.iter().copied()).unwrap().is_none());
+    // A game whose saves Ludusavi finds: `ludusavi_saves.rs`.
 }
