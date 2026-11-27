@@ -1,6 +1,6 @@
-Effective date: November 25, 2026 (updates the November 22, 2026 version: more about each kind of cloud, Recently deleted, and the data kept on your computer)
+Effective date: November 27, 2026 (updates the November 25, 2026 version: what is in your cloud, as Ludonimbus 1.0 stores saves; where achievement data comes from; games installed by Steam; the Switch console's local network connection; exported `.lnsave` files)
 
-Ludonimbus is an open-source desktop application for Windows that backs up and syncs game save files. It runs entirely on your computer. The developer does not operate any server and does not collect, receive, or store any of your data.
+Ludonimbus is an open-source desktop application, mainly for Windows and also for Linux and the Steam Deck, that backs up and syncs game save files. It runs entirely on your computer. The developer does not operate any server and does not collect, receive, or store any of your data.
 
 ## Google user data the app accesses
 
@@ -11,15 +11,15 @@ If you choose to connect Google Drive, Ludonimbus asks for these permissions:
 
 ## How the data is used
 
-- Ludonimbus creates a folder named `Ludonimbus` in your Google Drive and stores in it: compressed copies of your game save files, metadata about each saved version (time, file names, sizes, checksums, an optional comment), and a small file per computer with its device name, operating system, and app version.
-- These files are used only to provide the app's features: restoring saves, showing version history, and syncing between your own computers.
+- Ludonimbus creates a folder named `Ludonimbus` in your Google Drive and stores in it: compressed copies of your game save files; information about each save (which device, when, file names, sizes, checksums, the game version that wrote it, a name you gave it); a record per game (its name, its identifiers on each platform, where its saves are kept, the shelves you put it on such as "Finished"); and a small file per device with its device name, operating system, app version and which games it has.
+- These files are used only to provide the app's features: making a save current, showing the list of saves, and syncing between your own devices.
 - Your email address is only displayed in the app's settings.
 
 ## How the data is stored
 
 - Data is transferred directly between your computer and Google's servers over HTTPS. It never passes through any server run by the developer.
-- The Google sign-in token is stored on your computer in the Windows Credential Manager. App settings and sync state are stored locally in `%APPDATA%\Ludonimbus` (`~/.config/Ludonimbus` on Linux); logs stay on your computer and are never uploaded.
-- Save versions you delete in Ludonimbus stay in the `Ludonimbus` folder. You can restore them under Recently deleted in Ludonimbus for 30 days; after that Ludonimbus deletes them for good.
+- The Google sign-in token is stored on your computer in the Windows Credential Manager (the system keyring on Linux). App settings and sync state are stored locally in `%APPDATA%\Ludonimbus` (`~/.config/Ludonimbus` on Linux); logs stay on your computer and are never uploaded.
+- Saves you delete in Ludonimbus stay in the `Ludonimbus` folder. You can put them back under Recently deleted in Ludonimbus for 30 days; after that Ludonimbus deletes them for good.
 
 ## Sharing
 
@@ -37,7 +37,11 @@ Ludonimbus's use and transfer of information received from Google APIs adheres t
 - If you connect Quark, Ludonimbus runs the open-source tool OpenList on your computer (listening only on this computer) and uses it to read and write the "Ludonimbus" folder in your Quark drive. The Quark sign-in is kept only in OpenList's data folder on your computer, and saves travel only between your computer and Quark; the sign-in is deleted when you disconnect.
 - If you use a WebDAV server or S3-compatible storage, saves are sent only to the server you entered. Which server you connect to, and what runs behind it, is your own configuration. Its password or secret key is stored in the Windows Credential Manager on your computer and removed when you disconnect.
 - If you enter a SteamGridDB API key to pick artwork, Ludonimbus sends the game names you search for to SteamGridDB with your key and downloads the images you choose. The key is stored in the Windows Credential Manager and can be deleted in Settings. No save data is sent to SteamGridDB.
-- Ludonimbus connects to GitHub to check for new versions of itself, and lets Ludusavi download its game database from GitHub. These requests contain no save data or account information.
+- If you enter a RetroAchievements user name and Web API key, Ludonimbus uses them to ask retroachievements.org for your achievements in the games you linked and for those games' achievement lists, and downloads the achievement icons. The key is stored in the Windows Credential Manager and can be deleted in Settings.
+- Ludonimbus connects to GitHub to check for new versions of itself, lets Ludusavi download its game database from GitHub, downloads Millennium from its official GitHub releases when you install the Steam plugin, and downloads the open-source TrophyNX achievement rules for Switch games (the request holds only the game's Switch title id). These requests contain no save data or account information.
+- Ludonimbus reads the shortcuts, library and Steam Cloud settings in your Steam folder, to add games and to tell whether Steam Cloud syncs a game. When you turn on auto-sync or take over a game Steam installed, it changes that game's shortcut or launch options, keeping a copy of the original file on your computer. All of this stays on your computer.
+- If you turn on "Allow Switch connections" (off by default), Ludonimbus accepts connections from the Switch consoles you paired, on your local network only, encrypted and with the certificate checked. Saves the Switch sends go to your cloud as described above; the pairing is kept only on your computer.
+- A `.lnsave` file you export from the Saves tab holds the save files themselves and the game's name, its identifiers on each platform, the platform, the time and the game version. It holds no device name, device ID, account or local folders. It stays where you save it, and you decide whom to give it to.
 
 ## Baidu Netdisk {#baidu-netdisk}
 
@@ -54,7 +58,7 @@ Ludonimbus has no built-in Baidu Netdisk app. This applies only if you connect B
 | Used / total space | Show storage use in Settings | Not stored; read when Settings opens |
 | The saves and related data you choose to sync | Backup, restore and sync between your own computers | The folder 我的应用数据/Ludonimbus (My App Data/Ludonimbus) in your Baidu Netdisk |
 
-The account-info API also returns fields such as the membership type; Ludonimbus neither stores nor uses them. The app folder (`/apps/Ludonimbus` in the netdisk) holds compressed copies of your saves with the metadata of each version (time, device name, file names, sizes, checksums, an optional note), one small file per computer (device name, operating system, app version), the game definitions, and, if you turn those features on, play time, Steam screenshots, custom artwork, achievement records and game backups.
+The account-info API also returns fields such as the membership type; Ludonimbus neither stores nor uses them. The app folder (`/apps/Ludonimbus` in the netdisk) holds compressed copies of your saves with the information of each save (time, device name, file names, sizes, checksums, game version, a name you gave it), one small file per device (device name, operating system, app version, which games it has), the game definitions and records (identifiers on each platform, where the saves are kept, shelves), and, if you turn those features on, play time, Steam screenshots, custom artwork, achievement records and game backups.
 
 **Access scope.** Ludonimbus only reads and writes that one folder and never lists, reads, changes or deletes any other file in your netdisk. Baidu's open platform also restricts apps to their own folder on the server side, and Ludonimbus drops `..` from paths so that no path can point outside it.
 
@@ -67,8 +71,8 @@ The Baidu Netdisk entry in Ludonimbus's Settings explains both steps under "How 
 
 **Deleting data.**
 
-- Deleting a save version in its version history moves it to Recently deleted, where you can restore it for **30 days**; after that it is deleted for good. You can also delete it for good from Recently deleted yourself.
-- Automatic cleanup deletes older automatic versions according to your retention settings. Locked versions, manual backups and the latest version are never cleaned up automatically.
+- Deleting a save from a game's Saves tab ("More → Delete") moves it to Recently deleted, where you can put it back for **30 days**; after that it is deleted for good. You can also delete it for good from Recently deleted yourself.
+- Automatic cleanup deletes older automatic saves according to your retention settings. Kept saves, the newest save and the save each device last synced are never cleaned up automatically.
 - To delete everything Ludonimbus stored in Baidu Netdisk, delete the folder 我的应用数据/Ludonimbus. Revoking access does not delete these files by itself.
 - All of these deletions happen only inside 我的应用数据/Ludonimbus.
 

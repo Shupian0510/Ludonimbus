@@ -1,4 +1,4 @@
-Effective date: November 25, 2026
+Effective date: November 27, 2026
 
 By downloading, installing or using Ludonimbus, you agree to these terms.
 
@@ -22,9 +22,11 @@ Ludonimbus runs entirely on your computer. The developer provides no online serv
 
 ## 4. Deleting and restoring
 
-- Save versions you delete from the version history first move to Recently deleted, where you can restore them for 30 days; after that they are deleted for good. Versions you delete for good from Recently deleted cannot be restored.
-- Automatic cleanup only deletes older automatic versions according to your retention settings; it never deletes locked versions, manual backups or the latest version.
-- Lock important saves, or keep an extra copy with "Export zip".
+- Saves you delete from the Saves tab first move to Recently deleted, where you can put them back for 30 days; after that they are deleted for good. Saves you delete for good from Recently deleted cannot be restored.
+- Automatic cleanup only deletes older automatic saves according to your retention settings; it never deletes kept saves, the newest save or the save each device last synced.
+- Before a save is made current or sent to another version, the saves there now are kept first, so it can be undone or made current again.
+- Star important saves to keep them, or keep an extra copy by exporting them as a `.lnsave` file.
+- Writing into the Xbox app's version, sharing progress between the Switch and PC versions by a rule, and taking over Steam Cloud depend on how those platforms and games behave (the Xbox app's or Steam's own cloud sync may put saves back, for example). This is especially true of features marked "experimental" or "preview" in the app; read their explanation before using them.
 
 ## 5. Revoking access and stopping use
 
