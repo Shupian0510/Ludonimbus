@@ -330,9 +330,7 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
     let phase = phase(&g);
     let mut st = state::game(&g.key);
     let mut report: Option<StatusReport> = st.last_check.clone().and_then(|v| serde_json::from_value(v).ok());
-    let stale = report
-        .as_ref()
-        .is_none_or(|r| (Utc::now() - r.checked_at).num_seconds() > FRESH_SECS || st.last_sync_at.is_some_and(|t| t > r.checked_at));
+    let stale = report.as_ref().is_none_or(|r| (Utc::now() - r.checked_at).num_seconds() > FRESH_SECS || st.last_sync_at.is_some_and(|t| t > r.checked_at));
     if refresh && stale && phase == "idle" {
         let ctx = Ctx::from_config(cfg.clone());
         let r = sync::check(&ctx, &g);

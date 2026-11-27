@@ -63,12 +63,7 @@ pub fn exe_version(path: &Path) -> Option<String> {
             return None;
         }
         let info = &*(ptr as *const VS_FIXEDFILEINFO);
-        let parts = [
-            info.dwFileVersionMS >> 16,
-            info.dwFileVersionMS & 0xffff,
-            info.dwFileVersionLS >> 16,
-            info.dwFileVersionLS & 0xffff,
-        ];
+        let parts = [info.dwFileVersionMS >> 16, info.dwFileVersionMS & 0xffff, info.dwFileVersionLS >> 16, info.dwFileVersionLS & 0xffff];
         (parts != [0; 4]).then(|| tidy(parts))
     }
 }
@@ -127,15 +122,18 @@ fn sfo_version(source: &Path) -> Option<String> {
         dir.join("sce_sys").join("param.sfo"),
         dir.parent().map(|p| p.join("PARAM.SFO")).unwrap_or_default(),
     ];
-    cands.iter().filter(|p| p.is_file()).find_map(|p| {
-        let b = std::fs::read(p).ok()?;
-        emulators::sfo_value(&b, "APP_VER").or_else(|| emulators::sfo_value(&b, "VERSION")).filter(|v| !v.is_empty())
-    })
-    // "01.05" → "v1.05"
-    .map(|v| {
-        let t = v.strip_prefix('0').filter(|r| r.starts_with(|c: char| c.is_ascii_digit())).unwrap_or(&v);
-        format!("v{t}")
-    })
+    cands
+        .iter()
+        .filter(|p| p.is_file())
+        .find_map(|p| {
+            let b = std::fs::read(p).ok()?;
+            emulators::sfo_value(&b, "APP_VER").or_else(|| emulators::sfo_value(&b, "VERSION")).filter(|v| !v.is_empty())
+        })
+        // "01.05" → "v1.05"
+        .map(|v| {
+            let t = v.strip_prefix('0').filter(|r| r.starts_with(|c: char| c.is_ascii_digit())).unwrap_or(&v);
+            format!("v{t}")
+        })
 }
 
 /// `title_version` of an unpacked Wii U game's `meta/meta.xml`.
@@ -245,7 +243,11 @@ mod tests {
         let content = tmp.path().join("Content");
         std::fs::create_dir_all(&content).unwrap();
         std::fs::write(content.join("gamelaunchhelper.exe"), b"x").unwrap();
-        std::fs::write(content.join("appxmanifest.xml"), r#"<Package><Identity Name="X" Publisher="CN=1" Version="1.0.56.0" ProcessorArchitecture="x64" /></Package>"#).unwrap();
+        std::fs::write(
+            content.join("appxmanifest.xml"),
+            r#"<Package><Identity Name="X" Publisher="CN=1" Version="1.0.56.0" ProcessorArchitecture="x64" /></Package>"#,
+        )
+        .unwrap();
         assert_eq!(xbox(&content.join("gamelaunchhelper.exe")).as_deref(), Some("1.0.56.0"));
         assert_eq!(xbox(&content.join("other.exe")), None);
         let meta = tmp.path().join("mlc01/usr/title/0005000e/101c9400/meta/meta.xml");

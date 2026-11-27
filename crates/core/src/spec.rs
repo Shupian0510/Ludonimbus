@@ -76,7 +76,8 @@ pub fn effective(game: &GameEntry) -> SaveSpec {
 /// Files and folders that are never saves, for each root the saves use:
 /// programs, disc images and archives, logs, caches and screenshots.
 pub fn junk_excludes(saves: &[String]) -> Vec<String> {
-    const FILES: &str = "**/*.{exe,dll,pdb,msi,iso,cue,chd,cso,rvz,wbfs,wad,nsp,xci,xex,xbe,z64,n64,v64,sfc,smc,gba,nds,3ds,cia,zip,7z,rar,log,tmp,dmp,mp4,mkv}";
+    const FILES: &str =
+        "**/*.{exe,dll,pdb,msi,iso,cue,chd,cso,rvz,wbfs,wad,nsp,xci,xex,xbe,z64,n64,v64,sfc,smc,gba,nds,3ds,cia,zip,7z,rar,log,tmp,dmp,mp4,mkv}";
     const DIRS: [&str; 9] = ["cache", "caches", "shadercache", "shader_cache", "shaders", "logs", "crashdumps", "dumps", "screenshots"];
     let mut roots: Vec<String> = Vec::new();
     for s in saves {
@@ -96,9 +97,7 @@ pub fn junk_excludes(saves: &[String]) -> Vec<String> {
 
 /// The game folder used for `{install}`.
 pub fn install_dir(game: &GameEntry) -> Option<PathBuf> {
-    game.install
-        .clone()
-        .or_else(|| game.exe.as_ref().and_then(|e| e.parent().map(Path::to_path_buf)))
+    game.install.clone().or_else(|| game.exe.as_ref().and_then(|e| e.parent().map(Path::to_path_buf)))
 }
 
 /// The Proton prefix a Windows game runs in on this device (Linux): the
@@ -308,11 +307,12 @@ pub fn resolve_roots(game: &GameEntry, spec: &SaveSpec) -> Result<BTreeMap<Strin
 pub fn split_pattern(pattern: &str) -> Result<(String, String)> {
     let p = pattern.trim().replace('\\', "/");
     if !p.starts_with('{') {
-        bail!(crate::tr!("存档路径必须以 {{根目录}} 开头，例如 {{install}}/save/**：{pattern}", "Save paths must start with a {{root}}, e.g. {{install}}/save/**: {pattern}"));
+        bail!(crate::tr!(
+            "存档路径必须以 {{根目录}} 开头，例如 {{install}}/save/**：{pattern}",
+            "Save paths must start with a {{root}}, e.g. {{install}}/save/**: {pattern}"
+        ));
     }
-    let end = p
-        .find('}')
-        .ok_or_else(|| anyhow!(crate::tr!("存档路径缺少 }}：{pattern}", "The save path is missing }}: {pattern}")))?;
+    let end = p.find('}').ok_or_else(|| anyhow!(crate::tr!("存档路径缺少 }}：{pattern}", "The save path is missing }}: {pattern}")))?;
     let root = p[1..end].to_string();
     let rest = p[end + 1..].trim_start_matches('/').to_string();
     Ok((root, rest))
@@ -357,10 +357,7 @@ mod tests {
 
     #[test]
     fn splits() {
-        assert_eq!(
-            split_pattern("{install}/save/**").unwrap(),
-            ("install".into(), "save/**".into())
-        );
+        assert_eq!(split_pattern("{install}/save/**").unwrap(), ("install".into(), "save/**".into()));
         assert!(split_pattern("C:/x").is_err());
     }
 

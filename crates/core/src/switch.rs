@@ -85,10 +85,7 @@ fn is_app_title(id: u64) -> bool {
 
 /// A title id in text, e.g. a file name.
 pub fn title_in_text(text: &str) -> Option<u64> {
-    crate::emulators::hex_id_in(text, "01")
-        .and_then(|h| u64::from_str_radix(&h, 16).ok())
-        .filter(|&t| is_app_title(t))
-        .map(base_title)
+    crate::emulators::hex_id_in(text, "01").and_then(|h| u64::from_str_radix(&h, 16).ok()).filter(|&t| is_app_title(t)).map(base_title)
 }
 
 // ---------------------------------------------------------------------------
@@ -146,10 +143,7 @@ fn nca_title(path: &Path, files: &[Entry], key: &[u8; 32]) -> Option<u64> {
         })
         .collect();
     ncas.sort_by_key(|f| std::cmp::Reverse(f.size));
-    ncas.iter()
-        .take(8)
-        .find_map(|f| nca_program_id(path, f.offset, key).filter(|&t| is_app_title(t)))
-        .map(base_title)
+    ncas.iter().take(8).find_map(|f| nca_program_id(path, f.offset, key).filter(|&t| is_app_title(t))).map(base_title)
 }
 
 fn cnmt_xml_id(xml: &str) -> Option<u64> {
@@ -188,11 +182,7 @@ fn pfs_entries(path: &Path, at: u64) -> Option<Vec<Entry>> {
             let name_at = u32_le(&table, e + 16) as usize;
             let raw = names.get(name_at..)?;
             let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
-            Some(Entry {
-                name: String::from_utf8_lossy(&raw[..end]).into_owned(),
-                offset: data + u64_le(&table, e),
-                size: u64_le(&table, e + 8),
-            })
+            Some(Entry { name: String::from_utf8_lossy(&raw[..end]).into_owned(), offset: data + u64_le(&table, e), size: u64_le(&table, e + 8) })
         })
         .collect()
 }
@@ -339,10 +329,7 @@ pub fn parse_index(b: &[u8]) -> Result<Vec<IndexEntry>> {
     let mut out = Vec::with_capacity(n.min((b.len() - 12) / (12 + 0x80)));
     let mut at = 12;
     for _ in 0..n {
-        let ok = b.len() >= at + 12 + 0x80
-            && &b[at..at + 4] == b"IMEN"
-            && u32_le(b, at + 4) == 0x40
-            && u32_le(b, at + 8) == 0x40;
+        let ok = b.len() >= at + 12 + 0x80 && &b[at..at + 4] == b"IMEN" && u32_le(b, at + 4) == 0x40 && u32_le(b, at + 8) == 0x40;
         if !ok {
             bail!(crate::tr!("Ryujinx 的存档索引格式不认识", "Ryujinx's save index format isn't recognized"));
         }
@@ -377,16 +364,10 @@ fn read_index(emu: &Path) -> Result<Vec<IndexEntry>> {
 /// The profile Ryujinx opened last (`system/Profiles.json`); the default
 /// profile when there is none.
 pub fn current_user(emu: &Path) -> (u64, u64) {
-    let v = std::fs::read_to_string(emu.join("system").join("Profiles.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
-    let id = v.as_ref().and_then(|v| {
-        v["last_opened"]
-            .as_str()
-            .filter(|s| parse_user(s).is_some())
-            .or_else(|| v["profiles"][0]["user_id"].as_str())
-            .map(str::to_string)
-    });
+    let v = std::fs::read_to_string(emu.join("system").join("Profiles.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let id = v
+        .as_ref()
+        .and_then(|v| v["last_opened"].as_str().filter(|s| parse_user(s).is_some()).or_else(|| v["profiles"][0]["user_id"].as_str()).map(str::to_string));
     id.as_deref().and_then(parse_user).unwrap_or((1, 0))
 }
 
@@ -406,9 +387,7 @@ fn wanted_user(emu: &Path, kind: SaveKind) -> (u64, u64) {
 }
 
 fn find_entry(entries: &[IndexEntry], title: u64, kind: SaveKind, user: (u64, u64)) -> Option<&IndexEntry> {
-    entries
-        .iter()
-        .find(|e| e.in_user_space() && e.plain() && e.kind() == kind.code() && e.program() == title && e.user() == user)
+    entries.iter().find(|e| e.in_user_space() && e.plain() && e.kind() == kind.code() && e.program() == title && e.user() == user)
 }
 
 /// The committed folder of a game's save on this PC, if Ryujinx has made it.
@@ -426,9 +405,7 @@ pub fn pending_dir(emu: &Path, kind: SaveKind, title: u64) -> PathBuf {
 }
 
 pub fn is_pending(p: &Path) -> bool {
-    p.parent()
-        .and_then(Path::file_name)
-        .is_some_and(|n| n.to_string_lossy().starts_with("ludonimbus-new-"))
+    p.parent().and_then(Path::file_name).is_some_and(|n| n.to_string_lossy().starts_with("ludonimbus-new-"))
 }
 
 /// Create a game's save the way Ryujinx does (index entry, numbered folder,
@@ -443,18 +420,18 @@ fn create_save_with_backup(emu: &Path, kind: SaveKind, title: u64, backups: &Pat
     let idx = index_dir(emu);
     let arc = idx.join("0").join("imkvdb.arc");
     if !arc.is_file() {
-        bail!(crate::tr!("Ryujinx 还没有建好存档索引（{}）。请先打开一次 Ryujinx，再同步", "Ryujinx hasn't created its save index yet ({}). Open Ryujinx once, then sync", arc.display()));
+        bail!(crate::tr!(
+            "Ryujinx 还没有建好存档索引（{}）。请先打开一次 Ryujinx，再同步",
+            "Ryujinx hasn't created its save index yet ({}). Open Ryujinx once, then sync",
+            arc.display()
+        ));
     }
     let mut entries = parse_index(&std::fs::read(&arc)?)?;
     let user = wanted_user(emu, kind);
     let id = match find_entry(&entries, title, kind, user) {
         Some(e) => e.save_id(),
         None => {
-            let last = std::fs::read(idx.join("0").join("lastPublishedId"))
-                .ok()
-                .filter(|b| b.len() >= 8)
-                .map(|b| u64_le(&b, 0))
-                .unwrap_or(0);
+            let last = std::fs::read(idx.join("0").join("lastPublishedId")).ok().filter(|b| b.len() >= 8).map(|b| u64_le(&b, 0)).unwrap_or(0);
             let max_dir = std::fs::read_dir(saves_dir(emu))
                 .map(|rd| {
                     rd.flatten()
@@ -537,9 +514,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 /// it opens from.
 pub fn mirror_committed(committed: &Path) -> Result<()> {
     let Some(save) = committed.parent() else { return Ok(()) };
-    let numbered = save
-        .file_name()
-        .is_some_and(|n| n.len() == 16 && n.to_string_lossy().bytes().all(|c| c.is_ascii_hexdigit()));
+    let numbered = save.file_name().is_some_and(|n| n.len() == 16 && n.to_string_lossy().bytes().all(|c| c.is_ascii_hexdigit()));
     if !numbered || committed.file_name().is_none_or(|n| n != "0") || !committed.is_dir() {
         return Ok(());
     }
@@ -627,12 +602,7 @@ pub fn yuzu_profiles(user_dir: &Path) -> Vec<(u64, u64)> {
 fn parse_yuzu_profiles(b: &[u8]) -> Vec<(u64, u64)> {
     const HEADER: usize = 0x10;
     const RECORD: usize = 0xC8;
-    (0..8)
-        .map(|i| HEADER + i * RECORD)
-        .take_while(|&at| at + 16 <= b.len())
-        .map(|at| (u64_le(b, at + 8), u64_le(b, at)))
-        .filter(|&u| u != (0, 0))
-        .collect()
+    (0..8).map(|i| HEADER + i * RECORD).take_while(|&at| at + 16 <= b.len()).map(|at| (u64_le(b, at + 8), u64_le(b, at))).filter(|&u| u != (0, 0)).collect()
 }
 
 /// Where a yuzu-family emulator keeps its settings: `<user>/config` (Windows
@@ -643,11 +613,7 @@ fn yuzu_config_dir(user_dir: &Path) -> PathBuf {
     if inside.is_dir() || !cfg!(unix) {
         return inside;
     }
-    user_dir
-        .file_name()
-        .and_then(|n| dirs::config_dir().map(|c| c.join(n)))
-        .filter(|d| d.is_dir())
-        .unwrap_or(inside)
+    user_dir.file_name().and_then(|n| dirs::config_dir().map(|c| c.join(n))).filter(|d| d.is_dir()).unwrap_or(inside)
 }
 
 /// `current_user=<n>` in the `[System]` section of the emulator's settings
@@ -656,17 +622,12 @@ fn yuzu_current_index(user_dir: &Path) -> Option<usize> {
     let dir = yuzu_config_dir(user_dir);
     let mut files = vec![dir.join("qt-config.ini")];
     if let Ok(rd) = std::fs::read_dir(&dir) {
-        let mut more: Vec<PathBuf> = rd
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ini")) && !files.contains(p))
-            .collect();
+        let mut more: Vec<PathBuf> =
+            rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ini")) && !files.contains(p)).collect();
         more.sort();
         files.extend(more);
     }
-    files
-        .iter()
-        .find_map(|f| ini_value(&std::fs::read_to_string(f).ok()?, "System", "current_user")?.parse().ok())
+    files.iter().find_map(|f| ini_value(&std::fs::read_to_string(f).ok()?, "System", "current_user")?.parse().ok())
 }
 
 /// A value in a Qt-style `.ini` file.
@@ -785,24 +746,30 @@ mod tests {
     fn real_index() -> Vec<u8> {
         let mut b = b"IMKV\0\0\0\0\x03\0\0\0".to_vec();
         for (key, val) in [
-            ({
-                let mut k = [0u8; 0x40];
-                k[0x18..0x20].copy_from_slice(&0x8000_0000_0000_0030u64.to_le_bytes());
-                k
-            }, {
-                let mut v = [0u8; 0x40];
-                v[0..8].copy_from_slice(&0x8000_0000_0000_0030u64.to_le_bytes());
-                v
-            }),
-            ({
-                let mut k = [0u8; 0x40];
-                k[0x18..0x20].copy_from_slice(&0x8000_0000_0000_1040u64.to_le_bytes());
-                k
-            }, {
-                let mut v = [0u8; 0x40];
-                v[0..8].copy_from_slice(&0x8000_0000_0000_1040u64.to_le_bytes());
-                v
-            }),
+            (
+                {
+                    let mut k = [0u8; 0x40];
+                    k[0x18..0x20].copy_from_slice(&0x8000_0000_0000_0030u64.to_le_bytes());
+                    k
+                },
+                {
+                    let mut v = [0u8; 0x40];
+                    v[0..8].copy_from_slice(&0x8000_0000_0000_0030u64.to_le_bytes());
+                    v
+                },
+            ),
+            (
+                {
+                    let mut k = [0u8; 0x40];
+                    k[0x18..0x20].copy_from_slice(&0x8000_0000_0000_1040u64.to_le_bytes());
+                    k
+                },
+                {
+                    let mut v = [0u8; 0x40];
+                    v[0..8].copy_from_slice(&0x8000_0000_0000_1040u64.to_le_bytes());
+                    v
+                },
+            ),
             (IndexEntry::new(MHGU, SaveKind::Account, (1, 0), 1).key, IndexEntry::new(MHGU, SaveKind::Account, (1, 0), 1).value),
         ] {
             b.extend_from_slice(b"IMEN\x40\0\0\0\x40\0\0\0");
@@ -985,11 +952,7 @@ mod tests {
 
         // Another profile is current: its save doesn't exist yet.
         let me = "4b04a3eee61e4f808c8c15d3d0afb19d";
-        std::fs::write(
-            emu.join("system").join("Profiles.json"),
-            format!(r#"{{"profiles":[],"last_opened":"{me}"}}"#),
-        )
-        .unwrap();
+        std::fs::write(emu.join("system").join("Profiles.json"), format!(r#"{{"profiles":[],"last_opened":"{me}"}}"#)).unwrap();
         assert_eq!(find_save(&emu, SaveKind::Account, MHGU), None);
         assert!(saves(&emu).is_empty());
         let backups = tmp.path().join("backups");
@@ -1110,10 +1073,7 @@ mod tests {
         let found = yuzu_saves(&user);
         assert_eq!(
             found,
-            vec![
-                NxSave { title: MHGU, kind: SaveKind::Account, dir: mine },
-                NxSave { title: 0x0100_0000_0001_2000, kind: SaveKind::Device, dir: device },
-            ]
+            vec![NxSave { title: MHGU, kind: SaveKind::Account, dir: mine }, NxSave { title: 0x0100_0000_0001_2000, kind: SaveKind::Device, dir: device },]
         );
 
         // No profiles.dat: the user folder that changed last.

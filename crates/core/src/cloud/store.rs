@@ -52,12 +52,7 @@ pub trait Store: Send + Sync {
 
 /// Join path segments with `/`, skipping empty ones.
 pub fn join(parts: &[&str]) -> String {
-    parts
-        .iter()
-        .flat_map(|p| p.split('/'))
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("/")
+    parts.iter().flat_map(|p| p.split('/')).filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/")
 }
 
 /// Whether `name` can be one segment of a path: not `.` or `..`, and

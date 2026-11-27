@@ -104,11 +104,7 @@ pub fn read_manifest(store: &dyn Store, key: &str, summary: &Summary) -> Result<
         }
     }
     let bytes = store.read(&manifest_path(key, &summary.id))?.ok_or_else(|| {
-        anyhow!(crate::tr!(
-            "版本 {} 已不在云端（可能刚被删除）",
-            "Version {} is no longer in the cloud (it may have just been deleted)",
-            summary.id
-        ))
+        anyhow!(crate::tr!("版本 {} 已不在云端（可能刚被删除）", "Version {} is no longer in the cloud (it may have just been deleted)", summary.id))
     })?;
     let m = Manifest::decode(&bytes, summary)?;
     let _ = crate::util::atomic_write(&cached, &bytes);
@@ -133,12 +129,7 @@ pub fn delete_version(store: &dyn Store, key: &str, id: &str) -> Result<()> {
 
 /// Chunks in the cloud: name → stored size.
 pub fn list_chunks(store: &dyn Store) -> Result<HashMap<String, u64>> {
-    Ok(store
-        .list(&chunks_dir())?
-        .into_iter()
-        .filter(|e| !e.is_dir && e.name.len() == 64 && !e.name.contains('.'))
-        .map(|e| (e.name, e.size))
-        .collect())
+    Ok(store.list(&chunks_dir())?.into_iter().filter(|e| !e.is_dir && e.name.len() == 64 && !e.name.contains('.')).map(|e| (e.name, e.size)).collect())
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -272,12 +263,7 @@ fn used_chunks(store: &dyn Store, games: &[String], lock: &Lock) -> Result<std::
                 Ok((_, ids)) => used.extend(ids),
                 // An uncommitted manifest that is damaged was never a version.
                 Err(_) if !committed => {}
-                Err(e) => {
-                    return Ok(Err(crate::tr!(
-                        "{g} 的版本 {id} 读不出来（{e:#}），请删掉它",
-                        "Version {id} of {g} can't be read ({e:#}). Delete it"
-                    )))
-                }
+                Err(e) => return Ok(Err(crate::tr!("{g} 的版本 {id} 读不出来（{e:#}），请删掉它", "Version {id} of {g} can't be read ({e:#}). Delete it"))),
             }
         }
     }
@@ -286,13 +272,7 @@ fn used_chunks(store: &dyn Store, games: &[String], lock: &Lock) -> Result<std::
 
 /// Delete versions of `key` beyond the newest `keep`, then unused chunks.
 /// Returns the deleted version ids.
-pub fn prune(
-    store: &dyn Store,
-    key: &str,
-    keep: usize,
-    device: (&str, &str),
-    progress: &dyn Fn(usize, usize),
-) -> Result<(Vec<String>, GcReport)> {
+pub fn prune(store: &dyn Store, key: &str, keep: usize, device: (&str, &str), progress: &dyn Fn(usize, usize)) -> Result<(Vec<String>, GcReport)> {
     let versions = list_versions(store, key)?;
     let keep = keep.max(1);
     let mut deleted = Vec::new();
@@ -425,14 +405,7 @@ impl<'a> Lock<'a> {
         if back.as_ref().map(|l| &l.token) != Some(&info.token) {
             bail!(crate::tr!("另一台设备刚开始处理这个游戏，请稍后再试", "Another device just started working on this game. Try again later"));
         }
-        Ok(Lock {
-            store,
-            path: path.to_string(),
-            info: Mutex::new(info),
-            refreshed: Mutex::new(Instant::now()),
-            lost: AtomicBool::new(false),
-            released: false,
-        })
+        Ok(Lock { store, path: path.to_string(), info: Mutex::new(info), refreshed: Mutex::new(Instant::now()), lost: AtomicBool::new(false), released: false })
     }
 
     pub fn is_lost(&self) -> bool {
@@ -638,9 +611,8 @@ mod tests {
         store.write(&chunk_path(&id), b"LNCK").unwrap();
         assert!(collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap().postponed);
         // ...or only shows up (slow listings) once the chunks were listed.
-        let store = Meanwhile::new(tmp.path(), chunks_dir(), |s| {
-            s.write(&game_lock_path("h"), &lock_json("backup", Utc::now() + Duration::minutes(30))).unwrap()
-        });
+        let store =
+            Meanwhile::new(tmp.path(), chunks_dir(), |s| s.write(&game_lock_path("h"), &lock_json("backup", Utc::now() + Duration::minutes(30))).unwrap());
         store.remove(&game_lock_path("g")).unwrap();
         assert!(collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap().postponed);
         assert!(store.read(&chunk_path(&id)).unwrap().is_some(), "nothing deleted");

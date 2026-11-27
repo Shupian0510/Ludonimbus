@@ -40,14 +40,7 @@ fn add_found_game_to_steam() {
     };
     // Without any save rule it refuses.
     assert!(games::add_found(&found, FoundChoice::default()).is_err());
-    let g = games::add_found(
-        &found,
-        FoundChoice {
-            saves: vec!["{install}/Saves/**".into()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let g = games::add_found(&found, FoundChoice { saves: vec!["{install}/Saves/**".into()], ..Default::default() }).unwrap();
     assert_eq!(g.key, "celeste");
     assert_eq!(g.exe.as_deref(), Some(exe.as_path()));
     assert!(g.steam.is_none());
@@ -87,10 +80,7 @@ fn add_found_game_to_steam() {
     let sc = steam::find_shortcut(&root, "42", appid).unwrap().unwrap();
     assert!(sc.exe.ends_with("Celeste.exe"));
     games::steam_enable("celeste").unwrap();
-    assert_eq!(
-        steam::find_shortcut(&root, "42", appid).unwrap().unwrap().wrapped_key().as_deref(),
-        Some("celeste")
-    );
+    assert_eq!(steam::find_shortcut(&root, "42", appid).unwrap().unwrap().wrapped_key().as_deref(), Some("celeste"));
 
     // Removing it from Steam deletes the shortcut and its artwork.
     games::remove_from_steam("celeste").unwrap();

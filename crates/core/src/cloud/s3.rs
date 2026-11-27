@@ -93,40 +93,22 @@ pub fn canonical_query(query: &[(&str, &str)]) -> String {
 
 /// The `Authorization` header value for a request.
 pub fn authorization(r: &SignInput) -> String {
-    let mut headers: Vec<(String, String)> = vec![
-        ("host".into(), r.host.to_string()),
-        ("x-amz-content-sha256".into(), r.payload_hash.to_string()),
-        ("x-amz-date".into(), r.amz_date.to_string()),
-    ];
+    let mut headers: Vec<(String, String)> =
+        vec![("host".into(), r.host.to_string()), ("x-amz-content-sha256".into(), r.payload_hash.to_string()), ("x-amz-date".into(), r.amz_date.to_string())];
     headers.extend(r.headers.iter().map(|(k, v)| (k.to_lowercase(), v.trim().to_string())));
     headers.sort();
     let signed = headers.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
     let canonical_headers: String = headers.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
-    let canonical = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        r.method,
-        r.path,
-        canonical_query(r.query),
-        canonical_headers,
-        signed,
-        r.payload_hash
-    );
+    let canonical = format!("{}\n{}\n{}\n{}\n{}\n{}", r.method, r.path, canonical_query(r.query), canonical_headers, signed, r.payload_hash);
     let date = &r.amz_date[..8];
     let scope = format!("{date}/{}/s3/aws4_request", r.region);
-    let to_sign = format!(
-        "AWS4-HMAC-SHA256\n{}\n{scope}\n{}",
-        r.amz_date,
-        hex(&Sha256::digest(canonical.as_bytes()))
-    );
+    let to_sign = format!("AWS4-HMAC-SHA256\n{}\n{scope}\n{}", r.amz_date, hex(&Sha256::digest(canonical.as_bytes())));
     let k_date = hmac_sha256(format!("AWS4{}", r.secret).as_bytes(), date.as_bytes());
     let k_region = hmac_sha256(&k_date, r.region.as_bytes());
     let k_service = hmac_sha256(&k_region, b"s3");
     let k_signing = hmac_sha256(&k_service, b"aws4_request");
     let signature = hex(&hmac_sha256(&k_signing, to_sign.as_bytes()));
-    format!(
-        "AWS4-HMAC-SHA256 Credential={}/{scope},SignedHeaders={signed},Signature={signature}",
-        r.key_id
-    )
+    format!("AWS4-HMAC-SHA256 Credential={}/{scope},SignedHeaders={signed},Signature={signature}", r.key_id)
 }
 
 fn file_sha256(path: &Path) -> Result<String> {
@@ -148,13 +130,7 @@ fn s3_error(body: &str) -> (String, String) {
     let Ok(doc) = roxmltree::Document::parse(body) else {
         return (String::new(), body.chars().take(200).collect());
     };
-    let find = |name: &str| {
-        doc.descendants()
-            .find(|n| n.tag_name().name() == name)
-            .and_then(|n| n.text())
-            .unwrap_or("")
-            .to_string()
-    };
+    let find = |name: &str| doc.descendants().find(|n| n.tag_name().name() == name).and_then(|n| n.text()).unwrap_or("").to_string();
     (find("Code"), find("Message"))
 }
 
@@ -166,7 +142,10 @@ fn fail(e: ureq::Error) -> anyhow::Error {
                 "InvalidAccessKeyId" => anyhow!(crate::tr!("Access Key 不对（{c}）", "The Access Key is wrong ({c})")),
                 "SignatureDoesNotMatch" => anyhow!(crate::tr!("Secret Key 不对（{c}）", "The Secret Key is wrong ({c})")),
                 "NoSuchBucket" => anyhow!(crate::tr!("Bucket 不存在（{c}）", "The bucket doesn't exist ({c})")),
-                "AccessDenied" => anyhow!(crate::tr!("没有权限访问这个 Bucket（{c}），请检查密钥的权限", "No permission to access this bucket ({c}). Check the key's permissions")),
+                "AccessDenied" => anyhow!(crate::tr!(
+                    "没有权限访问这个 Bucket（{c}），请检查密钥的权限",
+                    "No permission to access this bucket ({c}). Check the key's permissions"
+                )),
                 "AuthorizationHeaderMalformed" | "PermanentRedirect" | "IllegalLocationConstraintException" => {
                     anyhow!(crate::tr!("区域（Region）或访问方式不对（{c}）：{msg}", "Wrong region or access style ({c}): {msg}"))
                 }
@@ -189,19 +168,15 @@ fn fail(e: ureq::Error) -> anyhow::Error {
 
 impl S3 {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        endpoint: &str,
-        region: &str,
-        bucket: &str,
-        prefix: &str,
-        key_id: &str,
-        secret: &str,
-        path_style: bool,
-        timeout: Duration,
-    ) -> Result<Self> {
+    pub fn new(endpoint: &str, region: &str, bucket: &str, prefix: &str, key_id: &str, secret: &str, path_style: bool, timeout: Duration) -> Result<Self> {
         let raw = endpoint.trim();
         let with_scheme = if raw.contains("://") { raw.to_string() } else { format!("https://{raw}") };
-        let u = Url::parse(&with_scheme).map_err(|_| anyhow!(crate::tr!("Endpoint 格式不对，例如 https://oss-cn-hangzhou.aliyuncs.com", "The endpoint looks wrong; it should look like https://oss-cn-hangzhou.aliyuncs.com")))?;
+        let u = Url::parse(&with_scheme).map_err(|_| {
+            anyhow!(crate::tr!(
+                "Endpoint 格式不对，例如 https://oss-cn-hangzhou.aliyuncs.com",
+                "The endpoint looks wrong; it should look like https://oss-cn-hangzhou.aliyuncs.com"
+            ))
+        })?;
         if !matches!(u.scheme(), "http" | "https") {
             bail!(crate::tr!("Endpoint 需要以 http:// 或 https:// 开头", "The endpoint needs to start with http:// or https://"));
         }
@@ -231,11 +206,7 @@ impl S3 {
                 .timeout_read(timeout.max(Duration::from_secs(20)))
                 .timeout_write(timeout.max(Duration::from_secs(20)))
                 .build(),
-            bulk: ureq::AgentBuilder::new()
-                .timeout_connect(timeout)
-                .timeout_read(Duration::from_secs(300))
-                .timeout_write(Duration::from_secs(300))
-                .build(),
+            bulk: ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
         })
     }
 
@@ -257,14 +228,7 @@ impl S3 {
         }
     }
 
-    fn request(
-        &self,
-        agent: &ureq::Agent,
-        method: &str,
-        key: &str,
-        query: &[(&str, &str)],
-        payload_hash: &str,
-    ) -> ureq::Request {
+    fn request(&self, agent: &ureq::Agent, method: &str, key: &str, query: &[(&str, &str)], payload_hash: &str) -> ureq::Request {
         let (host, path) = self.target(key);
         let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         let auth = authorization(&SignInput {
@@ -280,16 +244,8 @@ impl S3 {
             secret: &self.secret,
         });
         let q = canonical_query(query);
-        let url = if q.is_empty() {
-            format!("{}://{host}{path}", self.scheme)
-        } else {
-            format!("{}://{host}{path}?{q}", self.scheme)
-        };
-        agent
-            .request(method, &url)
-            .set("x-amz-date", &amz_date)
-            .set("x-amz-content-sha256", payload_hash)
-            .set("Authorization", &auth)
+        let url = if q.is_empty() { format!("{}://{host}{path}", self.scheme) } else { format!("{}://{host}{path}?{q}", self.scheme) };
+        agent.request(method, &url).set("x-amz-date", &amz_date).set("x-amz-content-sha256", payload_hash).set("Authorization", &auth)
     }
 
     fn get(&self, agent: &ureq::Agent, path: &str) -> Result<Option<ureq::Response>> {
@@ -308,24 +264,14 @@ impl S3 {
         if let Some(m) = max {
             q.push(("max-keys", m));
         }
-        self.request(&self.agent, "GET", "", &q, EMPTY_SHA256)
-            .call()
-            .map_err(fail)?
-            .into_string()
-            .map_err(|e| anyhow!(Unavailable(e.to_string())))
+        self.request(&self.agent, "GET", "", &q, EMPTY_SHA256).call().map_err(fail)?.into_string().map_err(|e| anyhow!(Unavailable(e.to_string())))
     }
 }
 
 /// Parse one `ListObjectsV2` page into entries below `prefix`.
 pub fn parse_list(xml: &str, prefix: &str) -> Result<(Vec<Entry>, Option<String>)> {
     let doc = roxmltree::Document::parse(xml).context(crate::tr!("S3 返回的不是有效的 XML", "S3 returned invalid XML"))?;
-    let text = |n: roxmltree::Node, name: &str| {
-        n.children()
-            .find(|c| c.tag_name().name() == name)
-            .and_then(|c| c.text())
-            .unwrap_or("")
-            .to_string()
-    };
+    let text = |n: roxmltree::Node, name: &str| n.children().find(|c| c.tag_name().name() == name).and_then(|c| c.text()).unwrap_or("").to_string();
     let mut out = Vec::new();
     for n in doc.root_element().children().filter(|n| n.is_element()) {
         match n.tag_name().name() {
@@ -348,12 +294,7 @@ pub fn parse_list(xml: &str, prefix: &str) -> Result<(Vec<Entry>, Option<String>
                 let p = text(n, "Prefix");
                 if let Some(name) = p.strip_prefix(prefix).map(|s| s.trim_end_matches('/')) {
                     if !name.is_empty() {
-                        out.push(Entry {
-                            name: name.to_string(),
-                            is_dir: true,
-                            size: 0,
-                            tag: String::new(),
-                        });
+                        out.push(Entry { name: name.to_string(), is_dir: true, size: 0, tag: String::new() });
                     }
                 }
             }
@@ -403,16 +344,12 @@ impl Store for S3 {
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
         let Some(r) = self.get(&self.agent, path)? else { return Ok(None) };
         let mut buf = Vec::new();
-        r.into_reader()
-            .read_to_end(&mut buf)
-            .map_err(|e| anyhow!(Unavailable(e.to_string())))?;
+        r.into_reader().read_to_end(&mut buf).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
         Ok(Some(buf))
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
-        let r = self
-            .get(&self.bulk, path)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
+        let r = self.get(&self.bulk, path)?.ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
         let tmp = dest.with_extension("download");
         let mut out = std::fs::File::create(&tmp).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
         std::io::copy(&mut r.into_reader(), &mut out).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
@@ -423,10 +360,7 @@ impl Store for S3 {
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         let hash = hex(&Sha256::digest(data));
-        self.request(&self.bulk, "PUT", &self.key(path), &[], &hash)
-            .set("Content-Type", "application/octet-stream")
-            .send_bytes(data)
-            .map_err(fail)?;
+        self.request(&self.bulk, "PUT", &self.key(path), &[], &hash).set("Content-Type", "application/octet-stream").send_bytes(data).map_err(fail)?;
         Ok(())
     }
 
@@ -504,10 +438,7 @@ mod tests {
 
     #[test]
     fn hmac_matches_rfc4231_case_2() {
-        assert_eq!(
-            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
+        assert_eq!(hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
     }
 
     #[test]
@@ -532,10 +463,7 @@ mod tests {
     fn addresses_objects() {
         let t = Duration::from_secs(5);
         let v = S3::new("https://oss-cn-hangzhou.aliyuncs.com", "", "my-bucket", "/Ludonimbus/", "k", "s", false, t).unwrap();
-        assert_eq!(
-            v.target(&v.key("games/a b.zip")),
-            ("my-bucket.oss-cn-hangzhou.aliyuncs.com".to_string(), "/Ludonimbus/games/a%20b.zip".to_string())
-        );
+        assert_eq!(v.target(&v.key("games/a b.zip")), ("my-bucket.oss-cn-hangzhou.aliyuncs.com".to_string(), "/Ludonimbus/games/a%20b.zip".to_string()));
         let p = S3::new("http://192.168.1.5:9000", "", "saves", "", "k", "s", true, t).unwrap();
         assert_eq!(p.target(&p.key("devices/d.json")), ("192.168.1.5:9000".to_string(), "/saves/devices/d.json".to_string()));
         assert_eq!(p.target(""), ("192.168.1.5:9000".to_string(), "/saves".to_string()));

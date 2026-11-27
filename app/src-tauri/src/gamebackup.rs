@@ -168,14 +168,7 @@ fn start_job(
         jobs().lock().unwrap().remove(&key);
         let finished = match result {
             Ok((message, outcome)) => Finished { key: key.clone(), kind, ok: true, cancelled: false, message, outcome },
-            Err(e) => Finished {
-                key: key.clone(),
-                kind,
-                ok: false,
-                cancelled: gamebackup::is_cancelled(&e),
-                message: format!("{e:#}"),
-                outcome: None,
-            },
+            Err(e) => Finished { key: key.clone(), kind, ok: false, cancelled: gamebackup::is_cancelled(&e), message: format!("{e:#}"), outcome: None },
         };
         log(format!("{key}: {kind} finished: ok={} {}", finished.ok, finished.message));
         let _ = app.emit("game-backup-finished", finished);
@@ -297,13 +290,12 @@ fn restore_defaults(cfg: &config::AppConfig, g: &GameEntry, m: &Manifest) -> Res
         }),
         _ => false,
     };
-    let program_dir = installed
-        .as_ref()
-        .map(|d| d.display().to_string())
-        .or_else(|| program.and_then(|p| p.bases.get("program")).and_then(|d| free_dir(d)));
-    let content_dir = content.and_then(|c| c.bases.get("content")).filter(|d| Path::new(d).is_dir()).cloned().or_else(|| {
-        g.adapter.as_deref().and_then(gamebackup::content_dir_for).map(|d| d.display().to_string())
-    });
+    let program_dir = installed.as_ref().map(|d| d.display().to_string()).or_else(|| program.and_then(|p| p.bases.get("program")).and_then(|d| free_dir(d)));
+    let content_dir = content
+        .and_then(|c| c.bases.get("content"))
+        .filter(|d| Path::new(d).is_dir())
+        .cloned()
+        .or_else(|| g.adapter.as_deref().and_then(gamebackup::content_dir_for).map(|d| d.display().to_string()));
     RestoreDefaults {
         has_program: program.is_some(),
         has_content: content.is_some(),
@@ -474,9 +466,7 @@ pub async fn game_backup_start(app: AppHandle, key: String) -> CmdResult<()> {
                 keep: s.keep_count(),
                 comment: String::new(),
             };
-            let out = backup::backup(store, &g, &device, &opts, cancel, &|p| {
-                progress(p.phase, p.done, p.total, p.uploaded, p.elapsed_secs)
-            })?;
+            let out = backup::backup(store, &g, &device, &opts, cancel, &|p| progress(p.phase, p.done, p.total, p.uploaded, p.elapsed_secs))?;
             let message = match &out {
                 backup::Outcome::Unchanged { .. } => tr!("游戏文件没有变化，不需要更新备份", "The game files haven't changed; the backup is up to date"),
                 backup::Outcome::Created { uploaded, .. } => {
@@ -512,11 +502,14 @@ pub async fn game_backup_restore(app: AppHandle, key: String, version: String, t
                 .find(|s| s.id == version)
                 .ok_or_else(|| anyhow!(tr!("云端已经没有这个版本了", "This version is no longer in the cloud")))?;
             let threads = gamebackup::default_threads(store.kind());
-            let (m, report) = restore::restore(store, &key, &summary, &targets, threads, cancel, &|p| {
-                progress(p.phase, p.done, p.total, 0, p.elapsed_secs)
-            })?;
+            let (m, report) = restore::restore(store, &key, &summary, &targets, threads, cancel, &|p| progress(p.phase, p.done, p.total, 0, p.elapsed_secs))?;
             let mut notes = vec![if report.kept > 0 {
-                tr!("恢复完成：写入 {} 个文件，{} 个已经在本机，没有改动", "Restored: {} files written, {} were already here and left as they are", report.files, report.kept)
+                tr!(
+                    "恢复完成：写入 {} 个文件，{} 个已经在本机，没有改动",
+                    "Restored: {} files written, {} were already here and left as they are",
+                    report.files,
+                    report.kept
+                )
             } else {
                 tr!("恢复完成：写入 {} 个文件", "Restored: {} files written", report.files)
             }];
@@ -530,9 +523,7 @@ pub async fn game_backup_restore(app: AppHandle, key: String, version: String, t
                                 "Steam 正在运行，快捷方式还指向旧位置：关闭 Steam 后在这里点「更新 Steam 快捷方式」",
                                 "Steam is running, so its shortcut still points at the old place: close Steam, then click \"Update the Steam shortcut\" here"
                             )),
-                            install::ShortcutFix::Failed(ref e) => {
-                                notes.push(tr!("没能更新 Steam 快捷方式：{e}", "Couldn't update the Steam shortcut: {e}"))
-                            }
+                            install::ShortcutFix::Failed(ref e) => notes.push(tr!("没能更新 Steam 快捷方式：{e}", "Couldn't update the Steam shortcut: {e}")),
                             _ => {}
                         }
                         fixed = serde_json::to_value(&f).ok();

@@ -616,7 +616,10 @@ pub mod tests {
 
     #[test]
     fn finds_container_folders() {
-        let p = ["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index", "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1"];
+        let p = [
+            "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index",
+            "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1",
+        ];
         assert_eq!(user_dirs(p.iter().copied()), vec!["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB".to_string()]);
         assert!(user_dirs(["{appdata}/Game/containers.index"].iter().copied()).is_empty());
         // Next to its containers, wherever it is.

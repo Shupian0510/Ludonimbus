@@ -141,13 +141,7 @@ fn files_in(dir: &Path) -> Vec<PathBuf> {
     if !dir.is_dir() {
         return Vec::new();
     }
-    walkdir::WalkDir::new(dir)
-        .follow_links(false)
-        .into_iter()
-        .flatten()
-        .filter(|e| e.file_type().is_file())
-        .map(|e| e.into_path())
-        .collect()
+    walkdir::WalkDir::new(dir).follow_links(false).into_iter().flatten().filter(|e| e.file_type().is_file()).map(|e| e.into_path()).collect()
 }
 
 #[cfg(test)]

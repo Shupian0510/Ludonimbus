@@ -635,10 +635,7 @@ fn test_popup(app: &AppHandle, key: Option<String>) -> Result<()> {
         .or_else(|| cfg.games.iter().filter(in_steam).find(|g| is_running(g)).cloned())
         .or_else(|| cfg.games.iter().find(in_steam).cloned())
         .unwrap_or_else(|| GameEntry { key: "test".into(), name: "Ludonimbus".into(), ..Default::default() });
-    let icon = ach::load_db(&g.key)
-        .schema
-        .and_then(|s| s.achievements.into_iter().find(|a| a.icon.is_some()))
-        .and_then(|a| a.icon);
+    let icon = ach::load_db(&g.key).schema.and_then(|s| s.achievements.into_iter().find(|a| a.icon.is_some())).and_then(|a| a.icon);
     let unlock = NewUnlock {
         key: g.key.clone(),
         achievement: ach::Achievement {
@@ -662,12 +659,7 @@ mod tests {
     use super::*;
 
     fn unlock(id: &str) -> NewUnlock {
-        NewUnlock {
-            key: "g".into(),
-            achievement: ach::placeholder(id),
-            unlocked_at: Utc::now(),
-            hardcore: false,
-        }
+        NewUnlock { key: "g".into(), achievement: ach::placeholder(id), unlocked_at: Utc::now(), hardcore: false }
     }
 
     #[test]

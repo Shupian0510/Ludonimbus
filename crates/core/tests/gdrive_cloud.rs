@@ -116,11 +116,7 @@ impl Drive {
             }
         }
         let parent = parent.expect("searches are within a folder");
-        self.files
-            .iter()
-            .filter(|f| f.parent == parent && name.as_ref().is_none_or(|n| &f.name == n) && (!folders_only || f.folder))
-            .map(Self::json)
-            .collect()
+        self.files.iter().filter(|f| f.parent == parent && name.as_ref().is_none_or(|n| &f.name == n) && (!folders_only || f.folder)).map(Self::json).collect()
     }
 
     fn handle(&mut self, method: &str, url: &str, headers: &HashMap<String, String>, body: &[u8]) -> Reply {
@@ -173,7 +169,15 @@ impl Drive {
                 let now = self.tick();
                 let id = format!("d{now}");
                 let parent = meta["parents"][0].as_str().unwrap().to_string();
-                self.files.push(File { id: id.clone(), name: meta["name"].as_str().unwrap().into(), parent, folder: true, data: Vec::new(), created: now, modified: now });
+                self.files.push(File {
+                    id: id.clone(),
+                    name: meta["name"].as_str().unwrap().into(),
+                    parent,
+                    folder: true,
+                    data: Vec::new(),
+                    created: now,
+                    modified: now,
+                });
                 ok(json!({ "id": id }))
             }
             ("GET", "/drive/v3/about") => ok(json!({ "user": { "emailAddress": "player@example.com" }, "storageQuota": { "usage": "10", "limit": "100" } })),
@@ -253,7 +257,8 @@ fn start_drive() -> (String, Arc<Mutex<Drive>>) {
                         async move {
                             let method = req.method().to_string();
                             let url = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
-                            let headers: HashMap<String, String> = req.headers().iter().map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())).collect();
+                            let headers: HashMap<String, String> =
+                                req.headers().iter().map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())).collect();
                             let body = req.into_body().collect().await.unwrap().to_bytes();
                             let (status, extra, out) = st.lock().unwrap().handle(&method, &url, &headers, &body);
                             let mut resp = hyper::Response::builder().status(status);
@@ -263,9 +268,7 @@ fn start_drive() -> (String, Arc<Mutex<Drive>>) {
                             Ok::<_, Infallible>(resp.body(Full::new(Bytes::from(out))).unwrap())
                         }
                     });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                        .await;
+                    let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), service).await;
                 });
             }
         });

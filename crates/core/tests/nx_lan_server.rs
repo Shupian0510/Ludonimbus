@@ -23,7 +23,14 @@ use std::time::{Duration, Instant};
 struct Pinned(String, Arc<CryptoProvider>);
 
 impl ServerCertVerifier for Pinned {
-    fn verify_server_cert(&self, cert: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: &ServerName<'_>, _: &[u8], _: UnixTime) -> Result<ServerCertVerified, rustls::Error> {
+    fn verify_server_cert(
+        &self,
+        cert: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
         let fp: String = Sha256::digest(cert.as_ref()).iter().map(|b| format!("{b:02x}")).collect();
         if fp == self.0 {
             Ok(ServerCertVerified::assertion())
@@ -82,7 +89,10 @@ fn exchange(port: u16, tls: &Arc<ClientConfig>, head: &str, body: &[u8]) -> std:
 /// A request as the Switch writes it.
 fn request(port: u16, tls: &Arc<ClientConfig>, method: &str, path: &str, token: Option<&str>, body: &[u8]) -> std::io::Result<(u16, Vec<u8>)> {
     let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
-    let head = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth}\r\n", body.len());
+    let head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{auth}\r\n",
+        body.len()
+    );
     exchange(port, tls, &head, body)
 }
 

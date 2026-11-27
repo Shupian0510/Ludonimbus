@@ -311,7 +311,13 @@ fn same_layout(src: &CloudGame, tgt: &GameEntry) -> bool {
 
 /// The source's saves under a cross-platform rule (relative to the rule's
 /// folder), with the plan's rule, left-out files and source version filled.
-fn rule_saves<'a>(rule: &crosssaves::Rule, src: &GameEntry, meta: &SnapshotMeta, files: &'a BTreeMap<String, Vec<u8>>, plan: &mut Plan) -> Vec<(String, &'a Vec<u8>)> {
+fn rule_saves<'a>(
+    rule: &crosssaves::Rule,
+    src: &GameEntry,
+    meta: &SnapshotMeta,
+    files: &'a BTreeMap<String, Vec<u8>>,
+    plan: &mut Plan,
+) -> Vec<(String, &'a Vec<u8>)> {
     plan.format_rule = Some(rule.display_name().to_string());
     let saves = crosssaves::saves_of(rule, &savelib::save_scope(src), files.iter().map(|(p, d)| (p.as_str(), (p, d))), &meta.roots);
     let kept: HashSet<&String> = saves.iter().map(|(_, (p, _))| *p).collect();
@@ -641,7 +647,11 @@ mod tests {
     fn aligns_by_file_names() {
         let t = |p: &str| PathBuf::from(p);
         // The Steam version's folder holds the same files deeper down.
-        let targets = vec![t("C:/Steam/userdata/1/2/remote/Saves/slot1.sav"), t("C:/Steam/userdata/1/2/remote/Saves/slot2.sav"), t("C:/Steam/userdata/1/2/remote/config.ini")];
+        let targets = vec![
+            t("C:/Steam/userdata/1/2/remote/Saves/slot1.sav"),
+            t("C:/Steam/userdata/1/2/remote/Saves/slot2.sav"),
+            t("C:/Steam/userdata/1/2/remote/config.ini"),
+        ];
         let sources = vec!["Saves/slot1.sav".to_string(), "Saves/slot2.sav".into(), "Saves/slot3.sav".into()];
         let (base, k, n) = align(&sources, &targets).unwrap();
         assert_eq!((norm(&base), k, n), ("c:/steam/userdata/1/2/remote".to_string(), 0, 2));
@@ -660,7 +670,12 @@ mod tests {
         let t = |p: &str| PathBuf::from(p);
         let src = |rel: &str| Src { rel: rel.to_string(), data: Vec::new() };
         // The Steam version of an Unreal game; one name has two extensions.
-        let targets = vec![t("C:/L/Game/Saved/SaveGames/7656/DA_Main.sav"), t("C:/L/Game/Saved/SaveGames/7656/Profile.sav"), t("C:/L/Game/Saved/SaveGames/7656/Two.sav"), t("C:/L/Game/Saved/SaveGames/7656/Two.bak")];
+        let targets = vec![
+            t("C:/L/Game/Saved/SaveGames/7656/DA_Main.sav"),
+            t("C:/L/Game/Saved/SaveGames/7656/Profile.sav"),
+            t("C:/L/Game/Saved/SaveGames/7656/Two.sav"),
+            t("C:/L/Game/Saved/SaveGames/7656/Two.bak"),
+        ];
         let mut srcs = vec![src("DA_Main"), src("profile"), src("Two"), src("New"), src("Has.ext")];
         with_target_extensions(&mut srcs, &targets);
         let rels: Vec<&str> = srcs.iter().map(|s| s.rel.as_str()).collect();
@@ -672,7 +687,10 @@ mod tests {
 
     #[test]
     fn finds_xbox_containers() {
-        let p = ["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index", "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1"];
+        let p = [
+            "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index",
+            "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1",
+        ];
         assert_eq!(wgs_dir(p.iter().copied()).as_deref(), Some("{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB"));
         assert_eq!(wgs_dir(["{appdata}/Game/containers.index"].iter().copied()), None);
         let windows = r"C:\Users\me\AppData\Local\Packages\X_y\SystemAppData\wgs\t\containers.index";

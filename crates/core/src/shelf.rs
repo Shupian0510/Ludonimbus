@@ -47,10 +47,7 @@ pub fn set(ctx: &Ctx, keys: &[String], tag: &str, on: bool) -> Result<BTreeMap<S
     }
     let cloud = ctx.cloud()?;
     if cloud.access()? != Access::ReadWrite {
-        bail!(tr!(
-            "云端还是旧版本的格式，升级完成后才能放上书架",
-            "The cloud still has the older layout; shelves work once it is upgraded"
-        ));
+        bail!(tr!("云端还是旧版本的格式，升级完成后才能放上书架", "The cloud still has the older layout; shelves work once it is upgraded"));
     }
     let store = cloud.files();
     let mut done: BTreeMap<String, Vec<String>> = BTreeMap::new();

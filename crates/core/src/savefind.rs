@@ -173,12 +173,36 @@ pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Ca
 /// and the busy folders of common programs (anchored to AppData so a game
 /// folder that happens to share a name is not ignored).
 const NOISE_DIRS: [&str; 30] = [
-    "\\temp\\", "\\tmp\\", "cache", "\\logs\\", "\\log\\", "crash", "dump", "\\appdata\\local\\nvidia", "\\appdata\\local\\amd\\",
-    "\\appdata\\local\\intel\\", "\\microsoft\\", "\\appdata\\local\\packages\\", "\\appdata\\local\\google\\",
-    "\\appdata\\roaming\\mozilla\\", "\\appdata\\local\\mozilla\\", "\\discord", "\\epic games\\launcher\\",
-    "\\appdata\\local\\epicgameslauncher\\", "\\appdata\\roaming\\claude", "\\appdata\\local\\anthropic", "\\appdata\\roaming\\code\\",
-    "\\.vscode", "\\appdata\\roaming\\ludonimbus\\", "\\tencent\\", "\\wechat", "\\appdata\\local\\programs\\",
-    "\\connecteddevicesplatform\\", "\\squirreltemp", "\\appdata\\local\\unity\\", "\\appdata\\roaming\\baidu\\",
+    "\\temp\\",
+    "\\tmp\\",
+    "cache",
+    "\\logs\\",
+    "\\log\\",
+    "crash",
+    "dump",
+    "\\appdata\\local\\nvidia",
+    "\\appdata\\local\\amd\\",
+    "\\appdata\\local\\intel\\",
+    "\\microsoft\\",
+    "\\appdata\\local\\packages\\",
+    "\\appdata\\local\\google\\",
+    "\\appdata\\roaming\\mozilla\\",
+    "\\appdata\\local\\mozilla\\",
+    "\\discord",
+    "\\epic games\\launcher\\",
+    "\\appdata\\local\\epicgameslauncher\\",
+    "\\appdata\\roaming\\claude",
+    "\\appdata\\local\\anthropic",
+    "\\appdata\\roaming\\code\\",
+    "\\.vscode",
+    "\\appdata\\roaming\\ludonimbus\\",
+    "\\tencent\\",
+    "\\wechat",
+    "\\appdata\\local\\programs\\",
+    "\\connecteddevicesplatform\\",
+    "\\squirreltemp",
+    "\\appdata\\local\\unity\\",
+    "\\appdata\\roaming\\baidu\\",
 ];
 const NOISE_EXTS: [&str; 12] = [".log", ".tmp", ".etl", ".lock", ".dmp", ".pf", ".journal", "-journal", ".cache", ".old", ".bak~", ".crdownload"];
 
@@ -188,10 +212,7 @@ pub fn is_noise(path: &Path) -> bool {
     let lower = path.to_string_lossy().replace('/', "\\").to_lowercase();
     // The Steam client's own folders (not games in a Steam library).
     let steam_client = lower.contains("\\steam\\") && !lower.contains("\\steamapps\\");
-    steam_client
-        || NOISE_DIRS.iter().any(|d| lower.contains(d))
-        || NOISE_EXTS.iter().any(|e| lower.ends_with(e))
-        || lower.ends_with("player.log")
+    steam_client || NOISE_DIRS.iter().any(|d| lower.contains(d)) || NOISE_EXTS.iter().any(|e| lower.ends_with(e)) || lower.ends_with("player.log")
 }
 
 /// Records file changes under some folders until stopped.
@@ -240,13 +261,7 @@ impl Watch {
 
     /// Changed files so far (existing regular files only).
     pub fn changed_files(&self) -> Vec<PathBuf> {
-        self.changes
-            .lock()
-            .unwrap()
-            .keys()
-            .filter(|p| p.is_file())
-            .cloned()
-            .collect()
+        self.changes.lock().unwrap().keys().filter(|p| p.is_file()).cloned().collect()
     }
 
     /// Stop and turn the changes into folder suggestions.

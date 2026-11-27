@@ -145,17 +145,11 @@ impl Value {
 
     /// Case-insensitive key lookup.
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.entries()
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key.as_bytes()))
-            .map(|(_, v)| v)
+        self.entries().iter().find(|(k, _)| k.eq_ignore_ascii_case(key.as_bytes())).map(|(_, v)| v)
     }
 
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
-        self.entries_mut()?
-            .iter_mut()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key.as_bytes()))
-            .map(|(_, v)| v)
+        self.entries_mut()?.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(key.as_bytes())).map(|(_, v)| v)
     }
 
     /// Set a string value, keeping the existing key's spelling if present.
@@ -198,10 +192,7 @@ pub enum Text {
 impl Text {
     pub fn get(&self, key: &str) -> Option<&Text> {
         match self {
-            Text::Map(e) => e
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(key))
-                .map(|(_, v)| v),
+            Text::Map(e) => e.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v),
             _ => None,
         }
     }
@@ -528,11 +519,9 @@ pub fn set_text_value(text: &str, path: &[&str], value: Option<&str>) -> Result<
 fn entry_text(blocks: &[&str], leaf: &str, value: &str, indent: &str, eol: &str) -> String {
     match blocks.split_first() {
         None => format!("{indent}{}\t\t{}{eol}", quote_text(leaf), quote_text(value)),
-        Some((name, rest)) => format!(
-            "{indent}{}{eol}{indent}{{{eol}{}{indent}}}{eol}",
-            quote_text(name),
-            entry_text(rest, leaf, value, &format!("{indent}\t"), eol)
-        ),
+        Some((name, rest)) => {
+            format!("{indent}{}{eol}{indent}{{{eol}{}{indent}}}{eol}", quote_text(name), entry_text(rest, leaf, value, &format!("{indent}\t"), eol))
+        }
     }
 }
 
@@ -634,7 +623,9 @@ mod tests {
     #[test]
     fn a_value_is_replaced_in_place() {
         for eol in ["\n", "\r\n"] {
-            let app = app_block(&["\"LastPlayed\"\t\t\"1\"", "\"LaunchOptions\"\t\t\"-novid\"", "\"cloud\"", "{", "\t\"last_sync_state\"\t\t\"synchronized\"", "}"]).replace('\n', eol);
+            let app =
+                app_block(&["\"LastPlayed\"\t\t\"1\"", "\"LaunchOptions\"\t\t\"-novid\"", "\"cloud\"", "{", "\t\"last_sync_state\"\t\t\"synchronized\"", "}"])
+                    .replace('\n', eol);
             let before = localconfig(&app, eol);
             // A Windows path in quotes: written escaped, read back as it was.
             let wanted = r#""C:\Tools\ludonimbus-run.exe" --game fe -- %command% -config "C:\My Games\a.cfg""#;
@@ -715,10 +706,7 @@ mod tests {
 
     #[test]
     fn text_parse() {
-        let t = parse_text(
-            r#""users" { "7656" { "AccountName" "me" "PersonaName" "Me \"Q\"" } }"#,
-        )
-        .unwrap();
+        let t = parse_text(r#""users" { "7656" { "AccountName" "me" "PersonaName" "Me \"Q\"" } }"#).unwrap();
         let u = t.get("users").unwrap().get("7656").unwrap();
         assert_eq!(u.get("PersonaName").unwrap().as_str(), Some("Me \"Q\""));
     }

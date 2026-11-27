@@ -41,10 +41,8 @@ pub fn candidates(g: &GameEntry) -> Vec<Candidate> {
     // Lantern Engine (Bloodborne): its own trophy log next to the saves.
     if let Some(dir) = install.as_ref().filter(|d| adapter_is(g, "bloodborne-lantern") || d.join("Lantern Engine.exe").is_file()) {
         let user = dir.join("user");
-        let npwr = trophy::lantern_game_dir()
-            .and_then(|d| trophy::npbind_id(&d))
-            .or_else(|| trophy::shadps4_sets(&user).into_iter().next())
-            .unwrap_or_default();
+        let npwr =
+            trophy::lantern_game_dir().and_then(|d| trophy::npbind_id(&d)).or_else(|| trophy::shadps4_sets(&user).into_iter().next()).unwrap_or_default();
         out.push(Candidate {
             binding: Binding { source: SourceKind::Lantern, source_id: npwr, path: Some(user.clone()), popup: None },
             title: Some(g.name.clone()),

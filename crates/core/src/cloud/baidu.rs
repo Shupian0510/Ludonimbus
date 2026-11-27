@@ -56,7 +56,11 @@ impl BaiduClient {
     pub fn resolve(app_key: &str, secret_key: &str, app_name: &str) -> Option<Self> {
         let pick = |v: &str, builtin: Option<&str>| {
             let v = v.trim();
-            if v.is_empty() { builtin.unwrap_or("").trim().to_string() } else { v.to_string() }
+            if v.is_empty() {
+                builtin.unwrap_or("").trim().to_string()
+            } else {
+                v.to_string()
+            }
         };
         let own = !app_key.trim().is_empty();
         let app_key = pick(app_key, option_env!("LUDONIMBUS_BAIDU_APP_KEY"));
@@ -66,24 +70,15 @@ impl BaiduClient {
         if app_name.is_empty() || app_name == "." || app_name == ".." {
             app_name = "Ludonimbus".into();
         }
-        (!app_key.is_empty() && !secret_key.is_empty()).then_some(BaiduClient {
-            app_key,
-            secret_key,
-            app_name,
-        })
+        (!app_key.is_empty() && !secret_key.is_empty()).then_some(BaiduClient { app_key, secret_key, app_name })
     }
 
     pub fn has_builtin() -> bool {
-        option_env!("LUDONIMBUS_BAIDU_APP_KEY").is_some_and(|s| !s.is_empty())
-            && option_env!("LUDONIMBUS_BAIDU_SECRET_KEY").is_some_and(|s| !s.is_empty())
+        option_env!("LUDONIMBUS_BAIDU_APP_KEY").is_some_and(|s| !s.is_empty()) && option_env!("LUDONIMBUS_BAIDU_SECRET_KEY").is_some_and(|s| !s.is_empty())
     }
 
     pub fn builtin_app_name() -> String {
-        option_env!("LUDONIMBUS_BAIDU_APP_NAME")
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or("Ludonimbus")
-            .trim()
-            .to_string()
+        option_env!("LUDONIMBUS_BAIDU_APP_NAME").filter(|s| !s.trim().is_empty()).unwrap_or("Ludonimbus").trim().to_string()
     }
 }
 
@@ -169,12 +164,7 @@ fn agent(timeout: Duration) -> ureq::Agent {
 }
 
 fn bulk_agent(timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(timeout)
-        .timeout_read(Duration::from_secs(300))
-        .timeout_write(Duration::from_secs(300))
-        .user_agent(UA)
-        .build()
+    ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).user_agent(UA).build()
 }
 
 /// JSON body of a response, also for HTTP error statuses (Baidu often puts
@@ -183,14 +173,20 @@ fn json_of(res: Result<ureq::Response, ureq::Error>) -> Result<Value> {
     match res {
         Ok(r) => {
             let text = r.into_string().map_err(|e| anyhow!(Unavailable(e.to_string())))?;
-            serde_json::from_str(&text).with_context(|| crate::tr!("百度网盘返回了无法识别的内容：{}", "Baidu Netdisk returned something unexpected: {}", text.chars().take(200).collect::<String>()))
+            serde_json::from_str(&text).with_context(|| {
+                crate::tr!("百度网盘返回了无法识别的内容：{}", "Baidu Netdisk returned something unexpected: {}", text.chars().take(200).collect::<String>())
+            })
         }
         Err(ureq::Error::Status(code, r)) => {
             let text = r.into_string().unwrap_or_default();
             match serde_json::from_str::<Value>(&text) {
                 Ok(v) if v.is_object() => Ok(v),
                 _ if code >= 500 => Err(anyhow!(Unavailable(crate::tr!("百度网盘服务器错误 {code}", "Baidu Netdisk server error {code}")))),
-                _ => Err(anyhow!(crate::tr!("百度网盘返回错误 {code}：{}", "Baidu Netdisk returned error {code}: {}", text.chars().take(200).collect::<String>()))),
+                _ => Err(anyhow!(crate::tr!(
+                    "百度网盘返回错误 {code}：{}",
+                    "Baidu Netdisk returned error {code}: {}",
+                    text.chars().take(200).collect::<String>()
+                ))),
             }
         }
         Err(ureq::Error::Transport(t)) => Err(anyhow!(Unavailable(t.to_string()))),
@@ -198,10 +194,7 @@ fn json_of(res: Result<ureq::Response, ureq::Error>) -> Result<Value> {
 }
 
 fn errno(v: &Value) -> i64 {
-    v.get("errno")
-        .and_then(Value::as_i64)
-        .or_else(|| v.get("error_code").and_then(Value::as_i64))
-        .unwrap_or(0)
+    v.get("errno").and_then(Value::as_i64).or_else(|| v.get("error_code").and_then(Value::as_i64)).unwrap_or(0)
 }
 
 fn is_token_error(code: i64) -> bool {
@@ -214,11 +207,7 @@ fn is_rate_limited(code: i64) -> bool {
 
 /// User-facing error for a Baidu error number.
 fn errno_error(code: i64, v: &Value, app_name: &str) -> anyhow::Error {
-    let msg = ["errmsg", "error_msg", "show_msg"]
-        .iter()
-        .find_map(|k| v.get(*k).and_then(Value::as_str))
-        .unwrap_or("")
-        .to_string();
+    let msg = ["errmsg", "error_msg", "show_msg"].iter().find_map(|k| v.get(*k).and_then(Value::as_str)).unwrap_or("").to_string();
     match code {
         c if is_token_error(c) => anyhow!(crate::tr!("百度网盘登录已失效（{c}），请在设置里重新连接百度网盘", "The Baidu Netdisk sign-in has expired ({c}). Reconnect Baidu Netdisk in Settings")),
         c if is_rate_limited(c) => anyhow!(Unavailable(crate::tr!("百度网盘请求太频繁（{c}），稍后会自动重试", "Too many requests to Baidu Netdisk ({c}); retrying automatically later"))),
@@ -286,10 +275,7 @@ pub fn start_device(client: &BaiduClient, ep: &Endpoints) -> Result<DeviceCode> 
 
 /// Errors that end the device flow; anything else is treated as "not yet".
 fn fatal_device_error(err: &str) -> bool {
-    matches!(
-        err,
-        "invalid_client" | "unauthorized_client" | "unsupported_grant_type" | "access_denied" | "authorization_declined" | "expired_token"
-    )
+    matches!(err, "invalid_client" | "unauthorized_client" | "unsupported_grant_type" | "access_denied" | "authorization_declined" | "expired_token")
 }
 
 /// Wait until the user approves (or the code expires / `cancel` is set).
@@ -307,7 +293,11 @@ pub fn poll_device(client: &BaiduClient, ep: &Endpoints, code: &DeviceCode, canc
             std::thread::sleep(Duration::from_millis(100).min(wait));
         }
         if Instant::now() > deadline {
-            bail!(crate::tr!("等待百度网盘授权超时，请重新点击连接{}", "Timed out waiting for Baidu Netdisk authorization. Click Connect again{}", if last.is_empty() { String::new() } else { crate::tr!("（{last}）", " ({last})") }));
+            bail!(crate::tr!(
+                "等待百度网盘授权超时，请重新点击连接{}",
+                "Timed out waiting for Baidu Netdisk authorization. Click Connect again{}",
+                if last.is_empty() { String::new() } else { crate::tr!("（{last}）", " ({last})") }
+            ));
         }
         let url = url::Url::parse_with_params(
             &format!("{}/oauth/2.0/token", ep.oauth),
@@ -455,12 +445,12 @@ impl BaiduPan {
     /// Absolute netdisk path below the app folder. `.` and `..` segments
     /// are dropped, so no path can point outside 「我的应用数据/<app name>」.
     fn full(&self, path: &str) -> String {
-        let rel = join(&[path])
-            .split('/')
-            .filter(|s| *s != "." && *s != "..")
-            .collect::<Vec<_>>()
-            .join("/");
-        if rel.is_empty() { self.root.clone() } else { format!("{}/{rel}", self.root) }
+        let rel = join(&[path]).split('/').filter(|s| *s != "." && *s != "..").collect::<Vec<_>>().join("/");
+        if rel.is_empty() {
+            self.root.clone()
+        } else {
+            format!("{}/{rel}", self.root)
+        }
     }
 
     /// A valid access token, refreshing it when it expires within a day (or
@@ -543,9 +533,7 @@ impl BaiduPan {
     fn api_url(&self, path: &str, params: &[(&str, &str)], token: &str) -> String {
         let mut all: Vec<(&str, &str)> = params.to_vec();
         all.push(("access_token", token));
-        url::Url::parse_with_params(&format!("{}{path}", self.ep.pan), &all)
-            .map(|u| u.to_string())
-            .unwrap_or_default()
+        url::Url::parse_with_params(&format!("{}{path}", self.ep.pan), &all).map(|u| u.to_string()).unwrap_or_default()
     }
 
     fn list_full(&self, dir: &str) -> Result<Option<Vec<Value>>> {
@@ -555,11 +543,7 @@ impl BaiduPan {
             let s = start.to_string();
             let v = self.call(&[-9], |t| {
                 self.agent
-                    .get(&self.api_url(
-                        "/rest/2.0/xpan/file",
-                        &[("method", "list"), ("dir", dir), ("start", &s), ("limit", "1000"), ("web", "0")],
-                        t,
-                    ))
+                    .get(&self.api_url("/rest/2.0/xpan/file", &[("method", "list"), ("dir", dir), ("start", &s), ("limit", "1000"), ("web", "0")], t))
                     .call()
             })?;
             if errno(&v) == -9 {
@@ -577,9 +561,7 @@ impl BaiduPan {
 
     fn mkdir(&self, full: &str) -> Result<()> {
         self.call(&[-8, 31061], |t| {
-            self.agent
-                .post(&self.api_url("/rest/2.0/xpan/file", &[("method", "create")], t))
-                .send_form(&[("path", full), ("isdir", "1"), ("rtype", "0")])
+            self.agent.post(&self.api_url("/rest/2.0/xpan/file", &[("method", "create")], t)).send_form(&[("path", full), ("isdir", "1"), ("rtype", "0")])
         })
         .map(|_| ())
     }
@@ -619,24 +601,14 @@ impl BaiduPan {
         let res = self.call(&[], |t| {
             let url = url::Url::parse_with_params(
                 &format!("{}/rest/2.0/pcs/file", self.ep.pcs),
-                &[
-                    ("method", "locateupload"),
-                    ("appid", "250528"),
-                    ("access_token", t),
-                    ("path", full),
-                    ("uploadid", uploadid),
-                    ("upload_version", "2.0"),
-                ],
+                &[("method", "locateupload"), ("appid", "250528"), ("access_token", t), ("path", full), ("uploadid", uploadid), ("upload_version", "2.0")],
             )
             .map(|u| u.to_string())
             .unwrap_or_default();
             self.agent.get(&url).call()
         });
         let host = res.ok().and_then(|v| {
-            let server = v["servers"]
-                .as_array()
-                .and_then(|a| a.iter().find_map(|s| s["server"].as_str()))
-                .map(str::to_string)?;
+            let server = v["servers"].as_array().and_then(|a| a.iter().find_map(|s| s["server"].as_str())).map(str::to_string)?;
             let secs = v["expire"].as_u64().unwrap_or(60).max(30);
             let server = if server.contains("://") { server } else { format!("https://{server}") };
             *self.upload_host.lock().unwrap_or_else(|e| e.into_inner()) = Some((server.clone(), Instant::now() + Duration::from_secs(secs)));
@@ -665,16 +637,14 @@ impl BaiduPan {
         let block_list = serde_json::to_string(&blocks)?;
         let size = body.len().to_string();
         let pre = self.call(&[], |t| {
-            self.agent
-                .post(&self.api_url("/rest/2.0/xpan/file", &[("method", "precreate")], t))
-                .send_form(&[
-                    ("path", full),
-                    ("size", size.as_str()),
-                    ("isdir", "0"),
-                    ("autoinit", "1"),
-                    ("rtype", "3"),
-                    ("block_list", block_list.as_str()),
-                ])
+            self.agent.post(&self.api_url("/rest/2.0/xpan/file", &[("method", "precreate")], t)).send_form(&[
+                ("path", full),
+                ("size", size.as_str()),
+                ("isdir", "0"),
+                ("autoinit", "1"),
+                ("rtype", "3"),
+                ("block_list", block_list.as_str()),
+            ])
         })?;
         if pre["return_type"].as_i64() == Some(2) {
             // The server already had this content ("rapid upload").
@@ -690,15 +660,15 @@ impl BaiduPan {
         };
         let host = self.upload_host(full, &uploadid);
         for i in todo {
-            let chunk = body.slice(i)?.ok_or_else(|| anyhow!(crate::tr!("百度网盘要求了不存在的分片 {i}", "Baidu Netdisk asked for a slice that doesn't exist: {i}")))?;
+            let chunk = body
+                .slice(i)?
+                .ok_or_else(|| anyhow!(crate::tr!("百度网盘要求了不存在的分片 {i}", "Baidu Netdisk asked for a slice that doesn't exist: {i}")))?;
             let seq = i.to_string();
             let boundary = format!("----Ludonimbus{}", ulid::Ulid::new());
             let mut form = Vec::with_capacity(chunk.len() + 256);
             form.extend_from_slice(
-                format!(
-                    "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"blob\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-                )
-                .as_bytes(),
+                format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"blob\"\r\nContent-Type: application/octet-stream\r\n\r\n")
+                    .as_bytes(),
             );
             form.extend_from_slice(&chunk);
             drop(chunk);
@@ -717,10 +687,7 @@ impl BaiduPan {
                 )
                 .map(|u| u.to_string())
                 .unwrap_or_default();
-                self.bulk
-                    .post(&url)
-                    .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
-                    .send_bytes(&form)
+                self.bulk.post(&url).set("Content-Type", &format!("multipart/form-data; boundary={boundary}")).send_bytes(&form)
             })?;
             if let Some(md5) = v["md5"].as_str() {
                 if !md5.eq_ignore_ascii_case(&blocks[i]) {
@@ -730,16 +697,14 @@ impl BaiduPan {
         }
         // Not sent twice: a create that went through used up the upload id.
         self.call_with(false, &[], |t| {
-            self.agent
-                .post(&self.api_url("/rest/2.0/xpan/file", &[("method", "create")], t))
-                .send_form(&[
-                    ("path", full),
-                    ("size", size.as_str()),
-                    ("isdir", "0"),
-                    ("rtype", "3"),
-                    ("uploadid", uploadid.as_str()),
-                    ("block_list", block_list.as_str()),
-                ])
+            self.agent.post(&self.api_url("/rest/2.0/xpan/file", &[("method", "create")], t)).send_form(&[
+                ("path", full),
+                ("size", size.as_str()),
+                ("isdir", "0"),
+                ("rtype", "3"),
+                ("uploadid", uploadid.as_str()),
+                ("block_list", block_list.as_str()),
+            ])
         })?;
         Ok(())
     }
@@ -794,19 +759,9 @@ impl BaiduPan {
     fn open_id(&self, id: u64, agent: &ureq::Agent) -> Result<Option<ureq::Response>> {
         let ids = format!("[{id}]");
         let v = self.call(&[-9, 31190, -3], |t| {
-            self.agent
-                .get(&self.api_url(
-                    "/rest/2.0/xpan/multimedia",
-                    &[("method", "filemetas"), ("fsids", ids.as_str()), ("dlink", "1")],
-                    t,
-                ))
-                .call()
+            self.agent.get(&self.api_url("/rest/2.0/xpan/multimedia", &[("method", "filemetas"), ("fsids", ids.as_str()), ("dlink", "1")], t)).call()
         })?;
-        let dlink = if errno(&v) == 0 {
-            v["list"].as_array().and_then(|a| a.first()).and_then(|f| f["dlink"].as_str()).map(str::to_string)
-        } else {
-            None
-        };
+        let dlink = if errno(&v) == 0 { v["list"].as_array().and_then(|a| a.first()).and_then(|f| f["dlink"].as_str()).map(str::to_string) } else { None };
         let Some(dlink) = dlink else { return Ok(None) };
         let token = self.access_token(false)?;
         let sep = if dlink.contains('?') { '&' } else { '?' };
@@ -895,11 +850,7 @@ impl Store for BaiduPan {
     }
 
     fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
-        let v = self.call(&[], |t| {
-            self.agent
-                .get(&self.api_url("/api/quota", &[("checkfree", "1")], t))
-                .call()
-        })?;
+        let v = self.call(&[], |t| self.agent.get(&self.api_url("/api/quota", &[("checkfree", "1")], t)).call())?;
         Ok((v["used"].as_u64(), v["total"].as_u64()))
     }
 
@@ -933,16 +884,12 @@ impl Store for BaiduPan {
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
         let Some(r) = self.open(path, &self.agent)? else { return Ok(None) };
         let mut buf = Vec::new();
-        r.into_reader()
-            .read_to_end(&mut buf)
-            .map_err(|e| anyhow!(Unavailable(e.to_string())))?;
+        r.into_reader().read_to_end(&mut buf).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
         Ok(Some(buf))
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
-        let r = self
-            .open(path, &self.bulk)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
+        let r = self.open(path, &self.bulk)?.ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
         let tmp = dest.with_extension("download");
         let mut out = std::fs::File::create(&tmp).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
         std::io::copy(&mut r.into_reader(), &mut out).map_err(|e| anyhow!(Unavailable(e.to_string())))?;

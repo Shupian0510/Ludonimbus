@@ -73,7 +73,11 @@ pub enum Access {
     Legacy,
     ReadWrite,
     /// Written by a newer Ludonimbus: never upload, change or delete anything.
-    ReadOnly { layout: u32, unknown: Vec<String>, min_app: String },
+    ReadOnly {
+        layout: u32,
+        unknown: Vec<String>,
+        min_app: String,
+    },
 }
 
 /// `None` when the cloud has no `format.json`. A file that can't be parsed is
@@ -82,9 +86,9 @@ pub enum Access {
 pub fn read_format(store: &dyn Store) -> Result<Option<FormatFile>> {
     match store.read(FORMAT_FILE)? {
         None => Ok(None),
-        Some(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .with_context(|| crate::tr!("云端的 format.json 读不懂", "Can't understand format.json in the cloud")),
+        Some(bytes) => {
+            serde_json::from_slice(&bytes).map(Some).with_context(|| crate::tr!("云端的 format.json 读不懂", "Can't understand format.json in the cloud"))
+        }
     }
 }
 
@@ -92,11 +96,7 @@ pub fn access(format: Option<&FormatFile>) -> Access {
     let Some(f) = format else { return Access::Legacy };
     let unknown = unknown(&f.requires);
     if f.layout > LAYOUT || !unknown.is_empty() {
-        return Access::ReadOnly {
-            layout: f.layout,
-            unknown,
-            min_app: f.min_app.clone(),
-        };
+        return Access::ReadOnly { layout: f.layout, unknown, min_app: f.min_app.clone() };
     }
     if f.layout < LAYOUT {
         return Access::Legacy;
@@ -226,12 +226,7 @@ impl GameRecord {
         let paths = || self.lines.iter().flat_map(|l| std::iter::once(&l.path).chain(&l.also)).find(|p| !path(p));
         match names.or_else(paths) {
             None => Ok(()),
-            Some(bad) => bail!(crate::tr!(
-                "云端的游戏记录 {} 里有不安全的路径：{}",
-                "The game record {} in the cloud has an unsafe path: {}",
-                self.id,
-                bad
-            )),
+            Some(bad) => bail!(crate::tr!("云端的游戏记录 {} 里有不安全的路径：{}", "The game record {} in the cloud has an unsafe path: {}", self.id, bad)),
         }
     }
 }
@@ -632,10 +627,7 @@ mod tests {
         }))
         .unwrap();
         let packs: Vec<String> = m.packs().into_iter().collect();
-        assert_eq!(
-            packs,
-            ["01JE0000000000000000000001", "01JF0000000000000000000002", "01JF0000000000000000000002-2"]
-        );
+        assert_eq!(packs, ["01JE0000000000000000000001", "01JF0000000000000000000002", "01JF0000000000000000000002-2"]);
         let s = m.summary();
         assert_eq!(s.packs, packs);
         assert_eq!(s.file_count, 3);
@@ -693,10 +685,7 @@ mod tests {
         let mut f = FormatFile { layout: LAYOUT, min_app: "1.0.0".into(), ..Default::default() };
         assert_eq!(access(Some(&f)), Access::ReadWrite);
         f.requires = vec!["enc1".into()];
-        assert_eq!(
-            access(Some(&f)),
-            Access::ReadOnly { layout: LAYOUT, unknown: vec!["enc1".into()], min_app: "1.0.0".into() }
-        );
+        assert_eq!(access(Some(&f)), Access::ReadOnly { layout: LAYOUT, unknown: vec!["enc1".into()], min_app: "1.0.0".into() });
         let newer = FormatFile { layout: LAYOUT + 1, min_app: "2.0.0".into(), ..Default::default() };
         assert!(matches!(access(Some(&newer)), Access::ReadOnly { layout, .. } if layout == LAYOUT + 1));
     }

@@ -58,20 +58,11 @@ pub struct Found {
 /// Lowercase letters and digits (any script) only: "Hollow Knight™" →
 /// "hollowknight".
 pub fn match_key(name: &str) -> String {
-    name.chars()
-        .filter(|c| c.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+    name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
 fn found(source: &str, id: String, name: String) -> Found {
-    Found {
-        match_key: match_key(&name),
-        id,
-        name,
-        source: source.into(),
-        ..Default::default()
-    }
+    Found { match_key: match_key(&name), id, name, source: source.into(), ..Default::default() }
 }
 
 /// Fast sources: Steam shortcuts, Epic, GOG, Xbox app, RecompLauncher, and
@@ -99,11 +90,7 @@ pub fn quick(cfg: &AppConfig) -> Vec<Found> {
     }
     // Emulator games: in the data folders of emulators in Steam or the
     // library, and in each emulator's usual folders.
-    let programs: Vec<PathBuf> = out
-        .iter()
-        .filter_map(|f| f.exe.as_deref().map(PathBuf::from))
-        .chain(cfg.games.iter().filter_map(|g| g.exe.clone()))
-        .collect();
+    let programs: Vec<PathBuf> = out.iter().filter_map(|f| f.exe.as_deref().map(PathBuf::from)).chain(cfg.games.iter().filter_map(|g| g.exe.clone())).collect();
     push_new_emulator_games(&mut out, emulator_games(&programs, true));
     attach_ludusavi_titles(&mut out);
     mark_added(cfg, &mut out);
@@ -132,7 +119,8 @@ pub fn emulator_games(programs: &[PathBuf], usual_places: bool) -> Vec<Found> {
             continue;
         }
         let install = d.install.clone().or_else(|| exe.parent().map(Path::to_path_buf));
-        if !places.iter().any(|(a, e, _)| a.key == d.adapter.key && e.as_deref().is_some_and(|e| util::same_path(&e.to_string_lossy(), &exe.to_string_lossy()))) {
+        if !places.iter().any(|(a, e, _)| a.key == d.adapter.key && e.as_deref().is_some_and(|e| util::same_path(&e.to_string_lossy(), &exe.to_string_lossy())))
+        {
             places.push((d.adapter, Some(exe.clone()), install));
         }
     }
@@ -242,10 +230,7 @@ pub fn epic_games(dir: &Path) -> Vec<Found> {
         if e.path().extension().is_none_or(|x| !x.eq_ignore_ascii_case("item")) {
             continue;
         }
-        let Some(v) = std::fs::read_to_string(e.path())
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        else {
+        let Some(v) = std::fs::read_to_string(e.path()).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()) else {
             continue;
         };
         if v["bIsIncompleteInstall"].as_bool() == Some(true) {
@@ -279,10 +264,7 @@ pub fn recomplauncher_games(launcher: Option<&Path>) -> Vec<Found> {
     for g in recomplauncher::installed(launcher) {
         let Some(exe) = g.exe.as_ref().map(|rel| g.path.join(rel)).filter(|e| e.is_file()) else { continue };
         let adapter = adapters::find_recomplauncher(&g.id).or_else(|| adapters::detect(&exe));
-        let name = adapter
-            .map(|a| a.name.clone())
-            .or_else(|| (!g.game.trim().is_empty()).then(|| g.game.clone()))
-            .unwrap_or_else(|| g.name.clone());
+        let name = adapter.map(|a| a.name.clone()).or_else(|| (!g.game.trim().is_empty()).then(|| g.game.clone())).unwrap_or_else(|| g.name.clone());
         let mut f = found("recomplauncher", format!("recomplauncher:{}", g.id), name);
         f.adapter = adapter.map(|a| a.key.clone());
         if adapter.is_none() {
@@ -325,9 +307,7 @@ pub fn gog_games() -> Vec<Found> {
 
 /// Look up Ludusavi titles for games without a built-in rule (one call).
 fn attach_ludusavi_titles(list: &mut [Found]) {
-    let idx: Vec<usize> = (0..list.len())
-        .filter(|&i| list[i].adapter.is_none() && list[i].saves.is_empty() && list[i].ludusavi_title.is_none())
-        .collect();
+    let idx: Vec<usize> = (0..list.len()).filter(|&i| list[i].adapter.is_none() && list[i].saves.is_empty() && list[i].ludusavi_title.is_none()).collect();
     let names: Vec<String> = idx.iter().map(|&i| list[i].name.clone()).collect();
     if let Ok(titles) = ludusavi::find_titles(&names) {
         for (i, t) in idx.into_iter().zip(titles) {
@@ -427,11 +407,7 @@ pub struct SteamInstalled {
     pub names: HashSet<String>,
 }
 
-pub fn classify(
-    games: &[ludusavi::ScanGame],
-    manifest: &HashMap<String, ludusavi::ManifestInfo>,
-    steam_installed: &SteamInstalled,
-) -> Vec<Found> {
+pub fn classify(games: &[ludusavi::ScanGame], manifest: &HashMap<String, ludusavi::ManifestInfo>, steam_installed: &SteamInstalled) -> Vec<Found> {
     games
         .iter()
         .map(|g| {
@@ -463,20 +439,36 @@ pub fn classify(
 
 fn is_steam_userdata(lower_path: &str) -> bool {
     let parts: Vec<&str> = lower_path.split(['\\', '/']).collect();
-    parts
-        .windows(3)
-        .any(|w| w[0] == "userdata" && w[1].chars().all(|c| c.is_ascii_digit()) && w[2].chars().all(|c| c.is_ascii_digit()))
+    parts.windows(3).any(|w| w[0] == "userdata" && w[1].chars().all(|c| c.is_ascii_digit()) && w[2].chars().all(|c| c.is_ascii_digit()))
 }
 
 const JUNK_EXE: &[&str] = &[
-    "unins", "uninst", "crash", "redist", "vcredist", "vc_redist", "dxsetup", "dxwebsetup", "dotnet", "setup", "install",
-    "update", "updater", "report", "helper", "cef", "unitycrashhandler", "ue4prereq", "easyanticheat", "battleye",
-    "7z", "quicksfv", "gamelaunchhelper",
+    "unins",
+    "uninst",
+    "crash",
+    "redist",
+    "vcredist",
+    "vc_redist",
+    "dxsetup",
+    "dxwebsetup",
+    "dotnet",
+    "setup",
+    "install",
+    "update",
+    "updater",
+    "report",
+    "helper",
+    "cef",
+    "unitycrashhandler",
+    "ue4prereq",
+    "easyanticheat",
+    "battleye",
+    "7z",
+    "quicksfv",
+    "gamelaunchhelper",
 ];
-const JUNK_DIRS: [&str; 10] = [
-    "redist", "_commonredist", "commonredist", "directx", "dotnet", "vcredist", "easyanticheat", "battleye", "__installer",
-    "support",
-];
+const JUNK_DIRS: [&str; 10] =
+    ["redist", "_commonredist", "commonredist", "directx", "dotnet", "vcredist", "easyanticheat", "battleye", "__installer", "support"];
 
 pub(crate) fn is_junk_exe(path: &Path) -> bool {
     let stem = path.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
@@ -495,10 +487,7 @@ pub fn pick_exe(dir: &Path) -> Option<PathBuf> {
     for entry in walkdir::WalkDir::new(dir)
         .max_depth(4)
         .into_iter()
-        .filter_entry(|e| {
-            !(e.file_type().is_dir()
-                && JUNK_DIRS.contains(&e.file_name().to_string_lossy().to_lowercase().as_str()))
-        })
+        .filter_entry(|e| !(e.file_type().is_dir() && JUNK_DIRS.contains(&e.file_name().to_string_lossy().to_lowercase().as_str())))
         .flatten()
     {
         let p = entry.path();
@@ -632,12 +621,7 @@ pub fn parse_gaming_root(b: &[u8]) -> Vec<String> {
     }
     let count = u32::from_le_bytes([b[4], b[5], b[6], b[7]]) as usize;
     let units: Vec<u16> = b[8..].as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
-    units
-        .split(|&u| u == 0)
-        .filter(|s| !s.is_empty())
-        .take(count.max(1))
-        .map(String::from_utf16_lossy)
-        .collect()
+    units.split(|&u| u == 0).filter(|s| !s.is_empty()).take(count.max(1)).map(String::from_utf16_lossy).collect()
 }
 
 /// Games installed by the Xbox app: `<root>\<game>\Content\MicrosoftGame.config`.
@@ -673,17 +657,8 @@ pub fn xbox_games_in(roots: &[PathBuf]) -> Vec<Found> {
 
 /// Store names often carry a platform suffix ("Doom Eternal - PC").
 pub fn clean_store_name(name: &str) -> String {
-    const SUFFIXES: [&str; 9] = [
-        " - pc",
-        " (pc)",
-        " pc",
-        " for windows 10",
-        " for windows",
-        " - windows 10",
-        " windows 10 edition",
-        " windows edition",
-        " (windows)",
-    ];
+    const SUFFIXES: [&str; 9] =
+        [" - pc", " (pc)", " pc", " for windows 10", " for windows", " - windows 10", " windows 10 edition", " windows edition", " (windows)"];
     let mut s = name.replace(['™', '®'], "").trim().to_string();
     loop {
         let lower = s.to_lowercase();
@@ -744,10 +719,7 @@ pub fn game_folders(cfg: &AppConfig) -> Vec<GameFolder> {
     list.iter()
         .map(|(label, p)| {
             let drive = p.to_string_lossy().chars().take(2).collect::<String>().to_uppercase();
-            GameFolder {
-                label: if count(label) > 1 { format!("{label} {drive}") } else { label.to_string() },
-                path: p.to_string_lossy().into_owned(),
-            }
+            GameFolder { label: if count(label) > 1 { format!("{label} {drive}") } else { label.to_string() }, path: p.to_string_lossy().into_owned() }
         })
         .collect()
 }
@@ -792,9 +764,8 @@ fn registered_programs() -> Vec<Install> {
                 // DisplayIcon is often the game exe ("C:\...\game.exe,0").
                 let icon = get("DisplayIcon");
                 let icon = icon.split(',').next().unwrap_or("").trim().trim_matches('"');
-                let exe = Some(PathBuf::from(icon)).filter(|p| {
-                    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && p.starts_with(&dir) && p.is_file() && !is_junk_exe(p)
-                });
+                let exe = Some(PathBuf::from(icon))
+                    .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && p.starts_with(&dir) && p.is_file() && !is_junk_exe(p));
                 out.push(Install { store: "registry".into(), name: name.trim().to_string(), dir, exe, by_dir_only: false });
             }
         }
@@ -936,17 +907,23 @@ mod tests {
 
     #[test]
     fn classifies_ludusavi_results() {
-        let g = |t: &str, files: &[&str]| ludusavi::ScanGame {
-            title: t.into(),
-            files: files.iter().map(|f| (f.to_string(), 10)).collect(),
-            has_registry: false,
-        };
+        let g =
+            |t: &str, files: &[&str]| ludusavi::ScanGame { title: t.into(), files: files.iter().map(|f| (f.to_string(), 10)).collect(), has_registry: false };
         let games = vec![
             g("Hollow Knight", &[r"C:\Users\me\AppData\LocalLow\Team Cherry\Hollow Knight\user1.dat"]),
             g("Ace Combat 8", &[r"C:\Users\me\AppData\Local\AC8\steam_autocloud.vdf", r"C:\Users\me\AppData\Local\AC8\save.sav"]),
-            g("Granblue Fantasy: Relink", &[r"C:\Users\me\AppData\Local\GBFR\Saved\SaveGames\steam_autocloud.vdf", r"C:\Users\me\AppData\Local\GBFR\Saved\SaveGames\SaveData1.dat"]),
+            g(
+                "Granblue Fantasy: Relink",
+                &[r"C:\Users\me\AppData\Local\GBFR\Saved\SaveGames\steam_autocloud.vdf", r"C:\Users\me\AppData\Local\GBFR\Saved\SaveGames\SaveData1.dat"],
+            ),
             g("Celeste", &[r"C:\Program Files (x86)\Steam\userdata\123\504230\remote\0.celeste"]),
-            g("Florence", &[r"C:\Program Files (x86)\Steam\userdata\123\1102130\remote\FlorenceSave.dat", r"C:\Users\me\AppData\LocalLow\Mountains\Florence\FlorenceSave.dat"]),
+            g(
+                "Florence",
+                &[
+                    r"C:\Program Files (x86)\Steam\userdata\123\1102130\remote\FlorenceSave.dat",
+                    r"C:\Users\me\AppData\LocalLow\Mountains\Florence\FlorenceSave.dat",
+                ],
+            ),
             g("Hades", &[r"C:\Users\me\Documents\Saved Games\Hades\Profile1.sav"]),
             g("The Witcher 3", &[r"C:\Users\me\Documents\The Witcher 3\gamesaves\a.sav"]),
         ];
@@ -955,10 +932,7 @@ mod tests {
         manifest.insert("Hollow Knight".to_string(), info(367520, &[]));
         manifest.insert("Hades".to_string(), info(1145360, &[]));
         manifest.insert("The Witcher 3".to_string(), info(292030, &[499450]));
-        let installed = SteamInstalled {
-            ids: [367520, 499450].into_iter().collect(),
-            names: [match_key("Ace Combat 8™")].into_iter().collect(),
-        };
+        let installed = SteamInstalled { ids: [367520, 499450].into_iter().collect(), names: [match_key("Ace Combat 8™")].into_iter().collect() };
         let out = classify(&games, &manifest, &installed);
         let by = |t: &str| out.iter().find(|f| f.name == t).unwrap();
         // Installed through Steam (by id, another edition's id, or name) and synced by Steam Cloud.
@@ -1043,7 +1017,13 @@ mod tests {
             by_dir_only,
         };
         let installs = vec![
-            Install { store: "xbox".into(), name: "Doom Eternal".into(), dir: tmp.path().join("XboxGames/Doom/Content"), exe: Some(doom.clone()), by_dir_only: false },
+            Install {
+                store: "xbox".into(),
+                name: "Doom Eternal".into(),
+                dir: tmp.path().join("XboxGames/Doom/Content"),
+                exe: Some(doom.clone()),
+                by_dir_only: false,
+            },
             folder("EA Games/Titanfall2", false),
             folder("Program Files/Control", true),
         ];

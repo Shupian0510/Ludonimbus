@@ -86,11 +86,7 @@ impl Ctx {
             Ok(c) => (c, None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
-        Ctx {
-            cfg,
-            cloud,
-            cloud_error,
-        }
+        Ctx { cfg, cloud, cloud_error }
     }
 
     /// With a cloud the caller opened itself, whatever the config says.
@@ -188,14 +184,29 @@ pub enum Resolution {
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Outcome {
     UpToDate,
-    Uploaded { id: String },
+    Uploaded {
+        id: String,
+    },
     /// Snapshot created but the cloud is unreachable; uploaded later.
-    Queued { id: String, reason: String },
-    Pulled { id: String, device: String, created_at: DateTime<Utc> },
-    Conflict { local_files: usize, local_size: u64, cloud: SnapshotSummary },
+    Queued {
+        id: String,
+        reason: String,
+    },
+    Pulled {
+        id: String,
+        device: String,
+        created_at: DateTime<Utc>,
+    },
+    Conflict {
+        local_files: usize,
+        local_size: u64,
+        cloud: SnapshotSummary,
+    },
     NothingToSave,
     NoCloud,
-    Offline { message: String },
+    Offline {
+        message: String,
+    },
 }
 
 impl Outcome {
@@ -215,10 +226,7 @@ pub fn mainline_head(list: &[SnapshotSummary]) -> Option<SnapshotSummary> {
     if let Some(head) = list.iter().filter(|s| s.head).max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id))) {
         return Some(head.clone());
     }
-    list.iter()
-        .filter(|s| !s.side && s.trigger.is_mainline())
-        .max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)))
-        .cloned()
+    list.iter().filter(|s| !s.side && s.trigger.is_mainline()).max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id))).cloned()
 }
 
 fn log(msg: impl AsRef<str>) {
@@ -292,12 +300,7 @@ fn base_manifest(key: &str, st: &GameState, size: u64) -> Option<Manifest> {
 /// what the line says while the snapshot is still there (a snapshot of 0.6
 /// has no other), else what this device remembers.
 fn base_vv(st: &GameState, view: &LineView) -> Vv {
-    st.last_synced_id
-        .as_deref()
-        .and_then(|id| view.get(id))
-        .map(|s| s.vv.clone())
-        .filter(|vv| !vv.is_empty())
-        .unwrap_or_else(|| st.last_synced_vv.clone())
+    st.last_synced_id.as_deref().and_then(|id| view.get(id)).map(|s| s.vv.clone()).filter(|vv| !vv.is_empty()).unwrap_or_else(|| st.last_synced_vv.clone())
 }
 
 fn local_of(local: &LocalState, st: &GameState) -> Local {
@@ -361,7 +364,13 @@ fn carried_dir(key: &str) -> PathBuf {
 /// are named without a pack: enough to compare, and a version made of them
 /// can't be put together (the error says which file is missing) rather than
 /// leave them out.
-fn carry(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, from: &Manifest, fetch: bool) -> Result<(Vec<FileRef>, Vec<packs::LocalFile>)> {
+fn carry(
+    cloud: Option<&Cloud>,
+    game: &GameEntry,
+    line: Option<(&Place, &LineView)>,
+    from: &Manifest,
+    fetch: bool,
+) -> Result<(Vec<FileRef>, Vec<packs::LocalFile>)> {
     let theirs: Vec<&FileRef> = from.files.iter().filter(|f| crate::bind::to_local(&game.bind, &f.path).is_none()).collect();
     if theirs.is_empty() {
         return Ok((Vec::new(), Vec::new()));
@@ -393,11 +402,7 @@ fn carry(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineVie
             have = theirs.iter().filter_map(|f| kept(f)).collect();
         }
     }
-    let refs = theirs
-        .into_iter()
-        .filter(|f| !have.iter().any(|h| h.path == f.path))
-        .map(|f| FileRef { pack: None, ..f.clone() })
-        .collect();
+    let refs = theirs.into_iter().filter(|f| !have.iter().any(|h| h.path == f.path)).map(|f| FileRef { pack: None, ..f.clone() }).collect();
     Ok((refs, have))
 }
 
@@ -485,7 +490,9 @@ fn scope_of_platform(platform: &str) -> Option<String> {
     match kind {
         "pc" => Some("pc".to_string()),
         "console" if !rest.is_empty() => Some(rest.to_string()),
-        "emu" | "recomp" => crate::adapters::find(rest).map(|_| crate::savelib::save_scope(&GameEntry { adapter: Some(rest.to_string()), ..Default::default() })),
+        "emu" | "recomp" => {
+            crate::adapters::find(rest).map(|_| crate::savelib::save_scope(&GameEntry { adapter: Some(rest.to_string()), ..Default::default() }))
+        }
         _ => None,
     }
 }
@@ -1076,9 +1083,7 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &Cloud, game: &GameEntry) {
     if !st.cloud_def_uploaded && cloud.put_game(&CloudGame::from(game)).is_ok() {
         let _ = state::update_game(&game.key, |g| g.cloud_def_uploaded = true);
     }
-    let due = state::load()
-        .device_seen_at
-        .is_none_or(|t| Utc::now() - t > chrono::Duration::hours(6));
+    let due = state::load().device_seen_at.is_none_or(|t| Utc::now() - t > chrono::Duration::hours(6));
     if due && cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
         let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
     }
@@ -1144,14 +1149,7 @@ fn clean(ctx: &Ctx, cloud: &Cloud, key: &str) -> Result<saves::Cleaned> {
         .zip(caches.iter_mut())
         .map(|(place, cache)| saves::Open { place, cache, bases: device_bases(ctx, &devices, place.dir(), own(place.dir()).as_deref()) })
         .collect();
-    saves::clean(
-        cloud.files(),
-        &mut lines,
-        &retention::Policy::from(&ctx.cfg.retention),
-        Duration::days(packs::GRACE_DAYS),
-        Utc::now(),
-        cloud.device_id(),
-    )
+    saves::clean(cloud.files(), &mut lines, &retention::Policy::from(&ctx.cfg.retention), Duration::days(packs::GRACE_DAYS), Utc::now(), cloud.device_id())
 }
 
 /// [`clean`], about once a day per game. Never fails a sync.
@@ -1174,12 +1172,7 @@ fn clean_if_due(ctx: &Ctx, cloud: &Cloud, key: &str) {
     }
     match clean(ctx, cloud, key) {
         Ok(c) if c.snapshots.is_empty() && c.purged.is_empty() && c.packs.is_empty() => {}
-        Ok(c) => log(format!(
-            "{key}: cleaned up {} old versions, {} deleted long ago, {} unused packs",
-            c.snapshots.len(),
-            c.purged.len(),
-            c.packs.len()
-        )),
+        Ok(c) => log(format!("{key}: cleaned up {} old versions, {} deleted long ago, {} unused packs", c.snapshots.len(), c.purged.len(), c.packs.len())),
         Err(e) => log(format!("{key}: cleaning up failed: {e:#}")),
     }
     let _ = state::update_game(key, |g| g.cleaned_at = Some(Utc::now()));
@@ -1655,12 +1648,7 @@ impl<'a> Session<'a> {
     /// up ([`Gate`]) the saves stay as they are, however far the download
     /// got.
     fn pull(&mut self, local: &LocalState, id: &str) -> Result<Outcome> {
-        let target = self
-            .line
-            .view
-            .get(id)
-            .cloned()
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
+        let target = self.line.view.get(id).cloned().ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
         if !target.unsupported().is_empty() {
             bail!(crate::tr!(
                 "这个版本是更新版本的 Ludonimbus 存的，这台设备上的 Ludonimbus 需要先更新",
@@ -1698,11 +1686,7 @@ impl<'a> Session<'a> {
         remember_base(self.key(), Some(&manifest));
         note_replaced(self.key(), back, id, &target.device_name);
         log(format!("{}: pulled {id} from {}", self.key(), target.device_name));
-        Ok(Outcome::Pulled {
-            id: id.to_string(),
-            device: target.device_name.clone(),
-            created_at: target.created_at,
-        })
+        Ok(Outcome::Pulled { id: id.to_string(), device: target.device_name.clone(), created_at: target.created_at })
     }
 
     /// After [`Session::pull`] of a version that is not the one newest
@@ -1763,11 +1747,7 @@ impl<'a> Session<'a> {
             });
         })?;
         log(format!("{}: conflict with {} from {}", self.key(), newest.id, newest.device_name));
-        Ok(Outcome::Conflict {
-            local_files: local.files.len(),
-            local_size: local.total_size,
-            cloud: newest,
-        })
+        Ok(Outcome::Conflict { local_files: local.files.len(), local_size: local.total_size, cloud: newest })
     }
 }
 
@@ -2406,13 +2386,22 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
             let mut members: Vec<LineMember> = devices
                 .iter()
                 .filter(|d| d.id != own_id)
-                .flat_map(|d| d.installs.iter().filter(|i| i.dir == l.path).map(|i| LineMember { device: d.name.clone(), platform: i.platform.clone(), here: false }))
+                .flat_map(|d| {
+                    d.installs.iter().filter(|i| i.dir == l.path).map(|i| LineMember { device: d.name.clone(), platform: i.platform.clone(), here: false })
+                })
                 .collect();
             if current {
                 members.push(me());
             }
             members.dedup();
-            LineInfo { id: l.id.clone(), name: l.name.clone().unwrap_or_default(), shared: l.scope != v2::SCOPE_INDEPENDENT, current, devices: names(&members), members }
+            LineInfo {
+                id: l.id.clone(),
+                name: l.name.clone().unwrap_or_default(),
+                shared: l.scope != v2::SCOPE_INDEPENDENT,
+                current,
+                devices: names(&members),
+                members,
+            }
         })
         .collect();
     out.sort_by_key(|l| !l.shared);
@@ -2422,7 +2411,14 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
         out.insert(0, LineInfo { id: library::MAIN_LINE.to_string(), name: String::new(), shared: true, current, devices: names(&members), members });
     }
     if !out.iter().any(|l| l.current) {
-        out.push(LineInfo { id: here.line.clone(), name: own_name.to_string(), shared: false, current: true, devices: vec![own_name.to_string()], members: vec![me()] });
+        out.push(LineInfo {
+            id: here.line.clone(),
+            name: own_name.to_string(),
+            shared: false,
+            current: true,
+            devices: vec![own_name.to_string()],
+            members: vec![me()],
+        });
     }
     Ok(out)
 }
@@ -2495,7 +2491,8 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     let work = paths::staging_dir().join(format!("take-{id}"));
     let _ = std::fs::remove_dir_all(&work);
     let dir = work.join("files");
-    let result = saves::fetch(cloud.files(), &place, &view, &manifest, only.as_deref(), &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
+    let result =
+        saves::fetch(cloud.files(), &place, &view, &manifest, only.as_deref(), &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
     let _ = std::fs::remove_dir_all(&work);
     result?;
     log(format!("{}: took {id} of the line {line} ({})", game.key, target.device_name));

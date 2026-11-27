@@ -165,8 +165,7 @@ fn ryujinx_per_game() {
         },
     )
     .unwrap();
-    let err = games::add_from_shortcut("42", plain, NewGame { name: None, adapter: None, saves: vec![], key: None, ludusavi_title: None })
-        .unwrap_err()
-        .to_string();
+    let err =
+        games::add_from_shortcut("42", plain, NewGame { name: None, adapter: None, saves: vec![], key: None, ludusavi_title: None }).unwrap_err().to_string();
     assert!(err.contains("单独同步") || err.contains("on their own"), "{err}");
 }

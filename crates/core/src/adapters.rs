@@ -270,8 +270,7 @@ pub fn builtin() -> &'static [Adapter] {
     CELL.get_or_init(|| {
         let mut all: Vec<Adapter> = Vec::new();
         for (file, text) in FILES {
-            let list: Vec<Adapter> =
-                serde_yaml::from_str(text).unwrap_or_else(|e| panic!("adapters/{file} must be valid: {e}"));
+            let list: Vec<Adapter> = serde_yaml::from_str(text).unwrap_or_else(|e| panic!("adapters/{file} must be valid: {e}"));
             for mut a in list {
                 if cfg!(unix) {
                     let linux = std::mem::take(&mut a.roots_linux);
@@ -325,12 +324,7 @@ pub fn detect_with(exe: &Path, args: &str) -> Option<Detected> {
     if let Some(d) = crate::recomplauncher::detect(exe, args) {
         return Some(d);
     }
-    let comps: Vec<String> = exe
-        .to_string_lossy()
-        .split(['\\', '/'])
-        .filter(|c| !c.is_empty())
-        .map(str::to_lowercase)
-        .collect();
+    let comps: Vec<String> = exe.to_string_lossy().split(['\\', '/']).filter(|c| !c.is_empty()).map(str::to_lowercase).collect();
     let args_l = args.to_lowercase();
     let mut best: Option<(usize, &'static Adapter, usize)> = None;
     for a in builtin() {
@@ -354,10 +348,7 @@ pub fn detect_with(exe: &Path, args: &str) -> Option<Detected> {
             }
             // Deeper paths, exact names, and extra conditions are more specific.
             let literal: usize = parts.iter().map(|p| p.chars().filter(|&c| c != '*').count()).sum();
-            let score = parts.len() * 10_000
-                + literal
-                + if m.sibling.is_some() { 5_000 } else { 0 }
-                + if m.args.is_some() { 5_000 } else { 0 };
+            let score = parts.len() * 10_000 + literal + if m.sibling.is_some() { 5_000 } else { 0 } + if m.args.is_some() { 5_000 } else { 0 };
             if best.as_ref().is_none_or(|(s, _, _)| score > *s) {
                 best = Some((score, a, parts.len()));
             }
@@ -442,7 +433,10 @@ mod tests {
     #[test]
     fn linux_program_names() {
         assert_eq!(linux_names(Path::new("/opt/Ryujinx-1.2.3-x64.AppImage"), ""), vec!["ryujinx-1.2.3-x64.appimage".to_string(), "ryujinx".into()]);
-        assert_eq!(linux_names(Path::new("/usr/bin/flatpak"), "run --branch=stable org.DolphinEmu.dolphin-emu -e /roms/x.iso")[1], "org.dolphinemu.dolphin-emu");
+        assert_eq!(
+            linux_names(Path::new("/usr/bin/flatpak"), "run --branch=stable org.DolphinEmu.dolphin-emu -e /roms/x.iso")[1],
+            "org.dolphinemu.dolphin-emu"
+        );
         assert!(builtin().iter().any(|a| a.matcher.as_ref().is_some_and(|m| !m.linux.is_empty())));
     }
 

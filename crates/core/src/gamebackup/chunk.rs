@@ -27,11 +27,7 @@ pub fn id(raw: &[u8]) -> String {
 /// saves less than 3% (already compressed archives and videos).
 pub fn encode(raw: &[u8]) -> Result<Vec<u8>> {
     let packed = zstd::bulk::compress(raw, LEVEL)?;
-    let (codec, body) = if (packed.len() as u64) * 100 < (raw.len() as u64) * 97 {
-        (ZSTD, packed.as_slice())
-    } else {
-        (RAW, raw)
-    };
+    let (codec, body) = if (packed.len() as u64) * 100 < (raw.len() as u64) * 97 { (ZSTD, packed.as_slice()) } else { (RAW, raw) };
     let mut out = Vec::with_capacity(body.len() + 6);
     out.extend_from_slice(MAGIC);
     out.push(VERSION);

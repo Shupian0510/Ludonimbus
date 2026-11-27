@@ -190,15 +190,8 @@ impl Memo {
     /// A complete listing of a folder. It replaces everything that was known
     /// about the folder's files.
     fn listed(&mut self, folder: &str, names: HashMap<String, Vec<String>>, now: Instant) {
-        let names = names
-            .into_iter()
-            .filter(|(_, ids)| !ids.is_empty())
-            .map(|(name, ids)| (name, (now, ids)))
-            .collect();
-        let known = Remembered {
-            listed: Some(now),
-            names,
-        };
+        let names = names.into_iter().filter(|(_, ids)| !ids.is_empty()).map(|(name, ids)| (name, (now, ids))).collect();
+        let known = Remembered { listed: Some(now), names };
         self.folders.insert(folder.to_string(), known);
     }
 
@@ -303,10 +296,7 @@ fn cache_file() -> std::path::PathBuf {
 }
 
 fn read_cache() -> FolderCache {
-    std::fs::read(cache_file())
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    std::fs::read(cache_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 /// Names one sign-in and folder name without giving either away, so the
@@ -403,10 +393,7 @@ fn ids_by_name(files: &[DriveFile]) -> HashMap<String, Vec<String>> {
     for f in files.iter().filter(|f| !f.is_folder) {
         by_name.entry(f.name.as_str()).or_default().push(f);
     }
-    by_name
-        .into_iter()
-        .map(|(name, same)| (name.to_string(), current_first(same)))
-        .collect()
+    by_name.into_iter().map(|(name, same)| (name.to_string(), current_first(same))).collect()
 }
 
 /// A folder's entries with one entry per name, in the order Drive listed
@@ -447,11 +434,7 @@ fn mime_for(name: &str) -> &'static str {
 fn parse_about(v: &Value) -> (Option<String>, Option<u64>, Option<u64>) {
     let num = |p: &str| v["storageQuota"][p].as_str().and_then(|s| s.parse().ok());
     let user = &v["user"];
-    let account = user["emailAddress"]
-        .as_str()
-        .or(user["displayName"].as_str())
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_string);
+    let account = user["emailAddress"].as_str().or(user["displayName"].as_str()).filter(|s| !s.trim().is_empty()).map(str::to_string);
     (account, num("usage"), num("limit"))
 }
 
@@ -564,25 +547,17 @@ fn refusal(code: u16, body: &str) -> Option<Refusal> {
     let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
     let err = &v["error"];
     let message = err["message"].as_str().unwrap_or_default();
-    let reasons: Vec<&str> = ["errors", "details"]
-        .iter()
-        .flat_map(|k| err[*k].as_array().into_iter().flatten())
-        .filter_map(|e| e["reason"].as_str())
-        .collect();
+    let reasons: Vec<&str> = ["errors", "details"].iter().flat_map(|k| err[*k].as_array().into_iter().flatten()).filter_map(|e| e["reason"].as_str()).collect();
     let has = |r: &str| reasons.iter().any(|x| x.eq_ignore_ascii_case(r));
     let lower = message.to_lowercase();
-    if has("insufficientPermissions")
-        || has("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
-        || lower.contains("insufficient authentication scopes")
-    {
+    if has("insufficientPermissions") || has("ACCESS_TOKEN_SCOPE_INSUFFICIENT") || lower.contains("insufficient authentication scopes") {
         return Some(Refusal::NoScope);
     }
     if has("domainPolicy") {
         return Some(Refusal::DomainPolicy);
     }
     let project_side = has("accessNotConfigured") || has("SERVICE_DISABLED");
-    let no_drive_text = lower.contains("drive")
-        && ["not enabled", "not activated", "signed up", "sign up"].iter().any(|p| lower.contains(p));
+    let no_drive_text = lower.contains("drive") && ["not enabled", "not activated", "signed up", "sign up"].iter().any(|p| lower.contains(p));
     if has("serviceNotAvailable") || (no_drive_text && !project_side) {
         return Some(Refusal::NoDrive);
     }
@@ -637,15 +612,8 @@ impl GoogleDrive {
             api: API.to_string(),
             upload: UPLOAD.to_string(),
             renew: Box::new(move |agent| oauth::refresh(agent, &client, &refresh_token)),
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(timeout)
-                .timeout_read(timeout.max(Duration::from_secs(20)))
-                .build(),
-            bulk: ureq::AgentBuilder::new()
-                .timeout_connect(timeout)
-                .timeout_read(Duration::from_secs(300))
-                .timeout_write(Duration::from_secs(300))
-                .build(),
+            agent: ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(timeout.max(Duration::from_secs(20))).build(),
+            bulk: ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
             token: Mutex::new(None),
             root: Mutex::new(None),
             folders: Mutex::new(HashMap::new()),
@@ -665,11 +633,7 @@ impl GoogleDrive {
 
     fn save_cache(&self) {
         let Some(root) = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
-        let cache = FolderCache {
-            owner: self.owner.clone(),
-            root,
-            folders: self.folders.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-        };
+        let cache = FolderCache { owner: self.owner.clone(), root, folders: self.folders.lock().unwrap_or_else(|e| e.into_inner()).clone() };
         if let Ok(bytes) = serde_json::to_vec_pretty(&cache) {
             let _ = util::atomic_write(&cache_file(), &bytes);
         }
@@ -813,20 +777,14 @@ impl GoogleDrive {
         let url = format!("{}/files?fields=id", self.api);
         let meta = json!({ "name": name, "mimeType": FOLDER_MIME, "parents": [parent] });
         let v = body_json(self.send(false, |auth| self.agent.post(&url).set("Authorization", auth).send_json(meta.clone()))?.map_err(drive_error)?)?;
-        v["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!(crate::tr!("创建文件夹失败", "Couldn't create the folder")))
+        v["id"].as_str().map(str::to_string).ok_or_else(|| anyhow!(crate::tr!("创建文件夹失败", "Couldn't create the folder")))
     }
 
     fn root_id(&self, create: bool) -> Result<Option<String>> {
         if let Some(r) = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Ok(Some(r));
         }
-        let q = format!(
-            "name='{}' and 'root' in parents and mimeType='{FOLDER_MIME}' and trashed=false",
-            esc(&self.folder)
-        );
+        let q = format!("name='{}' and 'root' in parents and mimeType='{FOLDER_MIME}' and trashed=false", esc(&self.folder));
         let id = match pick(self.query(&q)?) {
             Some((f, _)) => f.id,
             None if create => self.create_folder(&self.folder, "root")?,
@@ -865,11 +823,7 @@ impl GoogleDrive {
                 parent = id;
                 continue;
             }
-            let q = format!(
-                "name='{}' and '{}' in parents and mimeType='{FOLDER_MIME}' and trashed=false",
-                esc(name),
-                esc(&parent)
-            );
+            let q = format!("name='{}' and '{}' in parents and mimeType='{FOLDER_MIME}' and trashed=false", esc(name), esc(&parent));
             let id = match pick(self.query(&q)?) {
                 Some((f, _)) => f.id,
                 None if create => self.create_folder(name, &parent)?,
@@ -932,18 +886,11 @@ impl GoogleDrive {
         let len = body.len().to_string();
         let resp = self
             .send(true, |auth| {
-                start
-                    .clone()
-                    .set("Authorization", auth)
-                    .set("X-Upload-Content-Type", mime)
-                    .set("X-Upload-Content-Length", &len)
-                    .send_json(meta.clone())
+                start.clone().set("Authorization", auth).set("X-Upload-Content-Type", mime).set("X-Upload-Content-Length", &len).send_json(meta.clone())
             })?
             .map_err(write_error)?;
-        let location = resp
-            .header("Location")
-            .ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?
-            .to_string();
+        let location =
+            resp.header("Location").ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?.to_string();
         let put = self.bulk.put(&location).set("Content-Type", mime);
         let sent = match body {
             Body::Bytes(b) => put.send_bytes(b),
@@ -957,23 +904,15 @@ impl GoogleDrive {
 
     /// Create a file and give its id.
     fn create_file(&self, parent: &str, name: &str, mime: &str, body: Body) -> Result<String> {
-        let start = self
-            .agent
-            .post(&format!("{}/files?uploadType=resumable&fields={WRITTEN_FIELDS}", self.upload));
+        let start = self.agent.post(&format!("{}/files?uploadType=resumable&fields={WRITTEN_FIELDS}", self.upload));
         let v = self.upload_session(start, json!({ "name": name, "parents": [parent] }), mime, body)?;
         not_in_trash(&v)?;
-        v["id"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")))
+        v["id"].as_str().map(str::to_string).ok_or_else(|| anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")))
     }
 
     fn update_content(&self, file_id: &str, mime: &str, body: Body) -> Result<()> {
         let written = if body.len() > SIMPLE_UPLOAD_MAX as u64 {
-            let start = self.agent.request(
-                "PATCH",
-                &format!("{}/files/{file_id}?uploadType=resumable&fields={WRITTEN_FIELDS}", self.upload),
-            );
+            let start = self.agent.request("PATCH", &format!("{}/files/{file_id}?uploadType=resumable&fields={WRITTEN_FIELDS}", self.upload));
             self.upload_session(start, json!({}), mime, body)?
         } else {
             // The same content sent twice is the same file: this one may be
@@ -1154,15 +1093,7 @@ impl Store for GoogleDrive {
             }
             memo.listed(&folder, ids_by_name(&files), asked);
         }
-        Ok(one_per_name(files)
-            .into_iter()
-            .map(|f| Entry {
-                name: f.name,
-                is_dir: f.is_folder,
-                size: f.size,
-                tag: f.tag,
-            })
-            .collect())
+        Ok(one_per_name(files).into_iter().map(|f| Entry { name: f.name, is_dir: f.is_folder, size: f.size, tag: f.tag }).collect())
     }
 
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
@@ -1175,9 +1106,7 @@ impl Store for GoogleDrive {
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
-        let resp = self
-            .fetch(path)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud")))?;
+        let resp = self.fetch(path)?.ok_or_else(|| anyhow!(crate::tr!("云端找不到 {path}", "{path} wasn't found in the cloud")))?;
         let tmp = dest.with_extension("lntmp");
         let mut out = std::fs::File::create(&tmp)?;
         copy_body(resp.into_reader(), &mut out)?;
@@ -1251,8 +1180,7 @@ mod tests {
     use super::*;
 
     fn body(reason: &str, message: &str) -> String {
-        json!({ "error": { "code": 403, "message": message, "errors": [{ "domain": "global", "reason": reason, "message": message }] } })
-            .to_string()
+        json!({ "error": { "code": 403, "message": message, "errors": [{ "domain": "global", "reason": reason, "message": message }] } }).to_string()
     }
 
     #[test]
@@ -1330,11 +1258,9 @@ mod tests {
         let new = file("a-new", "index.json", "2026-11-26T10:00:00.250Z");
         let older = file("m-older", "index.json", "2026-11-25T23:59:59.999Z");
         // Whatever order Drive lists them in.
-        for listed in [
-            vec![old.clone(), new.clone(), older.clone()],
-            vec![new.clone(), older.clone(), old.clone()],
-            vec![older.clone(), old.clone(), new.clone()],
-        ] {
+        for listed in
+            [vec![old.clone(), new.clone(), older.clone()], vec![new.clone(), older.clone(), old.clone()], vec![older.clone(), old.clone(), new.clone()]]
+        {
             let (current, others) = pick(listed).unwrap();
             assert_eq!(current.id, "a-new");
             let mut rest = ids(&others);
@@ -1463,10 +1389,7 @@ mod tests {
     }
 
     fn drive(refresh_token: &str, folder: &str) -> GoogleDrive {
-        let client = GoogleClient {
-            id: "client-id".into(),
-            secret: String::new(),
-        };
+        let client = GoogleClient { id: "client-id".into(), secret: String::new() };
         GoogleDrive::new(client, refresh_token.into(), folder.into(), Duration::from_secs(5))
     }
 
@@ -1552,11 +1475,7 @@ mod tests {
     #[test]
     fn the_folder_cache_belongs_to_one_sign_in() {
         let mine = drive("token-a", "Ludonimbus");
-        let cache = FolderCache {
-            owner: mine.owner.clone(),
-            root: "1RootFolderId".into(),
-            folders: HashMap::new(),
-        };
+        let cache = FolderCache { owner: mine.owner.clone(), root: "1RootFolderId".into(), folders: HashMap::new() };
         assert_eq!(cache.root_for(&mine.owner), Some("1RootFolderId".into()));
         // The same sign-in opened again reads it; another account or another
         // folder name does not.
@@ -1618,10 +1537,7 @@ mod tests {
     }
 
     fn names(listing: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
-        listing
-            .iter()
-            .map(|(name, ids)| (name.to_string(), ids.iter().map(|id| id.to_string()).collect()))
-            .collect()
+        listing.iter().map(|(name, ids)| (name.to_string(), ids.iter().map(|id| id.to_string()).collect())).collect()
     }
 
     fn strings(ids: &[&str]) -> Vec<String> {
@@ -1629,10 +1545,7 @@ mod tests {
     }
 
     fn update(current: &str, others: &[&str]) -> Target {
-        Target::Update {
-            current: current.into(),
-            others: strings(others),
-        }
+        Target::Update { current: current.into(), others: strings(others) }
     }
 
     #[test]

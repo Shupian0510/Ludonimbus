@@ -106,10 +106,7 @@ pub fn find_roots() -> Vec<PathBuf> {
         }
     }
     let mut seen = std::collections::HashSet::new();
-    cands
-        .into_iter()
-        .filter(|p| is_root(p) && seen.insert(util::norm_path(&p.to_string_lossy())))
-        .collect()
+    cands.into_iter().filter(|p| is_root(p) && seen.insert(util::norm_path(&p.to_string_lossy()))).collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,9 +120,7 @@ pub struct Account {
 }
 
 pub fn accounts(root: &Path) -> Vec<Account> {
-    let login = std::fs::read_to_string(root.join("config").join("loginusers.vdf"))
-        .ok()
-        .and_then(|s| vdf::parse_text(&s).ok());
+    let login = std::fs::read_to_string(root.join("config").join("loginusers.vdf")).ok().and_then(|s| vdf::parse_text(&s).ok());
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(root.join("userdata")) else {
         return out;
@@ -136,10 +131,7 @@ pub fn accounts(root: &Path) -> Vec<Account> {
         if num == 0 {
             continue;
         }
-        let user = login
-            .as_ref()
-            .and_then(|l| l.get("users"))
-            .and_then(|u| u.get(&(num + STEAMID64_BASE).to_string()));
+        let user = login.as_ref().and_then(|l| l.get("users")).and_then(|u| u.get(&(num + STEAMID64_BASE).to_string()));
         let field = |k: &str| user.and_then(|u| u.get(k)).and_then(|v| v.as_str()).map(str::to_string);
         let shortcut_count = read_shortcuts(root, &id).map(|(_, s)| s.len()).unwrap_or(0);
         out.push(Account {
@@ -150,11 +142,7 @@ pub fn accounts(root: &Path) -> Vec<Account> {
             shortcut_count,
         });
     }
-    out.sort_by(|a, b| {
-        b.most_recent
-            .cmp(&a.most_recent)
-            .then(b.shortcut_count.cmp(&a.shortcut_count))
-    });
+    out.sort_by(|a, b| b.most_recent.cmp(&a.most_recent).then(b.shortcut_count.cmp(&a.shortcut_count)));
     out
 }
 
@@ -167,10 +155,7 @@ pub fn default_account(cfg: &AppConfig, root: &Path) -> Option<String> {
         }
     }
     let all = accounts(root);
-    all.iter()
-        .find(|a| a.most_recent && a.shortcut_count > 0)
-        .or_else(|| all.iter().max_by_key(|a| a.shortcut_count))
-        .map(|a| a.id.clone())
+    all.iter().find(|a| a.most_recent && a.shortcut_count > 0).or_else(|| all.iter().max_by_key(|a| a.shortcut_count)).map(|a| a.id.clone())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -230,25 +215,16 @@ fn to_shortcut(index: &[u8], v: &vdf::Value) -> Shortcut {
 pub fn read_shortcuts(root: &Path, account: &str) -> Result<(vdf::Value, Vec<Shortcut>)> {
     let path = shortcuts_path(root, account);
     if !path.exists() {
-        return Ok((
-            vdf::Value::Map(vec![(b"shortcuts".to_vec(), vdf::Value::Map(vec![]))]),
-            Vec::new(),
-        ));
+        return Ok((vdf::Value::Map(vec![(b"shortcuts".to_vec(), vdf::Value::Map(vec![]))]), Vec::new()));
     }
     let bytes = std::fs::read(&path).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display()))?;
     let doc = vdf::parse(&bytes).with_context(|| crate::tr!("无法解析 {}", "Can't parse {}", path.display()))?;
-    let list = doc
-        .get("shortcuts")
-        .map(|s| s.entries().iter().map(|(k, v)| to_shortcut(k, v)).collect())
-        .unwrap_or_default();
+    let list = doc.get("shortcuts").map(|s| s.entries().iter().map(|(k, v)| to_shortcut(k, v)).collect()).unwrap_or_default();
     Ok((doc, list))
 }
 
 pub fn find_shortcut(root: &Path, account: &str, appid: u32) -> Result<Option<Shortcut>> {
-    Ok(read_shortcuts(root, account)?
-        .1
-        .into_iter()
-        .find(|s| s.appid == appid))
+    Ok(read_shortcuts(root, account)?.1.into_iter().find(|s| s.appid == appid))
 }
 
 /// Steam library folders (the install folder plus `libraryfolders.vdf`).
@@ -293,11 +269,7 @@ pub fn installed_apps(root: &Path) -> Vec<InstalledApp> {
             let Some(state) = doc.get("AppState") else { continue };
             let field = |k: &str| state.get(k).and_then(vdf::Text::as_str).unwrap_or("").to_string();
             let Ok(appid) = field("appid").parse::<u32>() else { continue };
-            out.push(InstalledApp {
-                appid,
-                name: field("name"),
-                install_dir: apps.join("common").join(field("installdir")),
-            });
+            out.push(InstalledApp { appid, name: field("name"), install_dir: apps.join("common").join(field("installdir")) });
         }
     }
     out
@@ -367,11 +339,7 @@ pub fn add_shortcut(root: &Path, account: &str, sc: &NewShortcut) -> Result<u32>
         .get_mut("shortcuts")
         .and_then(vdf::Value::entries_mut)
         .ok_or_else(|| anyhow!(crate::tr!("shortcuts.vdf 格式异常", "shortcuts.vdf is malformed")))?;
-    let index = list
-        .iter()
-        .filter_map(|(k, _)| std::str::from_utf8(k).ok()?.parse::<usize>().ok())
-        .max()
-        .map_or(0, |m| m + 1);
+    let index = list.iter().filter_map(|(k, _)| std::str::from_utf8(k).ok()?.parse::<usize>().ok()).max().map_or(0, |m| m + 1);
     let s = |v: &str| vdf::Value::Str(v.as_bytes().to_vec());
     let quoted = |v: &str| if v.is_empty() { s("") } else { s(&util::quote(v)) };
     list.push((
@@ -453,13 +421,7 @@ pub struct Art {
 
 pub fn art(root: &Path, account: &str, appid: u32) -> Art {
     let pick = |kind: &str| art_file(root, account, appid, kind);
-    Art {
-        cover: pick("cover"),
-        wide: pick("wide"),
-        hero: pick("hero"),
-        logo: pick("logo"),
-        icon: pick("icon"),
-    }
+    Art { cover: pick("cover"), wide: pick("wide"), hero: pick("hero"), logo: pick("logo"), icon: pick("icon") }
 }
 
 pub fn art_file(root: &Path, account: &str, appid: u32, kind: &str) -> Option<PathBuf> {
@@ -535,10 +497,7 @@ pub fn shutdown(root: &Path) -> Result<()> {
     if !is_running() {
         return Ok(());
     }
-    steam_command(root)
-        .arg("-shutdown")
-        .spawn()
-        .with_context(|| crate::tr!("无法关闭 Steam", "Couldn't close Steam"))?;
+    steam_command(root).arg("-shutdown").spawn().with_context(|| crate::tr!("无法关闭 Steam", "Couldn't close Steam"))?;
     let start = Instant::now();
     while is_running() {
         if start.elapsed() > Duration::from_secs(45) {
@@ -566,7 +525,10 @@ fn running_in(root: &Path) -> bool {
 /// edits there need Steam closed.
 fn ensure_steam_closed(root: &Path) -> Result<()> {
     if running_in(root) {
-        bail!(crate::tr!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）", "STEAM_RUNNING: Steam needs to be closed before changing its shortcuts (it overwrites changes while running)"));
+        bail!(crate::tr!(
+            "STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）",
+            "STEAM_RUNNING: Steam needs to be closed before changing its shortcuts (it overwrites changes while running)"
+        ));
     }
     Ok(())
 }
@@ -587,16 +549,10 @@ pub(crate) fn ensure_closed_for_options(root: &Path) -> Result<()> {
 fn edit_shortcut(root: &Path, account: &str, appid: u32, f: impl FnOnce(&mut vdf::Value)) -> Result<()> {
     ensure_steam_closed(root)?;
     let (mut doc, _) = read_shortcuts(root, account)?;
-    let list = doc
-        .get_mut("shortcuts")
-        .ok_or_else(|| anyhow!(crate::tr!("shortcuts.vdf 格式异常", "shortcuts.vdf is malformed")))?;
+    let list = doc.get_mut("shortcuts").ok_or_else(|| anyhow!(crate::tr!("shortcuts.vdf 格式异常", "shortcuts.vdf is malformed")))?;
     let entry = list
         .entries_mut()
-        .and_then(|e| {
-            e.iter_mut()
-                .map(|(_, v)| v)
-                .find(|v| v.get("appid").and_then(vdf::Value::int).map(|i| i as u32) == Some(appid))
-        })
+        .and_then(|e| e.iter_mut().map(|(_, v)| v).find(|v| v.get("appid").and_then(vdf::Value::int).map(|i| i as u32) == Some(appid)))
         .ok_or_else(|| anyhow!(crate::tr!("在 Steam 中找不到这个快捷方式（appid {appid}）", "This shortcut wasn't found in Steam (appid {appid})")))?;
     f(entry);
     save_doc(root, account, &doc)
@@ -609,12 +565,7 @@ pub fn wrap(root: &Path, account: &str, appid: u32, key: &str, runner: &Path) ->
     }
     let sc = find_shortcut(root, account, appid)?
         .ok_or_else(|| anyhow!(crate::tr!("在 Steam 中找不到这个快捷方式（appid {appid}）", "This shortcut wasn't found in Steam (appid {appid})")))?;
-    let original = OriginalShortcut {
-        exe: sc.exe.clone(),
-        start_dir: sc.start_dir.clone(),
-        launch_options: sc.launch_options.clone(),
-        icon: sc.icon.clone(),
-    };
+    let original = OriginalShortcut { exe: sc.exe.clone(), start_dir: sc.start_dir.clone(), launch_options: sc.launch_options.clone(), icon: sc.icon.clone() };
     let runner_s = runner.to_string_lossy().into_owned();
     let icon = if sc.icon.trim().is_empty() { sc.exe.clone() } else { sc.icon.clone() };
     if cfg!(windows) {
@@ -815,11 +766,18 @@ pub enum Health {
     Disabled,
     Ok,
     /// The shortcut no longer exists (maybe re-added with a new appid).
-    ShortcutMissing { candidate_appid: Option<u32> },
+    ShortcutMissing {
+        candidate_appid: Option<u32>,
+    },
     /// The shortcut was edited / recreated and no longer goes through the wrapper.
-    Changed { exe: String, launch_options: String },
+    Changed {
+        exe: String,
+        launch_options: String,
+    },
     /// It goes through a wrapper at another location (app moved/reinstalled).
-    RunnerMoved { exe: String },
+    RunnerMoved {
+        exe: String,
+    },
     /// Steam folder not found.
     NoSteam,
 }
@@ -839,13 +797,7 @@ pub fn health(cfg: &AppConfig, game: &GameEntry) -> Health {
         // Look for a shortcut pointing at the same game.
         let candidate = shortcuts
             .iter()
-            .find(|s| {
-                s.wrapped_key().as_deref() == Some(game.key.as_str())
-                    || game
-                        .exe
-                        .as_ref()
-                        .is_some_and(|e| util::same_path(&s.exe, &e.to_string_lossy()))
-            })
+            .find(|s| s.wrapped_key().as_deref() == Some(game.key.as_str()) || game.exe.as_ref().is_some_and(|e| util::same_path(&s.exe, &e.to_string_lossy())))
             .map(|s| s.appid);
         return Health::ShortcutMissing { candidate_appid: candidate };
     };
@@ -860,10 +812,7 @@ pub fn health(cfg: &AppConfig, game: &GameEntry) -> Health {
                 Health::RunnerMoved { exe: runner }
             }
         }
-        _ => Health::Changed {
-            exe: sc.exe.clone(),
-            launch_options: sc.launch_options.clone(),
-        },
+        _ => Health::Changed { exe: sc.exe.clone(), launch_options: sc.launch_options.clone() },
     }
 }
 
@@ -984,9 +933,11 @@ pub fn launch_options(root: &Path, account: &str, appid: u32) -> Result<Option<S
 /// `localconfig.vdf` before and after setting the launch options of a game.
 fn edit_launch_options(root: &Path, account: &str, appid: u32, options: Option<&str>) -> Result<(PathBuf, String, String)> {
     let path = localconfig_path(root, account);
-    let before = std::fs::read_to_string(&path).with_context(|| crate::tr!("找不到这个 Steam 账号的设置文件 {}", "The settings of this Steam account weren't found: {}", path.display()))?;
+    let before = std::fs::read_to_string(&path)
+        .with_context(|| crate::tr!("找不到这个 Steam 账号的设置文件 {}", "The settings of this Steam account weren't found: {}", path.display()))?;
     let id = appid.to_string();
-    let after = vdf::set_text_value(&before, &launch_options_path(&id), options).with_context(|| crate::tr!("无法修改 {}", "Can't change {}", path.display()))?;
+    let after =
+        vdf::set_text_value(&before, &launch_options_path(&id), options).with_context(|| crate::tr!("无法修改 {}", "Can't change {}", path.display()))?;
     Ok((path, before, after))
 }
 
@@ -1201,7 +1152,9 @@ mod tests {
         assert_eq!(parse_wrapped(&wrapper_options(r, "k", "-novid")).unwrap().original, "-novid");
         assert_eq!(parse_wrapped(&wrapper_options(r, "k", "%command% -novid")).unwrap().original, "-novid");
         assert_eq!(parse_wrapped("/opt/ludonimbus-run --game k -- %command%").unwrap().original, "");
-        for other in ["", "-novid", "\"C:\\other.exe\" --game k -- %command%", "\"C:\\ludonimbus-run.exe\" --game", "\"C:\\ludonimbus-run.exe\" --game k %command%"] {
+        for other in
+            ["", "-novid", "\"C:\\other.exe\" --game k -- %command%", "\"C:\\ludonimbus-run.exe\" --game", "\"C:\\ludonimbus-run.exe\" --game k %command%"]
+        {
             assert_eq!(parse_wrapped(other), None, "{other}");
         }
         let health = |o: Option<&str>| wrapper_health(o, "k", r);
@@ -1256,7 +1209,11 @@ mod tests {
         assert_eq!(app_cloud(&root, "222222222", 1000), AppCloud::default());
         assert!(AppCloud::default().on());
 
-        let shared = |steam: &str| format!("\"UserRoamingConfigStore\"\n{{\n\t\"software\"\n\t{{\n\t\t\"valve\"\n\t\t{{\n\t\t\t\"Steam\"\n\t\t\t{{\n{steam}\t\t\t}}\n\t\t}}\n\t}}\n}}\n");
+        let shared = |steam: &str| {
+            format!(
+                "\"UserRoamingConfigStore\"\n{{\n\t\"software\"\n\t{{\n\t\t\"valve\"\n\t\t{{\n\t\t\t\"Steam\"\n\t\t\t{{\n{steam}\t\t\t}}\n\t\t}}\n\t}}\n}}\n"
+            )
+        };
         let synced = app.replace("changesincloud", "synchronized");
         // The global switch, in other key case; the game's switch.
         let (_t, root) = steam_files(&local_app(&synced, "\n"), Some(&shared("\t\t\t\t\"CloudEnabled\"\t\t\"0\"\n")));
@@ -1307,13 +1264,7 @@ mod tests {
             key: "fe".into(),
             exe: Some(PathBuf::from(EXE)),
             args: "--fullscreen".into(),
-            steam: Some(SteamLink {
-                account: "123".into(),
-                appid,
-                enabled: true,
-                original: Some(original.clone()),
-                created: false,
-            }),
+            steam: Some(SteamLink { account: "123".into(), appid, enabled: true, original: Some(original.clone()), created: false }),
             ..Default::default()
         };
         assert_eq!(health(&cfg, &game), Health::Ok);

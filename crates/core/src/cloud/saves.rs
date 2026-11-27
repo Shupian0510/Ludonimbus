@@ -100,10 +100,7 @@ fn not_found() -> anyhow::Error {
 fn writable(place: &Place) -> Result<&str> {
     let dir = place.dir();
     if v2::legacy_key(dir).is_some() {
-        bail!(crate::tr!(
-            "这条存档线的文件夹是 0.6 的，不能写入",
-            "This save line's folder is one of Ludonimbus 0.6 and can't be written to"
-        ));
+        bail!(crate::tr!("这条存档线的文件夹是 0.6 的，不能写入", "This save line's folder is one of Ludonimbus 0.6 and can't be written to"));
     }
     Ok(dir)
 }
@@ -139,9 +136,7 @@ fn own_packs(manifest: &Manifest) -> Vec<String> {
 
 fn remove_local(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            Err(e).with_context(|| crate::tr!("无法删除 {}", "Can't delete {}", path.display()))
-        }
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).with_context(|| crate::tr!("无法删除 {}", "Can't delete {}", path.display())),
         _ => Ok(()),
     }
 }
@@ -175,12 +170,7 @@ impl Place {
     /// line is `main` in `games/<key>/saves/main`, and `games/<key>/snapshots`
     /// is read as well.
     pub fn of_key(key: &str) -> Place {
-        Place {
-            game: key.to_string(),
-            line: "main".to_string(),
-            folders: vec![key.to_string()],
-            dirs: vec![v2::line_dir(key, "main"), v2::legacy_dir(key)],
-        }
+        Place { game: key.to_string(), line: "main".to_string(), folders: vec![key.to_string()], dirs: vec![v2::line_dir(key, "main"), v2::legacy_dir(key)] }
     }
 
     /// Where the line is written to.
@@ -231,10 +221,8 @@ pub struct Draft {
 /// same saves compare equal across layouts. Use that function rather than a
 /// second copy of it.
 pub fn content_hash(files: &[LocalFile]) -> String {
-    let entries: Vec<crate::snapshot::FileEntry> = files
-        .iter()
-        .map(|f| crate::snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime })
-        .collect();
+    let entries: Vec<crate::snapshot::FileEntry> =
+        files.iter().map(|f| crate::snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }).collect();
     crate::snapshot::content_hash(&entries)
 }
 
@@ -424,15 +412,7 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
 /// listed it before is caught by the look of step 3.
 ///
 /// Nothing is ever written into a folder of 0.6.
-pub fn publish(
-    store: &dyn Store,
-    place: &Place,
-    cache: &mut LineCache,
-    manifest: &Manifest,
-    dir: &Path,
-    files: &[LocalFile],
-    device_id: &str,
-) -> Result<()> {
+pub fn publish(store: &dyn Store, place: &Place, cache: &mut LineCache, manifest: &Manifest, dir: &Path, files: &[LocalFile], device_id: &str) -> Result<()> {
     check_id(&manifest.id)?;
     let home = writable(place)?;
     let Some(folder) = place.folders.first() else {
@@ -443,11 +423,7 @@ pub fn publish(
     for pack in &own {
         let zip = dir.join(format!("{pack}.zip"));
         if !zip.is_file() {
-            bail!(crate::tr!(
-                "等待上传的版本不完整：缺少 {}",
-                "The version waiting for upload is incomplete: {} is missing",
-                zip.display()
-            ));
+            bail!(crate::tr!("等待上传的版本不完整：缺少 {}", "The version waiting for upload is incomplete: {} is missing", zip.display()));
         }
     }
     // What an earlier call sent. The note of it is on this device, so the
@@ -497,15 +473,7 @@ pub fn manifest(store: &dyn Store, place: &Place, view: &LineView, id: &str) -> 
 /// folder the manifest is in, so `dest` is as it was after any error, and a
 /// pack that is gone is a [`packs::MissingPack`]. Putting the files where
 /// the game looks for them is the caller's business.
-pub fn fetch(
-    store: &dyn Store,
-    place: &Place,
-    view: &LineView,
-    manifest: &Manifest,
-    only: Option<&[String]>,
-    dest: &Path,
-    staging: &Path,
-) -> Result<()> {
+pub fn fetch(store: &dyn Store, place: &Place, view: &LineView, manifest: &Manifest, only: Option<&[String]>, dest: &Path, staging: &Path) -> Result<()> {
     let dir = place.dir_of(view, &manifest.id).ok_or_else(not_found)?;
     packs::read(store, &place.folders, dir, manifest, only, dest, staging)
 }
@@ -535,13 +503,7 @@ pub fn keep(store: &dyn Store, place: &Place, view: &LineView, id: &str, name: &
     let pin = match kept {
         Some(pin) => Pin { name: name.to_string(), ..pin },
         // Not kept, unkept meanwhile, or a pin that can't be understood.
-        None => Pin {
-            name: name.to_string(),
-            note: String::new(),
-            created_at: Some(now),
-            device_id: device_id.to_string(),
-            extra: v2::Extra::new(),
-        },
+        None => Pin { name: name.to_string(), note: String::new(), created_at: Some(now), device_id: device_id.to_string(), extra: v2::Extra::new() },
     };
     line::write_pin(store, home, id, &pin)
 }
@@ -655,9 +617,9 @@ pub fn untrash(store: &dyn Store, place: &Place, id: &str) -> Result<()> {
         ))
     };
     let (dir, bytes) = find_record(store, place, id)?.ok_or_else(gone)?;
-    let meta = parse_record(&bytes, id).and_then(|_| raw_field(&bytes, "meta")).ok_or_else(|| {
-        anyhow!(crate::tr!("「最近删除」里这个版本的记录读不懂", "Can't understand the record of this version in Recently deleted"))
-    })?;
+    let meta = parse_record(&bytes, id)
+        .and_then(|_| raw_field(&bytes, "meta"))
+        .ok_or_else(|| anyhow!(crate::tr!("「最近删除」里这个版本的记录读不懂", "Can't understand the record of this version in Recently deleted")))?;
     if v2::legacy_key(dir).is_some() {
         let zip = format!("{id}.zip");
         if !store.list(dir)?.iter().any(|e| !e.is_dir && e.name == zip) {
@@ -689,10 +651,7 @@ pub fn purge(store: &dyn Store, place: &Place, id: &str) -> Result<()> {
         },
     };
     if !purge_at(store, dir, id, true)? {
-        bail!(crate::tr!(
-            "这个版本已经被恢复到版本历史里，不能在这里彻底删除",
-            "This version was restored to the history and can't be deleted for good here"
-        ));
+        bail!(crate::tr!("这个版本已经被恢复到版本历史里，不能在这里彻底删除", "This version was restored to the history and can't be deleted for good here"));
     }
     Ok(())
 }

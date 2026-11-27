@@ -202,11 +202,7 @@ impl SnapshotMeta {
     /// is kept under).
     pub fn of(manifest: &crate::cloud::v2::Manifest, game: &str, listed: Option<&crate::cloud::v2::IndexEntry>) -> Self {
         let summary = SnapshotSummary::of(listed.unwrap_or(&manifest.summary()), false);
-        let roots = manifest
-            .extra
-            .get(ROOTS)
-            .and_then(|v| serde_json::from_value::<BTreeMap<String, String>>(v.clone()).ok())
-            .unwrap_or_default();
+        let roots = manifest.extra.get(ROOTS).and_then(|v| serde_json::from_value::<BTreeMap<String, String>>(v.clone()).ok()).unwrap_or_default();
         SnapshotMeta {
             id: manifest.id.clone(),
             game: game.to_string(),
@@ -217,11 +213,7 @@ impl SnapshotMeta {
             trigger: Trigger::parse(&manifest.trigger),
             roots,
             content_hash: manifest.content_hash.clone(),
-            files: manifest
-                .files
-                .iter()
-                .map(|f| FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime })
-                .collect(),
+            files: manifest.files.iter().map(|f| FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }).collect(),
             total_size: manifest.total_size,
             app_version: manifest.app_version.clone(),
             comment: summary.comment,
@@ -310,13 +302,7 @@ impl LocalState {
             .files
             .iter()
             .zip(&self.entries)
-            .map(|(f, e)| crate::cloud::packs::LocalFile {
-                path: e.path.clone(),
-                size: e.size,
-                hash: e.hash.clone(),
-                mtime: e.mtime,
-                source: f.abs.clone(),
-            })
+            .map(|(f, e)| crate::cloud::packs::LocalFile { path: e.path.clone(), size: e.size, hash: e.hash.clone(), mtime: e.mtime, source: f.abs.clone() })
             .collect();
         out.extend(self.carried_files.iter().cloned());
         out
@@ -326,11 +312,7 @@ impl LocalState {
     /// roots a file uses.
     pub fn used_roots(&self) -> BTreeMap<String, String> {
         let used: HashSet<&str> = self.entries.iter().filter_map(|e| e.path.split('/').next()).collect();
-        self.roots
-            .iter()
-            .filter(|(k, _)| used.contains(k.as_str()))
-            .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
-            .collect()
+        self.roots.iter().filter(|(k, _)| used.contains(k.as_str())).map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned())).collect()
     }
 }
 
@@ -440,20 +422,12 @@ pub fn outside_saves<'a>(game: &GameEntry, paths: impl IntoIterator<Item = &'a s
 }
 
 fn mtime_of(meta: &std::fs::Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .map(|t| DateTime::<Utc>::from(t).timestamp())
-        .unwrap_or(0)
+    meta.modified().ok().map(|t| DateTime::<Utc>::from(t).timestamp()).unwrap_or(0)
 }
 
 fn rel_slash(base: &Path, p: &Path) -> Option<String> {
     let rel = p.strip_prefix(base).ok()?;
-    Some(
-        rel.components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/"),
-    )
+    Some(rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"))
 }
 
 /// Find the save files of a game on this device, under the paths of the
@@ -639,15 +613,7 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
             }
             if let Ok(meta) = std::fs::metadata(&abs) {
                 if meta.is_file() && !is_leftover(&abs) {
-                    out.insert(
-                        logical.to_lowercase(),
-                        LocalFile {
-                            logical,
-                            size: meta.len(),
-                            mtime: mtime_of(&meta),
-                            abs,
-                        },
-                    );
+                    out.insert(logical.to_lowercase(), LocalFile { logical, size: meta.len(), mtime: mtime_of(&meta), abs });
                 }
             }
         }
@@ -662,8 +628,9 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
     let mut out: BTreeMap<String, LocalFile> = BTreeMap::new();
     for at in &wanted.saves {
         let root = &at.root;
-        let base = spec::resolve_root_name(root, &roots)
-            .ok_or_else(|| anyhow!(crate::tr!("无法确定根目录 {{{root}}}（游戏路径未设置？）", "Can't resolve the root {{{root}}} (is the game location set?)")))?;
+        let base = spec::resolve_root_name(root, &roots).ok_or_else(|| {
+            anyhow!(crate::tr!("无法确定根目录 {{{root}}}（游戏路径未设置？）", "Can't resolve the root {{{root}}} (is the game location set?)"))
+        })?;
         // Walk from the longest literal prefix to avoid scanning huge trees.
         let walk_root = literal(&at.rest).fold(base.clone(), |p, c| p.join(c));
         if !walk_root.exists() {
@@ -688,15 +655,7 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
                 Err(_) => continue,
             };
             let logical = format!("{root}/{rel}");
-            out.insert(
-                logical.to_lowercase(),
-                LocalFile {
-                    logical,
-                    abs: entry.path().to_path_buf(),
-                    size: meta.len(),
-                    mtime: mtime_of(&meta),
-                },
-            );
+            out.insert(logical.to_lowercase(), LocalFile { logical, abs: entry.path().to_path_buf(), size: meta.len(), mtime: mtime_of(&meta) });
         }
     }
     Ok((out.into_values().collect(), roots))
@@ -734,10 +693,7 @@ pub fn content_hash(entries: &[FileEntry]) -> String {
     if entries.is_empty() {
         return EMPTY_HASH.to_string();
     }
-    let mut lines: Vec<String> = entries
-        .iter()
-        .map(|e| format!("{}\0{}", e.path.to_lowercase(), e.hash))
-        .collect();
+    let mut lines: Vec<String> = entries.iter().map(|e| format!("{}\0{}", e.path.to_lowercase(), e.hash)).collect();
     lines.sort();
     blake3::hash(lines.join("\n").as_bytes()).to_hex().to_string()
 }
@@ -748,24 +704,11 @@ pub fn local_state(game: &GameEntry) -> Result<LocalState> {
     let mut entries = Vec::with_capacity(files.len());
     let mut total = 0;
     for f in &files {
-        entries.push(FileEntry {
-            path: f.logical.clone(),
-            size: f.size,
-            hash: hash_file(&f.abs)?,
-            mtime: f.mtime,
-        });
+        entries.push(FileEntry { path: f.logical.clone(), size: f.size, hash: hash_file(&f.abs)?, mtime: f.mtime });
         total += f.size;
     }
     let hash = content_hash(&entries);
-    Ok(LocalState {
-        files,
-        entries,
-        hash,
-        total_size: total,
-        roots,
-        carried: Vec::new(),
-        carried_files: Vec::new(),
-    })
+    Ok(LocalState { files, entries, hash, total_size: total, roots, carried: Vec::new(), carried_files: Vec::new() })
 }
 
 /// Pack a snapshot zip into the staging folder.
@@ -803,16 +746,12 @@ pub fn build(
 }
 
 fn write_zip(zip_path: &Path, local: &LocalState, meta: &SnapshotMeta) -> Result<()> {
-    let file = File::create(zip_path)
-        .with_context(|| crate::tr!("无法创建 {}", "Can't create {}", zip_path.display()))?;
+    let file = File::create(zip_path).with_context(|| crate::tr!("无法创建 {}", "Can't create {}", zip_path.display()))?;
     let mut zw = zip::ZipWriter::new(file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .large_file(false);
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(false);
     for f in &local.files {
         zw.start_file(format!("files/{}", f.logical), opts)?;
-        let mut src = File::open(&f.abs)
-            .with_context(|| crate::tr!("无法读取存档文件 {}", "Can't read the save file {}", f.abs.display()))?;
+        let mut src = File::open(&f.abs).with_context(|| crate::tr!("无法读取存档文件 {}", "Can't read the save file {}", f.abs.display()))?;
         std::io::copy(&mut src, &mut zw)?;
     }
     zw.start_file("snapshot.json", opts)?;
@@ -919,10 +858,7 @@ pub fn read_meta(zip_path: &Path) -> Result<SnapshotMeta> {
 }
 
 fn validate_logical(p: &str) -> Result<()> {
-    let ok = !p.is_empty()
-        && !p.contains('\\')
-        && !p.contains(':')
-        && p.split('/').all(|c| !c.is_empty() && c != "." && c != "..");
+    let ok = !p.is_empty() && !p.contains('\\') && !p.contains(':') && p.split('/').all(|c| !c.is_empty() && c != "." && c != "..");
     if !ok {
         bail!(crate::tr!("快照中包含不安全的路径：{p}", "The snapshot contains an unsafe path: {p}"));
     }
@@ -933,8 +869,9 @@ fn validate_logical(p: &str) -> Result<()> {
 pub fn resolve_logical(roots: &BTreeMap<String, PathBuf>, logical: &str) -> Result<PathBuf> {
     validate_logical(logical)?;
     let (root, rest) = logical.split_once('/').ok_or_else(|| anyhow!(crate::tr!("无效路径 {logical}", "Invalid path {logical}")))?;
-    let base = spec::resolve_root_name(root, roots)
-        .ok_or_else(|| anyhow!(crate::tr!("本机没有根目录 {{{root}}}，无法恢复 {logical}", "This PC has no root {{{root}}}, so {logical} can't be restored")))?;
+    let base = spec::resolve_root_name(root, roots).ok_or_else(|| {
+        anyhow!(crate::tr!("本机没有根目录 {{{root}}}，无法恢复 {logical}", "This PC has no root {{{root}}}, so {logical} can't be restored"))
+    })?;
     Ok(rest.split('/').fold(base, |p, c| p.join(c)))
 }
 
@@ -951,9 +888,8 @@ pub fn resolve_logical(roots: &BTreeMap<String, PathBuf>, logical: &str) -> Resu
 pub fn apply(zip_path: &Path, meta: &SnapshotMeta, game: &GameEntry) -> Result<()> {
     let mut archive = zip::ZipArchive::new(File::open(zip_path)?)?;
     apply_with(&meta.files, game, &mut |path, out| {
-        let mut entry = archive
-            .by_name(&format!("files/{path}"))
-            .map_err(|_| anyhow!(crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", path)))?;
+        let mut entry =
+            archive.by_name(&format!("files/{path}")).map_err(|_| anyhow!(crate::tr!("快照中缺少文件 {}", "The snapshot is missing the file {}", path)))?;
         std::io::copy(&mut entry, out)?;
         Ok(())
     })
@@ -1122,11 +1058,7 @@ fn apply_coded(files: &[FileEntry], game: &GameEntry, content: &mut dyn FnMut(&s
         let data = content_of(content, &fe.path).map_err(|e| e.context(unchanged()))?;
         let hash = blake3::hash(&data).to_hex().to_string();
         if !fe.hash.is_empty() && hash != fe.hash {
-            return Err(refuse(crate::tr!(
-                "{} 写到这台设备上以后读回来的内容不对",
-                "{} read back differently after it was written to this device",
-                fe.path
-            )));
+            return Err(refuse(crate::tr!("{} 写到这台设备上以后读回来的内容不对", "{} read back differently after it was written to this device", fe.path)));
         }
         let d = &found.decoded[*i];
         expect[d.dir].insert(key.clone(), hash);
@@ -1263,16 +1195,14 @@ fn write_files(
     // only, but a version something else wrote might, and on Windows they
     // are one file: the later one wins, as it always did.
     let mut places: HashSet<String> = HashSet::new();
-    let mut plan: Vec<(&FileEntry, PathBuf)> =
-        plan.into_iter().rev().filter(|(_, dest)| places.insert(dest.to_string_lossy().to_lowercase())).collect();
+    let mut plan: Vec<(&FileEntry, PathBuf)> = plan.into_iter().rev().filter(|(_, dest)| places.insert(dest.to_string_lossy().to_lowercase())).collect();
     plan.reverse();
     // 1. Written beside its place and read back: nothing is replaced yet.
     let mut written: Vec<PathBuf> = Vec::with_capacity(plan.len());
     let staged = (|| -> Result<()> {
         for (fe, dest) in &plan {
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
+                std::fs::create_dir_all(parent).with_context(|| crate::tr!("无法创建目录 {}", "Can't create the folder {}", parent.display()))?;
             }
             let tmp = beside(dest, WRITING);
             // A new file, never through a link something left under that name.
@@ -1289,11 +1219,7 @@ fn write_files(
             }
             // A version of 0.6 may not say what a file's content is.
             if !fe.hash.is_empty() && hash_file(&tmp)? != fe.hash {
-                bail!(crate::tr!(
-                    "{} 写到这台设备上以后读回来的内容不对",
-                    "{} read back differently after it was written to this device",
-                    fe.path
-                ));
+                bail!(crate::tr!("{} 写到这台设备上以后读回来的内容不对", "{} read back differently after it was written to this device", fe.path));
             }
         }
         Ok(())
@@ -1382,16 +1308,9 @@ pub fn keep_local_copy(meta: &SnapshotMeta, zip: &Path) -> Result<()> {
     let dir = paths::local_backups_dir().join(&meta.game);
     std::fs::create_dir_all(&dir)?;
     std::fs::copy(zip, dir.join(format!("{}.zip", meta.id)))?;
-    std::fs::write(
-        dir.join(format!("{}.json", meta.id)),
-        serde_json::to_vec_pretty(meta)?,
-    )?;
+    std::fs::write(dir.join(format!("{}.json", meta.id)), serde_json::to_vec_pretty(meta)?)?;
     // Keep the newest 10.
-    let mut zips: Vec<_> = std::fs::read_dir(&dir)?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "zip"))
-        .collect();
+    let mut zips: Vec<_> = std::fs::read_dir(&dir)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "zip")).collect();
     zips.sort();
     while zips.len() > 10 {
         let p = zips.remove(0);

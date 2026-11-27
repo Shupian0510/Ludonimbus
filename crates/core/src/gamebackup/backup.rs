@@ -86,9 +86,8 @@ impl Read for StreamReader<'_> {
         loop {
             let Some(f) = self.files.get(self.idx) else { return Ok(0) };
             if self.cur.is_none() {
-                let file = std::fs::File::open(&f.abs).map_err(|e| {
-                    std::io::Error::new(e.kind(), crate::tr!("无法读取 {}：{e}", "Can't read {}: {e}", f.abs.display()))
-                })?;
+                let file = std::fs::File::open(&f.abs)
+                    .map_err(|e| std::io::Error::new(e.kind(), crate::tr!("无法读取 {}：{e}", "Can't read {}: {e}", f.abs.display())))?;
                 self.cur = Some((file.take(f.size), 0));
             }
             let (file, done) = self.cur.as_mut().expect("open");
@@ -242,15 +241,11 @@ pub fn backup(
     stop()?;
 
     let versions = remote::list_versions(store, key)?;
-    let previous: Option<(Summary, Manifest)> = versions
-        .last()
-        .and_then(|s| remote::read_manifest(store, key, s).ok().map(|m| (s.clone(), m)))
-        .filter(|(_, m)| m.chunking == opts.params);
+    let previous: Option<(Summary, Manifest)> =
+        versions.last().and_then(|s| remote::read_manifest(store, key, s).ok().map(|m| (s.clone(), m))).filter(|(_, m)| m.chunking == opts.params);
     // Each component: the previous version's when its files are the same.
-    let reuse: Vec<Option<Component>> = planned
-        .iter()
-        .map(|p| previous.as_ref().and_then(|(_, m)| m.component(p.kind)).filter(|c| unchanged(p, c)).cloned())
-        .collect();
+    let reuse: Vec<Option<Component>> =
+        planned.iter().map(|p| previous.as_ref().and_then(|(_, m)| m.component(p.kind)).filter(|c| unchanged(p, c)).cloned()).collect();
     if let Some((s, m)) = &previous {
         if reuse.iter().all(Option::is_some) && m.components.len() == planned.len() {
             return Ok(Outcome::Unchanged { version: s.clone() });
@@ -375,10 +370,7 @@ fn upload_and_commit(
                 while i < p.files.len() {
                     let f = &p.files[i];
                     if f.size >= BIG_FILE {
-                        let cached = cache
-                            .get(&f.abs, f.size, f.mtime, f.nanos, &opts.params)
-                            .filter(|e| e.chunks.iter().all(|(id, _)| up.known(id)))
-                            .cloned();
+                        let cached = cache.get(&f.abs, f.size, f.mtime, f.nanos, &opts.params).filter(|e| e.chunks.iter().all(|(id, _)| up.known(id))).cloned();
                         match cached {
                             Some(e) => {
                                 up.reused.fetch_add(e.chunks.len(), Ordering::SeqCst);
@@ -460,12 +452,7 @@ fn upload_and_commit(
                     exe: p.exe.clone(),
                     source: p.source.clone(),
                     build: p.build.clone(),
-                    files: p
-                        .files
-                        .iter()
-                        .zip(hashes)
-                        .map(|(f, h)| FileEntry { p: f.logical.clone(), s: f.size, h, m: f.mtime, n: f.nanos })
-                        .collect(),
+                    files: p.files.iter().zip(hashes).map(|(f, h)| FileEntry { p: f.logical.clone(), s: f.size, h, m: f.mtime, n: f.nanos }).collect(),
                     dirs: p.dirs.clone(),
                     chunks,
                     total_size: p.total(),

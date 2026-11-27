@@ -585,7 +585,12 @@ fn switch_first(root: &Path) {
     let first = uploaded(s3.sync());
     assert_eq!(
         s3.files_of(&first),
-        strings(&[&format!("{NX}/Farm_1/Farm_1"), &format!("{NX}/Farm_1/SaveGameInfo"), &format!("{NX}/startup_preferences"), &format!("{NX_DEVICE}/device.bin")])
+        strings(&[
+            &format!("{NX}/Farm_1/Farm_1"),
+            &format!("{NX}/Farm_1/SaveGameInfo"),
+            &format!("{NX}/startup_preferences"),
+            &format!("{NX_DEVICE}/device.bin")
+        ])
     );
 
     // P3: the PC version, the same farm, and settings of its own.

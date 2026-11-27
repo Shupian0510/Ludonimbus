@@ -17,9 +17,7 @@ fn trim_url(s: &str) -> &str {
 pub fn user_for(cloud: &CloudConfig) -> Option<String> {
     match cloud {
         CloudConfig::WebDav { url, username, .. } => Some(format!("webdav:{}@{}", username.trim(), trim_url(url))),
-        CloudConfig::S3 { endpoint, access_key_id, .. } => {
-            Some(format!("s3:{}@{}", access_key_id.trim(), trim_url(endpoint)))
-        }
+        CloudConfig::S3 { endpoint, access_key_id, .. } => Some(format!("s3:{}@{}", access_key_id.trim(), trim_url(endpoint))),
         CloudConfig::BaiduPan { .. } => Some(super::baidu::KEYRING_USER.to_string()),
         _ => None,
     }

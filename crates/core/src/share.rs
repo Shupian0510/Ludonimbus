@@ -149,10 +149,7 @@ fn no_place(share: &Share, game: &GameEntry) -> Result<Vec<String>> {
             if roots.is_empty() {
                 return Ok(out);
             }
-            own.iter()
-                .filter(|(_, l)| !roots.keys().any(|r| r.eq_ignore_ascii_case(l.split('/').next().unwrap_or_default())))
-                .map(|(_, l)| l.clone())
-                .collect()
+            own.iter().filter(|(_, l)| !roots.keys().any(|r| r.eq_ignore_ascii_case(l.split('/').next().unwrap_or_default()))).map(|(_, l)| l.clone()).collect()
         }
     };
     for (path, local) in &own {

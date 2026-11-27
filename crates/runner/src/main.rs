@@ -178,11 +178,7 @@ fn ensure_exe(game: &mut GameEntry) -> Result<()> {
     if game.exe.as_ref().is_some_and(|e| e.is_file()) {
         return Ok(());
     }
-    let old = game
-        .exe
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| ludonimbus_core::tr!("（未设置）", "(not set)"));
+    let old = game.exe.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| ludonimbus_core::tr!("（未设置）", "(not set)"));
     log(format!("{}: exe missing at {old}", game.key));
 
     if let Some(candidate) = relocate::find_candidate(game) {
@@ -208,12 +204,7 @@ fn ensure_exe(game: &mut GameEntry) -> Result<()> {
             game.name
         ));
     }
-    let start_dir = game
-        .exe
-        .as_ref()
-        .and_then(|e| e.parent())
-        .and_then(|p| p.ancestors().find(|a| a.is_dir()))
-        .map(Path::to_path_buf);
+    let start_dir = game.exe.as_ref().and_then(|e| e.parent()).and_then(|p| p.ancestors().find(|a| a.is_dir())).map(Path::to_path_buf);
     let mut dialog = rfd::FileDialog::new()
         .set_title(ludonimbus_core::tr!("找不到「{}」，请选择新的游戏程序", "Can't find \"{}\". Choose its program again", game.name))
         .add_filter(ludonimbus_core::tr!("程序", "Programs"), &["exe", "bat", "cmd", "lnk"]);
@@ -305,13 +296,7 @@ fn sync_retrying(ctx: &Ctx, game: &GameEntry, res: Resolution, trigger: Trigger,
 /// reached, until the waiting is given up. Before playing (`launching`) a
 /// version kept for after the game ([`Outcome::Queued`]) is no reason to try
 /// again: it is a cloud that needs upgrading, or a sync nobody waits for.
-fn retrying(
-    waits: &[Duration],
-    launching: bool,
-    gate: &Gate,
-    mut attempt: impl FnMut() -> Result<Outcome>,
-    note: &dyn Fn(Duration),
-) -> Result<Outcome> {
+fn retrying(waits: &[Duration], launching: bool, gate: &Gate, mut attempt: impl FnMut() -> Result<Outcome>, note: &dyn Fn(Duration)) -> Result<Outcome> {
     let again = |out: &Outcome| match out {
         Outcome::Offline { .. } => true,
         Outcome::Queued { .. } => !launching,
@@ -457,11 +442,7 @@ impl Notice for prompt::Window {
 /// is waited for while `notice` (when it shows one) offers to stop waiting.
 /// A wrapper asked to stop gives it up too. Replacing the saves is always
 /// waited for; it is quick.
-fn wait_before_launch<T: Send + 'static>(
-    worker: Worker<T>,
-    budget: Duration,
-    notice: &mut dyn FnMut(Phase) -> Option<Box<dyn Notice>>,
-) -> Waited<T> {
+fn wait_before_launch<T: Send + 'static>(worker: Worker<T>, budget: Duration, notice: &mut dyn FnMut(Phase) -> Option<Box<dyn Notice>>) -> Waited<T> {
     match worker.wait(budget) {
         Poll::Ready(v) => return Waited::Finished(v),
         Poll::Lost => return Waited::Lost,
@@ -681,14 +662,8 @@ fn spawn_finisher(key: &str) -> bool {
         let plain = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
         // Out of a job Steam may have put the wrapper in, when it allows that.
         for flags in [plain | CREATE_BREAKAWAY_FROM_JOB, plain] {
-            let spawned = Command::new(&exe)
-                .arg(FINISH_ARG)
-                .arg(key)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(flags)
-                .spawn();
+            let spawned =
+                Command::new(&exe).arg(FINISH_ARG).arg(key).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).creation_flags(flags).spawn();
             match spawned {
                 Ok(child) => {
                     let how = if flags == plain { " (it couldn't leave the wrapper's job)" } else { "" };
@@ -860,10 +835,7 @@ struct RunningLock {
 
 impl RunningLock {
     fn create(key: &str) -> Self {
-        let lock = RunningLock {
-            path: paths::running_dir().join(format!("{key}.json")),
-            started: std::cell::Cell::new(None),
-        };
+        let lock = RunningLock { path: paths::running_dir().join(format!("{key}.json")), started: std::cell::Cell::new(None) };
         lock.phase("preLaunch");
         lock
     }
@@ -950,12 +922,7 @@ fn run(args: &[String]) -> Result<i32> {
         _ => {
             ensure_exe(&mut game)?;
             let exe = game.exe.clone().expect("checked by ensure_exe");
-            let work_dir = game
-                .work_dir
-                .clone()
-                .filter(|d| d.is_dir())
-                .or_else(|| exe.parent().map(Path::to_path_buf))
-                .unwrap_or_else(|| PathBuf::from("."));
+            let work_dir = game.work_dir.clone().filter(|d| d.is_dir()).or_else(|| exe.parent().map(Path::to_path_buf)).unwrap_or_else(|| PathBuf::from("."));
             Launch { exe, args: util::split_args(&game.args), envs: Vec::new(), work_dir }
         }
     };
@@ -1066,11 +1033,7 @@ fn run(args: &[String]) -> Result<i32> {
         }
         lock.phase("playing");
     };
-    let on_game_exit: Option<&mut dyn FnMut()> = if game.auto_sync && spec.upload_on_game_exit {
-        Some(&mut early_upload)
-    } else {
-        None
-    };
+    let on_game_exit: Option<&mut dyn FnMut()> = if game.auto_sync && spec.upload_on_game_exit { Some(&mut early_upload) } else { None };
 
     // Steam's "Stop" during the sync before launch, or the questions
     // (Linux: SIGTERM): the game isn't started.
@@ -1083,15 +1046,8 @@ fn run(args: &[String]) -> Result<i32> {
         log(format!("{key}: launching {} {:?} with {:?}", launch.exe.display(), launch.args, launch.envs));
     }
     lock.phase("playing");
-    let code = process::launch_and_wait(
-        &launch.exe,
-        &launch.args,
-        &launch.envs,
-        &launch.work_dir,
-        &spec.wait_for,
-        on_game_exit,
-        &|m| log(format!("{key}: {m}")),
-    )?;
+    let code =
+        process::launch_and_wait(&launch.exe, &launch.args, &launch.envs, &launch.work_dir, &spec.wait_for, on_game_exit, &|m| log(format!("{key}: {m}")))?;
 
     if let Some(start) = lock.started.get() {
         match playtime::record(&ctx.cfg, &game, start, chrono::Utc::now(), playtime::Via::Steam) {

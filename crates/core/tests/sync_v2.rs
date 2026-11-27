@@ -266,9 +266,7 @@ fn requests(root: &Path) {
         let cloud = Cloud::new(Box::new(store.clone()), &cfg.device.id, &cfg.device.name);
         Ctx::with_cloud(cfg, cloud)
     };
-    let saves = |log: &[String]| -> Vec<String> {
-        log.iter().filter(|l| l.contains("/saves/") || l.contains("/packs/") || l.contains(OLD)).cloned().collect()
-    };
+    let saves = |log: &[String]| -> Vec<String> { log.iter().filter(|l| l.contains("/saves/") || l.contains("/packs/") || l.contains(OLD)).cloned().collect() };
 
     // The first upload sets everything up: the layout, the game's record.
     let a = Device::new(root, "REQ-A", CloudConfig::None);
@@ -323,10 +321,7 @@ fn requests(root: &Path) {
     );
     assert_eq!(pulled(sync_with(&ctx(), Resolution::Auto, Trigger::PreLaunch)), second);
     assert_eq!(b.read(), "v2");
-    assert_eq!(
-        store.take(),
-        vec![format!("list {LINE}"), format!("read {LINE}/{second}.json"), format!("download games/{KEY}/packs/{second}.zip")]
-    );
+    assert_eq!(store.take(), vec![format!("list {LINE}"), format!("read {LINE}/{second}.json"), format!("download games/{KEY}/packs/{second}.zip")]);
     assert!(matches!(sync_with(&ctx(), Resolution::Auto, Trigger::PreLaunch), Outcome::UpToDate));
     assert_eq!(store.take(), vec![format!("list {LINE}")]);
     assert_ne!(first, second);
@@ -361,7 +356,9 @@ fn requests(root: &Path) {
     let log = store.take();
     let other_line = "games/other-game/saves/main";
     assert_eq!(
-        log.iter().filter(|l| !l.contains("/playtime") && !l.contains("/art/") && !l.ends_with("/game.json") && !l.starts_with("write devices/")).collect::<Vec<_>>(),
+        log.iter()
+            .filter(|l| !l.contains("/playtime") && !l.contains("/art/") && !l.ends_with("/game.json") && !l.starts_with("write devices/"))
+            .collect::<Vec<_>>(),
         vec![
             "list library",
             "list games/other-game",
@@ -559,10 +556,7 @@ fn from_06(root: &Path) {
     a.write("s5");
     let head = uploaded(run(Trigger::AutoExit));
     let list = versions();
-    assert_eq!(
-        list.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
-        vec![s1.id.as_str(), q.id.as_str(), p.as_str(), r.as_str(), head.as_str()]
-    );
+    assert_eq!(list.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec![s1.id.as_str(), q.id.as_str(), p.as_str(), r.as_str(), head.as_str()]);
     assert_eq!(heads(), vec![head.clone()]);
     for id in [&q.id, &p, &r, &head] {
         assert!(cloud.join(LINE).join(format!("{id}.json")).is_file());

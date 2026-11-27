@@ -105,9 +105,13 @@ pub enum Action {
     Nothing,
     /// The saves here already are this head: remember it as the base,
     /// transfer nothing.
-    Adopt { id: String },
+    Adopt {
+        id: String,
+    },
     /// Replace the saves here with this head.
-    Pull { id: String },
+    Pull {
+        id: String,
+    },
     /// Upload the saves here as a new snapshot.
     Push {
         /// The vectors the new snapshot's vector is built from

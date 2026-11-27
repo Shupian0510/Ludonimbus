@@ -51,11 +51,7 @@ const RECOMP_TITLES: &[(&str, &str)] = &[
 /// Wii U games (Cemu, `{mlc}/usr/save/00050000/<low>`) whose saves have the
 /// same structure as the Switch version's (BotW: the same `game_data.sav`,
 /// big-endian).
-const WIIU_TITLES: &[(&str, &str)] = &[
-    ("101c9300", "01007EF00011E000"),
-    ("101c9400", "01007EF00011E000"),
-    ("101c9500", "01007EF00011E000"),
-];
+const WIIU_TITLES: &[(&str, &str)] = &[("101c9300", "01007EF00011E000"), ("101c9400", "01007EF00011E000"), ("101c9500", "01007EF00011E000")];
 
 /// Ludonimbus's own lists, by adapter key (see `docs/achievement-rules.md`).
 const BUNDLED: &[(&str, &str)] = &[("zelda-oot-longshot", include_str!("../../../../adapters/achievements/zelda-oot-longshot.json"))];
@@ -230,10 +226,7 @@ pub fn load_list(tid: &str, fetch: bool) -> Result<Option<RuleList>> {
     if fresh(&none) || !fetch {
         return if cache.is_file() { parse(&cache).map(Some) } else { Ok(None) };
     }
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(15))
-        .user_agent(&format!("Ludonimbus/{}", crate::APP_VERSION))
-        .build();
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(15)).user_agent(&format!("Ludonimbus/{}", crate::APP_VERSION)).build();
     match agent.get(&format!("{TROPHYNX_RAW}/{tid}.json")).call() {
         Ok(r) => {
             let mut body = Vec::new();
@@ -670,11 +663,7 @@ pub fn evaluate(list: &RuleList, files: &[PathBuf], stats: Stats) -> Result<Vec<
     for a in &list.achievements {
         let at = match rule_type(&a.rule) {
             "launches" | "playtime_hours" => holds(None, &a.rule, stats).filter(|h| *h).map(|_| Utc::now()),
-            _ => docs
-                .iter()
-                .filter(|(_, d)| holds(Some(d), &a.rule, stats) == Some(true))
-                .map(|(f, _)| mtime(f))
-                .min(),
+            _ => docs.iter().filter(|(_, d)| holds(Some(d), &a.rule, stats) == Some(true)).map(|(f, _)| mtime(f)).min(),
         };
         if let Some(at) = at {
             unlocks.push(Unlock { id: a.id.clone(), unlocked_at: at, hardcore: false });
@@ -755,11 +744,7 @@ mod byml {
         }
         fn u24(&self, o: usize) -> Option<u32> {
             let b = self.d.get(o..o + 3)?;
-            Some(if self.le {
-                b[0] as u32 | (b[1] as u32) << 8 | (b[2] as u32) << 16
-            } else {
-                (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32
-            })
+            Some(if self.le { b[0] as u32 | (b[1] as u32) << 8 | (b[2] as u32) << 16 } else { (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32 })
         }
         fn string_table(&self, at: usize) -> Vec<String> {
             if at == 0 || self.d.get(at) != Some(&0xC2) {
@@ -847,7 +832,11 @@ mod byml {
         let hdr = |kind: u8, n: u32| {
             let mut b = vec![kind];
             let n = if le { n.to_le_bytes() } else { n.to_be_bytes() };
-            if le { b.extend_from_slice(&n[..3]) } else { b.extend_from_slice(&n[1..]) }
+            if le {
+                b.extend_from_slice(&n[..3])
+            } else {
+                b.extend_from_slice(&n[1..])
+            }
             b
         };
         let table = |items: &[&str]| -> Vec<u8> {
@@ -914,7 +903,10 @@ mod tests {
     use super::*;
 
     fn list(reader: &str, achievements: Value) -> RuleList {
-        serde_json::from_value(json!({ "title_id": "0100000000010000", "name": "Test", "reader": reader, "save_files": ["File0.bin"], "achievements": achievements })).unwrap()
+        serde_json::from_value(
+            json!({ "title_id": "0100000000010000", "name": "Test", "reader": reader, "save_files": ["File0.bin"], "achievements": achievements }),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -972,10 +964,13 @@ mod tests {
             prefixed.extend(&data);
             assert_eq!(walk(&byml::parse(&prefixed).unwrap(), "Coins"), vec![json!(42)]);
         }
-        let l = list("byml", json!([
-            { "id": "m2", "rule": { "type": "count", "path": "ShineData[*]/IsGet", "target": 2 } },
-            { "id": "m3", "rule": { "type": "count", "path": "ShineData[*]/IsGet", "target": 3 } }
-        ]));
+        let l = list(
+            "byml",
+            json!([
+                { "id": "m2", "rule": { "type": "count", "path": "ShineData[*]/IsGet", "target": 2 } },
+                { "id": "m3", "rule": { "type": "count", "path": "ShineData[*]/IsGet", "target": 3 } }
+            ]),
+        );
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("File0.bin");
         std::fs::write(&f, byml::build(true)).unwrap();
@@ -994,7 +989,12 @@ mod tests {
         // TotK-style: magic, header to 0x28, (murmur3(name), value) pairs, enum values hashed.
         let mut totk = vec![0u8; 0x28];
         totk[0..4].copy_from_slice(&0x0102_0304u32.to_le_bytes());
-        for (name, v) in [("DungeonState.Dungeon001", murmur3("Clear")), ("DungeonState.Dungeon002", murmur3("Open")), ("MetaData.SaveTypeHash", 0), ("DungeonState.Dungeon003", murmur3("Clear"))] {
+        for (name, v) in [
+            ("DungeonState.Dungeon001", murmur3("Clear")),
+            ("DungeonState.Dungeon002", murmur3("Open")),
+            ("MetaData.SaveTypeHash", 0),
+            ("DungeonState.Dungeon003", murmur3("Clear")),
+        ] {
             totk.extend(murmur3(name).to_le_bytes());
             totk.extend(v.to_le_bytes());
         }
@@ -1012,25 +1012,40 @@ mod tests {
             evaluate(&l, &[f], Stats::default()).unwrap().into_iter().map(|u| u.id).collect()
         };
         assert_eq!(
-            check("gamedata_hash", &botw, json!([
-                { "id": "stone", "rule": { "type": "flag", "name": "IsGet_Obj_DRStone_Get" } },
-                { "id": "gate", "rule": { "type": "flag", "name": "Open_DLC_Gate" } }
-            ]), json!({})),
+            check(
+                "gamedata_hash",
+                &botw,
+                json!([
+                    { "id": "stone", "rule": { "type": "flag", "name": "IsGet_Obj_DRStone_Get" } },
+                    { "id": "gate", "rule": { "type": "flag", "name": "Open_DLC_Gate" } }
+                ]),
+                json!({})
+            ),
             vec!["stone".to_string()]
         );
         assert_eq!(
-            check("totk_progress", &totk, json!([
-                { "id": "one", "rule": { "type": "count", "pattern": "DungeonState.Dungeon%03d", "from": 0, "to": 151, "equals": "Clear", "target": 1 } },
-                { "id": "two", "rule": { "type": "count", "pattern": "DungeonState.Dungeon%03d", "from": 0, "to": 151, "equals": "Clear", "target": 2 } }
-            ]), json!({})),
+            check(
+                "totk_progress",
+                &totk,
+                json!([
+                    { "id": "one", "rule": { "type": "count", "pattern": "DungeonState.Dungeon%03d", "from": 0, "to": 151, "equals": "Clear", "target": 1 } },
+                    { "id": "two", "rule": { "type": "count", "pattern": "DungeonState.Dungeon%03d", "from": 0, "to": 151, "equals": "Clear", "target": 2 } }
+                ]),
+                json!({})
+            ),
             vec!["one".to_string()],
             "pairs after MetaData.SaveTypeHash are not read"
         );
         assert_eq!(
-            check("binary_le", &mk, json!([
-                { "id": "c1k", "rule": { "type": "flag", "offset": "0x195C", "size": 4, "target": 1000, "max": 10000000 } },
-                { "id": "c10k", "rule": { "type": "flag", "offset": "0x195C", "size": 4, "target": 10000, "max": 10000000 } }
-            ]), json!({ "magic": "SUTC" })),
+            check(
+                "binary_le",
+                &mk,
+                json!([
+                    { "id": "c1k", "rule": { "type": "flag", "offset": "0x195C", "size": 4, "target": 1000, "max": 10000000 } },
+                    { "id": "c10k", "rule": { "type": "flag", "offset": "0x195C", "size": 4, "target": 10000, "max": 10000000 } }
+                ]),
+                json!({ "magic": "SUTC" })
+            ),
             vec!["c1k".to_string()]
         );
     }
@@ -1042,10 +1057,13 @@ mod tests {
             wiiu.extend(crc32(name).to_be_bytes());
             wiiu.extend(v.to_be_bytes());
         }
-        let l = list("gamedata_hash", json!([
-            { "id": "stone", "rule": { "type": "flag", "name": "IsGet_Obj_DRStone_Get" } },
-            { "id": "gate", "rule": { "type": "flag", "name": "Open_DLC_Gate" } }
-        ]));
+        let l = list(
+            "gamedata_hash",
+            json!([
+                { "id": "stone", "rule": { "type": "flag", "name": "IsGet_Obj_DRStone_Get" } },
+                { "id": "gate", "rule": { "type": "flag", "name": "Open_DLC_Gate" } }
+            ]),
+        );
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("game_data.sav");
         std::fs::write(&f, wiiu).unwrap();
@@ -1077,7 +1095,11 @@ mod tests {
             for a in &l.achievements {
                 assert!(ids.insert(a.id.clone()), "{key}: duplicate id {}", a.id);
                 assert!(!a.name.is_empty() && !a.desc.is_empty(), "{key}/{}: English text", a.id);
-                assert!(a.name_zh.as_deref().is_some_and(|s| !s.is_empty()) && a.desc_zh.as_deref().is_some_and(|s| !s.is_empty()), "{key}/{}: Chinese text", a.id);
+                assert!(
+                    a.name_zh.as_deref().is_some_and(|s| !s.is_empty()) && a.desc_zh.as_deref().is_some_and(|s| !s.is_empty()),
+                    "{key}/{}: Chinese text",
+                    a.id
+                );
                 assert!(matches!(rule_type(&a.rule), "flag" | "count" | "sum" | "launches" | "playtime_hours"), "{key}/{}: rule type", a.id);
             }
         }
@@ -1110,7 +1132,14 @@ mod tests {
             }
             d
         };
-        let common = [("IsGet.Weapon_Sword_Kokiri", 1), ("IsGet.Item_Stone_Forest", 1), ("IsGet.Item_Stone_Fire", 1), ("IsGet.Item_Stone_Water", 1), ("PouchData.Item_Token_Gold.StockNum", 21), ("PlayerStatus.MaxLife", 36)];
+        let common = [
+            ("IsGet.Weapon_Sword_Kokiri", 1),
+            ("IsGet.Item_Stone_Forest", 1),
+            ("IsGet.Item_Stone_Fire", 1),
+            ("IsGet.Item_Stone_Water", 1),
+            ("PouchData.Item_Token_Gold.StockNum", 21),
+            ("PlayerStatus.MaxLife", 36),
+        ];
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = (dir.path().join("slot_00/progress.sav"), dir.path().join("slot_01/progress.sav"));
         for (f, medal) in [(&a, 0), (&b, 1)] {

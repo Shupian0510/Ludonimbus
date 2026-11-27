@@ -152,7 +152,6 @@ fn def_of(game: &GameEntry) -> String {
     upgrade::line_def(&CloudGame::from(game))
 }
 
-
 fn suggest(s: Proposal, record: &str, def: &str, head: &crate::cloud::v2::IndexEntry, confirmed: bool, fit: Fit) -> Suggestion {
     Suggestion {
         record: record.to_string(),

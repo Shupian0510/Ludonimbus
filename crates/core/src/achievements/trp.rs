@@ -87,13 +87,7 @@ fn shadps4_configs() -> Vec<PathBuf> {
 fn toml_strings(text: &str, key: &str) -> Vec<String> {
     let Some(line) = text.lines().find(|l| l.trim_start().starts_with(key) && l.contains('=')) else { return Vec::new() };
     let value = line.split_once('=').map(|(_, v)| v).unwrap_or("");
-    value
-        .split('"')
-        .skip(1)
-        .step_by(2)
-        .map(|s| s.replace("\\\\", "\\"))
-        .filter(|s| !s.is_empty())
-        .collect()
+    value.split('"').skip(1).step_by(2).map(|s| s.replace("\\\\", "\\")).filter(|s| !s.is_empty()).collect()
 }
 
 /// Where the trophy key came from.

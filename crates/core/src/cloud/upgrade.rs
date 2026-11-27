@@ -334,13 +334,7 @@ fn name_of(key: &str, game: Option<&CloudGame>) -> String {
 ///
 /// `now` is the caller's clock (`migratedAt`, the lock). `progress` is
 /// called before each game, once its `game.json` has given its name.
-pub fn run(
-    store: &dyn Store,
-    device_id: &str,
-    device_name: &str,
-    now: DateTime<Utc>,
-    progress: &mut dyn FnMut(&Progress),
-) -> Result<Report> {
+pub fn run(store: &dyn Store, device_id: &str, device_name: &str, now: DateTime<Utc>, progress: &mut dyn FnMut(&Progress)) -> Result<Report> {
     match v2::access(v2::read_format(store)?.as_ref()) {
         Access::ReadWrite => return Ok(Report { already: true, ..Default::default() }),
         Access::ReadOnly { min_app, .. } if min_app.trim().is_empty() => bail!(crate::tr!(
@@ -440,12 +434,8 @@ fn upgrade_line(store: &dyn Store, key: &str, game: Option<CloudGame>, device_id
         if s.pin.is_some() {
             continue;
         }
-        let pin = Pin {
-            name: s.old_note().unwrap_or_default().to_string(),
-            created_at: Some(s.created_at),
-            device_id: s.device_id.clone(),
-            ..Default::default()
-        };
+        let pin =
+            Pin { name: s.old_note().unwrap_or_default().to_string(), created_at: Some(s.created_at), device_id: s.device_id.clone(), ..Default::default() };
         line::write_pin(store, &dir, &s.id, &pin)?;
         written.push((s.id.clone(), pin.name));
     }
@@ -546,10 +536,7 @@ impl<'a> Lock<'a> {
         // Two devices writing at once: the last write wins, the other backs
         // off.
         if read_lock(store)?.map(|l| l.token) != Some(info.token.clone()) {
-            return Err(anyhow!(Busy(crate::tr!(
-                "另一台设备刚开始升级云端，请稍后再试",
-                "Another device just started upgrading the cloud. Try again later"
-            ))));
+            return Err(anyhow!(Busy(crate::tr!("另一台设备刚开始升级云端，请稍后再试", "Another device just started upgrading the cloud. Try again later"))));
         }
         let at = Instant::now();
         Ok(Lock { store, info, now, taken: at, written: at, released: false })
@@ -613,11 +600,7 @@ mod tests {
     }
 
     fn with_adapter(key: &str, name: &str, adapter: &str, saves: &[&str]) -> CloudGame {
-        CloudGame {
-            adapter: Some(adapter.into()),
-            saves: saves.iter().map(|s| s.to_string()).collect(),
-            ..game(key, name)
-        }
+        CloudGame { adapter: Some(adapter.into()), saves: saves.iter().map(|s| s.to_string()).collect(), ..game(key, name) }
     }
 
     fn strings(items: &[&str]) -> Vec<String> {
@@ -627,11 +610,8 @@ mod tests {
     #[test]
     fn store_ids_are_kept_and_a_name_loses_its_scope() {
         // A PC game Ludusavi knows, with the Xbox package its device read.
-        let hades = CloudGame {
-            ludusavi_title: Some("Hades".into()),
-            ids: strings(&["xbox:supergiantgames.hades", "name:pc:hades"]),
-            ..game("hades", "Hades™")
-        };
+        let hades =
+            CloudGame { ludusavi_title: Some("Hades".into()), ids: strings(&["xbox:supergiantgames.hades", "name:pc:hades"]), ..game("hades", "Hades™") };
         assert_eq!(savelib::cloud_ids(&hades), strings(&["xbox:supergiantgames.hades", "ludusavi:hades", "name:pc:hades"]));
         assert_eq!(record_ids(&hades), strings(&["xbox:supergiantgames.hades", "ludusavi:hades", "name:hades"]));
         assert!(!library::is_strong("name:hades"));

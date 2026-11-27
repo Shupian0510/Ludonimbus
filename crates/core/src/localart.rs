@@ -25,10 +25,7 @@ pub fn file(key: &str, kind: &str) -> Option<PathBuf> {
 
 /// `(kind, file)` for every kind that has an image.
 pub fn all(key: &str) -> Vec<(String, PathBuf)> {
-    steam::ART_KINDS
-        .iter()
-        .filter_map(|k| file(key, k).map(|f| (k.to_string(), f)))
-        .collect()
+    steam::ART_KINDS.iter().filter_map(|k| file(key, k).map(|f| (k.to_string(), f))).collect()
 }
 
 /// Store an image as the game's artwork of one kind (replacing the old one).

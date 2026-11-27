@@ -167,8 +167,7 @@ fn stale(path: &Path, guarded: bool) -> Option<String> {
     let age = meta.modified().ok().and_then(|m| SystemTime::now().duration_since(m).ok()).unwrap_or_default();
     let left = match serde_json::from_str::<Holder>(&text) {
         Ok(h) if h.pid != 0 => {
-            let gone = !crate::process::pid_alive(h.pid)
-                || matches!((h.started, crate::process::started(h.pid)), (Some(a), Some(b)) if a != b);
+            let gone = !crate::process::pid_alive(h.pid) || matches!((h.started, crate::process::started(h.pid)), (Some(a), Some(b)) if a != b);
             if h.guarded {
                 guarded || gone
             } else {

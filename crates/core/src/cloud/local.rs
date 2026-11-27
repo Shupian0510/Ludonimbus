@@ -83,8 +83,7 @@ pub fn sync_folders() -> Vec<SyncFolder> {
     }
 
     let mut seen = std::collections::HashSet::new();
-    let list: Vec<(String, PathBuf)> =
-        list.into_iter().filter(|(_, p)| p.is_dir() && seen.insert(util::norm_path(&p.to_string_lossy()))).collect();
+    let list: Vec<(String, PathBuf)> = list.into_iter().filter(|(_, p)| p.is_dir() && seen.insert(util::norm_path(&p.to_string_lossy()))).collect();
     let count = |l: &str| list.iter().filter(|(x, _)| x == l).count();
     list.iter()
         .map(|(label, p)| {
@@ -146,18 +145,8 @@ impl Store for LocalFolder {
                 Err(err) if err.kind() == ErrorKind::NotFound => continue,
                 Err(err) => return Err(failed(err)),
             };
-            let mtime = md
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            out.push(Entry {
-                name,
-                is_dir: md.is_dir(),
-                size: md.len(),
-                tag: format!("{mtime}-{}", md.len()),
-            });
+            let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
+            out.push(Entry { name, is_dir: md.is_dir(), size: md.len(), tag: format!("{mtime}-{}", md.len()) });
         }
         Ok(out)
     }

@@ -20,13 +20,7 @@ fn sample() -> Memory {
         if !entry.file_type().is_file() {
             continue;
         }
-        let rel: Vec<String> = entry
-            .path()
-            .strip_prefix(&root)
-            .unwrap()
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let rel: Vec<String> = entry.path().strip_prefix(&root).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         store.put(&rel.join("/"), &std::fs::read(entry.path()).unwrap());
     }
     store

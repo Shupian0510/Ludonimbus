@@ -11,9 +11,7 @@ pub fn data_dir() -> PathBuf {
             return PathBuf::from(p);
         }
     }
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Ludonimbus")
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("Ludonimbus")
 }
 
 fn ensure(p: PathBuf) -> PathBuf {
@@ -65,10 +63,7 @@ pub fn decoded_dir() -> PathBuf {
 
 /// Directory of the running executable (where sidecars live).
 pub fn exe_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
+    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// File name of the Steam launch wrapper on this system.

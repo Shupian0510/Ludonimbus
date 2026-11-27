@@ -164,11 +164,8 @@ mod tests {
         for f in ["gamelaunchhelper.exe", "DOOMEternalx64vk.exe", "CrashReporter.exe", "launcher/idTechLauncher.exe"] {
             std::fs::write(content.join(f), b"x").unwrap();
         }
-        std::fs::write(
-            content.join(CONFIG),
-            r#"<Game><ExecutableList><Executable Name="launcher/idTechLauncher.exe" Id="Game" /></ExecutableList></Game>"#,
-        )
-        .unwrap();
+        std::fs::write(content.join(CONFIG), r#"<Game><ExecutableList><Executable Name="launcher/idTechLauncher.exe" Id="Game" /></ExecutableList></Game>"#)
+            .unwrap();
         let helper = content.join("gamelaunchhelper.exe");
         let real = content.join("launcher").join("idTechLauncher.exe");
         assert_eq!(content_dir(&real), Some(content.clone()));

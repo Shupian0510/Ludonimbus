@@ -310,7 +310,11 @@ pub(crate) fn human(bytes: u64) -> String {
         v /= 1024.0;
         i += 1;
     }
-    if i == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", U[i]) }
+    if i == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", U[i])
+    }
 }
 
 fn read_secret(prompt: &str) -> Result<String> {
@@ -516,11 +520,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             SteamCmd::Add { appid, account, name, adapter, saves } => {
                 let account = account_or_default(account)?;
-                let g = games::add_from_shortcut(
-                    &account,
-                    appid,
-                    games::NewGame { name, adapter, saves, key: None, ludusavi_title: None },
-                )?;
+                let g = games::add_from_shortcut(&account, appid, games::NewGame { name, adapter, saves, key: None, ludusavi_title: None })?;
                 println!("已添加 {}（{}）", g.name, g.key);
             }
             SteamCmd::Enable { key } => {
@@ -553,29 +553,11 @@ fn run(cli: Cli) -> Result<()> {
                 let c = CloudConfig::WebDav { url, username: user, folder };
                 connect_store(c)?;
             }
-            CloudCmd::S3 {
-                endpoint,
-                region,
-                bucket,
-                prefix,
-                access_key,
-                path_style,
-            } => {
-                let c = CloudConfig::S3 {
-                    endpoint,
-                    region,
-                    bucket,
-                    prefix,
-                    access_key_id: access_key,
-                    path_style,
-                };
+            CloudCmd::S3 { endpoint, region, bucket, prefix, access_key, path_style } => {
+                let c = CloudConfig::S3 { endpoint, region, bucket, prefix, access_key_id: access_key, path_style };
                 connect_store(c)?;
             }
-            CloudCmd::Baidu {
-                app_key,
-                secret_key,
-                app_name,
-            } => {
+            CloudCmd::Baidu { app_key, secret_key, app_name } => {
                 let cancel = std::sync::atomic::AtomicBool::new(false);
                 let name = cloud::connect_baidu(
                     &app_key,
@@ -601,17 +583,10 @@ fn run(cli: Cli) -> Result<()> {
                         println!("[{}/{}] {}", p.done + 1, p.total, p.game);
                     }
                 })?;
-                println!(
-                    "已复制 {} 个版本（{}），{} 个已存在而跳过，涉及 {} 个游戏",
-                    r.copied,
-                    human(r.bytes),
-                    r.skipped,
-                    r.games
-                );
+                println!("已复制 {} 个版本（{}），{} 个已存在而跳过，涉及 {} 个游戏", r.copied, human(r.bytes), r.skipped, r.games);
             }
             CloudCmd::Google { client_id, client_secret } => {
-                let client = oauth::GoogleClient::resolve(&client_id, &client_secret)
-                    .ok_or_else(|| anyhow!("需要 --client-id（发布版会内置）"))?;
+                let client = oauth::GoogleClient::resolve(&client_id, &client_secret).ok_or_else(|| anyhow!("需要 --client-id（发布版会内置）"))?;
                 println!("请在打开的浏览器中登录 Google 账号…");
                 let auth = oauth::authorize(&client, std::time::Duration::from_secs(300))?;
                 oauth::store_refresh_token(&auth.refresh_token)?;
@@ -670,11 +645,8 @@ fn run(cli: Cli) -> Result<()> {
                 list.extend(discover::ludusavi_scan(&cfg)?);
             }
             for f in &list {
-                let rule = f
-                    .adapter_name
-                    .clone()
-                    .or_else(|| f.ludusavi_title.as_ref().map(|t| format!("Ludusavi: {t}")))
-                    .unwrap_or_else(|| "需要指定存档".into());
+                let rule =
+                    f.adapter_name.clone().or_else(|| f.ludusavi_title.as_ref().map(|t| format!("Ludusavi: {t}"))).unwrap_or_else(|| "需要指定存档".into());
                 let mut flags = Vec::new();
                 if f.steam_cloud {
                     flags.push("Steam 云存档".to_string());

@@ -119,9 +119,7 @@ pub fn launch_and_wait(
     #[cfg(target_os = "linux")]
     let subreaper = unix::become_subreaper();
 
-    let mut child = cmd
-        .spawn()
-        .with_context(|| crate::tr!("无法启动 {}", "Couldn't start {}", exe.display()))?;
+    let mut child = cmd.spawn().with_context(|| crate::tr!("无法启动 {}", "Couldn't start {}", exe.display()))?;
     log(&format!("started pid {}", child.id()));
 
     #[cfg(windows)]
@@ -179,9 +177,7 @@ pub fn launch_and_wait(
                 game_seen = true;
                 game_ever_seen = true;
                 game_gone_since = None;
-            } else if game_seen
-                && game_gone_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(3)
-            {
+            } else if game_seen && game_gone_since.get_or_insert_with(Instant::now).elapsed() >= Duration::from_secs(3) {
                 game_seen = false;
                 game_gone_since = None;
                 if active {
@@ -247,10 +243,7 @@ pub fn wait_quiesce(patterns: &[std::path::PathBuf], max: Duration) {
     }
     let start = Instant::now();
     loop {
-        let busy = patterns
-            .iter()
-            .flat_map(|p| matching_files(p))
-            .any(|f| file_in_use(&f));
+        let busy = patterns.iter().flat_map(|p| matching_files(p)).any(|f| file_in_use(&f));
         if !busy || start.elapsed() > max {
             return;
         }
@@ -265,11 +258,7 @@ fn matching_files(pattern: &Path) -> Vec<std::path::PathBuf> {
     };
     let dir_end = s[..idx].rfind('/').unwrap_or(0);
     let dir = std::path::PathBuf::from(&s[..dir_end]);
-    let Ok(glob) = globset::GlobBuilder::new(&s)
-        .case_insensitive(true)
-        .literal_separator(true)
-        .build()
-    else {
+    let Ok(glob) = globset::GlobBuilder::new(&s).case_insensitive(true).literal_separator(true).build() else {
         return Vec::new();
     };
     let m = glob.compile_matcher();
@@ -330,10 +319,7 @@ mod tests {
         let game = tmp.path().join("ln-fake-game.exe");
         std::fs::copy(r"C:\Windows\System32\PING.EXE", &game).unwrap();
         // The "launcher" starts the game, then stays open ~6 s.
-        let script = format!(
-            "start /b {} -n 2 127.0.0.1 >nul & ping -n 7 127.0.0.1 >nul",
-            game.display()
-        );
+        let script = format!("start /b {} -n 2 127.0.0.1 >nul & ping -n 7 127.0.0.1 >nul", game.display());
         let calls = std::cell::Cell::new(0);
         let launcher_done = std::cell::Cell::new(false);
         let mut cb = || {
@@ -382,16 +368,11 @@ mod tests {
 mod win {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HANDLE, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-    };
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
-        QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation, QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
     };
-    use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
     pub struct Job(HANDLE);
 

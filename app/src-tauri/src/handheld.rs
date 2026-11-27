@@ -113,9 +113,7 @@ pub async fn handheld_info() -> CmdResult<HandheldInfo> {
     blocking(|| {
         let cfg = config::load()?;
         let in_steam = steam::root(&cfg).and_then(|root| {
-            steam::accounts(&root)
-                .into_iter()
-                .find_map(|a| handheld::steam_shortcut(&root, &a.id).map(|s| InSteam { account: a.id.clone(), appid: s.appid }))
+            steam::accounts(&root).into_iter().find_map(|a| handheld::steam_shortcut(&root, &a.id).map(|s| InSteam { account: a.id.clone(), appid: s.appid }))
         });
         Ok(HandheldInfo { device: handheld::device(), steam_gamepad_ui: handheld::steam_gamepad_ui(), mode: cfg.handheld, in_steam })
     })

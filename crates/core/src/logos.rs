@@ -69,11 +69,7 @@ fn xbox_app() -> Option<PathBuf> {
         let packages = winreg::RegKey::predef(HKEY_CURRENT_USER)
             .open_subkey(r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages")
             .ok()?;
-        let mut names: Vec<String> = packages
-            .enum_keys()
-            .flatten()
-            .filter(|k| k.starts_with("Microsoft.GamingApp_"))
-            .collect();
+        let mut names: Vec<String> = packages.enum_keys().flatten().filter(|k| k.starts_with("Microsoft.GamingApp_")).collect();
         names.sort();
         names.iter().rev().find_map(|n| {
             let root: String = packages.open_subkey(n).ok()?.get_value("PackageRootFolder").ok()?;
@@ -92,11 +88,7 @@ type Memo = HashMap<(PathBuf, u64, u64), Option<PathBuf>>;
 pub fn of_exe(exe: &Path) -> Option<PathBuf> {
     static MEMO: OnceLock<Mutex<Memo>> = OnceLock::new();
     let meta = std::fs::metadata(exe).ok().filter(|m| m.is_file())?;
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs());
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     let id = (exe.to_path_buf(), mtime, meta.len());
     let memo = MEMO.get_or_init(Default::default);
     if let Some(hit) = memo.lock().ok()?.get(&id) {
@@ -238,9 +230,7 @@ impl Resources {
     /// `(id or name flag, offset)` of a directory's entries; names first.
     fn entries(&self, at: usize) -> Option<Vec<(u32, u32)>> {
         let n = u16_at(&self.data, at + 12)? as usize + u16_at(&self.data, at + 14)? as usize;
-        (0..n.min(4096))
-            .map(|i| Some((u32_at(&self.data, at + 16 + i * 8)?, u32_at(&self.data, at + 20 + i * 8)?)))
-            .collect()
+        (0..n.min(4096)).map(|i| Some((u32_at(&self.data, at + 16 + i * 8)?, u32_at(&self.data, at + 20 + i * 8)?))).collect()
     }
 
     /// The directory under `type` (level 1), as an offset.

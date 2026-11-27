@@ -22,18 +22,12 @@ pub fn exe_path() -> Option<PathBuf> {
     if sidecar.is_file() {
         return Some(sidecar);
     }
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|d| d.join("ludusavi.exe"))
-            .find(|p| p.is_file())
-    })
+    std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).map(|d| d.join("ludusavi.exe")).find(|p| p.is_file()))
 }
 
 fn command(exe: &Path) -> Command {
     let mut cmd = Command::new(exe);
-    cmd.arg("--config")
-        .arg(paths::ludusavi_config_dir())
-        .arg("--try-manifest-update");
+    cmd.arg("--config").arg(paths::ludusavi_config_dir()).arg("--try-manifest-update");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -47,13 +41,9 @@ fn run_json(mut cmd: Command) -> Result<Value> {
     let out = cmd.output().context(crate::tr!("无法运行 Ludusavi", "Couldn't run Ludusavi"))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Ludusavi may print log lines before the JSON document.
-    let start = stdout.find('{').ok_or_else(|| {
-        anyhow!(crate::tr!(
-            "Ludusavi 没有返回结果：{}",
-            "Ludusavi returned nothing: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
-    })?;
+    let start = stdout
+        .find('{')
+        .ok_or_else(|| anyhow!(crate::tr!("Ludusavi 没有返回结果：{}", "Ludusavi returned nothing: {}", String::from_utf8_lossy(&out.stderr).trim())))?;
     serde_json::from_str(&stdout[start..]).context(crate::tr!("无法解析 Ludusavi 的输出", "Couldn't read Ludusavi's output"))
 }
 
@@ -79,10 +69,8 @@ pub fn search(query: &str) -> Result<Vec<String>> {
     let mut cmd = command(&exe);
     cmd.arg("api").arg(input.to_string());
     let v = run_json(cmd)?;
-    let titles = v["responses"][0]["findTitle"]["titles"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
-        .unwrap_or_default();
+    let titles =
+        v["responses"][0]["findTitle"]["titles"].as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect()).unwrap_or_default();
     Ok(titles)
 }
 
@@ -93,16 +81,11 @@ pub fn find_titles(names: &[String]) -> Result<Vec<Option<String>>> {
         return Ok(Vec::new());
     }
     let exe = exe_path().ok_or_else(|| anyhow!(crate::tr!("没有找到 ludusavi.exe", "ludusavi.exe not found")))?;
-    let requests: Vec<Value> = names
-        .iter()
-        .map(|n| json!({ "findTitle": { "names": [n], "normalized": true } }))
-        .collect();
+    let requests: Vec<Value> = names.iter().map(|n| json!({ "findTitle": { "names": [n], "normalized": true } })).collect();
     let mut cmd = command(&exe);
     cmd.arg("api").arg(json!({ "requests": requests }).to_string());
     let v = run_json(cmd)?;
-    Ok((0..names.len())
-        .map(|i| v["responses"][i]["findTitle"]["titles"][0].as_str().map(str::to_string))
-        .collect())
+    Ok((0..names.len()).map(|i| v["responses"][i]["findTitle"]["titles"][0].as_str().map(str::to_string)).collect())
 }
 
 /// A game with saves on this PC, from a full scan.
@@ -137,16 +120,9 @@ pub fn parse_scan(v: &Value) -> Result<Vec<ScanGame>> {
                     .collect()
             })
             .unwrap_or_default();
-        let has_registry = g
-            .get("registry")
-            .and_then(Value::as_object)
-            .is_some_and(|r| !r.is_empty());
+        let has_registry = g.get("registry").and_then(Value::as_object).is_some_and(|r| !r.is_empty());
         if !files.is_empty() || has_registry {
-            out.push(ScanGame {
-                title: title.clone(),
-                files,
-                has_registry,
-            });
+            out.push(ScanGame { title: title.clone(), files, has_registry });
         }
     }
     Ok(out)
@@ -182,10 +158,7 @@ fn unquote_key(k: &str) -> String {
     }
 }
 
-pub fn parse_manifest(
-    text: &str,
-    titles: &std::collections::HashSet<String>,
-) -> std::collections::HashMap<String, ManifestInfo> {
+pub fn parse_manifest(text: &str, titles: &std::collections::HashSet<String>) -> std::collections::HashMap<String, ManifestInfo> {
     let mut out = std::collections::HashMap::new();
     let mut current: Option<String> = None;
     // Second-level section we are in ("steam", "cloud", ...) and the
@@ -197,10 +170,7 @@ pub fn parse_manifest(
             continue;
         }
         if !line.starts_with(' ') {
-            current = line
-                .strip_suffix(':')
-                .map(unquote_key)
-                .filter(|t| titles.contains(t));
+            current = line.strip_suffix(':').map(unquote_key).filter(|t| titles.contains(t));
             section.clear();
             continue;
         }
@@ -341,8 +311,7 @@ Other Game:
   steam:
     id: 1
 "#;
-        let titles: std::collections::HashSet<String> =
-            ["Hollow Knight", "If on a Winter's Night, Four Travelers"].iter().map(|s| s.to_string()).collect();
+        let titles: std::collections::HashSet<String> = ["Hollow Knight", "If on a Winter's Night, Four Travelers"].iter().map(|s| s.to_string()).collect();
         let m = parse_manifest(text, &titles);
         assert_eq!(
             m["Hollow Knight"],
@@ -353,10 +322,7 @@ Other Game:
                 install_dirs: vec!["Hollow Knight".into(), "Hollow Knight: Voidheart".into()],
             }
         );
-        assert_eq!(
-            m["If on a Winter's Night, Four Travelers"],
-            ManifestInfo { steam_id: Some(2173360), ..Default::default() }
-        );
+        assert_eq!(m["If on a Winter's Night, Four Travelers"], ManifestInfo { steam_id: Some(2173360), ..Default::default() });
         assert!(!m.contains_key("Other Game"));
     }
 

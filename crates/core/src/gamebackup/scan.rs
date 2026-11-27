@@ -97,20 +97,12 @@ fn globset(patterns: &[String]) -> Result<GlobSet> {
 
 fn rel_slash(base: &Path, p: &Path) -> Option<String> {
     let rel = p.strip_prefix(base).ok()?;
-    let s = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/");
+    let s = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
     (!s.is_empty()).then_some(s)
 }
 
 fn mtime(meta: &std::fs::Metadata) -> (i64, u32) {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| (d.as_secs() as i64, d.subsec_nanos()))
-        .unwrap_or((0, 0))
+    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| (d.as_secs() as i64, d.subsec_nanos())).unwrap_or((0, 0))
 }
 
 /// Patterns that exclude the game's saves inside `root`: save rules whose
@@ -271,14 +263,9 @@ mod tests {
     fn scans_in_order_without_excluded_files() {
         let tmp = tempfile::tempdir().unwrap();
         let r = tmp.path();
-        for (p, body) in [
-            ("b.bin", "bb"),
-            ("A/z.txt", "z"),
-            ("A/y.log", "log"),
-            ("Cache/data.pak", "keep"),
-            ("ShaderCache/x.bin", "drop"),
-            ("saves/slot1.sav", "save"),
-        ] {
+        for (p, body) in
+            [("b.bin", "bb"), ("A/z.txt", "z"), ("A/y.log", "log"), ("Cache/data.pak", "keep"), ("ShaderCache/x.bin", "drop"), ("saves/slot1.sav", "save")]
+        {
             let f = r.join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(f, body).unwrap();

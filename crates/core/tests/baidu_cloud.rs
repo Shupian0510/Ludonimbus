@@ -81,7 +81,16 @@ impl Mock {
         p == APP || p.starts_with(&format!("{APP}/"))
     }
 
-    fn handle(&mut self, method: &str, path: &str, q: &HashMap<String, String>, form: &HashMap<String, String>, ua: &str, body: &[u8], ctype: &str) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    fn handle(
+        &mut self,
+        method: &str,
+        path: &str,
+        q: &HashMap<String, String>,
+        form: &HashMap<String, String>,
+        ua: &str,
+        body: &[u8],
+        ctype: &str,
+    ) -> (u16, Vec<(String, String)>, Vec<u8>) {
         let ok = |v: Value| (200, vec![], v.to_string().into_bytes());
         let get = |k: &str| q.get(k).or_else(|| form.get(k)).cloned().unwrap_or_default();
 
@@ -89,7 +98,9 @@ impl Mock {
         if path == "/oauth/2.0/device/code" {
             assert_eq!(get("client_id"), "app-key");
             assert_eq!(get("scope"), "basic,netdisk");
-            return ok(json!({ "device_code": "dev-1", "user_code": "ABCD1234", "verification_url": format!("{}/device", self.base), "qrcode_url": format!("{}/qr.png", self.base), "expires_in": 300, "interval": 0 }));
+            return ok(
+                json!({ "device_code": "dev-1", "user_code": "ABCD1234", "verification_url": format!("{}/device", self.base), "qrcode_url": format!("{}/qr.png", self.base), "expires_in": 300, "interval": 0 }),
+            );
         }
         if path == "/oauth/2.0/token" {
             assert_eq!(get("client_secret"), "secret-key");
@@ -98,7 +109,13 @@ impl Mock {
                     assert_eq!(get("code"), "dev-1");
                     self.device_polls += 1;
                     if self.device_polls < 3 {
-                        (400, vec![], json!({"error": "authorization_pending", "error_description": "User has not yet completed the authorization"}).to_string().into_bytes())
+                        (
+                            400,
+                            vec![],
+                            json!({"error": "authorization_pending", "error_description": "User has not yet completed the authorization"})
+                                .to_string()
+                                .into_bytes(),
+                        )
                     } else {
                         ok(self.issue())
                     }
@@ -310,9 +327,7 @@ fn start_mock() -> (String, Arc<Mutex<Mock>>) {
                             Ok::<_, Infallible>(resp.body(Full::new(Bytes::from(out))).unwrap())
                         }
                     });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                        .await;
+                    let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), service).await;
                 });
             }
         });
@@ -321,20 +336,11 @@ fn start_mock() -> (String, Arc<Mutex<Mock>>) {
 }
 
 fn client(app: &str) -> BaiduClient {
-    BaiduClient {
-        app_key: "app-key".into(),
-        secret_key: "secret-key".into(),
-        app_name: app.into(),
-    }
+    BaiduClient { app_key: "app-key".into(), secret_key: "secret-key".into(), app_name: app.into() }
 }
 
 fn endpoints(base: &str) -> Endpoints {
-    Endpoints {
-        oauth: base.into(),
-        pan: base.into(),
-        pcs: base.into(),
-        min_poll: Duration::from_millis(10),
-    }
+    Endpoints { oauth: base.into(), pan: base.into(), pcs: base.into(), min_poll: Duration::from_millis(10) }
 }
 
 fn meta(game: &str, id: &str, parent: Option<&str>) -> SnapshotMeta {
@@ -380,8 +386,7 @@ fn baidu_cloud() {
     // Device-code sign-in: pending twice, then approved; the connection test
     // creates the app folder and writes / lists / reads / deletes a file.
     let mut shown = None;
-    let (token, name, account) =
-        cloud::baidu_sign_in(&client("Ludonimbus"), &ep, |c| shown = Some(c.clone()), &AtomicBool::new(false), timeout).unwrap();
+    let (token, name, account) = cloud::baidu_sign_in(&client("Ludonimbus"), &ep, |c| shown = Some(c.clone()), &AtomicBool::new(false), timeout).unwrap();
     let code = shown.unwrap();
     assert_eq!(code.user_code, "ABCD1234");
     assert!(code.browser_url().ends_with("/device?code=ABCD1234"));
@@ -510,10 +515,7 @@ fn baidu_cloud() {
     assert!(dav.list_snapshots("fe").unwrap().is_empty());
     let trash = dav.list_trash("fe").unwrap();
     assert_eq!(trash.len(), 1);
-    assert_eq!(
-        (trash[0].snapshot.id.as_str(), trash[0].deleted_by.as_str(), trash[0].snapshot.comment.as_str()),
-        ("01AAA", "PC-A", "通关前")
-    );
+    assert_eq!((trash[0].snapshot.id.as_str(), trash[0].deleted_by.as_str(), trash[0].snapshot.comment.as_str()), ("01AAA", "PC-A", "通关前"));
     dav.untrash("fe", "01AAA").unwrap();
     assert_eq!(dav.list_snapshots("fe").unwrap()[0].comment, "通关前");
     assert!(dav.list_trash("fe").unwrap().is_empty());

@@ -388,7 +388,10 @@ fn backup_only(root: &Path) {
     assert!(steamcloud::add(&a.cfg(), ACCOUNT, APPID, FoundChoice { saves: vec!["{steamuser}/x/**".into()], ..Default::default() }, false).is_err());
     let apps = steamcloud::apps(&a.cfg());
     assert_eq!(apps.iter().map(|x| x.appid).collect::<Vec<_>>(), [APPID, KNOWN, OTHER]);
-    assert_eq!((apps[0].key.as_deref(), apps[0].state, apps[0].sync_state.as_deref(), apps[0].cloud_enabled), (Some(KEY), State::Backup, Some("changesincloud"), true));
+    assert_eq!(
+        (apps[0].key.as_deref(), apps[0].state, apps[0].sync_state.as_deref(), apps[0].cloud_enabled),
+        (Some(KEY), State::Backup, Some("changesincloud"), true)
+    );
     assert_eq!((apps[1].key.as_deref(), apps[1].state), (None, State::Steam));
     // `{steamuser}` is this device's Steam folder.
     assert_eq!(snapshot::local_state(&entry).unwrap().roots.get("steamuser"), Some(&a.steam.userdata()));

@@ -122,10 +122,7 @@ fn two_devices_full_flow() {
         assert!(list.iter().any(|s| s.trigger == Trigger::ConflictKeep));
         // Choose the cloud version.
         let game = ctx.game("test-game").unwrap();
-        assert!(matches!(
-            sync::sync(&ctx, &game, Resolution::UseCloud, Trigger::Manual).unwrap(),
-            Outcome::Pulled { .. }
-        ));
+        assert!(matches!(sync::sync(&ctx, &game, Resolution::UseCloud, Trigger::Manual).unwrap(), Outcome::Pulled { .. }));
     }
     assert_eq!(read_save(&game_a, "slot1.sav"), "v3-from-b");
     assert_eq!(status(), Status::Synced);

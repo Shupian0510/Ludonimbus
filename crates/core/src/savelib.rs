@@ -205,11 +205,7 @@ pub fn cached(cfg: &AppConfig) -> Cached {
     if cfg.cloud == CloudConfig::None {
         return Cached::default();
     }
-    std::fs::read(cache_file())
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Cached>(&b).ok())
-        .filter(|c| c.scope == scope(&cfg.cloud))
-        .unwrap_or_default()
+    std::fs::read(cache_file()).ok().and_then(|b| serde_json::from_slice::<Cached>(&b).ok()).filter(|c| c.scope == scope(&cfg.cloud)).unwrap_or_default()
 }
 
 fn save_cache(c: &Cached) -> Result<()> {
@@ -510,13 +506,7 @@ mod tests {
         // Ryujinx. The Switch and Ryujinx share saves (one title id); the
         // Wii U version doesn't, even with the same name.
         let wiiu = with(entry("botw", "The Legend of Zelda - Breath of the Wild", &["{mlc}/usr/save/00050000/101c9300/**"], None, None), "cemu");
-        let switch = entry(
-            "nx-01007ef00011e000",
-            "塞尔达传说 旷野之息",
-            &["{nxsave-01007ef00011e000}/**", "{nxdevice-01007ef00011e000}/**"],
-            None,
-            None,
-        );
+        let switch = entry("nx-01007ef00011e000", "塞尔达传说 旷野之息", &["{nxsave-01007ef00011e000}/**", "{nxdevice-01007ef00011e000}/**"], None, None);
         let ryujinx = with(entry("botw-ryujinx", "The Legend of Zelda: Breath of the Wild", &["{nxsave-01007ef00011e000}/**"], None, None), "ryujinx");
         assert_eq!((save_scope(&wiiu).as_str(), save_scope(&switch).as_str(), save_scope(&ryujinx).as_str()), ("wiiu", "switch", "switch"));
         let mut cloud = CloudGame::from(&switch);

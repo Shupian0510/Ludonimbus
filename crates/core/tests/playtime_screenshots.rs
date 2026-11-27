@@ -34,19 +34,10 @@ impl Device {
         let game = GameEntry {
             key: KEY.into(),
             name: "Zelda".into(),
-            steam: Some(SteamLink {
-                account: "42".into(),
-                appid,
-                enabled: true,
-                original: None,
-                created: false,
-            }),
+            steam: Some(SteamLink { account: "42".into(), appid, enabled: true, original: None, created: false }),
             ..Default::default()
         };
-        let shots = root
-            .join("userdata/42/760/remote")
-            .join(shortcut_gameid(appid).to_string())
-            .join("screenshots");
+        let shots = root.join("userdata/42/760/remote").join(shortcut_gameid(appid).to_string()).join("screenshots");
         fs::create_dir_all(shots.join("thumbnails")).unwrap();
         Device { home, cfg, game, shots }
     }
@@ -104,10 +95,7 @@ fn playtime_and_screenshots_across_devices() {
     let r = screenshots::sync(store, &b.cfg, &b.game, &quiet).unwrap();
     assert_eq!((r.uploaded, r.downloaded), (0, 2));
     assert_eq!(fs::read_to_string(b.shots.join("20261120161819_1.jpg")).unwrap(), "jpeg 20261120161819_1.jpg");
-    assert_eq!(
-        fs::read_to_string(b.shots.join("thumbnails/20261120161819_1.jpg")).unwrap(),
-        "thumb 20261120161819_1.jpg"
-    );
+    assert_eq!(fs::read_to_string(b.shots.join("thumbnails/20261120161819_1.jpg")).unwrap(), "thumb 20261120161819_1.jpg");
     // Nothing new: nothing moves.
     let r = screenshots::sync(store, &b.cfg, &b.game, &quiet).unwrap();
     assert_eq!((r.uploaded, r.downloaded), (0, 0));

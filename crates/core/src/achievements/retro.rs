@@ -21,10 +21,7 @@ pub fn api_key() -> Result<Option<String>> {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(20))
-        .user_agent(&format!("Ludonimbus/{}", crate::APP_VERSION))
-        .build()
+    ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).user_agent(&format!("Ludonimbus/{}", crate::APP_VERSION)).build()
 }
 
 fn get(endpoint: &str, key: &str, params: &[(&str, &str)]) -> Result<Value> {
@@ -239,12 +236,7 @@ pub fn scan(st: &Settings, b: &Binding) -> Result<Scan> {
 /// `(game id, achievement id)` of unlocks in the last `minutes` minutes: a
 /// cheap check while a game runs, before reading the whole game again.
 pub fn parse_recent(v: &Value) -> Vec<(String, String)> {
-    v.as_array()
-        .into_iter()
-        .flatten()
-        .map(|a| (text(&a["GameID"]), text(&a["AchievementID"])))
-        .filter(|(g, a)| !g.is_empty() && !a.is_empty())
-        .collect()
+    v.as_array().into_iter().flatten().map(|a| (text(&a["GameID"]), text(&a["AchievementID"]))).filter(|(g, a)| !g.is_empty() && !a.is_empty()).collect()
 }
 
 pub fn recent_unlocks(st: &Settings, minutes: u32) -> Result<Vec<(String, String)>> {
@@ -304,7 +296,8 @@ mod tests {
 
     #[test]
     fn profile() {
-        let p = parse_profile(&json!({ "User": "MaxMilyin", "ULID": "00003EMFWR7XB8SDPEHB3K56ZQ", "UserPic": "/UserPic/MaxMilyin.png", "TotalPoints": 5 })).unwrap();
+        let p = parse_profile(&json!({ "User": "MaxMilyin", "ULID": "00003EMFWR7XB8SDPEHB3K56ZQ", "UserPic": "/UserPic/MaxMilyin.png", "TotalPoints": 5 }))
+            .unwrap();
         assert_eq!(p.ulid.as_deref(), Some("00003EMFWR7XB8SDPEHB3K56ZQ"));
         assert!(parse_profile(&json!({})).is_err());
     }

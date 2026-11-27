@@ -37,7 +37,8 @@ const SOLO: &str = "solo";
 /// What a device on 0.6 left in the Xbox version's folder: names and
 /// contents as 0.6 writes them (sessions without `platform` and `line`).
 const OLD_PLAYTIME: &str = r#"{"version":1,"device":"d-old","deviceName":"OLD","steamBaseline":null,"sessions":[{"start":"2026-11-01T10:00:00Z","end":"2026-11-01T11:00:00Z","secs":3600,"via":"direct"}],"updatedAt":"2026-11-01T11:00:00Z"}"#;
-const OLD_UNLOCKS: &str = r#"{"device":"d-old","deviceName":"OLD","updatedAt":null,"unlocks":[{"id":"3","unlockedAt":"2026-11-01T10:30:00Z","hardcore":false}]}"#;
+const OLD_UNLOCKS: &str =
+    r#"{"device":"d-old","deviceName":"OLD","updatedAt":null,"unlocks":[{"id":"3","unlockedAt":"2026-11-01T10:30:00Z","hardcore":false}]}"#;
 
 /// A store in memory that writes down every request. Small files it has
 /// served are kept on the device, as with a cloud that is far away.
@@ -290,7 +291,15 @@ fn two_folders(w: &World) {
             title: None,
             achievements: ["1", "2", "3", "4"]
                 .iter()
-                .map(|id| Achievement { id: id.to_string(), name: format!("A{id}"), description: String::new(), icon: None, hidden: false, points: None, grade: None })
+                .map(|id| Achievement {
+                    id: id.to_string(),
+                    name: format!("A{id}"),
+                    description: String::new(),
+                    icon: None,
+                    hidden: false,
+                    points: None,
+                    grade: None,
+                })
                 .collect(),
         })
     })
@@ -394,10 +403,7 @@ fn costs(w: &World) {
         assert!(matches!(sync_once(w.a.cloud(&w.store), key), Outcome::UpToDate));
         w.store.take()
     };
-    assert_eq!(
-        after(SOLO),
-        [format!("list games/{SOLO}/saves/main"), format!("list games/{SOLO}/playtime"), format!("read games/{SOLO}/art/art.json")]
-    );
+    assert_eq!(after(SOLO), [format!("list games/{SOLO}/saves/main"), format!("list games/{SOLO}/playtime"), format!("read games/{SOLO}/art/art.json")]);
     assert_eq!(
         after(STEAM),
         [

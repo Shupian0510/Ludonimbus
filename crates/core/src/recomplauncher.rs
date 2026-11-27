@@ -104,11 +104,7 @@ pub fn detect(exe: &Path, args: &str) -> Option<Detected> {
     }
     let id = play_id(args)?;
     let adapter = adapters::find_recomplauncher(&id)?;
-    Some(Detected {
-        adapter,
-        install: find_installed(Some(exe), &id).map(|g| g.path),
-        via_recomplauncher: true,
-    })
+    Some(Detected { adapter, install: find_installed(Some(exe), &id).map(|g| g.path), via_recomplauncher: true })
 }
 
 /// A save place picked in RecompLauncher, in Ludonimbus' syntax.

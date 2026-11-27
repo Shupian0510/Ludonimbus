@@ -192,11 +192,7 @@ fn is_locked(s: &IndexEntry) -> bool {
 fn kept_by_0_6(view: &LineView, last_synced: Option<&str>, settings: &Retention) -> BTreeSet<String> {
     let exempt = |s: &IndexEntry| is_locked(s) || s.trigger == "manual";
     let mut keep = BTreeSet::new();
-    let mainline_head = view
-        .snapshots
-        .iter()
-        .filter(|s| !on_the_side(&s.trigger))
-        .max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+    let mainline_head = view.snapshots.iter().filter(|s| !on_the_side(&s.trigger)).max_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
     keep.extend(mainline_head.map(|s| s.id.clone()));
     keep.extend(last_synced.map(str::to_string));
     let mut sorted: Vec<&IndexEntry> = view.snapshots.iter().collect();
@@ -273,10 +269,7 @@ fn a_long_history_keeps_the_newest_20_and_one_per_day() {
             0 => {
                 assert_eq!(why(&p, morning), [Reason::Recent]);
                 assert_eq!(why(&p, noon), [Reason::Recent]);
-                assert_eq!(
-                    why(&p, evening),
-                    [Reason::Head, Reason::PlatformLatest, Reason::DeviceBase, Reason::Recent, Reason::Daily]
-                );
+                assert_eq!(why(&p, evening), [Reason::Head, Reason::PlatformLatest, Reason::DeviceBase, Reason::Recent, Reason::Daily]);
             }
             1..=5 => {
                 assert_eq!(why(&p, morning), [Reason::Recent]);
@@ -619,10 +612,7 @@ fn a_line_from_0_6_keeps_what_0_6_keeps() {
     assert_eq!(why(&p, &ids[70]), [Reason::Locked]);
     assert!(why(&p, &ids[60]).is_empty());
     assert_eq!(why(&p, &ids[3]), [Reason::Recent, Reason::Daily]);
-    assert_eq!(
-        why(&p, &ids[0]),
-        [Reason::Head, Reason::PlatformLatest, Reason::DeviceBase, Reason::Recent, Reason::Daily]
-    );
+    assert_eq!(why(&p, &ids[0]), [Reason::Head, Reason::PlatformLatest, Reason::DeviceBase, Reason::Recent, Reason::Daily]);
     // The last 30 days and the three the user asked for.
     assert_eq!(p.keep.len(), 33);
     assert_eq!(kept(&p), kept_by_0_6(&view, Some(&head.id), &Retention::default()));
@@ -723,10 +713,7 @@ fn all_the_rules_together() {
         match day {
             0 => {
                 expected.insert(first.clone(), vec![Reason::Recent]);
-                expected.insert(
-                    second.clone(),
-                    vec![Reason::Head, Reason::PlatformLatest, Reason::DeviceBase, Reason::Recent, Reason::Daily],
-                );
+                expected.insert(second.clone(), vec![Reason::Head, Reason::PlatformLatest, Reason::DeviceBase, Reason::Recent, Reason::Daily]);
             }
             1..=9 => {
                 expected.insert(first.clone(), vec![Reason::Recent]);
@@ -791,18 +778,8 @@ impl Rng {
 /// three devices on three platforms that mostly sync before they play and
 /// sometimes don't, restores, conflicts, manual backups, kept saves.
 fn random_line(rng: &mut Rng) -> (Line, Vec<DeviceBase>, Policy) {
-    const TRIGGERS: [&str; 10] = [
-        "auto-exit",
-        "auto-exit",
-        "auto-exit",
-        "pre-launch",
-        "passive",
-        "sync-now",
-        "manual",
-        "restore",
-        "pre-restore",
-        "conflict-keep",
-    ];
+    const TRIGGERS: [&str; 10] =
+        ["auto-exit", "auto-exit", "auto-exit", "pre-launch", "passive", "sync-now", "manual", "restore", "pre-restore", "conflict-keep"];
     let mut l = Line::new();
     let count = rng.below(90);
     // Minutes before now, the oldest first.

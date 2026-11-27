@@ -15,10 +15,8 @@ fn start_dav() -> u16 {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
-            let handler = dav_server::DavHandler::builder()
-                .filesystem(dav_server::memfs::MemFs::new())
-                .locksystem(dav_server::fakels::FakeLs::new())
-                .build_handler();
+            let handler =
+                dav_server::DavHandler::builder().filesystem(dav_server::memfs::MemFs::new()).locksystem(dav_server::fakels::FakeLs::new()).build_handler();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             tx.send(listener.local_addr().unwrap().port()).unwrap();
             loop {
@@ -29,9 +27,7 @@ fn start_dav() -> u16 {
                         let handler = handler.clone();
                         async move { Ok::<_, Infallible>(handler.handle(req).await) }
                     });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                        .await;
+                    let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), service).await;
                 });
             }
         });
@@ -40,22 +36,11 @@ fn start_dav() -> u16 {
 }
 
 fn small() -> SpeedOptions {
-    SpeedOptions {
-        total_bytes: 2 * 1024 * 1024,
-        object_bytes: 256 * 1024,
-        threads: 3,
-        max_secs: 30,
-    }
+    SpeedOptions { total_bytes: 2 * 1024 * 1024, object_bytes: 256 * 1024, threads: 3, max_secs: 30 }
 }
 
 fn leftovers(store: &dyn Store) -> Vec<String> {
-    store
-        .list("")
-        .unwrap()
-        .into_iter()
-        .filter(|e| e.name.starts_with(speedtest::PREFIX))
-        .map(|e| e.name)
-        .collect()
+    store.list("").unwrap().into_iter().filter(|e| e.name.starts_with(speedtest::PREFIX)).map(|e| e.name).collect()
 }
 
 fn check_full_run(store: &dyn Store) {
@@ -89,11 +74,7 @@ fn speed_test_on_local_folder_and_webdav() {
 
     let port = start_dav();
     let dav = cloud::build_store(
-        &CloudConfig::WebDav {
-            url: format!("http://127.0.0.1:{port}/"),
-            username: "player".into(),
-            folder: "Ludonimbus".into(),
-        },
+        &CloudConfig::WebDav { url: format!("http://127.0.0.1:{port}/"), username: "player".into(), folder: "Ludonimbus".into() },
         Some("secret"),
         Duration::from_secs(10),
     )
@@ -115,18 +96,34 @@ fn speed_test_on_local_folder_and_webdav() {
     let slow = SpeedOptions { max_secs: 1, total_bytes: 64 * 1024 * 1024, object_bytes: 64 * 1024, threads: 1 };
     struct Slow<'a>(&'a LocalFolder);
     impl Store for Slow<'_> {
-        fn kind(&self) -> &'static str { "localFolder" }
-        fn label(&self) -> String { self.0.label() }
-        fn check(&self) -> anyhow::Result<()> { self.0.check() }
-        fn list(&self, d: &str) -> anyhow::Result<Vec<ludonimbus_core::cloud::store::Entry>> { self.0.list(d) }
-        fn read(&self, p: &str) -> anyhow::Result<Option<Vec<u8>>> { self.0.read(p) }
-        fn download(&self, p: &str, d: &std::path::Path) -> anyhow::Result<()> { self.0.download(p, d) }
+        fn kind(&self) -> &'static str {
+            "localFolder"
+        }
+        fn label(&self) -> String {
+            self.0.label()
+        }
+        fn check(&self) -> anyhow::Result<()> {
+            self.0.check()
+        }
+        fn list(&self, d: &str) -> anyhow::Result<Vec<ludonimbus_core::cloud::store::Entry>> {
+            self.0.list(d)
+        }
+        fn read(&self, p: &str) -> anyhow::Result<Option<Vec<u8>>> {
+            self.0.read(p)
+        }
+        fn download(&self, p: &str, d: &std::path::Path) -> anyhow::Result<()> {
+            self.0.download(p, d)
+        }
         fn write(&self, p: &str, b: &[u8]) -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_millis(150));
             self.0.write(p, b)
         }
-        fn upload(&self, p: &str, s: &std::path::Path) -> anyhow::Result<()> { self.0.upload(p, s) }
-        fn remove(&self, p: &str) -> anyhow::Result<()> { self.0.remove(p) }
+        fn upload(&self, p: &str, s: &std::path::Path) -> anyhow::Result<()> {
+            self.0.upload(p, s)
+        }
+        fn remove(&self, p: &str) -> anyhow::Result<()> {
+            self.0.remove(p)
+        }
     }
     let r = speedtest::run(&Slow(&local), &slow, &AtomicBool::new(false), &|_| {}).unwrap();
     let us = r.upload_serial.unwrap();

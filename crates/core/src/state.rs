@@ -138,11 +138,7 @@ fn is_zero(n: &u64) -> bool {
 impl GameState {
     /// What this device synced last, for [`crate::cloud::decide`].
     pub fn base(&self) -> Option<Base> {
-        Some(Base {
-            id: self.last_synced_id.clone()?,
-            vv: self.last_synced_vv.clone(),
-            content_hash: self.last_synced_hash.clone().unwrap_or_default(),
-        })
+        Some(Base { id: self.last_synced_id.clone()?, vv: self.last_synced_vv.clone(), content_hash: self.last_synced_hash.clone().unwrap_or_default() })
     }
 }
 
@@ -173,10 +169,7 @@ fn lock() -> Result<FileLock> {
 }
 
 fn read() -> State {
-    std::fs::read_to_string(paths::state_file())
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    std::fs::read_to_string(paths::state_file()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 pub fn load() -> State {
