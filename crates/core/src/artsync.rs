@@ -189,4 +189,3 @@ mod tests {
         assert_eq!(store.take().read, 1);
     }
 }
-

@@ -50,7 +50,7 @@ impl<'a> Writer<'a> {
     /// `count` snapshots, each made from the one before, by two devices in turn.
     fn play(&mut self, count: u64, index: bool) {
         for _ in 0..count {
-            let device = if self.next % 2 == 0 { "d-a" } else { "d-b" };
+            let device = if self.next.is_multiple_of(2) { "d-a" } else { "d-b" };
             let m = manifest(self.next, device, Vv::next([&self.last], device, 0));
             line::write_manifest(self.store, DIR, &m).unwrap();
             self.cache.insert(&m);

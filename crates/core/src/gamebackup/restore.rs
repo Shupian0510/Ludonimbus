@@ -89,11 +89,7 @@ pub fn safe_join(target: &Path, rel: &str) -> Result<PathBuf> {
     let mut out = target.to_path_buf();
     for part in rel.split('/') {
         let p = Path::new(part);
-        let ok = !part.is_empty()
-            && part != "."
-            && part != ".."
-            && !part.contains(['\\', ':'])
-            && p.components().all(|c| matches!(c, PathPart::Normal(_)));
+        let ok = !part.is_empty() && part != "." && part != ".." && !part.contains(['\\', ':']) && p.components().all(|c| matches!(c, PathPart::Normal(_)));
         if !ok {
             bail!(crate::tr!("备份里有不安全的路径：{rel}", "The backup has an unsafe path: {rel}"));
         }
@@ -183,9 +179,7 @@ pub fn bases_for(m: &Manifest, t: &Targets) -> Bases {
                 let p = PathBuf::from(orig);
                 // The drive of the folder (`D:\` of `D:\Games\x`).
                 let drive: PathBuf = p.components().take(2).collect();
-                let back = plain_absolute(&p)
-                    && drive.exists()
-                    && (picked.iter().any(|d| inside(&p, d)) || !users.iter().any(|u| inside(&p, u)));
+                let back = plain_absolute(&p) && drive.exists() && (picked.iter().any(|d| inside(&p, d)) || !users.iter().any(|u| inside(&p, u)));
                 b.set(name, if back { p } else { fallback.join(name) });
             }
         }
@@ -312,13 +306,9 @@ impl Run<'_> {
                 continue;
             }
             let p = &part.paths[fi];
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .open(p)
-                .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", p.display()))?;
+            let mut f = std::fs::OpenOptions::new().write(true).open(p).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", p.display()))?;
             f.seek(SeekFrom::Start(file_off))?;
-            f.write_all(&raw[chunk_off..chunk_off + len])
-                .with_context(|| crate::tr!("无法写入 {}", "Can't write {}", p.display()))?;
+            f.write_all(&raw[chunk_off..chunk_off + len]).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", p.display()))?;
         }
         Ok(())
     }
@@ -457,10 +447,8 @@ pub fn restore(
     }
 
     let journal = if resuming { std::fs::read(journal_file(key)).ok().and_then(|b| serde_json::from_slice::<Journal>(&b).ok()) } else { None };
-    let done: HashSet<(usize, usize)> = journal
-        .as_ref()
-        .map(|j| j.done.iter().copied().filter(|&(pi, ci)| pi < parts.len() && ci < parts[pi].c.chunks.len()).collect())
-        .unwrap_or_default();
+    let done: HashSet<(usize, usize)> =
+        journal.as_ref().map(|j| j.done.iter().copied().filter(|&(pi, ci)| pi < parts.len() && ci < parts[pi].c.chunks.len()).collect()).unwrap_or_default();
     let resumed_chunks = done.len();
     let mut run = Run {
         store,
@@ -476,17 +464,16 @@ pub fn restore(
         kept: Vec::new(),
         last_flush: Mutex::new(Instant::now()),
     };
-    let full_size = |pi: usize, fi: usize, parts: &[Part]| {
-        std::fs::metadata(&parts[pi].paths[fi]).is_ok_and(|md| md.is_file() && md.len() == parts[pi].c.files[fi].s)
-    };
+    let full_size =
+        |pi: usize, fi: usize, parts: &[Part]| std::fs::metadata(&parts[pi].paths[fi]).is_ok_and(|md| md.is_file() && md.len() == parts[pi].c.files[fi].s);
 
     // Files already there with the right content stay as they are. Resuming,
     // those the first try found are still there; the files it was writing
     // have their full size but not their content yet, so they aren't hashed
     // again (a journal from before the list was kept: they are).
-    let kept_before = journal.and_then(|j| j.kept).map(|k| {
-        k.into_iter().filter(|&(pi, fi)| pi < run.parts.len() && fi < run.parts[pi].paths.len() && full_size(pi, fi, &run.parts)).collect::<Vec<_>>()
-    });
+    let kept_before = journal
+        .and_then(|j| j.kept)
+        .map(|k| k.into_iter().filter(|&(pi, fi)| pi < run.parts.len() && fi < run.parts[pi].paths.len() && full_size(pi, fi, &run.parts)).collect::<Vec<_>>());
     run.kept = match kept_before {
         Some(k) => k,
         None => {
@@ -556,9 +543,7 @@ pub fn restore(
         run.parts
             .iter()
             .enumerate()
-            .flat_map(|(pi, p)| {
-                (0..p.c.chunks.len()).filter(move |&ci| p.spans[ci].iter().any(|s| p.needed[s.0])).map(move |ci| (pi, ci))
-            })
+            .flat_map(|(pi, p)| (0..p.c.chunks.len()).filter(move |&ci| p.spans[ci].iter().any(|s| p.needed[s.0])).map(move |ci| (pi, ci)))
             .filter(|x| !done.contains(x))
             .collect()
     };

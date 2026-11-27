@@ -316,14 +316,7 @@ pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration)
             folder,
             timeout,
         )?),
-        CloudConfig::S3 {
-            endpoint,
-            region,
-            bucket,
-            prefix,
-            access_key_id,
-            path_style,
-        } => Box::new(s3::S3::new(
+        CloudConfig::S3 { endpoint, region, bucket, prefix, access_key_id, path_style } => Box::new(s3::S3::new(
             endpoint,
             region,
             bucket,
@@ -333,35 +326,26 @@ pub fn build_store(cloud: &CloudConfig, secret: Option<&str>, timeout: Duration)
             *path_style,
             timeout,
         )?),
-        CloudConfig::BaiduPan {
-            app_key,
-            secret_key,
-            app_name,
-            ..
-        } => {
+        CloudConfig::BaiduPan { app_key, secret_key, app_name, .. } => {
             let secret_key = baidu::saved_app_secret(app_key, secret_key)?;
-            let client = baidu::BaiduClient::resolve(app_key, &secret_key, app_name)
-                .ok_or_else(|| anyhow!(crate::tr!("百度网盘缺少应用的 AppKey / SecretKey，请在设置里填写", "Baidu Netdisk is missing the app's AppKey / SecretKey. Enter them in Settings")))?;
-            let token = baidu::load_token()?.ok_or_else(|| anyhow!(crate::tr!("百度网盘登录已失效，请在设置里重新连接", "The Baidu Netdisk sign-in has expired. Reconnect in Settings")))?;
-            Box::new(baidu::BaiduPan::new(
-                client,
-                baidu::Endpoints::default(),
-                token,
-                baidu::TokenSink::Keyring,
-                timeout,
-            ))
+            let client = baidu::BaiduClient::resolve(app_key, &secret_key, app_name).ok_or_else(|| {
+                anyhow!(crate::tr!(
+                    "百度网盘缺少应用的 AppKey / SecretKey，请在设置里填写",
+                    "Baidu Netdisk is missing the app's AppKey / SecretKey. Enter them in Settings"
+                ))
+            })?;
+            let token = baidu::load_token()?
+                .ok_or_else(|| anyhow!(crate::tr!("百度网盘登录已失效，请在设置里重新连接", "The Baidu Netdisk sign-in has expired. Reconnect in Settings")))?;
+            Box::new(baidu::BaiduPan::new(client, baidu::Endpoints::default(), token, baidu::TokenSink::Keyring, timeout))
         }
         CloudConfig::Quark { folder } => Box::new(quark::Quark::open(folder, timeout)?),
-        CloudConfig::GoogleDrive {
-            client_id,
-            client_secret,
-            folder,
-            ..
-        } => {
-            let client = oauth::GoogleClient::resolve(client_id, client_secret)
-                .ok_or_else(|| anyhow!(crate::tr!("Google Drive 缺少 OAuth Client ID，请在设置里填写", "Google Drive has no OAuth Client ID. Enter one in Settings")))?;
-            let token = oauth::load_refresh_token()?
-                .ok_or_else(|| anyhow!(crate::tr!("Google Drive 登录已失效，请在设置里重新连接", "The Google Drive sign-in has expired. Reconnect in Settings")))?;
+        CloudConfig::GoogleDrive { client_id, client_secret, folder, .. } => {
+            let client = oauth::GoogleClient::resolve(client_id, client_secret).ok_or_else(|| {
+                anyhow!(crate::tr!("Google Drive 缺少 OAuth Client ID，请在设置里填写", "Google Drive has no OAuth Client ID. Enter one in Settings"))
+            })?;
+            let token = oauth::load_refresh_token()?.ok_or_else(|| {
+                anyhow!(crate::tr!("Google Drive 登录已失效，请在设置里重新连接", "The Google Drive sign-in has expired. Reconnect in Settings"))
+            })?;
             Box::new(gdrive::GoogleDrive::new(client, token, folder.clone(), timeout))
         }
         CloudConfig::None => return Err(anyhow!(NotConfigured)),
@@ -383,11 +367,17 @@ pub fn probe_store(store: &dyn Store) -> Result<AccountInfo> {
     let result = (|| -> Result<()> {
         let listed = store.list("").context(crate::tr!("列出文件夹失败", "Couldn't list the folder"))?;
         if !listed.iter().any(|e| e.name == name) {
-            bail!(crate::tr!("写入的测试文件没有出现在文件列表里，这个服务器可能不完全兼容", "The test file didn't show up in the folder listing; this server may not be fully compatible"));
+            bail!(crate::tr!(
+                "写入的测试文件没有出现在文件列表里，这个服务器可能不完全兼容",
+                "The test file didn't show up in the folder listing; this server may not be fully compatible"
+            ));
         }
         let back = store.read(&name).context(crate::tr!("读取测试文件失败", "Couldn't read the test file back"))?;
         if back.as_deref() != Some(data.as_bytes()) {
-            bail!(crate::tr!("读回来的测试文件内容不一致，这个服务器可能不完全兼容", "The test file read back differently; this server may not be fully compatible"));
+            bail!(crate::tr!(
+                "读回来的测试文件内容不一致，这个服务器可能不完全兼容",
+                "The test file read back differently; this server may not be fully compatible"
+            ));
         }
         Ok(())
     })();
@@ -395,11 +385,7 @@ pub fn probe_store(store: &dyn Store) -> Result<AccountInfo> {
     result?;
     removed.context(crate::tr!("删除测试文件失败", "Couldn't delete the test file"))?;
     let (used, total) = store.quota().unwrap_or((None, None));
-    Ok(AccountInfo {
-        label: store.label(),
-        used,
-        total,
-    })
+    Ok(AccountInfo { label: store.label(), used, total })
 }
 
 /// Sign in to Baidu Netdisk with the device-code flow and test access to the
@@ -470,15 +456,7 @@ pub fn connect_baidu(
             let _ = secrets::clear(&baidu::app_secret_user(old));
         }
     }
-    switch_to(
-        CloudConfig::BaiduPan {
-            app_key,
-            secret_key: String::new(),
-            app_name: app_name.trim().to_string(),
-            account: Some(name.clone()),
-        },
-        None,
-    )?;
+    switch_to(CloudConfig::BaiduPan { app_key, secret_key: String::new(), app_name: app_name.trim().to_string(), account: Some(name.clone()) }, None)?;
     Ok(name)
 }
 
@@ -633,13 +611,43 @@ pub fn kind_id(cloud: &CloudConfig) -> &'static str {
 pub fn kind_name(cloud: &CloudConfig) -> &'static str {
     let en = crate::i18n::is_en();
     match cloud {
-        CloudConfig::None => if en { "Not connected" } else { "未连接" },
-        CloudConfig::LocalFolder { .. } => if en { "Local / synced folder" } else { "本地 / 同步文件夹" },
+        CloudConfig::None => {
+            if en {
+                "Not connected"
+            } else {
+                "未连接"
+            }
+        }
+        CloudConfig::LocalFolder { .. } => {
+            if en {
+                "Local / synced folder"
+            } else {
+                "本地 / 同步文件夹"
+            }
+        }
         CloudConfig::GoogleDrive { .. } => "Google Drive",
         CloudConfig::WebDav { .. } => "WebDAV",
-        CloudConfig::S3 { .. } => if en { "S3-compatible storage" } else { "S3 兼容存储" },
-        CloudConfig::BaiduPan { .. } => if en { "Baidu Netdisk" } else { "百度网盘" },
-        CloudConfig::Quark { .. } => if en { "Quark" } else { "夸克网盘" },
+        CloudConfig::S3 { .. } => {
+            if en {
+                "S3-compatible storage"
+            } else {
+                "S3 兼容存储"
+            }
+        }
+        CloudConfig::BaiduPan { .. } => {
+            if en {
+                "Baidu Netdisk"
+            } else {
+                "百度网盘"
+            }
+        }
+        CloudConfig::Quark { .. } => {
+            if en {
+                "Quark"
+            } else {
+                "夸克网盘"
+            }
+        }
     }
 }
 

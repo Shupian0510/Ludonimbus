@@ -234,12 +234,7 @@ pub fn steam_minutes(root: &Path, account: &str, appid: u32) -> Option<u64> {
 
 fn steam_minutes_in(text: &str, appid: u32) -> Option<u64> {
     let doc = vdf::parse_text(text).ok()?;
-    let apps = doc
-        .get("UserLocalConfigStore")?
-        .get("Software")?
-        .get("Valve")?
-        .get("Steam")?
-        .get("apps")?;
+    let apps = doc.get("UserLocalConfigStore")?.get("Software")?.get("Valve")?.get("Steam")?.get("apps")?;
     let signed = (appid as i32).to_string();
     let entry = apps.get(&signed).or_else(|| apps.get(&appid.to_string()))?;
     entry.get("Playtime")?.as_str()?.trim().parse().ok()
@@ -257,12 +252,7 @@ pub fn ensure(cfg: &AppConfig, game: &GameEntry) -> Result<DeviceLog> {
     if can_import {
         if let (Some(link), Some(root)) = (game.steam.as_ref(), steam::root(cfg)) {
             if let Some(minutes) = steam_minutes(&root, &link.account, link.appid) {
-                log.steam_baseline = Some(SteamBaseline {
-                    minutes,
-                    account: link.account.clone(),
-                    appid: link.appid,
-                    imported_at: Utc::now(),
-                });
+                log.steam_baseline = Some(SteamBaseline { minutes, account: link.account.clone(), appid: link.appid, imported_at: Utc::now() });
             }
         }
     }
@@ -353,12 +343,7 @@ fn summarize(own: Option<&DeviceLog>, others: &[Remote], own_id: &str, key: &str
     let mut platforms: Vec<PlatformTotal> = by_platform.into_iter().map(|(p, secs)| PlatformTotal { platform: p.to_string(), secs }).collect();
     platforms.sort_by(|a, b| b.secs.cmp(&a.secs).then(a.platform.cmp(&b.platform)));
 
-    Summary {
-        total_secs: devices.iter().map(|d| d.secs).sum(),
-        last_played: devices.iter().filter_map(|d| d.last_played).max(),
-        devices,
-        platforms,
-    }
+    Summary { total_secs: devices.iter().map(|d| d.secs).sum(), last_played: devices.iter().filter_map(|d| d.last_played).max(), devices, platforms }
 }
 
 /// Total over all devices from local data (this device + cached copies of
@@ -503,25 +488,13 @@ mod tests {
             version: 1,
             device: device.into(),
             device_name: device.to_uppercase(),
-            steam_baseline: baseline.map(|m| SteamBaseline {
-                minutes: m,
-                account: "1".into(),
-                appid: 1,
-                imported_at: t0,
-            }),
+            steam_baseline: baseline.map(|m| SteamBaseline { minutes: m, account: "1".into(), appid: 1, imported_at: t0 }),
             sessions: secs
                 .iter()
                 .enumerate()
                 .map(|(i, s)| {
                     let start = t0 + chrono::Duration::hours(i as i64);
-                    Session {
-                        start,
-                        end: start + chrono::Duration::seconds(*s as i64),
-                        secs: *s,
-                        via: Via::Steam,
-                        platform: None,
-                        line: None,
-                    }
+                    Session { start, end: start + chrono::Duration::seconds(*s as i64), secs: *s, via: Via::Steam, platform: None, line: None }
                 })
                 .collect(),
             updated_at: t0,
@@ -563,10 +536,7 @@ mod tests {
         // This device's other install of the game is this device's time too.
         assert_eq!((s.devices[0].device.as_str(), s.devices[0].secs, s.devices[0].this_device), ("a", 65, true));
         assert_eq!((s.devices[1].device.as_str(), s.devices[1].secs, s.devices[1].steam_minutes), ("b", 3160, Some(1)));
-        assert_eq!(
-            s.platforms,
-            vec![PlatformTotal { platform: "emu:ryujinx".into(), secs: 3000 }, PlatformTotal { platform: "pc".into(), secs: 100 }]
-        );
+        assert_eq!(s.platforms, vec![PlatformTotal { platform: "emu:ryujinx".into(), secs: 3000 }, PlatformTotal { platform: "pc".into(), secs: 100 }]);
     }
 
     #[test]

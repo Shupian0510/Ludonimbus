@@ -45,14 +45,7 @@ pub fn shortcut_gameid(appid: u32) -> u64 {
 pub fn steam_dir(cfg: &AppConfig, game: &GameEntry) -> Option<PathBuf> {
     let link = game.steam.as_ref()?;
     let root = steam::root(cfg)?;
-    Some(
-        root.join("userdata")
-            .join(&link.account)
-            .join("760")
-            .join("remote")
-            .join(shortcut_gameid(link.appid).to_string())
-            .join("screenshots"),
-    )
+    Some(root.join("userdata").join(&link.account).join("760").join("remote").join(shortcut_gameid(link.appid).to_string()).join("screenshots"))
 }
 
 fn is_image(name: &str) -> bool {
@@ -88,10 +81,7 @@ fn record_file(key: &str) -> PathBuf {
 }
 
 fn load_record(key: &str) -> Record {
-    std::fs::read(record_file(key))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    std::fs::read(record_file(key)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn save_record(key: &str, r: &Record) -> Result<()> {
@@ -151,10 +141,7 @@ fn download_to(store: &dyn Store, path: &str, dest: &Path) -> Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = dest.with_file_name(format!(
-        "{}.lntmp",
-        dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
-    ));
+    let tmp = dest.with_file_name(format!("{}.lntmp", dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
     store.download(path, &tmp)?;
     std::fs::rename(&tmp, dest).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", dest.display()))?;
     Ok(())
@@ -183,17 +170,8 @@ pub fn sync_at(store: &dyn Store, cfg: &AppConfig, at: &Folders, game: &GameEntr
 
     // Upload what was taken here.
     let own_dir = join(&[&at.write_dir(KIND), &at.own_name(own)]);
-    let in_cloud: BTreeSet<String> = store
-        .list(&own_dir)?
-        .into_iter()
-        .filter(|e| !e.is_dir)
-        .map(|e| e.name)
-        .collect();
-    let came_from_elsewhere: BTreeSet<&str> = record
-        .downloaded
-        .iter()
-        .filter_map(|id| id.split_once('/').map(|(_, n)| n))
-        .collect();
+    let in_cloud: BTreeSet<String> = store.list(&own_dir)?.into_iter().filter(|e| !e.is_dir).map(|e| e.name).collect();
+    let came_from_elsewhere: BTreeSet<&str> = record.downloaded.iter().filter_map(|id| id.split_once('/').map(|(_, n)| n)).collect();
     let mut uploaded_now = Vec::new();
     for name in local_names(&dir) {
         if in_cloud.contains(&name) || record.uploaded.contains(&name) || came_from_elsewhere.contains(name.as_str()) {
@@ -236,15 +214,8 @@ pub fn sync_at(store: &dyn Store, cfg: &AppConfig, at: &Folders, game: &GameEntr
     for (dev_dir, dev) in device_dirs(store, at)?.into_iter().filter(|(_, d)| gamedata::device_of(d) != own.as_str()) {
         let entries = store.list(&dev_dir)?;
         let has_thumbs = entries.iter().any(|e| e.is_dir && e.name == "thumbnails");
-        let thumbs: BTreeSet<String> = if has_thumbs {
-            store
-                .list(&join(&[&dev_dir, "thumbnails"]))?
-                .into_iter()
-                .map(|e| e.name)
-                .collect()
-        } else {
-            BTreeSet::new()
-        };
+        let thumbs: BTreeSet<String> =
+            if has_thumbs { store.list(&join(&[&dev_dir, "thumbnails"]))?.into_iter().map(|e| e.name).collect() } else { BTreeSet::new() };
         for e in entries.iter().filter(|e| !e.is_dir && safe_name(&e.name)) {
             let id = format!("{dev}/{}", e.name);
             if record.downloaded.contains(&id) {
@@ -340,11 +311,7 @@ pub fn gallery(store: Option<&dyn Store>, cfg: &AppConfig, at: &Folders, game: &
         for (dev_dir, dev) in device_dirs(store, at)? {
             let entries = store.list(&dev_dir)?;
             let thumbs: BTreeSet<String> = if entries.iter().any(|e| e.is_dir && e.name == "thumbnails") {
-                store
-                    .list(&join(&[&dev_dir, "thumbnails"]))?
-                    .into_iter()
-                    .map(|e| e.name)
-                    .collect()
+                store.list(&join(&[&dev_dir, "thumbnails"]))?.into_iter().map(|e| e.name).collect()
             } else {
                 BTreeSet::new()
             };
@@ -376,9 +343,7 @@ pub fn local_file(cfg: &AppConfig, game: &GameEntry, device: &str, name: &str, t
         return None;
     }
     let in_steam = steam_dir(cfg, game).map(|d| if thumb { d.join("thumbnails").join(name) } else { d.join(name) });
-    in_steam
-        .filter(|p| p.is_file())
-        .or_else(|| Some(cache_file(&game.key, device, name, thumb)).filter(|p| p.is_file()))
+    in_steam.filter(|p| p.is_file()).or_else(|| Some(cache_file(&game.key, device, name, thumb)).filter(|p| p.is_file()))
 }
 
 /// Download a cloud screenshot (or its thumbnail) of the game `at` into the

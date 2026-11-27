@@ -8,7 +8,9 @@ use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry, Retention
 use ludonimbus_core::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution, StatusReport};
-use ludonimbus_core::{adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, share, spec, steam, steamcloud, util};
+use ludonimbus_core::{
+    adapters, games, join, localart, logos, ludusavi, paths, playtime, process, relocate, savelib, screenshots, share, spec, steam, steamcloud, util,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -16,10 +18,7 @@ use std::path::{Path, PathBuf};
 pub(crate) type CmdResult<T> = std::result::Result<T, String>;
 
 pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> CmdResult<T> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?.map_err(|e| format!("{e:#}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -138,13 +137,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         }
         localart::file(&g.key, kind).map(|f| art::local_url(&g.key, kind, &f))
     };
-    let art = ArtView {
-        cover: pick("cover"),
-        wide: pick("wide"),
-        hero: pick("hero"),
-        logo: pick("logo"),
-        icon: pick("icon"),
-    };
+    let art = ArtView { cover: pick("cover"), wide: pick("wide"), hero: pick("hero"), logo: pick("logo"), icon: pick("icon") };
     let names = watcher::watch_names(g);
     GameView {
         key: g.key.clone(),
@@ -167,12 +160,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         has_game_process: !eff.wait_for.is_empty(),
         ludusavi_title: g.ludusavi_title.clone(),
         auto_sync: g.auto_sync,
-        steam: g.steam.as_ref().map(|l| SteamView {
-            account: l.account.clone(),
-            appid: l.appid,
-            enabled: l.enabled,
-            created: l.created,
-        }),
+        steam: g.steam.as_ref().map(|l| SteamView { account: l.account.clone(), appid: l.appid, enabled: l.enabled, created: l.created }),
         health: steam::health(cfg, g),
         art,
         running: watcher::runner_active(&g.key) || names.iter().any(|n| procs.contains(n)),
@@ -188,10 +176,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         pending: st.pending.len(),
         last_check: st.last_check,
         playtime: playtime_view(cfg, playtime::summary(cfg, &g.key)),
-        source: games::Source {
-            logo: logos::for_game(g, adapter).and_then(|f| art::logo_url(&f)),
-            ..games::source(g)
-        },
+        source: games::Source { logo: logos::for_game(g, adapter).and_then(|f| art::logo_url(&f)), ..games::source(g) },
         family: families.get(&g.key).cloned().unwrap_or_else(|| g.key.clone()),
         shelves: ludonimbus_core::shelf::of(cfg, shelves, &g.key),
         link: g.game.clone(),
@@ -223,7 +208,12 @@ pub struct CloudOnlyView {
     shelves: Vec<String>,
 }
 
-pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &HashMap<String, String>, shelves: &BTreeMap<String, Vec<String>>) -> Vec<CloudOnlyView> {
+pub(crate) fn cloud_only_views(
+    cfg: &AppConfig,
+    cloud: &[CloudGame],
+    families: &HashMap<String, String>,
+    shelves: &BTreeMap<String, Vec<String>>,
+) -> Vec<CloudOnlyView> {
     cloud
         .iter()
         .filter(|c| cfg.game(&c.key).is_none())
@@ -239,17 +229,8 @@ pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &
                 platform: adapter.and_then(|a| a.platform_label()),
                 ludusavi_title: c.ludusavi_title.clone(),
                 saves: c.saves.clone(),
-                source: games::Source {
-                    logo: logos::for_game(&g, adapter).and_then(|f| art::logo_url(&f)),
-                    ..games::source(&g)
-                },
-                art: ArtView {
-                    cover: pick("cover"),
-                    wide: pick("wide"),
-                    hero: pick("hero"),
-                    logo: pick("logo"),
-                    icon: pick("icon"),
-                },
+                source: games::Source { logo: logos::for_game(&g, adapter).and_then(|f| art::logo_url(&f)), ..games::source(&g) },
+                art: ArtView { cover: pick("cover"), wide: pick("wide"), hero: pick("hero"), logo: pick("logo"), icon: pick("icon") },
                 playtime: playtime_view(cfg, playtime::summary(cfg, &c.key)),
                 family: families.get(&c.key).cloned().unwrap_or_else(|| c.key.clone()),
                 link: c.game.clone(),
@@ -296,11 +277,7 @@ fn cloud_view(cfg: &AppConfig) -> CloudView {
         Ok(_) => None,
         Err(e) => Some(format!("{e:#}")),
     };
-    CloudView {
-        kind: kind.into(),
-        label,
-        error,
-    }
+    CloudView { kind: kind.into(), label, error }
 }
 
 #[tauri::command]
@@ -541,10 +518,7 @@ pub struct SnapshotList {
 fn too_new_ids<'a>(cfg: &config::AppConfig, key: &str, list: impl IntoIterator<Item = &'a SnapshotSummary>) -> Vec<String> {
     let Some(g) = cfg.game(key) else { return Vec::new() };
     let Some(here) = sync::saves_version(g) else { return Vec::new() };
-    list.into_iter()
-        .filter(|s| sync::too_new(g, Some(&here), &s.platform, s.game_version.as_deref()))
-        .map(|s| s.id.clone())
-        .collect()
+    list.into_iter().filter(|s| sync::too_new(g, Some(&here), &s.platform, s.game_version.as_deref())).map(|s| s.id.clone()).collect()
 }
 
 #[derive(Serialize)]
@@ -650,16 +624,10 @@ pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
         let ctx = Ctx::load()?;
         let mut list = ctx.cloud()?.list_snapshots(&key)?;
         let head = sync::mainline_head(&list).map(|h| h.id);
-        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
         let platforms = platform_marks(&ctx.cfg, list.iter().map(|s| s.platform.as_str()));
         let too_new = too_new_ids(&ctx.cfg, &key, &list);
-        Ok(SnapshotList {
-            snapshots: list,
-            head_id: head,
-            last_synced_id: state::game(&key).last_synced_id,
-            platforms,
-            too_new,
-        })
+        Ok(SnapshotList { snapshots: list, head_id: head, last_synced_id: state::game(&key).last_synced_id, platforms, too_new })
     })
     .await
 }
@@ -810,10 +778,7 @@ pub async fn open_save_folder(key: String) -> CmdResult<()> {
         for pattern in &eff.saves {
             let (root, rest) = spec::split_pattern(pattern)?;
             let Some(base) = spec::resolve_root_name(&root, &roots) else { continue };
-            let literal: PathBuf = rest
-                .split('/')
-                .take_while(|c| !c.contains(['*', '?', '[', '{']))
-                .fold(base, |p, c| p.join(c));
+            let literal: PathBuf = rest.split('/').take_while(|c| !c.contains(['*', '?', '[', '{'])).fold(base, |p, c| p.join(c));
             let target = literal.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf);
             if let Some(t) = target {
                 opener::open(&t)?;
@@ -849,11 +814,7 @@ pub async fn steam_accounts() -> CmdResult<AccountsView> {
         let root = steam::root(&cfg);
         let accounts = root.as_deref().map(steam::accounts).unwrap_or_default();
         let selected = root.as_deref().and_then(|r| steam::default_account(&cfg, r));
-        Ok(AccountsView {
-            accounts,
-            selected,
-            root: root.map(|r| r.display().to_string()),
-        })
+        Ok(AccountsView { accounts, selected, root: root.map(|r| r.display().to_string()) })
     })
     .await
 }
@@ -1083,11 +1044,7 @@ pub async fn folder_to_pattern(path: String, exe: Option<String>) -> CmdResult<S
         let roots = spec::builtin_roots(install.as_deref());
         let logical = spec::tokenize(Path::new(&path), &roots);
         let (root, rest) = logical.split_once('/').unwrap_or((&logical, ""));
-        Ok(if rest.is_empty() {
-            format!("{{{root}}}/**")
-        } else {
-            format!("{{{root}}}/{rest}/**")
-        })
+        Ok(if rest.is_empty() { format!("{{{root}}}/**") } else { format!("{{{root}}}/{rest}/**") })
     })
     .await
 }
@@ -1111,16 +1068,7 @@ pub(crate) fn with_steam_closed<T>(close_steam: bool, f: impl FnOnce() -> Result
 
 #[tauri::command]
 pub async fn steam_set_enabled(key: String, enabled: bool, close_steam: bool) -> CmdResult<()> {
-    blocking(move || {
-        with_steam_closed(close_steam, || {
-            if enabled {
-                games::steam_enable(&key)
-            } else {
-                games::steam_disable(&key)
-            }
-        })
-    })
-    .await
+    blocking(move || with_steam_closed(close_steam, || if enabled { games::steam_enable(&key) } else { games::steam_disable(&key) })).await
 }
 
 #[tauri::command]
@@ -1193,7 +1141,10 @@ pub async fn steam_cloud_open_properties(key: String) -> CmdResult<()> {
     blocking(move || {
         let cfg = config::load()?;
         let game = cfg.require_game(&key)?;
-        let link = game.store.as_ref().ok_or_else(|| anyhow!(ludonimbus_core::tr!("「{}」不是从 Steam 安装的游戏", "\"{}\" isn't a game installed through Steam", game.name)))?;
+        let link = game
+            .store
+            .as_ref()
+            .ok_or_else(|| anyhow!(ludonimbus_core::tr!("「{}」不是从 Steam 安装的游戏", "\"{}\" isn't a game installed through Steam", game.name)))?;
         opener::open(format!("steam://gameproperties/{}", link.appid))?;
         Ok(())
     })
@@ -1292,10 +1243,7 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             steam_account: root.as_deref().and_then(|r| steam::default_account(&cfg, r)),
             steam_root_custom: cfg.steam.root.as_deref().is_some_and(|r| root.as_deref() == Some(r)),
             steam_root: root.map(|r| r.display().to_string()),
-            previous_cloud: cfg.previous_cloud.as_ref().map(|p| PreviousCloud {
-                kind: cloud::kind_id(p).to_string(),
-                name: previous_name(p),
-            }),
+            previous_cloud: cfg.previous_cloud.as_ref().map(|p| PreviousCloud { kind: cloud::kind_id(p).to_string(), name: previous_name(p) }),
             cloud,
             google_builtin: oauth::GoogleClient::has_builtin(),
             baidu_builtin: cloud::baidu::BaiduClient::has_builtin(),
@@ -1453,17 +1401,12 @@ pub async fn steam_set_root(path: Option<String>) -> CmdResult<Option<String>> {
         let root = match path.filter(|p| !p.trim().is_empty()) {
             None => None,
             Some(p) => Some(steam::root_of(Path::new(p.trim())).ok_or_else(|| {
-                anyhow!(ludonimbus_core::tr!(
-                    "这个文件夹里没有 Steam（找不到 steam.exe）：{p}",
-                    "Steam isn't in this folder (no steam.exe): {p}"
-                ))
+                anyhow!(ludonimbus_core::tr!("这个文件夹里没有 Steam（找不到 steam.exe）：{p}", "Steam isn't in this folder (no steam.exe): {p}"))
             })?),
         };
         // The folder Steam itself registered needs no pinning: keep following it.
         let detected = steam::detect_root();
-        let pinned = root.filter(|r| {
-            !detected.as_ref().is_some_and(|d| util::same_path(&d.to_string_lossy(), &r.to_string_lossy()))
-        });
+        let pinned = root.filter(|r| !detected.as_ref().is_some_and(|d| util::same_path(&d.to_string_lossy(), &r.to_string_lossy())));
         config::update(|c| {
             c.steam.root = pinned;
             Ok(())
@@ -1701,7 +1644,7 @@ pub async fn list_devices() -> CmdResult<Vec<DeviceInfo>> {
         let c = ctx.cloud()?;
         let _ = c.put_device(&cloud::device_info(&ctx.cfg));
         let mut list = c.list_devices()?;
-        list.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        list.sort_by_key(|a| std::cmp::Reverse(a.last_seen));
         Ok(list)
     })
     .await
@@ -1755,25 +1698,14 @@ pub async fn screenshot_gallery(key: String) -> CmdResult<GalleryView> {
             Ok(s) => (s, None),
             Err(e) => (screenshots::gallery(None, &ctx.cfg, &at, &g)?, Some(format!("{e:#}"))),
         };
-        let mut names: BTreeMap<String, String> = cloud
-            .and_then(|c| c.list_devices().ok())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|d| (d.id, d.name))
-            .collect();
+        let mut names: BTreeMap<String, String> = cloud.and_then(|c| c.list_devices().ok()).unwrap_or_default().into_iter().map(|d| (d.id, d.name)).collect();
         names.insert(ctx.cfg.device.id.clone(), ctx.cfg.device.name.clone());
         for s in &mut shots {
             s.device_name = names.get(gamedata::device_of(&s.device)).cloned();
         }
         let cloud_bytes = shots.iter().filter(|s| s.in_cloud).map(|s| s.size).sum();
         Ok(GalleryView {
-            shots: shots
-                .into_iter()
-                .map(|s| ShotView {
-                    thumb_url: shot_link(&ctx.cfg, &g, &s.device, &s.name, true),
-                    shot: s,
-                })
-                .collect(),
+            shots: shots.into_iter().map(|s| ShotView { thumb_url: shot_link(&ctx.cfg, &g, &s.device, &s.name, true), shot: s }).collect(),
             mode: ctx.cfg.screenshots,
             linked: g.steam.is_some(),
             folder: screenshots::steam_dir(&ctx.cfg, &g).filter(|d| d.is_dir()).map(|d| d.display().to_string()),
@@ -1811,9 +1743,7 @@ fn shot_link(cfg: &AppConfig, g: &GameEntry, device: &str, name: &str, thumb: bo
 
 #[tauri::command]
 pub async fn screenshot_sync(app: tauri::AppHandle, key: String) -> CmdResult<screenshots::Report> {
-    tauri::async_runtime::spawn_blocking(move || watcher::sync_screenshots(&app, Some(key)))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || watcher::sync_screenshots(&app, Some(key))).await.map_err(|e| e.to_string())?
 }
 
 /// Show a screenshot in Explorer (this PC's Steam folder or the cache).

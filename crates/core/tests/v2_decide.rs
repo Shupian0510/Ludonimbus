@@ -339,10 +339,7 @@ fn a_head_that_lacks_what_was_synced_last_is_never_pulled_silently() {
     // The user keeps the saves here: the new head contains both sides, the
     // deleted one included.
     let theirs = b.base.clone().unwrap().vv;
-    assert_eq!(
-        settle(&a.local(), &cloud.view()),
-        Action::Push { bases: vec![theirs, waiting.vv.clone()], parent: Some(waiting.id.clone()) }
-    );
+    assert_eq!(settle(&a.local(), &cloud.view()), Action::Push { bases: vec![theirs, waiting.vv.clone()], parent: Some(waiting.id.clone()) });
     a.keep_local();
     let head = cloud.view().head().unwrap().clone();
     assert_eq!(head.content_hash, "a2");
@@ -598,18 +595,11 @@ fn a_count_is_never_used_twice() {
 
 #[test]
 fn status_names_are_those_of_today() {
-    let names: Vec<String> = [
-        Status::Empty,
-        Status::NotUploaded,
-        Status::Synced,
-        Status::LocalChanged,
-        Status::CloudNewer,
-        Status::CanRestore,
-        Status::Conflict,
-    ]
-    .iter()
-    .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_string())
-    .collect();
+    let names: Vec<String> =
+        [Status::Empty, Status::NotUploaded, Status::Synced, Status::LocalChanged, Status::CloudNewer, Status::CanRestore, Status::Conflict]
+            .iter()
+            .map(|s| serde_json::to_value(s).unwrap().as_str().unwrap().to_string())
+            .collect();
     assert_eq!(names, ["empty", "notUploaded", "synced", "localChanged", "cloudNewer", "canRestore", "conflict"]);
 }
 

@@ -142,8 +142,7 @@ fn rules_end_to_end() {
         .find_map(|a| {
             let exe = a.matcher.as_ref()?.exe.iter().find(|e| e.contains('/') && !e.contains('*'))?.clone();
             let save = a.saves.iter().find(|s| {
-                s.strip_prefix("{install}/")
-                    .is_some_and(|rest| !rest.contains(['*', '?']) && !rest.rsplit('/').next().unwrap_or("").contains('.'))
+                s.strip_prefix("{install}/").is_some_and(|rest| !rest.contains(['*', '?']) && !rest.rsplit('/').next().unwrap_or("").contains('.'))
             })?;
             a.skip_junk.then(|| (a, exe, save.strip_prefix("{install}/").unwrap().to_string()))
         })

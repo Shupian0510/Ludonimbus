@@ -40,21 +40,12 @@ impl FileCache {
 
     /// The cached hash and chunks of `abs`, if it is unchanged.
     pub fn get(&self, abs: &Path, size: u64, mtime: i64, nanos: u32, params: &Params) -> Option<&Entry> {
-        self.map
-            .get(&path_key(abs))
-            .filter(|e| e.size == size && e.mtime == mtime && e.nanos == nanos && e.params == key_params(params))
+        self.map.get(&path_key(abs)).filter(|e| e.size == size && e.mtime == mtime && e.nanos == nanos && e.params == key_params(params))
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn put(&mut self, abs: &Path, size: u64, mtime: i64, nanos: u32, params: &Params, hash: String, chunks: &[ChunkRef]) {
-        let e = Entry {
-            size,
-            mtime,
-            nanos,
-            params: key_params(params),
-            hash,
-            chunks: chunks.iter().map(|c| (c.h.clone(), c.s)).collect(),
-        };
+        let e = Entry { size, mtime, nanos, params: key_params(params), hash, chunks: chunks.iter().map(|c| (c.h.clone(), c.s)).collect() };
         self.map.insert(path_key(abs), e);
         self.dirty = true;
     }

@@ -99,12 +99,7 @@ impl Store for Memory {
                         out.push(Entry { name: folder.to_string(), is_dir: true, size: 0, tag: String::new() });
                     }
                 }
-                None => out.push(Entry {
-                    name: rest.to_string(),
-                    is_dir: false,
-                    size: data.len() as u64,
-                    tag: tag.to_string(),
-                }),
+                None => out.push(Entry { name: rest.to_string(), is_dir: false, size: data.len() as u64, tag: tag.to_string() }),
             }
         }
         Ok(out)

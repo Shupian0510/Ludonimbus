@@ -199,6 +199,6 @@ fn switch_game_moves_between_ryujinx_and_eden() {
     assert!(cfg.game(&c.key).is_none());
     assert_eq!(cfg.game(&cloud.key).unwrap().adapter.as_deref(), Some("eden"));
     // Nothing to take over once it has the key, or for a game the cloud doesn't have.
-    assert_eq!(games::adopt_cloud_key(&cloud.key, &[cloud.clone()]).unwrap(), None);
+    assert_eq!(games::adopt_cloud_key(&cloud.key, std::slice::from_ref(&cloud)).unwrap(), None);
     assert_eq!(games::adopt_cloud_key(&cloud.key, &[other]).unwrap(), None);
 }

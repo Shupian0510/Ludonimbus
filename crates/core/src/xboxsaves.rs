@@ -32,9 +32,7 @@ pub struct Rule {
 
 pub fn rules() -> &'static [Rule] {
     static R: OnceLock<Vec<Rule>> = OnceLock::new();
-    R.get_or_init(|| {
-        serde_yaml::from_str(include_str!("../../../adapters/xbox-saves.yaml")).expect("adapters/xbox-saves.yaml must be valid")
-    })
+    R.get_or_init(|| serde_yaml::from_str(include_str!("../../../adapters/xbox-saves.yaml")).expect("adapters/xbox-saves.yaml must be valid"))
 }
 
 /// The rule for a package (`<family name>` or `<family name>!<app>`).
@@ -215,10 +213,15 @@ pub fn named(package: &str, containers: &[Container]) -> Vec<Named> {
                         if let Some(fmt) = &icon {
                             let parent_name = parent.and_then(|p| p.rsplit('/').next()).unwrap_or("");
                             let file = format!("{parent_name}_icon.{fmt}");
-                            out.push(one(match parent {
-                                Some(p) => format!("{p}/{file}"),
-                                None => file,
-                            }, &c.name, f, d));
+                            out.push(one(
+                                match parent {
+                                    Some(p) => format!("{p}/{file}"),
+                                    None => file,
+                                },
+                                &c.name,
+                                f,
+                                d,
+                            ));
                         }
                     }
                 }

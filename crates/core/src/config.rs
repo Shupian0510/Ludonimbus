@@ -127,14 +127,8 @@ impl Default for DeviceConfig {
 
 impl DeviceConfig {
     pub fn generate() -> Self {
-        let name = std::env::var("COMPUTERNAME")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| crate::tr!("我的电脑", "My PC"));
-        DeviceConfig {
-            id: format!("d-{}", ulid::Ulid::new().to_string().to_lowercase()),
-            name,
-        }
+        let name = std::env::var("COMPUTERNAME").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| crate::tr!("我的电脑", "My PC"));
+        DeviceConfig { id: format!("d-{}", ulid::Ulid::new().to_string().to_lowercase()), name }
     }
 }
 
@@ -223,10 +217,7 @@ pub struct Retention {
 
 impl Default for Retention {
     fn default() -> Self {
-        Retention {
-            keep_recent: 20,
-            keep_daily_days: 30,
-        }
+        Retention { keep_recent: 20, keep_daily_days: 30 }
     }
 }
 
@@ -392,10 +383,7 @@ impl AppConfig {
 }
 
 fn lock() -> Result<FileLock> {
-    FileLock::acquire(
-        &paths::data_dir().join("config.lock"),
-        Duration::from_secs(10),
-    )
+    FileLock::acquire(&paths::data_dir().join("config.lock"), Duration::from_secs(10))
 }
 
 fn read_file() -> Result<Option<AppConfig>> {
@@ -403,10 +391,9 @@ fn read_file() -> Result<Option<AppConfig>> {
     if !path.exists() {
         return Ok(None);
     }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| crate::tr!("无法读取配置文件 {}", "Can't read the configuration file {}", path.display()))?;
-    let cfg: AppConfig = serde_json::from_str(&text)
-        .with_context(|| crate::tr!("配置文件格式错误 {}", "The configuration file is malformed: {}", path.display()))?;
+    let text = std::fs::read_to_string(&path).with_context(|| crate::tr!("无法读取配置文件 {}", "Can't read the configuration file {}", path.display()))?;
+    let cfg: AppConfig =
+        serde_json::from_str(&text).with_context(|| crate::tr!("配置文件格式错误 {}", "The configuration file is malformed: {}", path.display()))?;
     // Every program reads the configuration first, so this keeps texts made
     // in Rust in the user's language (also after it changes in Settings).
     crate::i18n::set(&cfg.language);
@@ -423,10 +410,8 @@ fn keep_older(path: &std::path::Path) {
         return;
     }
     let Ok(text) = std::fs::read_to_string(path) else { return };
-    let older = serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .and_then(|v| v.get("version").and_then(|n| n.as_u64()))
-        .is_some_and(|n| n < u64::from(VERSION));
+    let older =
+        serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|v| v.get("version").and_then(|n| n.as_u64())).is_some_and(|n| n < u64::from(VERSION));
     if older {
         let _ = std::fs::write(copy, text);
     }

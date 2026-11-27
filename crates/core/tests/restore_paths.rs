@@ -33,10 +33,7 @@ fn version(dir: &Path, files: &[(&str, &str)]) -> Vec<FileEntry> {
 /// Every root a version below names, in the test's folder: whatever the
 /// code does, nothing can land in the real home folder or on a real drive.
 fn roots(base: &Path) -> BTreeMap<String, String> {
-    ["home", "appdata", "localappdata", "documents", "drive-c", "drive-q", "abs"]
-        .iter()
-        .map(|r| (r.to_string(), base.join(r).display().to_string()))
-        .collect()
+    ["home", "appdata", "localappdata", "documents", "drive-c", "drive-q", "abs"].iter().map(|r| (r.to_string(), base.join(r).display().to_string())).collect()
 }
 
 /// The files below `dir`, `/`-separated and sorted. Links aren't followed.

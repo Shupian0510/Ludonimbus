@@ -183,8 +183,7 @@ pub fn content_dir_for(adapter: &str) -> Option<PathBuf> {
 }
 
 pub fn remember_content_dir(adapter: &str, dir: &std::path::Path) {
-    let mut map: BTreeMap<String, PathBuf> =
-        std::fs::read(dirs_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let mut map: BTreeMap<String, PathBuf> = std::fs::read(dirs_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     map.insert(adapter.to_string(), dir.to_path_buf());
     if let Ok(bytes) = serde_json::to_vec_pretty(&map) {
         let _ = util::atomic_write(&dirs_file(), &bytes);

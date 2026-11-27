@@ -33,24 +33,14 @@ pub enum Algo {
 impl Default for Params {
     /// 2 / 8 / 24 MiB: about 6400 chunks for a 50 GB game.
     fn default() -> Self {
-        Params {
-            algo: Algo::FastCdc2020,
-            min: 2 * MIB,
-            avg: 8 * MIB,
-            max: 24 * MIB,
-        }
+        Params { algo: Algo::FastCdc2020, min: 2 * MIB, avg: 8 * MIB, max: 24 * MIB }
     }
 }
 
 impl Params {
     /// Small chunks, for tests.
     pub fn tiny() -> Self {
-        Params {
-            algo: Algo::FastCdc2020,
-            min: 4 * 1024,
-            avg: 16 * 1024,
-            max: 64 * 1024,
-        }
+        Params { algo: Algo::FastCdc2020, min: 4 * 1024, avg: 16 * 1024, max: 64 * 1024 }
     }
 
     fn masks(&self) -> (u64, u64) {
@@ -137,14 +127,7 @@ impl<R: Read> Chunker<R> {
     pub fn with_buffer(reader: R, params: Params, mut buf: Vec<u8>) -> Self {
         buf.clear();
         buf.reserve(params.max * 2);
-        Chunker {
-            reader,
-            masks: params.masks(),
-            params,
-            buf,
-            start: 0,
-            eof: false,
-        }
+        Chunker { reader, masks: params.masks(), params, buf, start: 0, eof: false }
     }
 
     pub fn into_buffer(self) -> Vec<u8> {
@@ -278,9 +261,7 @@ mod tests {
         let mut changed = d.clone();
         let at = d.len() / 3;
         changed.splice(at..at, data(777, 3));
-        let ids = |c: &[Vec<u8>]| -> std::collections::HashSet<String> {
-            c.iter().map(|x| blake3::hash(x).to_hex().to_string()).collect()
-        };
+        let ids = |c: &[Vec<u8>]| -> std::collections::HashSet<String> { c.iter().map(|x| blake3::hash(x).to_hex().to_string()).collect() };
         let before = ids(&chunks(&d, p));
         let after_chunks = chunks(&changed, p);
         let new = ids(&after_chunks).difference(&before).count();
@@ -299,21 +280,11 @@ mod tests {
         let ids: Vec<String> = c.iter().map(|x| crate::gamebackup::chunk::id(x)).collect();
         let hash = t.elapsed().as_secs_f64();
         let mb = d.len() as f64 / 1048576.0;
-        println!(
-            "{} chunks, average {:.1} MiB; chunking {:.0} MB/s, BLAKE3 {:.0} MB/s",
-            ids.len(),
-            mb / ids.len() as f64,
-            mb / cut,
-            mb / hash
-        );
+        println!("{} chunks, average {:.1} MiB; chunking {:.0} MB/s, BLAKE3 {:.0} MB/s", ids.len(), mb / ids.len() as f64, mb / cut, mb / hash);
         // Words in random order with random numbers: compresses roughly like game text and tables.
         let words = ["entity", "dialogue", "level", "texture", "0.75", "spawn", "door", "{", "}", "true", "npc", "quest"];
         let r = data(8 * 1024 * 1024, 5);
-        let text: Vec<u8> = r
-            .chunks(2)
-            .flat_map(|b| format!("{} {} ", words[b[0] as usize % words.len()], b[1]).into_bytes())
-            .take(8 * 1024 * 1024)
-            .collect();
+        let text: Vec<u8> = r.chunks(2).flat_map(|b| format!("{} {} ", words[b[0] as usize % words.len()], b[1]).into_bytes()).take(8 * 1024 * 1024).collect();
         let t = std::time::Instant::now();
         let obj = crate::gamebackup::chunk::encode(&text).unwrap();
         println!(

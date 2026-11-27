@@ -23,12 +23,8 @@ use std::time::{Duration, Instant};
 #[ignore]
 fn baidu_live() {
     let env = |k: &str| std::env::var(k).unwrap_or_default();
-    let client = BaiduClient::resolve(
-        &env("LUDONIMBUS_BAIDU_APP_KEY"),
-        &env("LUDONIMBUS_BAIDU_SECRET_KEY"),
-        &env("LUDONIMBUS_BAIDU_APP_NAME"),
-    )
-    .expect("set LUDONIMBUS_BAIDU_APP_KEY / LUDONIMBUS_BAIDU_SECRET_KEY");
+    let client = BaiduClient::resolve(&env("LUDONIMBUS_BAIDU_APP_KEY"), &env("LUDONIMBUS_BAIDU_SECRET_KEY"), &env("LUDONIMBUS_BAIDU_APP_NAME"))
+        .expect("set LUDONIMBUS_BAIDU_APP_KEY / LUDONIMBUS_BAIDU_SECRET_KEY");
     let token = baidu::load_token().unwrap().expect("sign in with `ludonimbus cloud baidu` first");
     let s = BaiduPan::new(client, Endpoints::default(), token, TokenSink::Keyring, Duration::from_secs(20));
     let dir = format!("live-test-{}", ulid::Ulid::new().to_string().to_lowercase());

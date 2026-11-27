@@ -35,10 +35,8 @@ fn start_dav() -> u16 {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
-            let handler = dav_server::DavHandler::builder()
-                .filesystem(dav_server::memfs::MemFs::new())
-                .locksystem(dav_server::fakels::FakeLs::new())
-                .build_handler();
+            let handler =
+                dav_server::DavHandler::builder().filesystem(dav_server::memfs::MemFs::new()).locksystem(dav_server::fakels::FakeLs::new()).build_handler();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             tx.send(listener.local_addr().unwrap().port()).unwrap();
             loop {
@@ -49,9 +47,7 @@ fn start_dav() -> u16 {
                         let handler = handler.clone();
                         async move { Ok::<_, Infallible>(handler.handle(req).await) }
                     });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                        .await;
+                    let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), service).await;
                 });
             }
         });
@@ -98,12 +94,8 @@ fn restore_to(store: &dyn Store, key: &str, s: &Summary, t: &Targets) -> restore
 }
 
 fn files_in(p: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = walkdir::WalkDir::new(p)
-        .into_iter()
-        .flatten()
-        .filter(|e| e.file_type().is_file())
-        .map(|e| e.path().strip_prefix(p).unwrap().to_path_buf())
-        .collect();
+    let mut v: Vec<PathBuf> =
+        walkdir::WalkDir::new(p).into_iter().flatten().filter(|e| e.file_type().is_file()).map(|e| e.path().strip_prefix(p).unwrap().to_path_buf()).collect();
     v.sort();
     v
 }
@@ -493,12 +485,7 @@ fn emulator_part(tmp: &Path, store: &dyn Store) {
     let mb = remote::read_manifest(store, "botw", &b1).unwrap();
     let mk = remote::read_manifest(store, "mk8", &k1).unwrap();
     assert_eq!(mb.component(Kind::Program).unwrap().chunks, mk.component(Kind::Program).unwrap().chunks);
-    let own: HashSet<&String> = mk
-        .components
-        .iter()
-        .filter(|c| c.kind != Kind::Program)
-        .flat_map(|c| c.chunks.iter().map(|c| &c.h))
-        .collect();
+    let own: HashSet<&String> = mk.components.iter().filter(|c| c.kind != Kind::Program).flat_map(|c| c.chunks.iter().map(|c| &c.h)).collect();
     assert_eq!(remote::list_chunks(store).unwrap().len(), chunks_after_botw + own.len(), "mk8 added only its own chunks");
     assert_eq!(b1.components.iter().map(|c| c.version.clone()).collect::<Vec<_>>(), vec![Some("2.6".into()), Some("v208".into()), None]);
 
@@ -520,7 +507,13 @@ fn emulator_part(tmp: &Path, store: &dyn Store) {
     );
     same_file(&emu.join("gameProfiles/0005000010101c00.ini"), &new_emu.join("gameProfiles/0005000010101c00.ini"));
     // Left out (their folders come back empty, like in the original).
-    for f in ["keys.txt", "games/Other.wua", "shaderCache/transferable/x.bin", "portable/mlc01/usr/save/00050000/10101c00/user/80000001/save.dat", "portable/mlc01/usr/title/0005000e/aaaaaaaa/content/up.bin"] {
+    for f in [
+        "keys.txt",
+        "games/Other.wua",
+        "shaderCache/transferable/x.bin",
+        "portable/mlc01/usr/save/00050000/10101c00/user/80000001/save.dat",
+        "portable/mlc01/usr/title/0005000e/aaaaaaaa/content/up.bin",
+    ] {
         assert!(!new_emu.join(f).exists(), "{f}");
     }
 

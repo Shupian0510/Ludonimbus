@@ -46,14 +46,7 @@ pub fn games(a: &Adapter, install: Option<&Path>) -> Vec<SavedGame> {
     let r = roots(a, install);
     let dir = |root: &str| r.get(root).filter(|p| p.is_dir()).cloned();
     // The folder the per-game saves are in.
-    let save_root = a
-        .game_saves
-        .values()
-        .flatten()
-        .next()
-        .and_then(|t| spec::split_pattern(t).ok())
-        .map(|(root, _)| root)
-        .unwrap_or_default();
+    let save_root = a.game_saves.values().flatten().next().and_then(|t| spec::split_pattern(t).ok()).map(|(root, _)| root).unwrap_or_default();
     let mut out = match a.game_id.as_deref() {
         Some("switch") => match (dir("emu"), dir("user")) {
             (Some(emu), _) => ryujinx(&emu),
@@ -81,17 +74,13 @@ pub fn games(a: &Adapter, install: Option<&Path>) -> Vec<SavedGame> {
 }
 
 fn subdirs(p: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(p)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
-        .unwrap_or_default();
+    let mut v: Vec<PathBuf> = std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
     v.sort();
     v
 }
 
 fn files_in(p: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(p)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect())
-        .unwrap_or_default();
+    let mut v: Vec<PathBuf> = std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect()).unwrap_or_default();
     v.sort();
     v
 }
@@ -184,10 +173,7 @@ fn dolphin(emu: &Path) -> Vec<SavedGame> {
     // Discs in Dolphin's game folders: launch options that start each game.
     let discs = game_files(&dolphin_iso_paths(emu), &["iso", "gcm", "rvz", "wia", "wbfs", "ciso"]);
     if !discs.is_empty() && !out.is_empty() {
-        let ids: HashMap<String, PathBuf> = discs
-            .iter()
-            .filter_map(|p| emulators::gc_wii(p).map(|g| (format!("{}:{}", g.variant, g.id), p.clone())))
-            .collect();
+        let ids: HashMap<String, PathBuf> = discs.iter().filter_map(|p| emulators::gc_wii(p).map(|g| (format!("{}:{}", g.variant, g.id), p.clone()))).collect();
         for g in &mut out {
             let hit = match g.game.variant.as_str() {
                 "gc" => ids.get(&format!("gc:{}", g.game.id)),
@@ -402,10 +388,7 @@ fn retroarch(saves: &Path) -> Vec<SavedGame> {
         }
     }
     stems.sort();
-    stems
-        .into_iter()
-        .map(|s| SavedGame::new(EmuGame::new(s.clone(), "default", &[("stem", emulators::escape_glob(&s))], None).named(Some(s))))
-        .collect()
+    stems.into_iter().map(|s| SavedGame::new(EmuGame::new(s.clone(), "default", &[("stem", emulators::escape_glob(&s))], None).named(Some(s)))).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -460,16 +443,10 @@ fn switch_launch_args(mut out: Vec<SavedGame>, keys: &[PathBuf], game_dirs: &[Pa
 
 /// `game_dirs` in Ryujinx's `Config.json`.
 fn ryujinx_game_dirs(emu: &Path) -> Vec<PathBuf> {
-    let Some(v) = std::fs::read_to_string(emu.join("Config.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-    else {
+    let Some(v) = std::fs::read_to_string(emu.join("Config.json")).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()) else {
         return Vec::new();
     };
-    v["game_dirs"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|d| d.as_str()).map(PathBuf::from).filter(|p| p.is_dir()).collect())
-        .unwrap_or_default()
+    v["game_dirs"].as_array().map(|a| a.iter().filter_map(|d| d.as_str()).map(PathBuf::from).filter(|p| p.is_dir()).collect()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -538,7 +515,11 @@ mod tests {
         let install = tmp.path().join("ZeldaBW").join("Cemu");
         let mlc = tmp.path().join("ZeldaBW").join("MLC");
         write(&mlc, "usr/save/00050000/101c9300/user/80000001/game_data.sav", b"x");
-        write(&mlc, "usr/save/00050000/101c9300/meta/meta.xml", b"<menu><longname_en type=\"string\">The Legend of Zelda\nBreath of the Wild</longname_en></menu>");
+        write(
+            &mlc,
+            "usr/save/00050000/101c9300/meta/meta.xml",
+            b"<menu><longname_en type=\"string\">The Legend of Zelda\nBreath of the Wild</longname_en></menu>",
+        );
         write(&mlc, "usr/save/00050000/10101c00/meta/meta.xml", b"<menu/>");
         let code = tmp.path().join("Games").join("BotW").join("code");
         let rpx = write(&code, "U-King.rpx", b"x");

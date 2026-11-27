@@ -80,8 +80,10 @@ impl Drop for Cleanup {
             }
             openlist::forget();
         }
-        println!("cleanup: drive folder {}, OpenList servers stopped and their data deleted",
-            if removed { "deleted" } else { "NOT deleted (delete Ludonimbus-E1 in Quark yourself)" });
+        println!(
+            "cleanup: drive folder {}, OpenList servers stopped and their data deleted",
+            if removed { "deleted" } else { "NOT deleted (delete Ludonimbus-E1 in Quark yourself)" }
+        );
     }
 }
 

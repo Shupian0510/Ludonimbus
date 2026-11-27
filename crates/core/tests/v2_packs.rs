@@ -50,8 +50,7 @@ fn tree(dir: &Path) -> BTreeMap<String, Vec<u8>> {
             if p.is_dir() {
                 walk(base, &p, out);
             } else {
-                let rel: Vec<String> =
-                    p.strip_prefix(base).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+                let rel: Vec<String> = p.strip_prefix(base).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
                 out.insert(rel.join("/"), std::fs::read(&p).unwrap());
             }
         }
@@ -228,10 +227,7 @@ fn a_round_trip_restores_identical_files() {
     // The pack is an ordinary zip that says what it is: usable by hand.
     let entries = zip_entries(&store, &v2::pack_path(GAME, &s1));
     let names: Vec<&str> = entries.keys().map(String::as_str).collect();
-    assert_eq!(
-        names,
-        ["files/saves/Farm_1/Farm_1", "files/saves/Farm_1/SaveGameInfo", "files/saves/startup_preferences", "snapshot.json"]
-    );
+    assert_eq!(names, ["files/saves/Farm_1/Farm_1", "files/saves/Farm_1/SaveGameInfo", "files/saves/startup_preferences", "snapshot.json"]);
     assert_eq!(entries["files/saves/Farm_1/Farm_1"], bytes(1, 1500));
     assert_eq!(serde_json::from_slice::<Manifest>(&entries["snapshot.json"]).unwrap(), m);
 
@@ -298,11 +294,7 @@ fn a_large_save_uploads_only_what_changed() {
     a.save("saves/world/region3", &bytes(33, 1024));
     store.take();
     let (m2, p2) = push(&store, &a, &id(2), Some(&m1));
-    assert_eq!(
-        store.take(),
-        Counts { upload: 1, write: 1, list: 1, ..Default::default() },
-        "the changed file's pack, the manifest, one look at packs/"
-    );
+    assert_eq!(store.take(), Counts { upload: 1, write: 1, list: 1, ..Default::default() }, "the changed file's pack, the manifest, one look at packs/");
     assert_eq!(p2.packs.len(), 1);
     assert_eq!(p2.packs[0].files, ["saves/world/region3"]);
     assert_eq!(p2.upload_size(), 1024);
@@ -899,12 +891,8 @@ fn clean_up_respects_references_and_the_grace_period() {
 
     let mut left = store.paths();
     left.retain(|p| p.starts_with(&v2::packs_dir(GAME)));
-    let mut expect = vec![
-        format!("{}/README.txt", v2::packs_dir(GAME)),
-        v2::pack_path(GAME, &m1.id),
-        v2::pack_path(GAME, &m3.id),
-        v2::pack_path(GAME, &in_progress),
-    ];
+    let mut expect =
+        vec![format!("{}/README.txt", v2::packs_dir(GAME)), v2::pack_path(GAME, &m1.id), v2::pack_path(GAME, &m3.id), v2::pack_path(GAME, &in_progress)];
     expect.sort();
     assert_eq!(left, expect);
     assert_eq!(pull(&store, &m3).0, tree(&a.root()));

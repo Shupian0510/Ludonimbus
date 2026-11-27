@@ -50,10 +50,7 @@ pub struct SgdbImage {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(30))
-        .build()
+    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(30)).build()
 }
 
 fn get(key: &str, path: &str, query: &[(&str, &str)]) -> Result<Value> {
@@ -137,7 +134,7 @@ pub fn images(key: &str, game_id: u64, kind: &str) -> Result<Vec<SgdbImage>> {
                 .collect()
         })
         .unwrap_or_default();
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|a| std::cmp::Reverse(a.score));
     Ok(out)
 }
 
@@ -148,10 +145,7 @@ pub fn download(url: &str) -> Result<PathBuf> {
     if parsed.scheme() != "https" || !(host == "steamgriddb.com" || host.ends_with(".steamgriddb.com")) {
         bail!(crate::tr!("只能从 SteamGridDB 下载图片", "Images can only be downloaded from SteamGridDB"));
     }
-    let resp = agent()
-        .get(url)
-        .call()
-        .map_err(|e| anyhow!(crate::tr!("下载图片失败：{e}", "Couldn't download the image: {e}")))?;
+    let resp = agent().get(url).call().map_err(|e| anyhow!(crate::tr!("下载图片失败：{e}", "Couldn't download the image: {e}")))?;
     let ext = match resp.content_type() {
         "image/jpeg" => "jpg",
         "image/webp" => "webp",

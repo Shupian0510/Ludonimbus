@@ -34,7 +34,15 @@ fn real_save_rules() {
         };
         let files = achievements::rules::find_save_files(g, &list.save_files);
         let unlocks = achievements::rules::evaluate(&list, &files, achievements::rules::Stats::default()).unwrap();
-        eprintln!("{}: {} ({tid}), reader {}, {} achievements, {} save files, {} unlocked", g.key, list.name, list.reader, list.achievements.len(), files.len(), unlocks.len());
+        eprintln!(
+            "{}: {} ({tid}), reader {}, {} achievements, {} save files, {} unlocked",
+            g.key,
+            list.name,
+            list.reader,
+            list.achievements.len(),
+            files.len(),
+            unlocks.len()
+        );
         for u in unlocks.iter().take(6) {
             let name = list.achievements.iter().find(|a| a.id == u.id).map(|a| a.name.as_str()).unwrap_or("?");
             eprintln!("  {} ({})", name, u.id);

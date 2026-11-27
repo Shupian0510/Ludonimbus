@@ -16,10 +16,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub fn scan(_cfg: &AppConfig, _game: &GameEntry, b: &Binding) -> Result<Scan> {
-    let path = b
-        .path
-        .clone()
-        .ok_or_else(|| anyhow!(crate::tr!("奖杯来源缺少文件夹", "The trophy source has no folder")))?;
+    let path = b.path.clone().ok_or_else(|| anyhow!(crate::tr!("奖杯来源缺少文件夹", "The trophy source has no folder")))?;
     match b.source {
         SourceKind::Shadps4 => shadps4(&path, &b.source_id),
         SourceKind::Lantern => lantern(&path, &b.source_id),
@@ -34,10 +31,7 @@ pub fn watch_files(b: &Binding) -> Vec<PathBuf> {
     let Some(path) = &b.path else { return Vec::new() };
     match b.source {
         SourceKind::Shadps4 => shadps4_save_files(path, &b.source_id),
-        SourceKind::Lantern => lantern_log(path)
-            .into_iter()
-            .chain(path.parent().map(|p| p.join("logs").join("last_session.log")))
-            .collect(),
+        SourceKind::Lantern => lantern_log(path).into_iter().chain(path.parent().map(|p| p.join("logs").join("last_session.log"))).collect(),
         SourceKind::Rpcs3 => vec![path.join("TROPUSR.DAT")],
         SourceKind::Ps4port => port_files(path),
         SourceKind::Retroachievements | SourceKind::Rules => Vec::new(),
@@ -94,29 +88,16 @@ fn parse_xml(text: &str) -> Result<XmlSet> {
     }
     let opt = roxmltree::ParsingOptions { allow_dtd: true, nodes_limit: 1_000_000 };
     let doc = roxmltree::Document::parse_with_options(&text, opt)?;
-    let child_text = |n: roxmltree::Node, tag: &str| {
-        n.children()
-            .find(|c| c.has_tag_name(tag))
-            .and_then(|c| c.text())
-            .map(|t| t.trim().to_string())
-            .unwrap_or_default()
-    };
-    let title = doc
-        .descendants()
-        .find(|n| n.has_tag_name("title-name"))
-        .and_then(|n| n.text())
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
+    let child_text =
+        |n: roxmltree::Node, tag: &str| n.children().find(|c| c.has_tag_name(tag)).and_then(|c| c.text()).map(|t| t.trim().to_string()).unwrap_or_default();
+    let title = doc.descendants().find(|n| n.has_tag_name("title-name")).and_then(|n| n.text()).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let mut trophies = Vec::new();
     for n in doc.descendants().filter(|n| n.has_tag_name("trophy")) {
         let Some(id) = n.attribute("id").and_then(norm_id) else { continue };
         let unlocked = match n.attribute("unlockstate") {
-            Some(v) if v.eq_ignore_ascii_case("true") || v == "1" => Some(
-                n.attribute("timestamp")
-                    .and_then(|t| t.trim().parse::<i64>().ok())
-                    .and_then(unix_any)
-                    .unwrap_or_else(Utc::now),
-            ),
+            Some(v) if v.eq_ignore_ascii_case("true") || v == "1" => {
+                Some(n.attribute("timestamp").and_then(|t| t.trim().parse::<i64>().ok()).and_then(unix_any).unwrap_or_else(Utc::now))
+            }
             _ => None,
         };
         trophies.push(XmlTrophy {
@@ -176,9 +157,7 @@ fn unix_any(n: i64) -> Option<DateTime<Utc>> {
 /// Chinese, `TROP_01.XML` US English), falling back to `TROP.XML`.
 fn shadps4_xml(xml_dir: &Path) -> Option<PathBuf> {
     let lang = if crate::i18n::is_en() { ["TROP_01.XML", "TROP_18.XML"] } else { ["TROP_11.XML", "TROP_10.XML"] };
-    lang.iter()
-        .chain(["TROP.XML"].iter())
-        .find_map(|n| crate::util::find_file_ci(xml_dir, n))
+    lang.iter().chain(["TROP.XML"].iter()).find_map(|n| crate::util::find_file_ci(xml_dir, n))
 }
 
 /// Per-user unlock files: `<user>/home/<uid>/trophy/<NPWR>.xml`.
@@ -315,9 +294,7 @@ pub fn parse_log_line(line: &str) -> Option<(String, Option<DateTime<Utc>>)> {
         if let Some(d) = parse_time(t) {
             at = at.or(Some(d));
         } else if let Ok(date) = NaiveDate::parse_from_str(t, "%Y-%m-%d").or_else(|_| NaiveDate::parse_from_str(t, "%Y/%m/%d")) {
-            let time = tokens
-                .get(i + 1)
-                .and_then(|n| NaiveTime::parse_from_str(n, "%H:%M:%S%.f").ok());
+            let time = tokens.get(i + 1).and_then(|n| NaiveTime::parse_from_str(n, "%H:%M:%S%.f").ok());
             if time.is_some() {
                 i += 1;
             }
@@ -380,13 +357,8 @@ fn lantern_icons(user: &Path, npwr: &str) -> Option<PathBuf> {
     // The launcher's cache: %APPDATA%\Lantern Engine\trophy-icons\<hash>\.
     if let Some(appdata) = dirs::config_dir() {
         let root = appdata.join("Lantern Engine").join("trophy-icons");
-        let dirs: Vec<PathBuf> = std::fs::read_dir(&root)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.join("TROP000.PNG").is_file())
-            .collect();
+        let dirs: Vec<PathBuf> =
+            std::fs::read_dir(&root).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.join("TROP000.PNG").is_file()).collect();
         if dirs.len() == 1 {
             return dirs.into_iter().next();
         }
@@ -428,10 +400,7 @@ pub fn decrypted_set(npwr: &str) -> Option<PathBuf> {
 pub fn lantern(user: &Path, npwr: &str) -> Result<Scan> {
     let mut scan = Scan::default();
     let decrypted = decrypted_set(npwr);
-    let icons = decrypted
-        .clone()
-        .filter(|d| d.join("TROP000.PNG").is_file())
-        .or_else(|| lantern_icons(user, npwr));
+    let icons = decrypted.clone().filter(|d| d.join("TROP000.PNG").is_file()).or_else(|| lantern_icons(user, npwr));
     // Names: a shadPS4-style XML for the same set, else the official
     // definitions decrypted from the game's trophy file.
     let xml = (!npwr.is_empty())
@@ -628,10 +597,7 @@ pub fn ps4port(install: &Path, npwr: &str) -> Result<Scan> {
 }
 
 fn file_time(p: &Path) -> DateTime<Utc> {
-    std::fs::metadata(p)
-        .and_then(|m| m.modified())
-        .map(DateTime::<Utc>::from)
-        .unwrap_or_else(|_| Utc::now())
+    std::fs::metadata(p).and_then(|m| m.modified()).map(DateTime::<Utc>::from).unwrap_or_else(|_| Utc::now())
 }
 
 // ---------------------------------------------------------------------------
@@ -645,9 +611,7 @@ pub fn extract_trp_icons(trp: &Path, out: &Path) -> Result<usize> {
 /// The trophy set id in a PS4 game's `sce_sys/npbind.dat`.
 pub fn npbind_id(game_dir: &Path) -> Option<String> {
     let data = std::fs::read(game_dir.join("sce_sys").join("npbind.dat")).ok()?;
-    data.windows(12)
-        .find(|w| std::str::from_utf8(w).is_ok_and(is_npwr))
-        .map(|w| String::from_utf8_lossy(w).to_string())
+    data.windows(12).find(|w| std::str::from_utf8(w).is_ok_and(is_npwr)).map(|w| String::from_utf8_lossy(w).to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -663,16 +627,10 @@ fn rtc_tick(us: u64) -> Option<DateTime<Utc>> {
 
 /// `(trophy id, unlock time)` of unlocked trophies in a `TROPUSR.DAT`.
 pub fn parse_tropusr(data: &[u8]) -> Result<Vec<(u32, Option<DateTime<Utc>>)>> {
-    let be32 = |o: usize| -> Result<u32> {
-        data.get(o..o + 4)
-            .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
-            .ok_or_else(|| anyhow!("TROPUSR.DAT is truncated"))
-    };
-    let be64 = |o: usize| -> Result<u64> {
-        data.get(o..o + 8)
-            .map(|b| u64::from_be_bytes(b.try_into().unwrap()))
-            .ok_or_else(|| anyhow!("TROPUSR.DAT is truncated"))
-    };
+    let be32 =
+        |o: usize| -> Result<u32> { data.get(o..o + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap())).ok_or_else(|| anyhow!("TROPUSR.DAT is truncated")) };
+    let be64 =
+        |o: usize| -> Result<u64> { data.get(o..o + 8).map(|b| u64::from_be_bytes(b.try_into().unwrap())).ok_or_else(|| anyhow!("TROPUSR.DAT is truncated")) };
     if be32(0)? != 0x818F_54AD {
         bail!("not a TROPUSR.DAT file");
     }
@@ -767,7 +725,10 @@ mod tests {
         // as many of those as one likes.
         let long = "x".repeat(1000);
         let refs = "&b;".repeat(200);
-        let laughs = format!("<?xml version=\"1.0\"?><!DOCTYPE t [<!ENTITY a \"{long}\"><!ENTITY b \"{}\">]><trophyconf><title-name>{refs}</title-name></trophyconf>", "&a;".repeat(255));
+        let laughs = format!(
+            "<?xml version=\"1.0\"?><!DOCTYPE t [<!ENTITY a \"{long}\"><!ENTITY b \"{}\">]><trophyconf><title-name>{refs}</title-name></trophyconf>",
+            "&a;".repeat(255)
+        );
         let started = std::time::Instant::now();
         assert!(parse_xml(&laughs).is_err());
         assert!(started.elapsed() < std::time::Duration::from_secs(1));

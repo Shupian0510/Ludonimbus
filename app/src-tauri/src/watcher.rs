@@ -12,12 +12,12 @@
 //! - keeps Steam games that Ludonimbus manages without the wrapper up to
 //!   date while they aren't running (see [`Unwrapped`])
 
-use ludonimbus_core::snapshot::Trigger;
-use ludonimbus_core::sync::{self, Ctx, Resolution};
 use chrono::{DateTime, Utc};
 use ludonimbus_core::catchup::{self, Wrapper};
 use ludonimbus_core::playtime::{self, Via};
+use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::steamcloud::{self, Polled};
+use ludonimbus_core::sync::{self, Ctx, Resolution};
 use ludonimbus_core::{config, logger, paths, process, spec, steam};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -135,11 +135,7 @@ pub fn watch_names(g: &config::GameEntry) -> Vec<String> {
 
 fn vdf_stamp(cfg: &config::AppConfig) -> Option<SystemTime> {
     let root = steam::root(cfg)?;
-    cfg.games
-        .iter()
-        .filter_map(|g| g.steam.as_ref())
-        .filter_map(|l| std::fs::metadata(steam::shortcuts_path(&root, &l.account)).ok()?.modified().ok())
-        .max()
+    cfg.games.iter().filter_map(|g| g.steam.as_ref()).filter_map(|l| std::fs::metadata(steam::shortcuts_path(&root, &l.account)).ok()?.modified().ok()).max()
 }
 
 /// Sync a game after it ran, on a thread of its own: a slow cloud never
@@ -162,18 +158,10 @@ fn background_sync(app: &AppHandle, cfg: &config::AppConfig, g: &config::GameEnt
         std::thread::sleep(Duration::from_secs(2));
         let ctx = Ctx::from_config(cfg);
         let result = sync::sync(&ctx, &g, Resolution::Auto, Trigger::Passive);
-        logger::log(
-            "watcher",
-            format!("{}: background sync {:?}", g.key, result.as_ref().map_err(|e| e.to_string())),
-        );
+        logger::log("watcher", format!("{}: background sync {:?}", g.key, result.as_ref().map_err(|e| e.to_string())));
         let _ = app.emit(
             "sync-finished",
-            SyncEvent {
-                key: g.key.clone(),
-                name: g.name.clone(),
-                outcome: result.as_ref().ok().cloned(),
-                error: result.err().map(|e| format!("{e:#}")),
-            },
+            SyncEvent { key: g.key.clone(), name: g.name.clone(), outcome: result.as_ref().ok().cloned(), error: result.err().map(|e| format!("{e:#}")) },
         );
     });
 }
@@ -447,12 +435,7 @@ pub fn spawn(app: AppHandle) {
                 };
                 if runner == Wrapper::Running || game_up {
                     // Started outside Steam, launcher still open, game closed.
-                    if game_proc_ended
-                        && eff.upload_on_game_exit
-                        && g.auto_sync
-                        && runner != Wrapper::Running
-                        && running.get(&g.key) == Some(&false)
-                    {
+                    if game_proc_ended && eff.upload_on_game_exit && g.auto_sync && runner != Wrapper::Running && running.get(&g.key) == Some(&false) {
                         background_sync(&app, &cfg, g, "game process exited while the launcher is still open");
                         changed = true;
                     }
@@ -510,7 +493,7 @@ pub fn spawn(app: AppHandle) {
             backlog.tick(&app, &cfg, &procs);
             unwrapped.tick(&app, &cfg, &procs);
 
-            if tick % 5 == 0 {
+            if tick.is_multiple_of(5) {
                 let stamp = vdf_stamp(&cfg);
                 if stamp != last_vdf {
                     if last_vdf.is_some() {

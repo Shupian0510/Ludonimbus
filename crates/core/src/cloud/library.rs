@@ -121,8 +121,7 @@ pub fn load(store: &dyn Store, cache: &mut LibraryCache) -> Result<Library> {
     for (file, tag) in &listed {
         // A backend that can't tell whether a file changed gives no tag:
         // such a file is read every time.
-        let known = !tag.is_empty()
-            && (cache.records.get(file).is_some_and(|c| c.tag == *tag) || cache.unreadable.get(file) == Some(tag));
+        let known = !tag.is_empty() && (cache.records.get(file).is_some_and(|c| c.tag == *tag) || cache.unreadable.get(file) == Some(tag));
         if known {
             continue;
         }
@@ -205,11 +204,7 @@ pub fn resolve_line<'a>(records: &'a [GameRecord], game: &str, line: &str) -> Op
     if now.id == from.id {
         return Some((now, old));
     }
-    let found = now
-        .lines
-        .iter()
-        .find(|l| l.path == old.path)
-        .or_else(|| now.lines.iter().find(|l| reads(l, &old.path)))?;
+    let found = now.lines.iter().find(|l| l.path == old.path).or_else(|| now.lines.iter().find(|l| reads(l, &old.path)))?;
     Some((now, found))
 }
 
@@ -275,8 +270,7 @@ pub fn find<'a>(records: &'a [GameRecord], ids: &[String]) -> Match<'a> {
     for r in records {
         let same_game = r.ids.iter().any(|id| is_strong(id) && strong.contains(&key(id)));
         // A record's own name counts even where its ids don't list it.
-        let same_name = r.ids.iter().any(|id| is_name(id) && names.contains(&key(id)))
-            || name_id(&r.name).is_some_and(|n| names.contains(&n));
+        let same_name = r.ids.iter().any(|id| is_name(id) && names.contains(&key(id))) || name_id(&r.name).is_some_and(|n| names.contains(&n));
         if !same_game && !same_name {
             continue;
         }
@@ -321,14 +315,9 @@ pub fn same_saves(a: &Line, b: &Line) -> bool {
 /// [`dedupe_with`] then puts on the card as one more line.
 pub fn line_to_join<'a>(records: &'a [GameRecord], ids: &[String], format: &str, def: &str) -> Option<&'a GameRecord> {
     let Match::Record(card) = find(records, ids) else { return None };
-    let mut of_card: Vec<&GameRecord> =
-        records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
+    let mut of_card: Vec<&GameRecord> = records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
     of_card.sort_by(|a, b| (a.id != card.id).cmp(&(b.id != card.id)).then_with(|| seniority(a, b)));
-    of_card.into_iter().find(|r| {
-        r.lines
-            .iter()
-            .any(|l| l.id == MAIN_LINE && l.scope == SCOPE_SHARED && l.format == format && l.def.as_deref() == Some(def))
-    })
+    of_card.into_iter().find(|r| r.lines.iter().any(|l| l.id == MAIN_LINE && l.scope == SCOPE_SHARED && l.format == format && l.def.as_deref() == Some(def)))
 }
 
 /// The shared lines `main` of the card of the game known by `ids`, as they
@@ -337,8 +326,7 @@ pub fn line_to_join<'a>(records: &'a [GameRecord], ids: &[String], format: &str,
 /// first. A game follows such a line by belonging to that record.
 fn main_lines<'a>(records: &'a [GameRecord], ids: &[String]) -> Vec<(&'a GameRecord, &'a Line)> {
     let Match::Record(card) = find(records, ids) else { return Vec::new() };
-    let mut of_card: Vec<&GameRecord> =
-        records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
+    let mut of_card: Vec<&GameRecord> = records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
     of_card.sort_by(|a, b| (a.id != card.id).cmp(&(b.id != card.id)).then_with(|| seniority(a, b)));
     let mut out: Vec<(&GameRecord, &Line)> = Vec::new();
     for r in of_card {
@@ -364,9 +352,7 @@ pub fn binds_for<'a>(line: &'a Line, def: &str) -> Option<&'a [crate::bind::Bind
 /// (`rule:<id>` among the ids of the line's record or of the card it is part
 /// of now), and the rule has a folder for the platforms of both formats.
 pub fn rule_pair(records: &[GameRecord], record: &GameRecord, line: &Line, rule: &crate::crosssaves::Rule, own: &str) -> bool {
-    let both = [own, line.format.as_str()]
-        .iter()
-        .all(|f| super::upgrade::scope_of_format(f).is_some_and(|s| rule.folders.contains_key(s)));
+    let both = [own, line.format.as_str()].iter().all(|f| super::upgrade::scope_of_format(f).is_some_and(|s| rule.folders.contains_key(s)));
     let id = key(&format!("rule:{}", rule.id));
     let says = |r: &GameRecord| r.ids.iter().any(|i| key(i) == id);
     line.format != own && both && (says(record) || resolve(records, &record.id).is_some_and(says))
@@ -623,10 +609,7 @@ pub fn merge(a: &GameRecord, b: &GameRecord) -> GameRecord {
 /// A version says which one it is by `rev`, `updatedAt` and `updatedBy`; a
 /// record that was never stamped can't be told from another like it.
 fn same_version(cloud: &GameRecord, mine: &GameRecord) -> bool {
-    cloud.updated_at.is_some()
-        && cloud.rev == mine.rev
-        && cloud.updated_at == mine.updated_at
-        && cloud.updated_by == mine.updated_by
+    cloud.updated_at.is_some() && cloud.rev == mine.rev && cloud.updated_at == mine.updated_at && cloud.updated_by == mine.updated_by
 }
 
 /// Write `record`: a new one, or one read earlier and changed since (leave
@@ -908,10 +891,8 @@ mod tests {
 
     #[test]
     fn a_strong_id_finds_the_game_and_a_name_only_suggests() {
-        let stardew = GameRecord {
-            name: "Stardew Valley".into(),
-            ..record("stardew-valley-7k3f", &["steam:413150", "xbox:ConcernedApe.StardewValleyPC"], Some(0))
-        };
+        let stardew =
+            GameRecord { name: "Stardew Valley".into(), ..record("stardew-valley-7k3f", &["steam:413150", "xbox:ConcernedApe.StardewValleyPC"], Some(0)) };
         let hades = GameRecord { name: "Hades".into(), ..record("hades-2b9d", &["steam:1145360", "name:hades"], Some(1)) };
         let other_hades = GameRecord { name: "HADES!".into(), ..record("hades-8m1x", &["gog:1"], Some(2)) };
         let genshin = GameRecord { name: "原神".into(), ..record("game-4t6v", &["rule:genshin"], Some(3)) };
@@ -1035,19 +1016,14 @@ mod tests {
         assert_eq!(slug("?!"), "");
 
         // Long names end at the end of a word, or at the limit.
-        assert_eq!(
-            slug("The Legend of Heroes: Trails of Cold Steel IV -The End of Saga-"),
-            "the-legend-of-heroes-trails-of-cold"
-        );
+        assert_eq!(slug("The Legend of Heroes: Trails of Cold Steel IV -The End of Saga-"), "the-legend-of-heroes-trails-of-cold");
         assert_eq!(slug(&"a".repeat(60)), "a".repeat(SLUG_MAX));
         assert_eq!(slug(&format!("a {}", "b".repeat(60))), format!("a-{}", "b".repeat(SLUG_MAX - 2)));
     }
 
     /// `<slug>-<four base-32 characters>`.
     fn tail_of<'a>(id: &'a str, slug: &str) -> Option<&'a str> {
-        id.strip_prefix(slug)?
-            .strip_prefix('-')
-            .filter(|tail| tail.len() == 4 && tail.bytes().all(|b| BASE32.contains(&b)))
+        id.strip_prefix(slug)?.strip_prefix('-').filter(|tail| tail.len() == 4 && tail.bytes().all(|b| BASE32.contains(&b)))
     }
 
     #[test]
@@ -1080,10 +1056,7 @@ mod tests {
         assert_eq!(r.name, "Stardew Valley");
         assert_eq!(r.ids, strings(&["steam:413150", "rule:stardew-valley"]));
         assert_eq!(r.folders, vec![r.id.clone()]);
-        assert_eq!(
-            r.lines,
-            vec![line("main", "rule:stardew-valley", "shared", &format!("games/{}/saves/main", r.id))]
-        );
+        assert_eq!(r.lines, vec![line("main", "rule:stardew-valley", "shared", &format!("games/{}/saves/main", r.id))]);
         assert_eq!((r.rev, r.created_at, r.merged_into.clone()), (0, Some(at(0)), None));
         assert_eq!(r.updated_by, "d-a");
     }
@@ -1150,14 +1123,8 @@ mod tests {
 
         let m = merge(&a, &b);
         assert_eq!(m, merge(&b, &a));
-        assert_eq!(
-            serde_json::Value::Object(m.extra.clone()),
-            json!({ "collection": { "shelf": 2 }, "hidden": true, "rating": 5 })
-        );
-        assert_eq!(
-            serde_json::Value::Object(m.lines[0].extra.clone()),
-            json!({ "owner": "family", "color": "red", "icon": "deck" })
-        );
+        assert_eq!(serde_json::Value::Object(m.extra.clone()), json!({ "collection": { "shelf": 2 }, "hidden": true, "rating": 5 }));
+        assert_eq!(serde_json::Value::Object(m.lines[0].extra.clone()), json!({ "owner": "family", "color": "red", "icon": "deck" }));
         // And they are written back where they were found.
         let out = serde_json::to_value(&m).unwrap();
         assert_eq!(out["collection"]["shelf"], 2);
@@ -1202,10 +1169,7 @@ mod tests {
         assert_eq!(m.lines.len(), 1);
         assert_eq!(m.lines[0].path, "games/hades-2b9d/saves/main-2");
         assert_eq!(m.lines[0].name.as_deref(), Some("Main"));
-        assert_eq!(
-            m.lines[0].also,
-            strings(&["games/other/saves/main", "games/hades-2b9d/saves/main", "games/hades/snapshots"])
-        );
+        assert_eq!(m.lines[0].also, strings(&["games/other/saves/main", "games/hades-2b9d/saves/main", "games/hades/snapshots"]));
         assert_eq!(merge(&m, &a), m);
     }
 
@@ -1299,10 +1263,7 @@ mod tests {
         assert_eq!(survivor.ids, strings(&["nx:0100E65002BB8000", "steam:413150", "name:stardewvalley"]));
         assert_eq!(survivor.folders, strings(&["stardew-nx", "stardew-both", "stardew-steam"]));
         assert_eq!(survivor.lines.len(), 1);
-        assert_eq!(
-            survivor.lines[0].also,
-            strings(&["games/stardew-nx/snapshots", "games/stardew-both/saves/main", "games/stardew-steam/saves/main"])
-        );
+        assert_eq!(survivor.lines[0].also, strings(&["games/stardew-nx/snapshots", "games/stardew-both/saves/main", "games/stardew-steam/saves/main"]));
     }
 
     #[test]
@@ -1405,10 +1366,7 @@ mod tests {
         // more folder: that is picked up.
         new.lines[0].also = strings(&["games/stardew/snapshots"]);
         let again = dedupe(&[first.survivor.clone(), new]).remove(0);
-        assert_eq!(
-            again.survivor.lines[0].also,
-            strings(&["games/stardew-x2m9/saves/main", "games/stardew/snapshots"])
-        );
+        assert_eq!(again.survivor.lines[0].also, strings(&["games/stardew-x2m9/saves/main", "games/stardew/snapshots"]));
         assert_eq!(again.survivor.lines[1..], first.survivor.lines[1..]);
     }
 }

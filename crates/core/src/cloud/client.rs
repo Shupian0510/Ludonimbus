@@ -235,11 +235,8 @@ impl Cloud {
             let mut games = self.games.lock().unwrap();
             for g in &cfg.games {
                 let line = wanted_line(cfg, g, state.games.get(&g.key));
-                let known = Known {
-                    line: (line != library::MAIN_LINE).then_some(line),
-                    record: g.record.clone().filter(|r| !r.is_empty()),
-                    entry: Some(g.clone()),
-                };
+                let known =
+                    Known { line: (line != library::MAIN_LINE).then_some(line), record: g.record.clone().filter(|r| !r.is_empty()), entry: Some(g.clone()) };
                 games.insert(g.key.clone(), known);
             }
         }
@@ -1014,8 +1011,7 @@ impl Cloud {
 
 /// The versions of a line as the app lists them, oldest first.
 pub fn summaries(view: &LineView) -> Vec<SnapshotSummary> {
-    let mut out: Vec<SnapshotSummary> =
-        view.snapshots.iter().enumerate().map(|(i, s)| SnapshotSummary::of(s, view.heads.contains(&i))).collect();
+    let mut out: Vec<SnapshotSummary> = view.snapshots.iter().enumerate().map(|(i, s)| SnapshotSummary::of(s, view.heads.contains(&i))).collect();
     // A version made by restoring another says so where 0.6 kept a note; so
     // does one a device brought along from another save line.
     for i in 0..out.len() {

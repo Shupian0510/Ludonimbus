@@ -52,9 +52,7 @@ struct TrashRecord {
 
 impl<S: Store> Repo<S> {
     pub fn new(store: S) -> Self {
-        let cache = store
-            .cache_scope()
-            .map(|scope| paths::data_dir().join("cloud-cache").join(hex(&scope, 16)));
+        let cache = store.cache_scope().map(|scope| paths::data_dir().join("cloud-cache").join(hex(&scope, 16)));
         Repo { store, cache }
     }
 
@@ -79,10 +77,7 @@ impl<S: Store> Repo<S> {
         let body = self.store.read(path)?;
         if let (Some(f), Some(b)) = (&file, &body) {
             if let Ok(text) = std::str::from_utf8(b) {
-                let cached = Cached {
-                    tag: tag.to_string(),
-                    body: text.to_string(),
-                };
+                let cached = Cached { tag: tag.to_string(), body: text.to_string() };
                 if let Ok(bytes) = serde_json::to_vec(&cached) {
                     let _ = util::atomic_write(f, &bytes);
                 }
@@ -111,11 +106,7 @@ impl<S: Store> CloudProvider for Repo<S> {
     fn account(&self) -> Result<AccountInfo> {
         self.store.check()?;
         let (used, total) = self.store.quota().unwrap_or((None, None));
-        Ok(AccountInfo {
-            label: self.store.label(),
-            used,
-            total,
-        })
+        Ok(AccountInfo { label: self.store.label(), used, total })
     }
 
     fn list_snapshots(&self, game: &str) -> Result<Vec<SnapshotSummary>> {
@@ -167,15 +158,8 @@ impl<S: Store> CloudProvider for Repo<S> {
 
     fn trash(&self, game: &str, id: &str, by: &str) -> Result<()> {
         let json = join(&[&snapshots_dir(game), &format!("{id}.json")]);
-        let bytes = self
-            .store
-            .read(&json)?
-            .ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
-        let record = TrashRecord {
-            deleted_at: Utc::now(),
-            deleted_by: by.to_string(),
-            meta: serde_json::from_slice(&bytes)?,
-        };
+        let bytes = self.store.read(&json)?.ok_or_else(|| anyhow!(crate::tr!("找不到这个版本", "This version wasn't found")))?;
+        let record = TrashRecord { deleted_at: Utc::now(), deleted_by: by.to_string(), meta: serde_json::from_slice(&bytes)? };
         // The record first: an interruption leaves the snapshot in the
         // history rather than losing it.
         self.write_json(&join(&[&trash_dir(game), &format!("{id}.json")]), &record)?;
@@ -185,22 +169,11 @@ impl<S: Store> CloudProvider for Repo<S> {
 
     fn list_trash(&self, game: &str) -> Result<Vec<TrashedSnapshot>> {
         let dir = trash_dir(game);
-        let records: Vec<_> = self
-            .store
-            .list(&dir)?
-            .into_iter()
-            .filter(|e| !e.is_dir && e.name.ends_with(".json"))
-            .collect();
+        let records: Vec<_> = self.store.list(&dir)?.into_iter().filter(|e| !e.is_dir && e.name.ends_with(".json")).collect();
         if records.is_empty() {
             return Ok(Vec::new());
         }
-        let snaps: HashSet<String> = self
-            .store
-            .list(&snapshots_dir(game))?
-            .into_iter()
-            .filter(|e| !e.is_dir)
-            .map(|e| e.name)
-            .collect();
+        let snaps: HashSet<String> = self.store.list(&snapshots_dir(game))?.into_iter().filter(|e| !e.is_dir).map(|e| e.name).collect();
         let mut out = Vec::new();
         for e in records {
             let id = e.name.trim_end_matches(".json");
@@ -217,22 +190,23 @@ impl<S: Store> CloudProvider for Repo<S> {
             }
             if let Some(bytes) = self.read_tagged(&path, &e.tag)? {
                 if let Ok(r) = serde_json::from_slice::<TrashRecord>(&bytes) {
-                    out.push(TrashedSnapshot {
-                        snapshot: SnapshotSummary::from(&r.meta),
-                        deleted_at: r.deleted_at,
-                        deleted_by: r.deleted_by,
-                    });
+                    out.push(TrashedSnapshot { snapshot: SnapshotSummary::from(&r.meta), deleted_at: r.deleted_at, deleted_by: r.deleted_by });
                 }
             }
         }
-        out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        out.sort_by_key(|a| std::cmp::Reverse(a.deleted_at));
         Ok(out)
     }
 
     fn untrash(&self, game: &str, id: &str) -> Result<()> {
         let dir = snapshots_dir(game);
         let path = join(&[&trash_dir(game), &format!("{id}.json")]);
-        let gone = || anyhow!(crate::tr!("「最近删除」里没有这个版本了，可能已经被彻底删除", "This version is no longer in Recently deleted; it may have been deleted for good"));
+        let gone = || {
+            anyhow!(crate::tr!(
+                "「最近删除」里没有这个版本了，可能已经被彻底删除",
+                "This version is no longer in Recently deleted; it may have been deleted for good"
+            ))
+        };
         let bytes = self.store.read(&path)?.ok_or_else(gone)?;
         let record: TrashRecord = serde_json::from_slice(&bytes)?;
         if !self.store.list(&dir)?.iter().any(|e| e.name == format!("{id}.zip")) {
@@ -247,7 +221,10 @@ impl<S: Store> CloudProvider for Repo<S> {
         let dir = snapshots_dir(game);
         if self.store.read(&join(&[&dir, &format!("{id}.json")]))?.is_some() {
             // Restored on another device meanwhile: it is a live version again.
-            bail!(crate::tr!("这个版本已经被恢复到版本历史里，不能在这里彻底删除", "This version was restored to the history and can't be deleted for good here"));
+            bail!(crate::tr!(
+                "这个版本已经被恢复到版本历史里，不能在这里彻底删除",
+                "This version was restored to the history and can't be deleted for good here"
+            ));
         }
         self.store.remove(&join(&[&dir, &format!("{id}.zip")]))?;
         let path = join(&[&trash_dir(game), &format!("{id}.json")]);

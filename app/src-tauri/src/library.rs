@@ -66,15 +66,7 @@ pub async fn scan_folder(path: String) -> CmdResult<Vec<Found>> {
 #[tauri::command]
 pub async fn add_found(found: Found, name: String, saves: Vec<String>, ludusavi_title: Option<String>, exe: Option<String>) -> CmdResult<String> {
     blocking(move || {
-        let g = games::add_found(
-            &found,
-            games::FoundChoice {
-                name,
-                saves,
-                ludusavi_title,
-                exe: exe.map(PathBuf::from),
-            },
-        )?;
+        let g = games::add_found(&found, games::FoundChoice { name, saves, ludusavi_title, exe: exe.map(PathBuf::from) })?;
         Ok(crate::commands::adopt_cloud_key(g.key))
     })
     .await
@@ -175,13 +167,7 @@ pub struct SgdbStatus {
 
 #[tauri::command]
 pub async fn sgdb_status() -> CmdResult<SgdbStatus> {
-    blocking(|| {
-        Ok(SgdbStatus {
-            has_key: sgdb::load_key()?.is_some(),
-            key_page: sgdb::KEY_PAGE.into(),
-        })
-    })
-    .await
+    blocking(|| Ok(SgdbStatus { has_key: sgdb::load_key()?.is_some(), key_page: sgdb::KEY_PAGE.into() })).await
 }
 
 /// Check and save the user's API key.
@@ -225,8 +211,8 @@ fn push_art(key: &str) {
         let Ok(cfg) = config::load() else { return };
         let Some(g) = cfg.game(&key).cloned() else { return };
         if let Ok(Some(cloud)) = ludonimbus_core::cloud::open(&cfg) {
-            let result = ludonimbus_core::cloud::gamedata::Folders::of(&cloud, &key)
-                .and_then(|at| ludonimbus_core::artsync::push(cloud.files(), &cfg, &at, &g));
+            let result =
+                ludonimbus_core::cloud::gamedata::Folders::of(&cloud, &key).and_then(|at| ludonimbus_core::artsync::push(cloud.files(), &cfg, &at, &g));
             if let Err(e) = result {
                 ludonimbus_core::logger::log("app", format!("{key}: artwork upload failed: {e:#}"));
             }
@@ -320,13 +306,7 @@ pub async fn steam_add_games(keys: Vec<String>, account: String, auto_art: bool,
             }
         }
         with_steam_closed(close_steam, || {
-            Ok(keys
-                .iter()
-                .map(|k| BatchResult {
-                    key: k.clone(),
-                    error: games::add_to_steam(k, &account).err().map(|e| format!("{e:#}")),
-                })
-                .collect())
+            Ok(keys.iter().map(|k| BatchResult { key: k.clone(), error: games::add_to_steam(k, &account).err().map(|e| format!("{e:#}")) }).collect())
         })
     })
     .await

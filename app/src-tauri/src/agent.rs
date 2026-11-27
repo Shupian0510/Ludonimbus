@@ -83,13 +83,8 @@ pub fn spawn(app: AppHandle) {
         let mut raw = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut raw);
         let token: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-        let info = AgentInfo {
-            port,
-            token: token.clone(),
-            pid: std::process::id(),
-            version: ludonimbus_core::APP_VERSION.to_string(),
-            api_version: API_VERSION,
-        };
+        let info =
+            AgentInfo { port, token: token.clone(), pid: std::process::id(), version: ludonimbus_core::APP_VERSION.to_string(), api_version: API_VERSION };
         // It holds the token: only this user may read it (Linux, macOS).
         match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| util::write_private(&agent_file(), &b)) {
             Ok(()) => log(format!("local API listening on 127.0.0.1:{port}")),
@@ -109,10 +104,7 @@ pub fn spawn(app: AppHandle) {
 /// Remove `agent.json` when this process wrote it (called on exit).
 pub fn remove_agent_file() {
     let path = agent_file();
-    let ours = std::fs::read(&path)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<AgentInfo>(&b).ok())
-        .is_some_and(|i| i.pid == std::process::id());
+    let ours = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentInfo>(&b).ok()).is_some_and(|i| i.pid == std::process::id());
     if ours {
         let _ = std::fs::remove_file(path);
     }
@@ -128,10 +120,7 @@ struct ApiError {
 
 impl ApiError {
     fn new(status: u16, message: impl Into<String>) -> Self {
-        ApiError {
-            status,
-            message: message.into(),
-        }
+        ApiError { status, message: message.into() }
     }
 }
 
@@ -144,10 +133,7 @@ impl From<anyhow::Error> for ApiError {
 type ApiResult = Result<Value, ApiError>;
 
 fn header<'a>(req: &'a Request, name: &str) -> Option<&'a str> {
-    req.headers()
-        .iter()
-        .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name))
-        .map(|h| h.value.as_str())
+    req.headers().iter().find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name)).map(|h| h.value.as_str())
 }
 
 fn handle(app: &AppHandle, req: Request, token: &str, port: u16) {
@@ -179,11 +165,7 @@ fn authorize(req: &Request, token: &str, port: u16) -> Result<(), ApiError> {
 }
 
 fn query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
-    query
-        .split('&')
-        .filter_map(|kv| kv.split_once('=').or(Some((kv, ""))))
-        .find(|(k, _)| *k == name)
-        .map(|(_, v)| v)
+    query.split('&').filter_map(|kv| kv.split_once('=').or(Some((kv, "")))).find(|(k, _)| *k == name).map(|(_, v)| v)
 }
 
 fn route(app: &AppHandle, req: &Request) -> ApiResult {
@@ -236,7 +218,9 @@ fn route(app: &AppHandle, req: &Request) -> ApiResult {
         (Method::Get, ["v1", "games", key, "achievements", id, "icon"]) => Ok(achievements::api_icon(key, id)?),
         (Method::Get, ["v1", "games", key, "icon"]) => Ok(achievements::api_game_icon(key)?),
         (Method::Get, ["v1", "achievements", "events"]) => Ok(achievements::api_events(query_param(query, "after"))?),
-        (Method::Post, ["v1", "achievements", "events", seq, "ack"]) => Ok(achievements::api_ack(seq, query_param(query, "shown"), query_param(query, "reason"))?),
+        (Method::Post, ["v1", "achievements", "events", seq, "ack"]) => {
+            Ok(achievements::api_ack(seq, query_param(query, "shown"), query_param(query, "reason"))?)
+        }
         _ => Err(ApiError::new(404, "not found")),
     }
 }
@@ -324,9 +308,7 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
     let mut st = state::game(&g.key);
     let mut report: Option<StatusReport> = st.last_check.clone().and_then(|v| serde_json::from_value(v).ok());
     // Old, or taken before the latest sync (e.g. the Steam wrapper uploaded since).
-    let stale = report.as_ref().is_none_or(|r| {
-        (Utc::now() - r.checked_at).num_seconds() > FRESH_SECS || st.last_sync_at.is_some_and(|t| t > r.checked_at)
-    });
+    let stale = report.as_ref().is_none_or(|r| (Utc::now() - r.checked_at).num_seconds() > FRESH_SECS || st.last_sync_at.is_some_and(|t| t > r.checked_at));
     if refresh && stale && phase == "idle" {
         let ctx = Ctx::from_config(cfg.clone());
         let r = sync::check(&ctx, &g);
@@ -336,10 +318,7 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
     }
     let health = match &g.store {
         Some(_) => steamcloud::wrapper_word(&cfg, &g).to_string(),
-        None => serde_json::to_value(steam::health(&cfg, &g))
-            .ok()
-            .and_then(|v| v["state"].as_str().map(str::to_string))
-            .unwrap_or_default(),
+        None => serde_json::to_value(steam::health(&cfg, &g)).ok().and_then(|v| v["state"].as_str().map(str::to_string)).unwrap_or_default(),
     };
     let body = GameStatus {
         managed: true,
@@ -355,10 +334,7 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
         message: report.as_ref().and_then(|r| r.message.clone()),
         last_sync_at: st.last_sync_at,
         last_synced_device: st.last_synced_device.clone(),
-        cloud_head: report.as_ref().and_then(|r| r.head.as_ref()).map(|h| CloudHead {
-            device_name: h.device_name.clone(),
-            created_at: h.created_at,
-        }),
+        cloud_head: report.as_ref().and_then(|r| r.head.as_ref()).map(|h| CloudHead { device_name: h.device_name.clone(), created_at: h.created_at }),
         pending: st.pending.len(),
         conflict: st.conflict.is_some(),
         last_error: st.last_error.clone(),
@@ -380,9 +356,7 @@ fn apply_newer(app: &AppHandle, key: &str, id: &str) -> ApiResult {
     if let Some(reason) = busy_reason(&g) {
         return Err(ApiError::new(409, reason));
     }
-    let n = ludonimbus_core::savelib::newer_version(&ctx, &g)?
-        .filter(|n| n.snapshot.id == id)
-        .ok_or_else(|| ApiError::new(404, "no such newer version"))?;
+    let n = ludonimbus_core::savelib::newer_version(&ctx, &g)?.filter(|n| n.snapshot.id == id).ok_or_else(|| ApiError::new(404, "no such newer version"))?;
     let guard = busy::begin(key).ok_or_else(|| ApiError::new(409, ludonimbus_core::tr!("正在同步", "Syncing")))?;
     let app = app.clone();
     std::thread::spawn(move || {
@@ -392,7 +366,12 @@ fn apply_newer(app: &AppHandle, key: &str, id: &str) -> ApiResult {
         commands::cache_check(&g.key, &sync::check(&ctx, &g));
         let _ = app.emit(
             "sync-finished",
-            watcher::SyncEvent { key: g.key.clone(), name: g.name.clone(), outcome: result.as_ref().ok().cloned(), error: result.err().map(|e| format!("{e:#}")) },
+            watcher::SyncEvent {
+                key: g.key.clone(),
+                name: g.name.clone(),
+                outcome: result.as_ref().ok().cloned(),
+                error: result.err().map(|e| format!("{e:#}")),
+            },
         );
     });
     Ok(json!({ "started": true }))
@@ -471,7 +450,7 @@ fn snapshots(key: &str) -> ApiResult {
     let ctx = Ctx::from_config(cfg);
     let mut list = ctx.cloud()?.list_snapshots(key)?;
     let head = sync::mainline_head(&list).map(|h| h.id);
-    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     let st = state::game(key);
     Ok(json!({
         "key": key,

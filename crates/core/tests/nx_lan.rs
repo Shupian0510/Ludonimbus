@@ -229,7 +229,10 @@ fn switch_client_round_trip() {
     let list = json_of(&b);
     assert_eq!(list["headId"].as_str(), Some(kept_switch.as_str()));
     let newest = &list["snapshots"][0];
-    assert_eq!((newest["id"].as_str(), newest["parent"].as_str(), newest["pending"].as_bool()), (Some(kept_switch.as_str()), Some(meta.id.as_str()), Some(true)));
+    assert_eq!(
+        (newest["id"].as_str(), newest["parent"].as_str(), newest["pending"].as_bool()),
+        (Some(kept_switch.as_str()), Some(meta.id.as_str()), Some(true))
+    );
     let _ = nxlan::upload_waiting().unwrap();
     assert_eq!(ludonimbus_core::sync::mainline_head(&ctx.cloud().unwrap().list_snapshots(key).unwrap()).unwrap().id, kept_switch);
 

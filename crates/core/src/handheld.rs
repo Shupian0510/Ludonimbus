@@ -59,10 +59,7 @@ fn firmware_names() -> Vec<String> {
         let Ok(k) = winreg::RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey(r"HARDWARE\DESCRIPTION\System\BIOS") else {
             return Vec::new();
         };
-        ["SystemManufacturer", "SystemProductName", "SystemFamily", "BaseBoardProduct"]
-            .iter()
-            .filter_map(|n| k.get_value::<String, _>(n).ok())
-            .collect()
+        ["SystemManufacturer", "SystemProductName", "SystemFamily", "BaseBoardProduct"].iter().filter_map(|n| k.get_value::<String, _>(n).ok()).collect()
     }
     #[cfg(not(windows))]
     {

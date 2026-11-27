@@ -130,12 +130,8 @@ pub fn push(files: &dyn Store, at: &Folders, device: &str, device_name: &str) ->
     let db = super::load_db(key);
     let mut wrote = false;
     if !db.mine.is_empty() {
-        let file = DeviceFile {
-            device: device.to_string(),
-            device_name: device_name.to_string(),
-            updated_at: None,
-            unlocks: db.mine.values().cloned().collect(),
-        };
+        let file =
+            DeviceFile { device: device.to_string(), device_name: device_name.to_string(), updated_at: None, unlocks: db.mine.values().cloned().collect() };
         let h = hash(&serde_json::to_vec(&file)?);
         if db.uploaded.as_deref() != Some(h.as_str()) {
             // Never drop entries another run of this device uploaded before
@@ -193,7 +189,7 @@ mod tests {
                 Unlock { id: "2".into(), unlocked_at: t("2026-11-23T00:00:00Z"), hardcore: false },
             ],
         };
-        assert_eq!(merge_files(&mut db, &[other.clone()], None), 2);
+        assert_eq!(merge_files(&mut db, std::slice::from_ref(&other), None), 2);
         assert_eq!(db.unlocks["1"].device_name, "Laptop");
         assert_eq!(db.unlocks.len(), 2);
         // Merging again changes nothing; other devices' unlocks never count as this device's.
@@ -208,8 +204,24 @@ mod tests {
             source_id: "NPWR00001_00".into(),
             title: None,
             achievements: vec![
-                Achievement { id: "0".into(), name: "A".into(), description: String::new(), icon: Some("C:\\x\\TROP000.PNG".into()), hidden: false, points: None, grade: None },
-                Achievement { id: "1".into(), name: "B".into(), description: String::new(), icon: Some("https://media.retroachievements.org/Badge/1.png".into()), hidden: false, points: None, grade: None },
+                Achievement {
+                    id: "0".into(),
+                    name: "A".into(),
+                    description: String::new(),
+                    icon: Some("C:\\x\\TROP000.PNG".into()),
+                    hidden: false,
+                    points: None,
+                    grade: None,
+                },
+                Achievement {
+                    id: "1".into(),
+                    name: "B".into(),
+                    description: String::new(),
+                    icon: Some("https://media.retroachievements.org/Badge/1.png".into()),
+                    hidden: false,
+                    points: None,
+                    grade: None,
+                },
             ],
         };
         let p = portable(&s);

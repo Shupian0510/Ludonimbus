@@ -172,10 +172,7 @@ fn copy_and_wait(log: &Log, api: &openlist::Api, src_dir: &str, name: &str, dst_
         let got = v["content"].as_array().and_then(|l| l.iter().find(|e| e["name"] == name).and_then(|e| e["size"].as_u64()));
         if got == Some(size) {
             let secs = t.elapsed().as_secs_f64();
-            log.step(format!(
-                "Quark: the copy of {name} is complete after {secs:.1} s ({:.1} MB/s)",
-                size as f64 / 1_048_576.0 / secs.max(0.001)
-            ));
+            log.step(format!("Quark: the copy of {name} is complete after {secs:.1} s ({:.1} MB/s)", size as f64 / 1_048_576.0 / secs.max(0.001)));
             return Ok(());
         }
         if Instant::now() > deadline {
@@ -204,12 +201,8 @@ fn baidu(log: &Log) -> Result<()> {
         _ => bail!("the current cloud in Ludonimbus is not Baidu Netdisk: switch to it in Settings first"),
     };
     let pick = |own: &str, var: &str| if own.trim().is_empty() { env(var) } else { own.to_string() };
-    let client = BaiduClient::resolve(
-        &pick(&k, "LUDONIMBUS_BAIDU_APP_KEY"),
-        &pick(&s, "LUDONIMBUS_BAIDU_SECRET_KEY"),
-        &pick(&n, "LUDONIMBUS_BAIDU_APP_NAME"),
-    )
-    .ok_or_else(|| anyhow!("no Baidu app keys: put them in secrets.local.env (the script reads it)"))?;
+    let client = BaiduClient::resolve(&pick(&k, "LUDONIMBUS_BAIDU_APP_KEY"), &pick(&s, "LUDONIMBUS_BAIDU_SECRET_KEY"), &pick(&n, "LUDONIMBUS_BAIDU_APP_NAME"))
+        .ok_or_else(|| anyhow!("no Baidu app keys: put them in secrets.local.env (the script reads it)"))?;
     let token = baidu::load_token()?.ok_or_else(|| anyhow!("sign in to Baidu Netdisk in Ludonimbus first"))?;
     let pan = BaiduPan::new(client, Endpoints::default(), token, TokenSink::Keyring, Duration::from_secs(20));
     let app = pan.app_root().to_string();
@@ -220,12 +213,7 @@ fn baidu(log: &Log) -> Result<()> {
     for dir in ["/", app.as_str()] {
         let t = Instant::now();
         let v = list(dir)?;
-        log.step(format!(
-            "Baidu: list {dir}: errno {} — {} entries ({} ms)",
-            errno(&v),
-            v["list"].as_array().map_or(0, Vec::len),
-            t.elapsed().as_millis()
-        ));
+        log.step(format!("Baidu: list {dir}: errno {} — {} entries ({} ms)", errno(&v), v["list"].as_array().map_or(0, Vec::len), t.elapsed().as_millis()));
     }
 
     // 2. A folder of yours, read only.

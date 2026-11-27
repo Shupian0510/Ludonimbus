@@ -54,21 +54,8 @@ pub fn speed(a: SpeedArgs) -> Result<()> {
     let provider = gamebackup::open(&cfg)?;
     let store = provider.files();
     const MB: u64 = 1024 * 1024;
-    let opts = speedtest::SpeedOptions {
-        total_bytes: a.mb * MB,
-        object_bytes: a.object_mb * MB,
-        threads: a.threads,
-        max_secs: a.max_secs,
-    };
-    eprintln!(
-        "测速：{}（{}），每轮 {} MB，对象 {} MB，并行 {} 线程，每轮最多 {} 秒",
-        store.label(),
-        store.kind(),
-        a.mb,
-        a.object_mb,
-        a.threads,
-        a.max_secs
-    );
+    let opts = speedtest::SpeedOptions { total_bytes: a.mb * MB, object_bytes: a.object_mb * MB, threads: a.threads, max_secs: a.max_secs };
+    eprintln!("测速：{}（{}），每轮 {} MB，对象 {} MB，并行 {} 线程，每轮最多 {} 秒", store.label(), store.kind(), a.mb, a.object_mb, a.threads, a.max_secs);
     let last = Mutex::new(String::new());
     let progress = |p: &speedtest::SpeedProgress| {
         let line = if p.phase == "cleanup" {
@@ -76,13 +63,7 @@ pub fn speed(a: SpeedArgs) -> Result<()> {
         } else if p.total_bytes == 0 {
             p.phase.to_string()
         } else {
-            format!(
-                "{:<16} {:>9} / {:<9} {:>5.1}s",
-                p.phase,
-                human(p.done_bytes),
-                human(p.total_bytes),
-                p.elapsed_secs
-            )
+            format!("{:<16} {:>9} / {:<9} {:>5.1}s", p.phase, human(p.done_bytes), human(p.total_bytes), p.elapsed_secs)
         };
         let mut l = last.lock().unwrap();
         if *l != line {
@@ -105,11 +86,7 @@ pub fn speed(a: SpeedArgs) -> Result<()> {
     println!("{}", phase_line("上传 并行", &r.upload_parallel));
     println!("{}", phase_line("下载 单线程", &r.download_serial));
     println!("{}", phase_line("下载 并行", &r.download_parallel));
-    let eta = |bytes: u64, bps: f64| {
-        speedtest::eta_secs(bytes, bps)
-            .map(|s| format!("{:.1} 小时", s as f64 / 3600.0))
-            .unwrap_or_else(|| "-".into())
-    };
+    let eta = |bytes: u64, bps: f64| speedtest::eta_secs(bytes, bps).map(|s| format!("{:.1} 小时", s as f64 / 3600.0)).unwrap_or_else(|| "-".into());
     println!(
         "估算          10 GB 上传 {}，下载 {}；50 GB 上传 {}，下载 {}",
         eta(10 << 30, r.upload_bps),
@@ -318,7 +295,12 @@ pub fn run(cmd: Cmd) -> Result<()> {
             let program = if keep_program { to.clone() } else { restore::resolve_target(&to, &program_base) };
             let content = m.component(gamebackup::format::Kind::Content).map(|_| content.unwrap_or_else(|| to.parent().unwrap_or(&to).to_path_buf()));
             let targets = restore::Targets { program, restore_program: !keep_program, content };
-            eprintln!("恢复 {}：程序到 {}，游戏文件到 {}", s.id, targets.program.display(), targets.content.as_ref().map(|c| c.display().to_string()).unwrap_or("-".into()));
+            eprintln!(
+                "恢复 {}：程序到 {}，游戏文件到 {}",
+                s.id,
+                targets.program.display(),
+                targets.content.as_ref().map(|c| c.display().to_string()).unwrap_or("-".into())
+            );
             let show = line_progress();
             let threads = threads.unwrap_or_else(|| gamebackup::default_threads(store.kind()));
             let result = restore::restore(store, &key, &s, &targets, threads, &cancel, &|p| show(p.phase, p.done, p.total));

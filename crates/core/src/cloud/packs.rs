@@ -111,12 +111,7 @@ impl LocalFile {
     pub fn from_disk(path: impl Into<String>, source: impl Into<PathBuf>) -> Result<LocalFile> {
         let source = source.into();
         let mut file = File::open(&source).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", source.display()))?;
-        let mtime = file
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .map(|t| DateTime::<Utc>::from(t).timestamp())
-            .unwrap_or(0);
+        let mtime = file.metadata().ok().and_then(|m| m.modified().ok()).map(|t| DateTime::<Utc>::from(t).timestamp()).unwrap_or(0);
         let (size, hash) = copy_hashed(&mut file, &mut std::io::sink(), u64::MAX)?;
         Ok(LocalFile { path: path.into(), size, hash, mtime, source })
     }
@@ -221,14 +216,7 @@ pub fn plan(id: &str, local: &[LocalFile], base: Option<&Manifest>, policy: &Pol
                 (!first).then(|| p.id.clone())
             }
         };
-        plan.files.push(FileRef {
-            path: f.path.clone(),
-            size: f.size,
-            hash: f.hash.clone(),
-            mtime: f.mtime,
-            pack,
-            extra: Extra::new(),
-        });
+        plan.files.push(FileRef { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime, pack, extra: Extra::new() });
     }
     if large {
         plan.sizes = plan.packs.iter().map(|p| (p.id.clone(), p.size)).collect();
@@ -272,7 +260,8 @@ fn repack<'a>(sorted: &[&'a LocalFile], borrowed: &mut BTreeMap<&'a str, &'a str
     loop {
         let per_pack = taken(borrowed);
         let live: u64 = per_pack.values().sum();
-        let held = per_pack.iter().fold(total.saturating_sub(live), |sum, (pack, used)| sum.saturating_add(known.get(*pack).copied().unwrap_or(*used).max(*used)));
+        let held =
+            per_pack.iter().fold(total.saturating_sub(live), |sum, (pack, used)| sum.saturating_add(known.get(*pack).copied().unwrap_or(*used).max(*used)));
         if held <= total.saturating_mul(REPACK_ABOVE) {
             return;
         }
@@ -323,11 +312,7 @@ pub fn build(manifest: &Manifest, pack: &str, local: &[LocalFile], staging: &Pat
     for f in manifest.files.iter().filter(|f| pack_of(manifest, f) == pack) {
         check_path(&f.path)?;
         let l = on_disk.get(f.path.as_str()).filter(|l| l.size == f.size && l.hash == f.hash).ok_or_else(|| {
-            anyhow!(crate::tr!(
-                "本机没有内容包 {pack} 需要的文件 {}",
-                "This device doesn't have the file {} that the content pack {pack} needs",
-                f.path
-            ))
+            anyhow!(crate::tr!("本机没有内容包 {pack} 需要的文件 {}", "This device doesn't have the file {} that the content pack {pack} needs", f.path))
         })?;
         members.push((f, l));
     }
@@ -352,17 +337,12 @@ fn write_zip(zip_path: &Path, manifest: &Manifest, members: &[(&FileRef, &LocalF
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (f, l) in members {
         zw.start_file(format!("files/{}", f.path), opts.large_file(f.size >= ZIP64_FROM))?;
-        let mut src = File::open(&l.source)
-            .with_context(|| crate::tr!("无法读取存档文件 {}", "Can't read the save file {}", l.source.display()))?;
+        let mut src = File::open(&l.source).with_context(|| crate::tr!("无法读取存档文件 {}", "Can't read the save file {}", l.source.display()))?;
         // Hashed on the way in: the file may have been written to since it
         // was scanned.
         let (size, hash) = copy_hashed(&mut src, &mut zw, f.size.saturating_add(1))?;
         if size != f.size || hash != f.hash {
-            bail!(crate::tr!(
-                "存档文件 {} 在打包时发生了变化",
-                "The save file {} changed while it was being packed",
-                l.source.display()
-            ));
+            bail!(crate::tr!("存档文件 {} 在打包时发生了变化", "The save file {} changed while it was being packed", l.source.display()));
         }
     }
     zw.start_file("snapshot.json", opts)?;
@@ -429,11 +409,7 @@ pub fn verify(store: &dyn Store, folders: &[String], manifest: &Manifest, local:
         }
     }
     let at_hand = |pack: &str| {
-        manifest
-            .files
-            .iter()
-            .filter(|f| pack_of(manifest, f) == pack)
-            .all(|f| local.iter().any(|l| l.path == f.path && l.size == f.size && l.hash == f.hash))
+        manifest.files.iter().filter(|f| pack_of(manifest, f) == pack).all(|f| local.iter().any(|l| l.path == f.path && l.size == f.size && l.hash == f.hash))
     };
     if let Some(gone) = missing.iter().find(|p| !is_own(p.as_str(), &manifest.id) && !at_hand(p.as_str())) {
         return Err(MissingPack { pack: gone.clone() }.into());
@@ -471,11 +447,7 @@ pub struct MissingPack {
 
 impl std::fmt::Display for MissingPack {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = crate::tr!(
-            "这个版本不完整：云端缺少内容包 {}",
-            "This version is incomplete: the content pack {} is missing from the cloud",
-            self.pack
-        );
+        let text = crate::tr!("这个版本不完整：云端缺少内容包 {}", "This version is incomplete: the content pack {} is missing from the cloud", self.pack);
         write!(f, "{text}")
     }
 }
@@ -501,22 +473,10 @@ pub fn missing_pack(e: &anyhow::Error) -> Option<&MissingPack> {
 /// it was. All that can still fail once the moving has begun is this
 /// device's own disk. Files already in `dest` under the same path are
 /// replaced, others are left alone.
-pub fn read(
-    store: &dyn Store,
-    folders: &[String],
-    line_dir: &str,
-    manifest: &Manifest,
-    only: Option<&[String]>,
-    dest: &Path,
-    staging: &Path,
-) -> Result<()> {
+pub fn read(store: &dyn Store, folders: &[String], line_dir: &str, manifest: &Manifest, only: Option<&[String]>, dest: &Path, staging: &Path) -> Result<()> {
     let lacking = manifest.unsupported();
     if !lacking.is_empty() {
-        bail!(crate::tr!(
-            "这个版本要用更新的 Ludonimbus 才能读取（{}）",
-            "This version needs a newer Ludonimbus to be read ({})",
-            lacking.join(", ")
-        ));
+        bail!(crate::tr!("这个版本要用更新的 Ludonimbus 才能读取（{}）", "This version needs a newer Ludonimbus to be read ({})", lacking.join(", ")));
     }
     let by_path: BTreeMap<&str, &FileRef> = manifest.files.iter().map(|f| (f.path.as_str(), f)).collect();
     let wanted: Vec<&FileRef> = match only {
@@ -838,10 +798,7 @@ mod tests {
             file("saves/new", KIB, "hn"),
         ];
         let p = plan("S3", &local, Some(&base), &POLICY);
-        assert_eq!(
-            refs(&p),
-            [("saves/a", Some("S2")), ("saves/b", Some("S1")), ("saves/c", None), ("saves/d2", None), ("saves/new", None)]
-        );
+        assert_eq!(refs(&p), [("saves/a", Some("S2")), ("saves/b", Some("S1")), ("saves/c", None), ("saves/d2", None), ("saves/new", None)]);
         assert_eq!(p.packs, vec![NewPack { id: "S3".into(), files: vec!["saves/c".into(), "saves/d2".into(), "saves/new".into()], size: 4 * KIB }]);
         // Only packs the base uses are referenced.
         let used: BTreeSet<String> = p.files.iter().filter_map(|f| f.pack.clone()).collect();
@@ -962,8 +919,7 @@ mod tests {
             file("saves/f", 0, "f"),
         ];
         let p = plan("S1", &local, None, &POLICY);
-        let packs: Vec<(&str, Vec<&str>, u64)> =
-            p.packs.iter().map(|k| (k.id.as_str(), k.files.iter().map(String::as_str).collect(), k.size)).collect();
+        let packs: Vec<(&str, Vec<&str>, u64)> = p.packs.iter().map(|k| (k.id.as_str(), k.files.iter().map(String::as_str).collect(), k.size)).collect();
         assert_eq!(
             packs,
             [
@@ -1000,14 +956,7 @@ mod tests {
         assert_eq!(p.packs, vec![NewPack { id: "S2".into(), files: vec!["saves/b".into(), "saves/e".into()], size: 8 * KIB }]);
         assert_eq!(
             refs(&p),
-            [
-                ("saves/a", Some("S1")),
-                ("saves/b", None),
-                ("saves/c", Some("S1-2")),
-                ("saves/d", Some("S1-3")),
-                ("saves/e", None),
-                ("saves/f", Some("S1-4")),
-            ]
+            [("saves/a", Some("S1")), ("saves/b", None), ("saves/c", Some("S1-2")), ("saves/d", Some("S1-3")), ("saves/e", None), ("saves/f", Some("S1-4")),]
         );
     }
 
@@ -1068,10 +1017,8 @@ mod tests {
         let grace = chrono::Duration::days(GRACE_DAYS);
         let (used_old, used_part, orphan_old, orphan_part, orphan_young, orphan_fresh) =
             (id(24 * 30, 1), format!("{}-2", id(24 * 30, 2)), id(24 * 30, 3), format!("{}-2", id(24 * 9, 4)), id(24 * 3, 5), id(1, 6));
-        let mut listing: Vec<Entry> = [&used_old, &used_part, &orphan_old, &orphan_part, &orphan_young, &orphan_fresh]
-            .iter()
-            .map(|id| zip_entry(&format!("{id}.zip")))
-            .collect();
+        let mut listing: Vec<Entry> =
+            [&used_old, &used_part, &orphan_old, &orphan_part, &orphan_young, &orphan_fresh].iter().map(|id| zip_entry(&format!("{id}.zip"))).collect();
         // Things that are not packs of the kind this version writes.
         listing.push(zip_entry("notes.txt"));
         listing.push(zip_entry(&format!("{}.zip.lntmp", id(24 * 30, 7))));

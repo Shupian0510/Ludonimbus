@@ -102,11 +102,7 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<DavItem>> {
             quota_available: None,
         };
         for ps in resp.children().filter(|n| dav(n, "propstat")) {
-            let ok = ps
-                .children()
-                .find(|n| dav(n, "status"))
-                .and_then(|n| n.text())
-                .is_none_or(|s| s.contains(" 200"));
+            let ok = ps.children().find(|n| dav(n, "status")).and_then(|n| n.text()).is_none_or(|s| s.contains(" 200"));
             if !ok {
                 continue;
             }
@@ -137,11 +133,21 @@ fn fail(e: ureq::Error) -> anyhow::Error {
             let body: String = resp.into_string().unwrap_or_default().chars().take(300).collect();
             match code {
                 401 => anyhow!(crate::tr!("WebDAV 用户名或密码不对（401）", "Wrong WebDAV username or password (401)")),
-                403 => anyhow!(crate::tr!("WebDAV 服务器拒绝了操作（403），请检查账号是否有这个文件夹的读写权限", "The WebDAV server refused (403). Check that the account can read and write this folder")),
-                404 => anyhow!(crate::tr!("WebDAV 地址不存在（404），请检查地址和文件夹", "The WebDAV address doesn't exist (404). Check the address and folder")),
-                405 => anyhow!(crate::tr!("WebDAV 服务器不支持这个操作（405），请确认地址指向的是 WebDAV 服务", "The WebDAV server doesn't support this (405). Make sure the address points to a WebDAV service")),
+                403 => anyhow!(crate::tr!(
+                    "WebDAV 服务器拒绝了操作（403），请检查账号是否有这个文件夹的读写权限",
+                    "The WebDAV server refused (403). Check that the account can read and write this folder"
+                )),
+                404 => {
+                    anyhow!(crate::tr!("WebDAV 地址不存在（404），请检查地址和文件夹", "The WebDAV address doesn't exist (404). Check the address and folder"))
+                }
+                405 => anyhow!(crate::tr!(
+                    "WebDAV 服务器不支持这个操作（405），请确认地址指向的是 WebDAV 服务",
+                    "The WebDAV server doesn't support this (405). Make sure the address points to a WebDAV service"
+                )),
                 507 => anyhow!(crate::tr!("WebDAV 空间不足（507）", "Not enough space on the WebDAV server (507)")),
-                429 | 503 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器繁忙或请求太频繁（{code}）", "The WebDAV server is busy or got too many requests ({code})"))),
+                429 | 503 => {
+                    anyhow!(Unavailable(crate::tr!("WebDAV 服务器繁忙或请求太频繁（{code}）", "The WebDAV server is busy or got too many requests ({code})")))
+                }
                 c if c >= 500 && body.trim().is_empty() => anyhow!(Unavailable(crate::tr!("WebDAV 服务器错误 {c}", "WebDAV server error {c}"))),
                 c if c >= 500 => anyhow!(Unavailable(crate::tr!("WebDAV 服务器错误 {c}：{}", "WebDAV server error {c}: {}", body.trim()))),
                 c => anyhow!(crate::tr!("WebDAV 返回错误 {c}：{body}", "WebDAV returned error {c}: {body}")),
@@ -161,7 +167,12 @@ fn fail(e: ureq::Error) -> anyhow::Error {
 
 impl WebDav {
     pub fn new(url: &str, username: &str, password: &str, folder: &str, timeout: Duration) -> Result<Self> {
-        let mut server = Url::parse(url.trim()).map_err(|_| anyhow!(crate::tr!("WebDAV 地址格式不对，应类似 https://example.com/dav/", "The WebDAV address looks wrong; it should look like https://example.com/dav/")))?;
+        let mut server = Url::parse(url.trim()).map_err(|_| {
+            anyhow!(crate::tr!(
+                "WebDAV 地址格式不对，应类似 https://example.com/dav/",
+                "The WebDAV address looks wrong; it should look like https://example.com/dav/"
+            ))
+        })?;
         if !matches!(server.scheme(), "http" | "https") {
             bail!(crate::tr!("WebDAV 地址需要以 http:// 或 https:// 开头", "The WebDAV address needs to start with http:// or https://"));
         }
@@ -174,10 +185,7 @@ impl WebDav {
             let p = format!("{}/", server.path());
             server.set_path(&p);
         }
-        let auth = format!(
-            "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"))
-        );
+        let auth = format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}")));
         Ok(WebDav {
             server,
             folder: segments(folder).map(str::to_string).collect(),
@@ -188,11 +196,7 @@ impl WebDav {
                 .timeout_read(timeout.max(Duration::from_secs(20)))
                 .timeout_write(timeout.max(Duration::from_secs(20)))
                 .build(),
-            bulk: ureq::AgentBuilder::new()
-                .timeout_connect(timeout)
-                .timeout_read(Duration::from_secs(300))
-                .timeout_write(Duration::from_secs(300))
-                .build(),
+            bulk: ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
             known_dirs: Mutex::new(HashSet::new()),
             atomic: true,
         })
@@ -233,11 +237,7 @@ impl WebDav {
 
     fn propfind(&self, url: &Url, depth: &str, body: &str) -> Result<Option<Vec<DavItem>>> {
         let t = Instant::now();
-        let res = self
-            .req(&self.agent, "PROPFIND", url)
-            .set("Depth", depth)
-            .set("Content-Type", "application/xml; charset=utf-8")
-            .send_string(body);
+        let res = self.req(&self.agent, "PROPFIND", url).set("Depth", depth).set("Content-Type", "application/xml; charset=utf-8").send_string(body);
         trace("PROPFIND", url, t, &res);
         match res {
             Ok(r) => Ok(Some(parse_multistatus(&r.into_string()?)?)),
@@ -325,19 +325,13 @@ impl WebDav {
         loop {
             let t = Instant::now();
             let res = match body {
-                Body::Bytes(b) => self
-                    .req(&self.bulk, "PUT", &url)
-                    .set("Content-Type", "application/octet-stream")
-                    .send_bytes(b),
+                Body::Bytes(b) => self.req(&self.bulk, "PUT", &url).set("Content-Type", "application/octet-stream").send_bytes(b),
                 Body::File(p) => {
                     let f = std::fs::File::open(p).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", p.display()))?;
                     let len = f.metadata()?.len();
                     // An explicit length avoids chunked uploads, which some
                     // WebDAV servers reject.
-                    self.req(&self.bulk, "PUT", &url)
-                        .set("Content-Type", "application/octet-stream")
-                        .set("Content-Length", &len.to_string())
-                        .send(f)
+                    self.req(&self.bulk, "PUT", &url).set("Content-Type", "application/octet-stream").set("Content-Length", &len.to_string()).send(f)
                 }
             };
             trace("PUT", &url, t, &res);
@@ -356,11 +350,7 @@ impl WebDav {
     fn rename(&self, from: &str, to: &str) -> Result<bool> {
         let t = Instant::now();
         let url = self.url(from, false);
-        let res = self
-            .req(&self.agent, "MOVE", &url)
-            .set("Destination", self.url(to, false).as_str())
-            .set("Overwrite", "T")
-            .call();
+        let res = self.req(&self.agent, "MOVE", &url).set("Destination", self.url(to, false).as_str()).set("Overwrite", "T").call();
         trace("MOVE", &url, t, &res);
         match res {
             Ok(_) => Ok(true),
@@ -453,17 +443,13 @@ impl Store for WebDav {
         check_path(path)?;
         let Some(r) = self.get(&self.agent, path)? else { return Ok(None) };
         let mut buf = Vec::new();
-        r.into_reader()
-            .read_to_end(&mut buf)
-            .map_err(|e| anyhow!(Unavailable(e.to_string())))?;
+        r.into_reader().read_to_end(&mut buf).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
         Ok(Some(buf))
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
         check_path(path)?;
-        let r = self
-            .get(&self.bulk, path)?
-            .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
+        let r = self.get(&self.bulk, path)?.ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
         let tmp = dest.with_extension("download");
         let mut out = std::fs::File::create(&tmp).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", tmp.display()))?;
         std::io::copy(&mut r.into_reader(), &mut out).map_err(|e| anyhow!(Unavailable(e.to_string())))?;
@@ -534,17 +520,10 @@ mod tests {
     fn builds_urls_below_the_folder() {
         let d = WebDav::new("https://dav.example.com/dav", "u", "p", "Ludo nimbus/sub", Duration::from_secs(5)).unwrap();
         assert_eq!(d.url("", true).as_str(), "https://dav.example.com/dav/Ludo%20nimbus/sub/");
-        assert_eq!(
-            d.url("games/x/snapshots/1.zip", false).as_str(),
-            "https://dav.example.com/dav/Ludo%20nimbus/sub/games/x/snapshots/1.zip"
-        );
+        assert_eq!(d.url("games/x/snapshots/1.zip", false).as_str(), "https://dav.example.com/dav/Ludo%20nimbus/sub/games/x/snapshots/1.zip");
         assert_eq!(d.label(), "https://dav.example.com/dav/Ludo nimbus/sub");
         // No segment leads out of the folder, however it is written.
-        for (path, url) in [
-            ("games/../../x", "games/x"),
-            (r"games\..\x", "games%5C..%5Cx"),
-            ("games/%2e%2e/x", "games/%252e%252e/x"),
-        ] {
+        for (path, url) in [("games/../../x", "games/x"), (r"games\..\x", "games%5C..%5Cx"), ("games/%2e%2e/x", "games/%252e%252e/x")] {
             assert_eq!(d.url(path, false).as_str(), format!("https://dav.example.com/dav/Ludo%20nimbus/sub/{url}"), "{path}");
         }
     }

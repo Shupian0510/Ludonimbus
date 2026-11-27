@@ -299,10 +299,7 @@ pub fn by_id(id: &str) -> Option<&'static Rule> {
 fn covers(rule_id: &str, id: &str) -> bool {
     let (r, i) = (rule_id.to_lowercase(), id.to_lowercase());
     match r.strip_prefix("name:") {
-        Some(name) => i
-            .strip_prefix("name:")
-            .and_then(|rest| rest.split_once(':'))
-            .is_some_and(|(_, n)| n == discover::match_key(name)),
+        Some(name) => i.strip_prefix("name:").and_then(|rest| rest.split_once(':')).is_some_and(|(_, n)| n == discover::match_key(name)),
         None => r == i,
     }
 }
@@ -310,9 +307,7 @@ fn covers(rule_id: &str, id: &str) -> bool {
 /// The rule for a version with library ids `ids` on platform `scope`
 /// ([`savelib::save_scope`]).
 pub fn rule_for_ids(ids: &[String], scope: &str) -> Option<&'static Rule> {
-    rules()
-        .iter()
-        .find(|r| r.folders.contains_key(scope) && r.ids.iter().any(|rid| ids.iter().any(|i| covers(rid, i))))
+    rules().iter().find(|r| r.folders.contains_key(scope) && r.ids.iter().any(|rid| ids.iter().any(|i| covers(rid, i))))
 }
 
 /// The rule a version's saves follow.
@@ -440,10 +435,7 @@ fn ends_with(p: &Path, want: &[String]) -> bool {
 pub fn folder_on_device(rule: &Rule, scope: &str, files: &[LocalFile], roots: &BTreeMap<String, PathBuf>) -> Option<PathBuf> {
     let folder = rule.folders.get(scope)?;
     if folder == NXSAVE {
-        return roots
-            .iter()
-            .find(|(name, p)| matches!(switch::parse_root(name), Some((SaveKind::Account, _))) && p.is_dir())
-            .map(|(_, p)| p.clone());
+        return roots.iter().find(|(name, p)| matches!(switch::parse_root(name), Some((SaveKind::Account, _))) && p.is_dir()).map(|(_, p)| p.clone());
     }
     let want = lower_parts(folder);
     let parts: Vec<&str> = folder.split(['/', '\\']).filter(|c| !c.is_empty()).collect();

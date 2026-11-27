@@ -90,6 +90,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           # .cargo/config.toml holds the build profiles, which rust-cache does not hash itself.
@@ -121,6 +123,9 @@ jobs:
       # the workspace tests.
       - name: Desktop app tests
         run: cargo test -p ludonimbus-app
+      # Windows-only code is linted here, the rest on Linux too.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   # Linux (Steam Deck / SteamOS): the same tests, the desktop app must
   # compile, and the Decky plugin must type-check and build.
@@ -131,6 +136,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Formatting (rustfmt.toml)
+        run: cargo fmt --all --check
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: linux-debug-build-${{ hashFiles('.cargo/config.toml') }}
@@ -160,6 +169,8 @@ jobs:
           cargo build --locked -p ludonimbus-app
       - name: Desktop app tests
         run: cargo test --locked -p ludonimbus-app
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Decky plugin
         working-directory: plugin-decky
         run: |

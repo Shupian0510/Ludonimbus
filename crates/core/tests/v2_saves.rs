@@ -53,13 +53,7 @@ fn record() -> GameRecord {
         id: GAME.into(),
         name: "Stardew Valley".into(),
         folders: vec![GAME.into()],
-        lines: vec![Line {
-            id: "main".into(),
-            format: "pc".into(),
-            scope: v2::SCOPE_SHARED.into(),
-            path: v2::line_dir(GAME, "main"),
-            ..Default::default()
-        }],
+        lines: vec![Line { id: "main".into(), format: "pc".into(), scope: v2::SCOPE_SHARED.into(), path: v2::line_dir(GAME, "main"), ..Default::default() }],
         ..Default::default()
     }
 }
@@ -89,8 +83,7 @@ fn tree(dir: &Path) -> BTreeMap<String, Vec<u8>> {
             if p.is_dir() {
                 walk(base, &p, out);
             } else {
-                let rel: Vec<String> =
-                    p.strip_prefix(base).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+                let rel: Vec<String> = p.strip_prefix(base).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
                 out.insert(rel.join("/"), std::fs::read(&p).unwrap());
             }
         }
@@ -101,9 +94,7 @@ fn tree(dir: &Path) -> BTreeMap<String, Vec<u8>> {
 }
 
 fn names(dir: &Path) -> BTreeSet<String> {
-    std::fs::read_dir(dir)
-        .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
-        .unwrap_or_default()
+    std::fs::read_dir(dir).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default()
 }
 
 fn counts(list: u32, read: u32, download: u32, write: u32, upload: u32, remove: u32) -> Counts {
@@ -208,8 +199,7 @@ fn sample() -> Memory {
         if !entry.file_type().is_file() {
             continue;
         }
-        let rel: Vec<String> =
-            entry.path().strip_prefix(&root).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+        let rel: Vec<String> = entry.path().strip_prefix(&root).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         store.put(&rel.join("/"), &std::fs::read(entry.path()).unwrap());
     }
     store
@@ -393,16 +383,7 @@ struct Device {
 
 impl Device {
     fn new(id: &'static str, name: &'static str) -> Self {
-        Device {
-            tmp: tempfile::tempdir().unwrap(),
-            id,
-            name,
-            cache: LineCache::default(),
-            base: None,
-            synced: None,
-            counter: 0,
-            pulls: 0,
-        }
+        Device { tmp: tempfile::tempdir().unwrap(), id, name, cache: LineCache::default(), base: None, synced: None, counter: 0, pulls: 0 }
     }
 
     /// The saves, under their canonical paths.
@@ -606,11 +587,8 @@ fn a_draft_has_a_new_id_of_its_moment_and_the_hash_of_0_6() {
     assert_eq!(m.files, packs::plan(&m.id, &dev.files(), None, &POLICY).files);
 
     // The hash 0.6 computes for the same files.
-    let entries: Vec<ludonimbus_core::snapshot::FileEntry> = dev
-        .files()
-        .iter()
-        .map(|f| ludonimbus_core::snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime })
-        .collect();
+    let entries: Vec<ludonimbus_core::snapshot::FileEntry> =
+        dev.files().iter().map(|f| ludonimbus_core::snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }).collect();
     assert_eq!(m.content_hash, ludonimbus_core::snapshot::content_hash(&entries));
     assert_eq!(saves::content_hash(&[]), "empty");
 
@@ -664,7 +642,7 @@ fn two_devices_play_in_turn_fork_and_settle() {
     // Made without the cloud: built on no pack.
     let s4 = b.draft(&place, vv, parent, false, tick(), None);
     saves::stage(&s4, &b.files(), &b.queue()).unwrap();
-    assert_eq!(saves::staged(&b.queue()).unwrap(), [s4.clone()]);
+    assert_eq!(saves::staged(&b.queue()).unwrap(), std::slice::from_ref(&s4));
 
     // Back online: the upload that waited goes up.
     b.open(&store, &place);
@@ -717,7 +695,7 @@ fn a_small_save_is_one_complete_pack() {
     a.save("saves/Farm_1/SaveGameInfo", &bytes(2, 300));
     a.save("saves/startup_preferences", b"");
     let m = a.push_at(&store, &place, tick());
-    assert_eq!(m.packs().into_iter().collect::<Vec<_>>(), [m.id.clone()]);
+    assert_eq!(m.packs().into_iter().collect::<Vec<_>>(), std::slice::from_ref(&m.id));
 
     // The zip alone is the whole save: unpacked, it is exactly the files.
     let entries = zip_entries(&store, &v2::pack_path(GAME, &m.id));
@@ -726,14 +704,7 @@ fn a_small_save_is_one_complete_pack() {
     assert_eq!(files, tree(&a.root()));
     assert_eq!(entries.len(), files.len() + 1);
     assert_eq!(serde_json::from_slice::<Manifest>(&entries["snapshot.json"]).unwrap(), m);
-    assert_eq!(
-        store.paths(),
-        [
-            v2::pack_path(GAME, &m.id),
-            v2::manifest_path(place.dir(), &m.id),
-            v2::index_path(place.dir()),
-        ]
-    );
+    assert_eq!(store.paths(), [v2::pack_path(GAME, &m.id), v2::manifest_path(place.dir(), &m.id), v2::index_path(place.dir()),]);
 }
 
 #[test]
@@ -1014,7 +985,7 @@ fn a_borrowed_pack_cleaned_up_meanwhile_is_put_back() {
     let first = a.push_at(&store, &place, tick());
     a.save("saves/world/region0", &bytes(77, 1024));
     let view = a.open(&store, &place);
-    let second = a.make(&place, &view, &[first.vv.clone()], Some(first.id.clone()), tick());
+    let second = a.make(&place, &view, std::slice::from_ref(&first.vv), Some(first.id.clone()), tick());
     let (files, q) = (a.files(), a.queue());
     saves::stage(&second, &files, &q).unwrap();
     // Another device's clean-up takes the pack while this one uploads.
@@ -1042,7 +1013,7 @@ fn a_borrowed_pack_that_cannot_be_put_back_takes_the_manifest_with_it() {
     let first = a.push_at(&store, &place, tick());
     a.save("saves/world/region0", &bytes(77, 1024));
     let view = a.open(&store, &place);
-    let second = a.make(&place, &view, &[first.vv.clone()], Some(first.id.clone()), tick());
+    let second = a.make(&place, &view, std::slice::from_ref(&first.vv), Some(first.id.clone()), tick());
     let q = a.queue();
     saves::stage(&second, &a.files(), &q).unwrap();
     // While it waits, another device cleans up the first version and its
@@ -1098,12 +1069,8 @@ fn every_version_of_0_6_is_read_through_the_key_before_any_migration() {
             let dest = dev.dest(&format!("{key}-{id}"));
             saves::fetch(&store, &place, &view, &m, None, &dest, &dev.staging()).unwrap();
             let got = tree(&dest);
-            let want: BTreeMap<String, Vec<u8>> = was["files"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .map(|(path, text)| (path.clone(), text.as_str().unwrap().as_bytes().to_vec()))
-                .collect();
+            let want: BTreeMap<String, Vec<u8>> =
+                was["files"].as_object().unwrap().iter().map(|(path, text)| (path.clone(), text.as_str().unwrap().as_bytes().to_vec())).collect();
             assert_eq!(got, want, "{key} {id}");
             for f in &m.files {
                 assert_eq!(blake3::hash(&want[&f.path]).to_hex().to_string(), f.hash, "{key} {id} {}", f.path);
@@ -1140,10 +1107,7 @@ fn an_upload_to_a_line_of_0_6_writes_only_into_the_new_folders() {
         assert_eq!(after.get(path), Some(data), "{path} changed");
     }
     for path in after.keys().filter(|p| !before.contains_key(*p)) {
-        assert!(
-            path.starts_with(&format!("games/{OLD}/saves/main/")) || path.starts_with(&format!("games/{OLD}/packs/")),
-            "{path} was written"
-        );
+        assert!(path.starts_with(&format!("games/{OLD}/saves/main/")) || path.starts_with(&format!("games/{OLD}/packs/")), "{path} was written");
     }
     assert_eq!(seen_by_0_6(&store, OLD), history);
 
@@ -1376,7 +1340,7 @@ fn deleting_in_a_folder_of_0_6_is_what_0_6_sees() {
     assert!(store.peek(&format!("{old_dir}/{x}.zip")).is_some(), "the zip stays beside");
     let (h, t) = seen_by_0_6(&store, OLD);
     assert_eq!(h, history.iter().filter(|id| **id != x).cloned().collect::<Vec<_>>());
-    assert_eq!(t, [x.clone()]);
+    assert_eq!(t, std::slice::from_ref(&x));
     let repo = Repo::new(Shared(&store));
     assert_eq!(repo.list_trash(OLD).unwrap()[0].deleted_by, "Desktop");
     let listed = saves::trashed(&store, &place).unwrap();
@@ -1547,8 +1511,7 @@ fn clean_up_follows_retention_but_never_in_a_folder_of_0_6() {
     let store = &h.store;
     let (old_history, old_trash) = seen_by_0_6(store, OLD);
     assert_eq!(old_trash, [h.old[1].clone(), h.old[0].clone()], "newest deletion first");
-    let old_files: BTreeMap<String, Vec<u8>> =
-        state(store).into_iter().filter(|(p, _)| p.starts_with(&format!("{}/", v2::legacy_dir(OLD)))).collect();
+    let old_files: BTreeMap<String, Vec<u8>> = state(store).into_iter().filter(|(p, _)| p.starts_with(&format!("{}/", v2::legacy_dir(OLD)))).collect();
 
     let mut cache = LineCache::default();
     let view = saves::open(store, &h.place, &mut cache).unwrap();
@@ -1718,7 +1681,7 @@ fn a_manifest_written_during_the_clean_up_keeps_its_pack() {
     let mut cache = LineCache::default();
     let mut lines = [Open { place: &place, cache: &mut cache, bases: vec![] }];
     let cleaned = saves::clean(&store, &mut lines, &retention::Policy::default(), Duration::days(7), now, "d-a").unwrap();
-    assert_eq!(cleaned.packs, [late.id.clone()]);
+    assert_eq!(cleaned.packs, std::slice::from_ref(&late.id));
 }
 
 #[test]
@@ -1862,7 +1825,7 @@ fn requests_publish_with_files_from_older_packs() {
 
     a.save("saves/a", b"2");
     let view = a.open(&store, &place);
-    let delta = a.make(&place, &view, &[split.vv.clone()], Some(split.id.clone()), tick());
+    let delta = a.make(&place, &view, std::slice::from_ref(&split.vv), Some(split.id.clone()), tick());
     assert_eq!(delta.packs(), BTreeSet::from([delta.id.clone(), format!("{}-2", split.id)]));
     let files = a.files();
     saves::stage(&delta, &files, &q).unwrap();
@@ -1873,7 +1836,7 @@ fn requests_publish_with_files_from_older_packs() {
 
     // Nothing changed in a large save: a manifest and no pack.
     let view = a.open(&store, &place);
-    let same = a.make(&place, &view, &[delta.vv.clone()], Some(delta.id.clone()), tick());
+    let same = a.make(&place, &view, std::slice::from_ref(&delta.vv), Some(delta.id.clone()), tick());
     assert!(same.files.iter().all(|f| f.pack.is_some()));
     let files = a.files();
     saves::stage(&same, &files, &q).unwrap();

@@ -184,8 +184,7 @@ pub fn load_all(store: &dyn Store, dirs: &[&str], cache: &mut LineCache) -> Resu
     // first folder's covers the whole line; the others' only help right after
     // a merge, before the first folder's index has caught up.
     let incomplete = |cache: &LineCache| {
-        ids.keys().any(|id| !cache.snapshots.contains_key(id))
-            || pins.keys().any(|id| cache.snapshots.get(id).is_some_and(|e| e.pin.is_none()))
+        ids.keys().any(|id| !cache.snapshots.contains_key(id)) || pins.keys().any(|id| cache.snapshots.get(id).is_some_and(|e| e.pin.is_none()))
     };
     let mut needs_index = index_tags.first().is_some_and(|t| t.is_none()) && !ids.is_empty();
     for (place, dir) in dirs.iter().enumerate() {
@@ -213,11 +212,7 @@ pub fn load_all(store: &dyn Store, dirs: &[&str], cache: &mut LineCache) -> Resu
 
     // Whatever the indexes didn't have: straight from the manifests and pins.
     let mut unreadable = Vec::new();
-    let missing: Vec<(&String, usize)> = ids
-        .iter()
-        .filter(|(id, _)| !cache.snapshots.contains_key(*id))
-        .map(|(id, place)| (id, *place))
-        .collect();
+    let missing: Vec<(&String, usize)> = ids.iter().filter(|(id, _)| !cache.snapshots.contains_key(*id)).map(|(id, place)| (id, *place)).collect();
     for (id, place) in missing {
         needs_index = true;
         // `None`: deleted since the listing was made.

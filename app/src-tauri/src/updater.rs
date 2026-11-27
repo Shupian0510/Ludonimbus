@@ -32,20 +32,10 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let current = app.package_info().version.to_string();
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
-        Ok(Some(u)) => Ok(UpdateInfo {
-            current,
-            available: true,
-            version: Some(u.version.clone()),
-            notes: u.body.clone(),
-            date: u.date.map(|d| d.to_string()),
-        }),
-        Ok(None) => Ok(UpdateInfo {
-            current,
-            available: false,
-            version: None,
-            notes: None,
-            date: None,
-        }),
+        Ok(Some(u)) => {
+            Ok(UpdateInfo { current, available: true, version: Some(u.version.clone()), notes: u.body.clone(), date: u.date.map(|d| d.to_string()) })
+        }
+        Ok(None) => Ok(UpdateInfo { current, available: false, version: None, notes: None, date: None }),
         Err(e) => {
             logger::log("updater", format!("check failed: {e}"));
             Err(ludonimbus_core::tr!("检查更新失败：{e}", "Couldn't check for updates: {e}"))

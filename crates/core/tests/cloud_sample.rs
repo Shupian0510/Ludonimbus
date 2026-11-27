@@ -20,13 +20,7 @@ fn sample() -> Memory {
         if !entry.file_type().is_file() {
             continue;
         }
-        let rel: Vec<String> = entry
-            .path()
-            .strip_prefix(&root)
-            .unwrap()
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let rel: Vec<String> = entry.path().strip_prefix(&root).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         store.put(&rel.join("/"), &std::fs::read(entry.path()).unwrap());
     }
     store
@@ -99,7 +93,7 @@ fn what_0_6_kept_in_a_snapshot_is_still_readable() {
     assert_eq!(m.extra["comment"], "keep this");
     assert_eq!(m.app_version, "0.6.2");
     // All of its content is in the zip beside it.
-    assert_eq!(m.packs().into_iter().collect::<Vec<_>>(), [m.id.clone()]);
+    assert_eq!(m.packs().into_iter().collect::<Vec<_>>(), std::slice::from_ref(&m.id));
     assert!(store.peek(&format!("{dir}/{}.zip", m.id)).is_some());
 
     let m = line::read_manifest(&store, &dir, manual["id"].as_str().unwrap()).unwrap().unwrap();

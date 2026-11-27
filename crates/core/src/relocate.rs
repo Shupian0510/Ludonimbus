@@ -14,26 +14,13 @@ struct Rule {
 }
 
 fn rule_for(game: &GameEntry) -> Option<Rule> {
-    if let Some(r) = game
-        .adapter
-        .as_deref()
-        .and_then(adapters::find)
-        .and_then(|a| a.relocate.clone())
-    {
-        return Some(Rule {
-            exe: r.exe,
-            dir_pattern: r.dir_pattern,
-            sibling: r.sibling,
-        });
+    if let Some(r) = game.adapter.as_deref().and_then(adapters::find).and_then(|a| a.relocate.clone()) {
+        return Some(Rule { exe: r.exe, dir_pattern: r.dir_pattern, sibling: r.sibling });
     }
     let exe = game.exe.as_ref()?;
     let name = exe.file_name()?.to_string_lossy().into_owned();
     let dir_name = exe.parent()?.file_name()?.to_string_lossy().into_owned();
-    Some(Rule {
-        exe: name,
-        dir_pattern: derive_pattern(&dir_name),
-        sibling: None,
-    })
+    Some(Rule { exe: name, dir_pattern: derive_pattern(&dir_name), sibling: None })
 }
 
 /// `fefw-recomp-0.2.6` → `fefw-recomp-*`; names without a version → `None`
@@ -54,27 +41,14 @@ pub fn derive_pattern(dir_name: &str) -> Option<String> {
 
 /// Numbers in a folder name, for "highest version wins".
 fn version_key(name: &str) -> Vec<u64> {
-    name.split(|c: char| !c.is_ascii_digit())
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.parse().ok())
-        .collect()
+    name.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).filter_map(|s| s.parse().ok()).collect()
 }
 
 /// Search near the old location for a folder containing the game.
 pub fn find_candidate(game: &GameEntry) -> Option<PathBuf> {
     let rule = rule_for(game)?;
-    let old_dir = game
-        .exe
-        .as_ref()
-        .and_then(|e| e.parent().map(Path::to_path_buf))
-        .or_else(|| game.install.clone())?;
-    let pattern = rule.dir_pattern.as_ref().and_then(|p| {
-        GlobBuilder::new(p)
-            .case_insensitive(true)
-            .build()
-            .ok()
-            .map(|g| g.compile_matcher())
-    });
+    let old_dir = game.exe.as_ref().and_then(|e| e.parent().map(Path::to_path_buf)).or_else(|| game.install.clone())?;
+    let pattern = rule.dir_pattern.as_ref().and_then(|p| GlobBuilder::new(p).case_insensitive(true).build().ok().map(|g| g.compile_matcher()));
 
     let mut search_roots = Vec::new();
     if let Some(parent) = old_dir.parent() {
@@ -86,12 +60,7 @@ pub fn find_candidate(game: &GameEntry) -> Option<PathBuf> {
 
     let mut found: Vec<(Vec<u64>, std::time::SystemTime, PathBuf)> = Vec::new();
     for root in search_roots {
-        for entry in walkdir::WalkDir::new(&root)
-            .min_depth(1)
-            .max_depth(2)
-            .into_iter()
-            .flatten()
-        {
+        for entry in walkdir::WalkDir::new(&root).min_depth(1).max_depth(2).into_iter().flatten() {
             if !entry.file_type().is_dir() {
                 continue;
             }
@@ -113,9 +82,7 @@ pub fn find_candidate(game: &GameEntry) -> Option<PathBuf> {
                     continue;
                 }
             }
-            let mtime = std::fs::metadata(&exe)
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
+            let mtime = std::fs::metadata(&exe).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
             found.push((version_key(&dir_name), mtime, exe));
         }
     }
@@ -144,11 +111,7 @@ mod tests {
             std::fs::create_dir_all(d).unwrap();
             std::fs::write(d.join("fefw.exe"), b"x").unwrap();
         }
-        let game = GameEntry {
-            key: "fe".into(),
-            exe: Some(old.join("fefw.exe")),
-            ..Default::default()
-        };
+        let game = GameEntry { key: "fe".into(), exe: Some(old.join("fefw.exe")), ..Default::default() };
         assert_eq!(find_candidate(&game), Some(newer.join("fefw.exe")));
     }
 }

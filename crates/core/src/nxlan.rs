@@ -257,7 +257,7 @@ fn err(status: u16, message: impl Into<String>) -> Resp {
     Resp { status, content_type: "application/json", body: json!({ "error": message.into() }).to_string().into_bytes() }
 }
 
-fn query_param<'a>(query: &'a str, name: &str) -> Option<String> {
+fn query_param(query: &str, name: &str) -> Option<String> {
     query
         .split('&')
         .filter_map(|kv| kv.split_once('='))
@@ -298,7 +298,9 @@ fn answer(req: &Req, device: Option<&Paired>) -> Resp {
     match (req.method, &parts[2..]) {
         ("GET", ["hello"]) => {
             let cfg = config::load().unwrap_or_default();
-            ok_json(json!({ "app": "ludonimbus", "version": crate::APP_VERSION, "protocol": PROTOCOL, "name": cfg.device.name, "pairing": pairing_code().is_some() }))
+            ok_json(
+                json!({ "app": "ludonimbus", "version": crate::APP_VERSION, "protocol": PROTOCOL, "name": cfg.device.name, "pairing": pairing_code().is_some() }),
+            )
         }
         ("POST", ["pair"]) => {
             #[derive(Deserialize)]
@@ -490,7 +492,7 @@ fn fetch_list_in_background() {
     }
     std::thread::spawn(|| {
         if let Ok(cfg) = config::load() {
-            if let Err(e) = cloud(&cfg).and_then(|c| savelib::refresh(&cfg, &*c)) {
+            if let Err(e) = cloud(&cfg).and_then(|c| savelib::refresh(&cfg, &c)) {
                 failed(&cfg, &e);
             }
         }
@@ -567,15 +569,8 @@ fn register_device(cfg: &AppConfig, d: &Paired, client: String) {
     std::thread::spawn(move || {
         let (id, name) = device_tuple(&d);
         // It reaches the cloud through this PC, so it knows the layout this PC knows.
-        let info = DeviceInfo {
-            id,
-            name,
-            os: "switch".into(),
-            app_version: client,
-            last_seen: Utc::now(),
-            layout: crate::cloud::v2::LAYOUT,
-            installs: Vec::new(),
-        };
+        let info =
+            DeviceInfo { id, name, os: "switch".into(), app_version: client, last_seen: Utc::now(), layout: crate::cloud::v2::LAYOUT, installs: Vec::new() };
         if let Err(e) = cloud(&cfg).and_then(|c| c.put_device(&info)) {
             failed(&cfg, &e);
         }
@@ -586,8 +581,7 @@ static UPLOADING: Mutex<()> = Mutex::new(());
 
 /// The Switch's versions waiting in this PC's queue (all games), oldest first.
 fn switch_waiting() -> Vec<SnapshotMeta> {
-    let mut out: Vec<SnapshotMeta> =
-        sync::pending_keys().iter().flat_map(|k| sync::pending_metas(k)).filter(|m| m.device_id.starts_with("nx-")).collect();
+    let mut out: Vec<SnapshotMeta> = sync::pending_keys().iter().flat_map(|k| sync::pending_metas(k)).filter(|m| m.device_id.starts_with("nx-")).collect();
     out.sort_by_key(|m| m.created_at);
     out
 }
@@ -985,7 +979,8 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             let (files, carried) = match cfg.game(&key).filter(|g| !g.bind.is_empty()) {
                 None => (files, Vec::new()),
                 Some(g) => {
-                    let mut mapped: Vec<(String, Vec<u8>)> = files.into_iter().filter_map(|(p, d)| crate::bind::to_canon(&g.bind, &p).map(|c| (c, d))).collect();
+                    let mut mapped: Vec<(String, Vec<u8>)> =
+                        files.into_iter().filter_map(|(p, d)| crate::bind::to_canon(&g.bind, &p).map(|c| (c, d))).collect();
                     if mapped.is_empty() {
                         return Ok(err(400, "no save files"));
                     }
@@ -998,8 +993,15 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             let hash = match carried.is_empty() {
                 true => snapshot::files_hash(&files),
                 false => {
-                    let mut entries: Vec<snapshot::FileEntry> =
-                        files.iter().map(|(path, data)| snapshot::FileEntry { path: path.clone(), size: data.len() as u64, hash: blake3::hash(data).to_hex().to_string(), mtime: 0 }).collect();
+                    let mut entries: Vec<snapshot::FileEntry> = files
+                        .iter()
+                        .map(|(path, data)| snapshot::FileEntry {
+                            path: path.clone(),
+                            size: data.len() as u64,
+                            hash: blake3::hash(data).to_hex().to_string(),
+                            mtime: 0,
+                        })
+                        .collect();
                     entries.extend(carried.iter().map(|f| snapshot::FileEntry { path: f.path.clone(), size: f.size, hash: f.hash.clone(), mtime: f.mtime }));
                     snapshot::content_hash(&entries)
                 }
@@ -1521,7 +1523,10 @@ mod tests {
     #[test]
     fn request_heads() {
         let h = head_of("POST /nx/v1/games/0100770008dd8000/snapshots?parent=01J HTTP/1.1\r\nHost: pc:47716\r\nConnection: close\r\nContent-Type: application/zip\r\nContent-Length: 1234\r\nAuthorization: Bearer abc").ok().unwrap();
-        assert_eq!((h.method.as_str(), h.target.as_str(), h.length, h.auth.as_deref()), ("POST", "/nx/v1/games/0100770008dd8000/snapshots?parent=01J", 1234, Some("Bearer abc")));
+        assert_eq!(
+            (h.method.as_str(), h.target.as_str(), h.length, h.auth.as_deref()),
+            ("POST", "/nx/v1/games/0100770008dd8000/snapshots?parent=01J", 1234, Some("Bearer abc"))
+        );
         assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1").ok().unwrap().length, 0);
         assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1\r\nTransfer-Encoding: chunked").err(), Some(411));
         assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2").err(), Some(400));

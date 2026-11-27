@@ -156,10 +156,7 @@ fn files_that_are_not_records_are_skipped_and_reported() {
     let (library, c) = refresh(&store, &mut cache);
     assert_eq!(requests(c), (1, 4), "the record and the three files named like one");
     assert_eq!(ids_of(&library), [hades.id.as_str()]);
-    assert_eq!(
-        library.skipped,
-        [".json", "broken.json", "copy-of-hades.json", "hades.json.lntmp", "index.json", "notes.txt"]
-    );
+    assert_eq!(library.skipped, [".json", "broken.json", "copy-of-hades.json", "hades.json.lntmp", "index.json", "notes.txt"]);
 
     // They are reported every time and fetched once.
     let (again, c) = refresh(&store, &mut cache);
@@ -403,10 +400,7 @@ fn the_example_record_of_the_design_comes_back_as_it_was() {
         assert!(library::is_strong(id), "{id}");
         assert_eq!(library::find(&library.records, std::slice::from_ref(id)), Match::Record(&record));
     }
-    assert_eq!(
-        library::find(&library.records, &[library::name_id("STARDEW VALLEY!").unwrap()]),
-        Match::Suggestions(vec![&record])
-    );
+    assert_eq!(library::find(&library.records, &[library::name_id("STARDEW VALLEY!").unwrap()]), Match::Suggestions(vec![&record]));
 
     // Through a save: only what the save is for changes.
     let mut edit = record.clone();
@@ -465,17 +459,8 @@ fn a_game_made_on_two_devices_becomes_one_card() {
     // Both offline: the Steam version on the desktop, the Switch version
     // through the other PC. The rule both recognised is what they share.
     let format = "rule:stardew-valley";
-    let desktop =
-        create_as(&store, "stardew-valley-7k3f", "Stardew Valley", &["steam:413150", "rule:stardew-valley"], format, "d-a", 0);
-    let laptop = create_as(
-        &store,
-        "stardew-valley-x2m9",
-        "Stardew Valley",
-        &["nx:0100E65002BB8000", "rule:stardew-valley"],
-        format,
-        "d-b",
-        5,
-    );
+    let desktop = create_as(&store, "stardew-valley-7k3f", "Stardew Valley", &["steam:413150", "rule:stardew-valley"], format, "d-a", 0);
+    let laptop = create_as(&store, "stardew-valley-x2m9", "Stardew Valley", &["nx:0100E65002BB8000", "rule:stardew-valley"], format, "d-b", 5);
     let hades = create(&store, "Hades", &["steam:1145360"], "pc", "d-a", 6);
     // Each has played: a snapshot in its own folder.
     store.put(&v2::manifest_path(&desktop.lines[0].path, "01JTEST0000000000000000001"), b"{}");

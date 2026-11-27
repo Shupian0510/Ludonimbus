@@ -13,10 +13,7 @@ use tauri::{AppHandle, Emitter, Manager};
 type CmdResult<T> = std::result::Result<T, String>;
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> CmdResult<T> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| format!("{e:#}"))
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?.map_err(|e| format!("{e:#}"))
 }
 
 fn log(msg: impl AsRef<str>) {

@@ -52,12 +52,7 @@ pub async fn refresh_cloud_library() -> CmdResult<CloudLibrary> {
         let cfg = config::load()?;
         let cached = savelib::cached(&cfg);
         let families = savelib::index(&cfg, &cached.games);
-        Ok(CloudLibrary {
-            cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags),
-            families,
-            fetched_at: cached.fetched_at,
-            error,
-        })
+        Ok(CloudLibrary { cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags), families, fetched_at: cached.fetched_at, error })
     })
     .await
 }
@@ -91,13 +86,10 @@ pub async fn cloud_game_info(key: String) -> CmdResult<CloudGameInfo> {
         let at = Folders::of(cloud, &key).unwrap_or_else(|_| Folders::of_key(&key));
         let playtime = playtime::sync(store, &ctx.cfg, &at).unwrap_or_else(|_| playtime::summary(&ctx.cfg, &key));
         let _ = artsync::pull(store, &ctx.cfg, &at, None);
-        let game_backup = gamebackup::open(&ctx.cfg)
-            .and_then(|p| remote::list_versions(p.files(), &key))
-            .ok()
-            .and_then(|v| {
-                let n = v.len();
-                v.into_iter().last().map(|s| GameBackupView { versions: n, size: s.total_size, created_at: s.created_at, device_name: s.device_name })
-            });
+        let game_backup = gamebackup::open(&ctx.cfg).and_then(|p| remote::list_versions(p.files(), &key)).ok().and_then(|v| {
+            let n = v.len();
+            v.into_iter().last().map(|s| GameBackupView { versions: n, size: s.total_size, created_at: s.created_at, device_name: s.device_name })
+        });
         let playtime = crate::commands::playtime_view(&ctx.cfg, playtime);
         Ok(CloudGameInfo { playtime, game_backup })
     })

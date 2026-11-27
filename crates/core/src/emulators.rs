@@ -201,10 +201,7 @@ fn nx_layout<'a>(a: &Adapter, roots: &'a BTreeMap<String, PathBuf>) -> Option<Nx
     if a.game_id.as_deref() != Some("switch") {
         return None;
     }
-    roots
-        .get("emu")
-        .map(|p| NxLayout::Ryujinx(p.as_path()))
-        .or_else(|| roots.get("user").map(|p| NxLayout::Yuzu(p.as_path())))
+    roots.get("emu").map(|p| NxLayout::Ryujinx(p.as_path())).or_else(|| roots.get("user").map(|p| NxLayout::Yuzu(p.as_path())))
 }
 
 /// Roots read from an emulator's settings and data on this PC, overriding
@@ -241,7 +238,11 @@ pub fn prepare_restore(a: &Adapter, roots: &mut BTreeMap<String, PathBuf>, used:
         Some(NxLayout::Yuzu(_)) => {
             // Fixed paths, created as files are written; only a profile is needed.
             if used.iter().any(|n| switch::parse_root(n).is_some() && roots.get(n).is_some_and(|p| switch::is_pending(p))) {
-                anyhow::bail!(crate::tr!("请先打开一次 {}，建好一个用户：这个游戏的存档要放在用户名下", "Open {} once and set up a user first: this game's save belongs to a user", a.name));
+                anyhow::bail!(crate::tr!(
+                    "请先打开一次 {}，建好一个用户：这个游戏的存档要放在用户名下",
+                    "Open {} once and set up a user first: this game's save belongs to a user",
+                    a.name
+                ));
             }
             return Ok(());
         }
@@ -253,7 +254,12 @@ pub fn prepare_restore(a: &Adapter, roots: &mut BTreeMap<String, PathBuf>, used:
             continue;
         }
         if is_running(a) {
-            anyhow::bail!(crate::tr!("请先关闭 {}：这台电脑上还没有这个游戏的存档，要在 {} 的存档索引里新建", "Close {} first: this PC has no save for this game yet, and one has to be created in {}'s save index", a.name, a.name));
+            anyhow::bail!(crate::tr!(
+                "请先关闭 {}：这台电脑上还没有这个游戏的存档，要在 {} 的存档索引里新建",
+                "Close {} first: this PC has no save for this game yet, and one has to be created in {}'s save index",
+                a.name,
+                a.name
+            ));
         }
         let p = switch::create_save(&emu, kind, title)?;
         roots.insert(name.clone(), p);
@@ -354,12 +360,7 @@ pub fn gc_wii(path: &Path) -> Option<EmuGame> {
     }
     let id = String::from_utf8_lossy(id).to_string();
     let id4hex: String = id.bytes().take(4).map(|b| format!("{b:02x}")).collect();
-    Some(EmuGame::new(
-        id.clone(),
-        kind,
-        &[("id4", id[0..4].to_string()), ("maker", id[4..6].to_string()), ("id4hex", id4hex), ("id", id.clone())],
-        Some(path),
-    ))
+    Some(EmuGame::new(id.clone(), kind, &[("id4", id[0..4].to_string()), ("maker", id[4..6].to_string()), ("id4hex", id4hex), ("id", id.clone())], Some(path)))
 }
 
 // ---------------------------------------------------------------------------
@@ -509,11 +510,7 @@ pub fn ps3(path: &Path) -> Option<EmuGame> {
     }
     let dir = if path.is_file() { path.parent()? } else { path };
     // EBOOT.BIN lives in <game>/USRDIR; discs keep the game in PS3_GAME.
-    let cands = [
-        dir.join("PARAM.SFO"),
-        dir.join("PS3_GAME").join("PARAM.SFO"),
-        dir.parent().map(|p| p.join("PARAM.SFO")).unwrap_or_default(),
-    ];
+    let cands = [dir.join("PARAM.SFO"), dir.join("PS3_GAME").join("PARAM.SFO"), dir.parent().map(|p| p.join("PARAM.SFO")).unwrap_or_default()];
     cands.iter().filter(|p| p.is_file()).find_map(|p| sfo_file_id(p)).map(|id| serial_game(&id, Some(path)))
 }
 
@@ -535,9 +532,7 @@ pub fn psp(path: &Path) -> Option<EmuGame> {
             .and_then(|b| String::from_utf8_lossy(&b).split('|').next().map(|s| s.trim().replace('-', "")))
             .filter(|s| serial_in(s).is_some()),
         "pbp" => pbp_sfo(path).and_then(|s| sfo_value(&s, "DISC_ID")),
-        _ if path.is_dir() => [path.join("PSP_GAME").join("PARAM.SFO"), path.join("PARAM.SFO")]
-            .iter()
-            .find_map(|p| sfo_file_id(p)),
+        _ if path.is_dir() => [path.join("PSP_GAME").join("PARAM.SFO"), path.join("PARAM.SFO")].iter().find_map(|p| sfo_file_id(p)),
         _ => None,
     };
     id.or_else(|| serial_in(&path.to_string_lossy())).map(|id| serial_game(&id, Some(path)))
@@ -590,9 +585,7 @@ pub fn iso_root_file(path: &Path, name: &str) -> Option<Vec<u8>> {
 /// Vita3K: `-r <id>` / `--installed-path <id>`, or a serial in the options.
 fn vita(toks: &[String]) -> Option<EmuGame> {
     let flag = toks.windows(2).find(|w| w[0] == "-r" || w[0] == "--installed-path").map(|w| w[1].clone());
-    flag.filter(|s| serial_in(s).is_some())
-        .or_else(|| serial_in(&toks.join(" ")))
-        .map(|id| serial_game(&id, None))
+    flag.filter(|s| serial_in(s).is_some()).or_else(|| serial_in(&toks.join(" "))).map(|id| serial_game(&id, None))
 }
 
 // ---------------------------------------------------------------------------
@@ -633,10 +626,8 @@ fn switch_game(a: &Adapter, exe: &Path, args: &str, paths: &[PathBuf]) -> Option
     if let Some(h) = dirs::home_dir() {
         keys.push(h.join(".switch").join("prod.keys"));
     }
-    let (title, source) = paths
-        .iter()
-        .find_map(|p| switch::title_id(p, &keys).map(|t| (t, Some(p.as_path()))))
-        .or_else(|| switch::title_in_text(args).map(|t| (t, None)))?;
+    let (title, source) =
+        paths.iter().find_map(|p| switch::title_id(p, &keys).map(|t| (t, Some(p.as_path())))).or_else(|| switch::title_in_text(args).map(|t| (t, None)))?;
     let name = dirs.iter().find_map(|d| switch::game_name(d, title));
     Some(switch_emu_game(title, source).named(name))
 }
@@ -671,8 +662,7 @@ pub(crate) fn hex_id_in(text: &str, prefix: &str) -> Option<String> {
     (0..b.len().saturating_sub(15)).rev().find_map(|i| {
         let w = &b[i..i + 16];
         let edge_ok = (i == 0 || !b[i - 1].is_ascii_hexdigit()) && (i + 16 == b.len() || !b[i + 16].is_ascii_hexdigit());
-        (edge_ok && w.iter().all(u8::is_ascii_hexdigit) && text[i..i + 16].to_lowercase().starts_with(prefix))
-            .then(|| text[i..i + 16].to_string())
+        (edge_ok && w.iter().all(u8::is_ascii_hexdigit) && text[i..i + 16].to_lowercase().starts_with(prefix)).then(|| text[i..i + 16].to_string())
     })
 }
 

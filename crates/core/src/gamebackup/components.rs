@@ -136,10 +136,7 @@ impl Bases {
     /// The absolute path of `{base}/rel`.
     pub fn resolve(&self, logical: &str) -> Result<PathBuf> {
         let (name, rest) = split(logical).ok_or_else(|| anyhow!(crate::tr!("备份里有无效的路径：{logical}", "The backup has an invalid path: {logical}")))?;
-        let base = self
-            .map
-            .get(name)
-            .ok_or_else(|| anyhow!(crate::tr!("不知道恢复到哪里：{{{name}}}", "Don't know where to restore {{{name}}}")))?;
+        let base = self.map.get(name).ok_or_else(|| anyhow!(crate::tr!("不知道恢复到哪里：{{{name}}}", "Don't know where to restore {{{name}}}")))?;
         if rest.is_empty() {
             Ok(base.clone())
         } else {
@@ -265,13 +262,7 @@ fn files_under(p: &Path) -> Vec<PathBuf> {
     if !p.is_dir() {
         return Vec::new();
     }
-    walkdir::WalkDir::new(p)
-        .follow_links(false)
-        .into_iter()
-        .flatten()
-        .filter(|e| e.file_type().is_file())
-        .map(|e| e.path().to_path_buf())
-        .collect()
+    walkdir::WalkDir::new(p).follow_links(false).into_iter().flatten().filter(|e| e.file_type().is_file()).map(|e| e.path().to_path_buf()).collect()
 }
 
 /// `{root}/rest` patterns as patterns relative to `dir`, for those whose
@@ -438,7 +429,9 @@ pub fn build_of(adapter: Option<&Adapter>, root: &Path, roots: &BTreeMap<String,
     let rule = adapter.and_then(|a| a.build.as_ref());
     let mut launcher = rule.and_then(|b| b.launcher.as_deref()).and_then(|l| spec::expand(l, roots).ok()).filter(|p| p.is_file());
     let mut output: Vec<String> = rule.map(|b| b.output.clone()).unwrap_or_default();
-    let manifest = std::fs::read(root.join("recomplauncher.json")).ok().and_then(|b| serde_json::from_str::<serde_json::Value>(String::from_utf8_lossy(&b).trim_start_matches('\u{feff}')).ok());
+    let manifest = std::fs::read(root.join("recomplauncher.json"))
+        .ok()
+        .and_then(|b| serde_json::from_str::<serde_json::Value>(String::from_utf8_lossy(&b).trim_start_matches('\u{feff}')).ok());
     if let Some(prepare) = manifest.as_ref().map(|v| &v["prepare"]) {
         let strings = |v: &serde_json::Value| v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>();
         if launcher.is_none() {
@@ -464,9 +457,7 @@ fn pack_dirs(packs: &Packs, roots: &BTreeMap<String, PathBuf>, g: Option<&EmuGam
         .filter(|e| {
             // Not always UTF-8 (comments in other encodings): read leniently.
             let text = String::from_utf8_lossy(&std::fs::read(e.path()).unwrap_or_default()).into_owned();
-            ini_values(&text, std::slice::from_ref(&packs.key))
-                .iter()
-                .any(|v| v.split(',').any(|x| x.trim().eq_ignore_ascii_case(&id)))
+            ini_values(&text, std::slice::from_ref(&packs.key)).iter().any(|v| v.split(',').any(|x| x.trim().eq_ignore_ascii_case(&id)))
         })
         .filter_map(|e| e.path().parent().map(Path::to_path_buf))
         .collect()
@@ -545,19 +536,14 @@ impl Builder<'_> {
             return;
         }
         files.sort_by(|a, b| a.logical.cmp(&b.logical));
-        let bases = self
-            .bases
-            .recorded(files.iter().map(|f| f.logical.as_str()).chain(dirs.iter().map(String::as_str)).chain(source.iter().map(String::as_str)));
+        let bases =
+            self.bases.recorded(files.iter().map(|f| f.logical.as_str()).chain(dirs.iter().map(String::as_str)).chain(source.iter().map(String::as_str)));
         self.out.push(Planned { kind, name, version, files, dirs, exe, source, bases, build: None, excluded_files, excluded_bytes, skipped_links });
     }
 }
 
 fn mtime(meta: &std::fs::Metadata) -> (i64, u32) {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| (d.as_secs() as i64, d.subsec_nanos()))
-        .unwrap_or((0, 0))
+    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| (d.as_secs() as i64, d.subsec_nanos())).unwrap_or((0, 0))
 }
 
 /// What a backup of `game` contains: its components in a fixed order
@@ -569,9 +555,7 @@ pub fn plan(game: &GameEntry, opts: &Options) -> Result<Vec<Planned>> {
         .or_else(|| spec::install_dir(game))
         .ok_or_else(|| anyhow!(crate::tr!("不知道游戏文件夹，请先设置游戏位置", "The game's folder is unknown. Set the game location first")))?;
     let adapter = game.adapter.as_deref().and_then(adapters::find);
-    let saves: HashSet<String> = snapshot::scan_own(game)
-        .map(|(files, _)| files.iter().map(|f| path_key(&f.abs)).collect())
-        .unwrap_or_default();
+    let saves: HashSet<String> = snapshot::scan_own(game).map(|(files, _)| files.iter().map(|f| path_key(&f.abs)).collect()).unwrap_or_default();
     let roots = match adapter {
         Some(a) => emugames::roots(a, Some(&root)),
         None => spec::builtin_roots(Some(&root)),

@@ -78,11 +78,7 @@ impl Default for Policy {
 
 impl From<&config::Retention> for Policy {
     fn from(settings: &config::Retention) -> Self {
-        Policy {
-            keep_recent: settings.keep_recent,
-            keep_daily_days: settings.keep_daily_days,
-            device_days: DEVICE_DAYS,
-        }
+        Policy { keep_recent: settings.keep_recent, keep_daily_days: settings.keep_daily_days, device_days: DEVICE_DAYS }
     }
 }
 
@@ -185,11 +181,7 @@ pub fn plan(view: &LineView, bases: &[DeviceBase], policy: &Policy, now: DateTim
         }
     }
 
-    let based: BTreeSet<&str> = bases
-        .iter()
-        .filter(|b| (now - b.seen_at).num_days() < policy.device_days)
-        .map(|b| b.snapshot.as_str())
-        .collect();
+    let based: BTreeSet<&str> = bases.iter().filter(|b| (now - b.seen_at).num_days() < policy.device_days).map(|b| b.snapshot.as_str()).collect();
     for s in all.iter().filter(|s| based.contains(s.id.as_str())) {
         mark(s, Reason::DeviceBase);
     }

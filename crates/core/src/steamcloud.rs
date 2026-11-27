@@ -59,9 +59,7 @@ pub fn state(game: &GameEntry) -> State {
 }
 
 fn store_link(game: &GameEntry) -> Result<&StoreLink> {
-    game.store
-        .as_ref()
-        .ok_or_else(|| anyhow!(crate::tr!("「{}」不是从 Steam 安装的游戏", "\"{}\" isn't a game installed through Steam", game.name)))
+    game.store.as_ref().ok_or_else(|| anyhow!(crate::tr!("「{}」不是从 Steam 安装的游戏", "\"{}\" isn't a game installed through Steam", game.name)))
 }
 
 fn steam_root(cfg: &AppConfig) -> Result<PathBuf> {
@@ -118,7 +116,15 @@ pub fn apps(cfg: &AppConfig) -> Vec<StoreApp> {
         .map(|a| {
             let entry = entry_of(cfg, &account, a.appid);
             let cloud = steam::app_cloud(&root, &account, a.appid);
-            StoreApp { appid: a.appid, name: a.name, key: entry.map(|g| g.key.clone()), state: entry.map_or(State::Steam, state), sync_state: cloud.sync_state, cloud_enabled: cloud.enabled, cloud_used: cloud.used }
+            StoreApp {
+                appid: a.appid,
+                name: a.name,
+                key: entry.map(|g| g.key.clone()),
+                state: entry.map_or(State::Steam, state),
+                sync_state: cloud.sync_state,
+                cloud_enabled: cloud.enabled,
+                cloud_used: cloud.used,
+            }
         })
         .collect();
     out.sort_by_key(|a| a.name.to_lowercase());
@@ -264,7 +270,10 @@ fn insert(account: &str, app: &InstalledApp, title: Option<String>, choice: Foun
     let saves = if choice.saves.is_empty() { rec.as_ref().map(games::Recognized::saves).unwrap_or_default() } else { choice.saves.clone() };
     let title = title.filter(|_| rec.is_none() && saves.is_empty());
     if rec.is_none() && saves.is_empty() && title.is_none() {
-        bail!(crate::tr!("还不知道「{name}」的存档在哪里，请先指定存档位置", "It's not known yet where \"{name}\" keeps its saves. Choose the save location first"));
+        bail!(crate::tr!(
+            "还不知道「{name}」的存档在哪里，请先指定存档位置",
+            "It's not known yet where \"{name}\" keeps its saves. Choose the save location first"
+        ));
     }
     let adapter = rec.as_ref().map(|r| r.adapter);
     config::update(|cfg| {
@@ -541,12 +550,8 @@ pub fn take_over_all(ctx: &Ctx, wrapper: bool) -> Result<Vec<Done>> {
 /// Give every game back to Steam Cloud, and every wrapper out of the
 /// launch options (an uninstall does this).
 pub fn hand_back_all(ctx: &Ctx) -> Vec<Done> {
-    let ours: Vec<(u32, String)> = ctx
-        .cfg
-        .games
-        .iter()
-        .filter_map(|g| g.store.as_ref().filter(|s| s.mode == StoreMode::Managed || s.wrapper).map(|s| (s.appid, g.key.clone())))
-        .collect();
+    let ours: Vec<(u32, String)> =
+        ctx.cfg.games.iter().filter_map(|g| g.store.as_ref().filter(|s| s.mode == StoreMode::Managed || s.wrapper).map(|s| (s.appid, g.key.clone()))).collect();
     ours.into_iter().map(|(appid, key)| Done::of(appid, Some(key.clone()), hand_back(ctx, &key))).collect()
 }
 

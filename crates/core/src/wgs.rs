@@ -110,7 +110,7 @@ impl<'a> Reader<'a> {
 }
 
 fn utf16(b: &[u8]) -> String {
-    let units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     String::from_utf16_lossy(&units).trim_end_matches('\0').to_string()
 }
 
@@ -616,7 +616,10 @@ pub mod tests {
 
     #[test]
     fn finds_container_folders() {
-        let p = ["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index", "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1"];
+        let p = [
+            "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/containers.index",
+            "{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB/ABC/container.1",
+        ];
         assert_eq!(user_dirs(p.iter().copied()), vec!["{localappdata}/Packages/X_y/SystemAppData/wgs/0009_00AB".to_string()]);
         assert!(user_dirs(["{appdata}/Game/containers.index"].iter().copied()).is_empty());
         // Next to its containers, wherever it is.

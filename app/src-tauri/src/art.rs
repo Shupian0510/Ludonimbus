@@ -25,12 +25,7 @@ use tauri::{Runtime, UriSchemeContext, UriSchemeResponder};
 const APP_WINDOWS: [&str; 2] = ["main", crate::achievements::TOAST_LABEL];
 
 fn version(file: &Path) -> u64 {
-    std::fs::metadata(file)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    std::fs::metadata(file).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 /// How the webview reaches the protocol: WebView2 on Windows only through
@@ -57,14 +52,7 @@ pub fn logo_url(file: &Path) -> Option<String> {
 
 pub fn shot_url(key: &str, device: &str, name: &str, thumb: bool, file: &Path) -> String {
     let enc = |s: &str| percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string();
-    format!(
-        "{BASE}/shot/{}/{}/{}/{}?v={}",
-        enc(key),
-        enc(device),
-        if thumb { "t" } else { "f" },
-        enc(name),
-        version(file)
-    )
+    format!("{BASE}/shot/{}/{}/{}/{}?v={}", enc(key), enc(device), if thumb { "t" } else { "f" }, enc(name), version(file))
 }
 
 fn not_found() -> Response<Vec<u8>> {
@@ -114,11 +102,7 @@ fn respond(path: &str) -> Response<Vec<u8>> {
     };
     // No CORS header: the app shows these with <img> and CSS, which don't
     // need one, and no other page may read them.
-    Response::builder()
-        .header("Content-Type", mime)
-        .header("Cache-Control", "max-age=3600")
-        .body(bytes)
-        .unwrap()
+    Response::builder().header("Content-Type", mime).header("Cache-Control", "max-age=3600").body(bytes).unwrap()
 }
 
 /// Registered with `register_asynchronous_uri_scheme_protocol`: reading the

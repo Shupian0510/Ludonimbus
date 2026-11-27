@@ -86,10 +86,7 @@ struct State {
 }
 
 fn load_state() -> State {
-    std::fs::read(state_path())
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    std::fs::read(state_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 fn save_state(s: &State) -> Result<()> {
@@ -178,10 +175,7 @@ fn download(progress: &dyn Fn(u64, u64)) -> Result<PathBuf> {
     let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     if actual != SHA256 {
         let _ = std::fs::remove_file(&part);
-        bail!(tr!(
-            "下载的 OpenList 校验失败（SHA-256 不一致），请稍后重试",
-            "The downloaded OpenList failed its check (SHA-256 mismatch). Try again later"
-        ));
+        bail!(tr!("下载的 OpenList 校验失败（SHA-256 不一致），请稍后重试", "The downloaded OpenList failed its check (SHA-256 mismatch). Try again later"));
     }
     let dest = home().join(ASSET);
     std::fs::rename(&part, &dest)?;
@@ -190,8 +184,7 @@ fn download(progress: &dyn Fn(u64, u64)) -> Result<PathBuf> {
 
 /// Take `openlist.exe` out of the release zip.
 fn extract(zip_path: &Path) -> Result<()> {
-    let mut zip = zip::ZipArchive::new(std::fs::File::open(zip_path)?)
-        .context(tr!("OpenList 安装包已损坏", "The OpenList package is damaged"))?;
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(zip_path)?).context(tr!("OpenList 安装包已损坏", "The OpenList package is damaged"))?;
     let index = (0..zip.len())
         .find(|&i| {
             zip.by_index(i)
@@ -311,9 +304,7 @@ pub fn ensure_running() -> Result<Running> {
     if !st.admin_created {
         cmd.env("OPENLIST_ADMIN_PASSWORD", admin_password()?);
     }
-    let child = cmd
-        .spawn()
-        .map_err(|e| anyhow!(Unavailable(tr!("无法启动 OpenList：{e}", "Couldn't start OpenList: {e}"))))?;
+    let child = cmd.spawn().map_err(|e| anyhow!(Unavailable(tr!("无法启动 OpenList：{e}", "Couldn't start OpenList: {e}"))))?;
     let pid = child.id();
     let started = Instant::now();
     while !ping(port) {
@@ -406,10 +397,7 @@ fn unwrap_reply(v: Value, what: &str) -> Result<Value> {
     if v["code"].as_i64() == Some(200) {
         return Ok(v["data"].clone());
     }
-    Err(anyhow!(Refused {
-        code: v["code"].as_i64().unwrap_or(0),
-        text: format!("OpenList {what}: {}", v["message"].as_str().unwrap_or("?")),
-    }))
+    Err(anyhow!(Refused { code: v["code"].as_i64().unwrap_or(0), text: format!("OpenList {what}: {}", v["message"].as_str().unwrap_or("?")) }))
 }
 
 /// Whether OpenList turned a call down because its own sign-in (the admin
@@ -427,20 +415,14 @@ impl Api {
 
     /// Sign in with a known admin password (see [`crate::cloud::quark`]).
     pub fn login_as(port: u16, password: &str) -> Result<Api> {
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(5))
-            .timeout_read(Duration::from_secs(60))
-            .build();
+        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5)).timeout_read(Duration::from_secs(60)).build();
         let base = format!("http://127.0.0.1:{port}");
         let v: Value = agent
             .post(&format!("{base}/api/auth/login"))
             .send_json(json!({ "username": "admin", "password": password }))
             .map_err(|e| anyhow!(Unavailable(format!("OpenList: {e}"))))?
             .into_json()?;
-        let token = unwrap_reply(v, "login")?["token"]
-            .as_str()
-            .ok_or_else(|| anyhow!("OpenList login: no token"))?
-            .to_string();
+        let token = unwrap_reply(v, "login")?["token"].as_str().ok_or_else(|| anyhow!("OpenList login: no token"))?.to_string();
         Ok(Api { base, agent, token })
     }
 
@@ -479,9 +461,7 @@ impl Api {
     /// The storage mounted at `mount`, if any.
     pub fn storage(&self, mount: &str) -> Result<Option<Value>> {
         let list = self.call("GET", "/api/admin/storage/list", None)?;
-        Ok(list["content"]
-            .as_array()
-            .and_then(|a| a.iter().find(|s| s["mount_path"].as_str() == Some(mount)).cloned()))
+        Ok(list["content"].as_array().and_then(|a| a.iter().find(|s| s["mount_path"].as_str() == Some(mount)).cloned()))
     }
 
     /// Create or update the storage at `mount` and wait until it works.
@@ -523,12 +503,7 @@ impl Api {
 
     /// List `path` straight from the drive (and refresh OpenList's cache).
     pub fn refresh(&self, path: &str) -> Result<()> {
-        self.call(
-            "POST",
-            "/api/fs/list",
-            Some(json!({ "path": path, "password": "", "page": 1, "per_page": 1, "refresh": true })),
-        )
-        .map(|_| ())
+        self.call("POST", "/api/fs/list", Some(json!({ "path": path, "password": "", "page": 1, "per_page": 1, "refresh": true }))).map(|_| ())
     }
 
     /// Create (or reset) the WebDAV-only user limited to `base_path`, with a
@@ -536,9 +511,7 @@ impl Api {
     pub fn ensure_webdav_user(&self, base_path: &str) -> Result<()> {
         let password = random_secret();
         let users = self.call("GET", "/api/admin/user/list", None)?;
-        let existing = users["content"]
-            .as_array()
-            .and_then(|a| a.iter().find(|u| u["username"].as_str() == Some(WEBDAV_USER)).cloned());
+        let existing = users["content"].as_array().and_then(|a| a.iter().find(|u| u["username"].as_str() == Some(WEBDAV_USER)).cloned());
         let mut body = existing.clone().unwrap_or_else(|| json!({ "username": WEBDAV_USER, "role": 0 }));
         body["password"] = json!(password);
         body["base_path"] = json!(base_path);
@@ -553,10 +526,7 @@ impl Api {
 /// The WebDAV user's password.
 pub fn webdav_password() -> Result<String> {
     secrets::load(&key("webdav"))?.ok_or_else(|| {
-        anyhow!(tr!(
-            "找不到夸克网盘的连接信息，请在设置里重新连接夸克网盘",
-            "The Quark connection details are missing. Reconnect Quark in Settings"
-        ))
+        anyhow!(tr!("找不到夸克网盘的连接信息，请在设置里重新连接夸克网盘", "The Quark connection details are missing. Reconnect Quark in Settings"))
     })
 }
 
@@ -579,12 +549,8 @@ pub fn connect_quark(cookie: &str, folder: &str) -> Result<()> {
         "cookie": cookie, "root_folder_id": "0", "order_by": "none", "order_direction": "asc",
         "use_transcoding_address": false, "only_list_video_file": false,
     });
-    api.put_storage(QUARK_MOUNT, "Quark", addition).map_err(|e| {
-        anyhow!(tr!(
-            "OpenList 无法用这个登录信息访问夸克网盘：{e}",
-            "OpenList couldn't open Quark with this sign-in: {e}"
-        ))
-    })?;
+    api.put_storage(QUARK_MOUNT, "Quark", addition)
+        .map_err(|e| anyhow!(tr!("OpenList 无法用这个登录信息访问夸克网盘：{e}", "OpenList couldn't open Quark with this sign-in: {e}")))?;
     let base = format!("{QUARK_MOUNT}/{}", folder.trim_matches('/'));
     api.mkdir(&base)?;
     api.ensure_webdav_user(&base)

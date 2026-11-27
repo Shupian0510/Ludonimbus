@@ -266,9 +266,7 @@ fn requests(root: &Path) {
         let cloud = Cloud::new(Box::new(store.clone()), &cfg.device.id, &cfg.device.name);
         Ctx::with_cloud(cfg, cloud)
     };
-    let saves = |log: &[String]| -> Vec<String> {
-        log.iter().filter(|l| l.contains("/saves/") || l.contains("/packs/") || l.contains(OLD)).cloned().collect()
-    };
+    let saves = |log: &[String]| -> Vec<String> { log.iter().filter(|l| l.contains("/saves/") || l.contains("/packs/") || l.contains(OLD)).cloned().collect() };
 
     // The first upload sets everything up: the layout, the game's record.
     let a = Device::new(root, "REQ-A", CloudConfig::None);
@@ -323,10 +321,7 @@ fn requests(root: &Path) {
     );
     assert_eq!(pulled(sync_with(&ctx(), Resolution::Auto, Trigger::PreLaunch)), second);
     assert_eq!(b.read(), "v2");
-    assert_eq!(
-        store.take(),
-        vec![format!("list {LINE}"), format!("read {LINE}/{second}.json"), format!("download games/{KEY}/packs/{second}.zip")]
-    );
+    assert_eq!(store.take(), vec![format!("list {LINE}"), format!("read {LINE}/{second}.json"), format!("download games/{KEY}/packs/{second}.zip")]);
     assert!(matches!(sync_with(&ctx(), Resolution::Auto, Trigger::PreLaunch), Outcome::UpToDate));
     assert_eq!(store.take(), vec![format!("list {LINE}")]);
     assert_ne!(first, second);
@@ -361,7 +356,9 @@ fn requests(root: &Path) {
     let log = store.take();
     let other_line = "games/other-game/saves/main";
     assert_eq!(
-        log.iter().filter(|l| !l.contains("/playtime") && !l.contains("/art/") && !l.ends_with("/game.json") && !l.starts_with("write devices/")).collect::<Vec<_>>(),
+        log.iter()
+            .filter(|l| !l.contains("/playtime") && !l.contains("/art/") && !l.ends_with("/game.json") && !l.starts_with("write devices/"))
+            .collect::<Vec<_>>(),
         vec![
             "list library",
             "list games/other-game",
@@ -559,10 +556,7 @@ fn from_06(root: &Path) {
     a.write("s5");
     let head = uploaded(run(Trigger::AutoExit));
     let list = versions();
-    assert_eq!(
-        list.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
-        vec![s1.id.as_str(), q.id.as_str(), p.as_str(), r.as_str(), head.as_str()]
-    );
+    assert_eq!(list.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec![s1.id.as_str(), q.id.as_str(), p.as_str(), r.as_str(), head.as_str()]);
     assert_eq!(heads(), vec![head.clone()]);
     for id in [&q.id, &p, &r, &head] {
         assert!(cloud.join(LINE).join(format!("{id}.json")).is_file());
@@ -963,14 +957,14 @@ fn taking_back(root: &Path) {
     let v3 = uploaded(undo().unwrap());
     assert_eq!(desk.read(), "one");
     assert_eq!(status(), Status::Synced);
-    assert_eq!(heads(), [v3.clone()]);
+    assert_eq!(heads(), std::slice::from_ref(&v3));
     // Nothing was lost: the other device's progress is a version like any other,
     // and taking it back can be taken back.
     let r = sync::undoable(KEY).unwrap();
     assert_eq!((r.back.as_str(), r.now.as_str()), (v2.as_str(), v3.as_str()));
     let v4 = uploaded(undo().unwrap());
     assert_eq!(desk.read(), "two");
-    assert_eq!(heads(), [v4.clone()]);
+    assert_eq!(heads(), std::slice::from_ref(&v4));
 
     // Saves that were not in the cloud yet are kept first, and are what it goes back to.
     desk.write("unsaved");

@@ -60,8 +60,7 @@ fn openlist_local() {
     let drive = tmp.path().join("drive");
     std::fs::create_dir_all(&drive).unwrap();
     let api = Api::login(run.port).unwrap();
-    api.put_storage(openlist::QUARK_MOUNT, "Local", serde_json::json!({ "root_folder_path": drive.display().to_string() }))
-        .unwrap();
+    api.put_storage(openlist::QUARK_MOUNT, "Local", serde_json::json!({ "root_folder_path": drive.display().to_string() })).unwrap();
     api.mkdir("/quark/Ludonimbus").unwrap();
     api.mkdir("/quark/Ludonimbus").unwrap(); // already exists: fine
     api.ensure_webdav_user("/quark/Ludonimbus").unwrap();

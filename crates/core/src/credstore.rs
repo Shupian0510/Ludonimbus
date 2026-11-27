@@ -73,10 +73,8 @@ pub fn get(service: &str, user: &str) -> Result<Option<String>> {
 
 /// Save a secret (replacing the old one).
 pub fn set(service: &str, user: &str, secret: &str) -> Result<()> {
-    let res = entry(service, user).and_then(|e| {
-        e.set_password(secret)
-            .map_err(|e| anyhow!(crate::tr!("无法保存密码：{e}", "Couldn't save the password: {e}")))
-    });
+    let res =
+        entry(service, user).and_then(|e| e.set_password(secret).map_err(|e| anyhow!(crate::tr!("无法保存密码：{e}", "Couldn't save the password: {e}"))));
     #[cfg(target_os = "linux")]
     {
         let id = format!("{service}/{user}");

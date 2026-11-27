@@ -43,13 +43,7 @@ fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
         if !entry.file_type().is_file() {
             continue;
         }
-        let rel: Vec<String> = entry
-            .path()
-            .strip_prefix(root)
-            .unwrap()
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let rel: Vec<String> = entry.path().strip_prefix(root).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         out.insert(rel.join("/"), std::fs::read(entry.path()).unwrap());
     }
     out
@@ -211,12 +205,8 @@ fn state(store: &Memory, ignore: &[&str]) -> BTreeMap<String, Value> {
             }
         }
         if let Some(dir) = path.strip_suffix("/index.json") {
-            let tags: BTreeMap<String, String> = store
-                .list(dir)
-                .unwrap()
-                .into_iter()
-                .filter_map(|e| Some((e.name.strip_suffix(v2::PIN_SUFFIX)?.to_string(), e.tag)))
-                .collect();
+            let tags: BTreeMap<String, String> =
+                store.list(dir).unwrap().into_iter().filter_map(|e| Some((e.name.strip_suffix(v2::PIN_SUFFIX)?.to_string(), e.tag))).collect();
             for entry in value["snapshots"].as_array_mut().unwrap() {
                 let id = entry["id"].as_str().unwrap().to_string();
                 if let Some(pin) = entry.get_mut("pin") {
@@ -251,8 +241,7 @@ fn budget(games: &[(u32, u32)]) -> Counts {
 
 /// (snapshots, pins) of each game in the sample.
 fn sample_budget() -> Counts {
-    let games: Vec<(u32, u32)> =
-        keys().iter().map(|k| (expected()[k].as_array().unwrap().len() as u32, kept(k).len() as u32)).collect();
+    let games: Vec<(u32, u32)> = keys().iter().map(|k| (expected()[k].as_array().unwrap().len() as u32, kept(k).len() as u32)).collect();
     budget(&games)
 }
 
@@ -291,11 +280,8 @@ fn nothing_of_0_6_changes_and_everything_else_is_an_addition() {
 
     // format.json last, saying who did it and when.
     let format: Value = serde_json::from_slice(&store.peek(v2::FORMAT_FILE).unwrap()).unwrap();
-    assert_eq!(
-        format,
-        json!({ "layout": 2, "minApp": "1.0.0", "requires": [], "migratedAt": now(), "migratedBy": DEVICE })
-    );
-    assert_eq!(flaky.touched().iter().filter(|p| !p.as_str().eq(upgrade::LOCK_FILE)).last().unwrap(), v2::FORMAT_FILE);
+    assert_eq!(format, json!({ "layout": 2, "minApp": "1.0.0", "requires": [], "migratedAt": now(), "migratedBy": DEVICE }));
+    assert_eq!(flaky.touched().iter().rfind(|p| !p.as_str().eq(upgrade::LOCK_FILE)).unwrap(), v2::FORMAT_FILE);
     assert_eq!(v2::access(v2::read_format(&store).unwrap().as_ref()), v2::Access::ReadWrite);
 }
 
@@ -303,14 +289,10 @@ fn nothing_of_0_6_changes_and_everything_else_is_an_addition() {
 fn one_record_per_key_and_one_card_per_game() {
     let store = sample();
     let mut seen = Vec::new();
-    let report =
-        upgrade::run(&store, DEVICE, DEVICE_NAME, now(), &mut |p: &Progress| seen.push((p.game.clone(), p.done, p.total))).unwrap();
+    let report = upgrade::run(&store, DEVICE, DEVICE_NAME, now(), &mut |p: &Progress| seen.push((p.game.clone(), p.done, p.total))).unwrap();
     assert_eq!(report, Report { already: false, games: 4, merged: 1, snapshots: 16, pins: 2 });
     let fe_name = "火焰纹章：万缕千丝";
-    assert_eq!(
-        seen,
-        [("Abs Game", 0), (fe_name, 1), (fe_name, 2), ("Test Game", 3)].map(|(name, done)| (name.to_string(), done, 4))
-    );
+    assert_eq!(seen, [("Abs Game", 0), (fe_name, 1), (fe_name, 2), ("Test Game", 3)].map(|(name, done)| (name.to_string(), done, 4)));
 
     let records = records(&store);
     assert_eq!(records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), keys());
@@ -368,10 +350,7 @@ fn one_record_per_key_and_one_card_per_game() {
         name: fe_name.into(),
         ids: fe_ids,
         folders: strings(&["fe-fortunes-weave", "fe-fortunes-weave-2"]),
-        lines: vec![
-            line("main", format, "fe-fortunes-weave"),
-            Line { id: "main-fe-fortunes-weave-2".into(), ..line("main", format, "fe-fortunes-weave-2") },
-        ],
+        lines: vec![line("main", format, "fe-fortunes-weave"), Line { id: "main-fe-fortunes-weave-2".into(), ..line("main", format, "fe-fortunes-weave-2") }],
         created_at: Some(oldest(&store, "fe-fortunes-weave")),
         ..Default::default()
     });
@@ -381,10 +360,7 @@ fn one_record_per_key_and_one_card_per_game() {
     // histories stays two all the same: the upgrade changes nothing about
     // what is shared.
     assert!(library::same_saves(&first.lines[0], &first.lines[1]));
-    assert_eq!(
-        library::get(&records, "fe-fortunes-weave-2").unwrap(),
-        &GameRecord { merged_into: Some("fe-fortunes-weave".into()), ..second }
-    );
+    assert_eq!(library::get(&records, "fe-fortunes-weave-2").unwrap(), &GameRecord { merged_into: Some("fe-fortunes-weave".into()), ..second });
     assert_eq!(library::live(&records).count(), 3);
 
     // What a device remembers of the old key finds the card and the line.
@@ -433,12 +409,7 @@ fn locked_snapshots_and_manual_backups_get_a_pin() {
         .map(|s| {
             let id = s["id"].as_str().unwrap();
             let m = old_manifest(&store, "test-game", id);
-            let pin = Pin {
-                name: s["comment"].as_str().unwrap().into(),
-                created_at: Some(m.created_at),
-                device_id: m.device_id.clone(),
-                ..Default::default()
-            };
+            let pin = Pin { name: s["comment"].as_str().unwrap().into(), created_at: Some(m.created_at), device_id: m.device_id.clone(), ..Default::default() };
             (v2::pin_path("games/test-game/saves/main", id), pin)
         })
         .collect();
@@ -449,8 +420,7 @@ fn locked_snapshots_and_manual_backups_get_a_pin() {
     let index = line::read_index(&store, "games/test-game/saves/main").unwrap().unwrap();
     let restore = index.snapshots.iter().find(|s| s.trigger == "restore").unwrap();
     assert!(restore.pin.is_none() && restore.old_note().is_some());
-    let pinned: BTreeMap<&str, &str> =
-        index.snapshots.iter().filter_map(|s| Some((s.id.as_str(), s.pin.as_ref()?.name.as_str()))).collect();
+    let pinned: BTreeMap<&str, &str> = index.snapshots.iter().filter_map(|s| Some((s.id.as_str(), s.pin.as_ref()?.name.as_str()))).collect();
     assert_eq!(pinned.values().copied().collect::<BTreeSet<_>>(), names);
 }
 
@@ -519,12 +489,8 @@ fn every_old_version_still_restores_through_the_records() {
             let dest = tmp.path().join("restored").join(id);
             // Every file is checked against the size and hash in the manifest.
             packs::read(&store, &card.folders, dir, &m, None, &dest, &staging).unwrap();
-            let files: BTreeMap<String, Vec<u8>> = was["files"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .map(|(p, text)| (p.clone(), text.as_str().unwrap().as_bytes().to_vec()))
-                .collect();
+            let files: BTreeMap<String, Vec<u8>> =
+                was["files"].as_object().unwrap().iter().map(|(p, text)| (p.clone(), text.as_str().unwrap().as_bytes().to_vec())).collect();
             assert_eq!(tree(&dest), files, "{key} {id}");
             assert_eq!(m.files.iter().map(|f| f.path.clone()).collect::<BTreeSet<_>>(), files.keys().cloned().collect());
             restored += 1;

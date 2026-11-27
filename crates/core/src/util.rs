@@ -151,9 +151,7 @@ pub fn quote(s: &str) -> String {
 
 /// File name of a path, lowercased.
 pub fn file_name_lower(p: &Path) -> String {
-    p.file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_default()
+    p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default()
 }
 
 /// Split launch options into arguments the way the program gets them when

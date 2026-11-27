@@ -73,14 +73,8 @@ pub fn detect(root: &Path) -> Install {
 pub fn status(root: &Path, bundled: Option<&Path>) -> Status {
     let installed = plugin_path(root);
     let plugin_installed = installed.is_file();
-    let plugin_current = plugin_installed
-        && bundled.is_some_and(|b| matches!((std::fs::read(b), std::fs::read(&installed)), (Ok(a), Ok(c)) if a == c));
-    Status {
-        millennium: detect(root),
-        plugin_installed,
-        plugin_enabled: is_enabled(root).unwrap_or(false),
-        plugin_current,
-    }
+    let plugin_current = plugin_installed && bundled.is_some_and(|b| matches!((std::fs::read(b), std::fs::read(&installed)), (Ok(a), Ok(c)) if a == c));
+    Status { millennium: detect(root), plugin_installed, plugin_enabled: is_enabled(root).unwrap_or(false), plugin_current }
 }
 
 fn read_config(root: &Path) -> Result<Value> {
@@ -101,9 +95,7 @@ fn read_config(root: &Path) -> Result<Value> {
 
 pub fn is_enabled(root: &Path) -> Result<bool> {
     let cfg = read_config(root)?;
-    Ok(cfg["plugins"]["enabledPlugins"]
-        .as_array()
-        .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(PLUGIN_ID))))
+    Ok(cfg["plugins"]["enabledPlugins"].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(PLUGIN_ID))))
 }
 
 /// Add or remove the plugin in `enabledPlugins`, keeping everything else.
@@ -115,11 +107,7 @@ pub fn set_enabled(root: &Path, enabled: bool) -> Result<()> {
     if !plugins.is_object() {
         *plugins = json!({});
     }
-    let list = plugins
-        .as_object_mut()
-        .expect("just made an object")
-        .entry("enabledPlugins")
-        .or_insert_with(|| json!([]));
+    let list = plugins.as_object_mut().expect("just made an object").entry("enabledPlugins").or_insert_with(|| json!([]));
     if !list.is_array() {
         *list = json!([]);
     }
@@ -182,13 +170,9 @@ pub fn latest_release() -> Result<Release> {
 fn parse_release(v: &Value) -> Result<Release> {
     let tag = v["tag_name"].as_str().ok_or_else(|| anyhow!(crate::tr!("GitHub 返回的版本信息不完整", "GitHub returned incomplete release information")))?;
     let assets = v["assets"].as_array().cloned().unwrap_or_default();
-    let find = |suffix: &str| {
-        assets
-            .iter()
-            .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix)))
-            .cloned()
-    };
-    let zip = find("-windows-x86_64.zip").ok_or_else(|| anyhow!(crate::tr!("Millennium {tag} 没有 Windows 安装包", "Millennium {tag} has no Windows package")))?;
+    let find = |suffix: &str| assets.iter().find(|a| a["name"].as_str().is_some_and(|n| n.ends_with(suffix))).cloned();
+    let zip =
+        find("-windows-x86_64.zip").ok_or_else(|| anyhow!(crate::tr!("Millennium {tag} 没有 Windows 安装包", "Millennium {tag} has no Windows package")))?;
     let sha = find("-windows-x86_64.sha256").ok_or_else(|| anyhow!(crate::tr!("Millennium {tag} 没有校验文件", "Millennium {tag} has no checksum file")))?;
     let url = |a: &Value| a["browser_download_url"].as_str().map(str::to_string);
     Ok(Release {
@@ -222,14 +206,8 @@ pub fn download(release: &Release, dir: &Path, progress: &dyn Fn(u64, u64)) -> R
     )?;
     std::fs::create_dir_all(dir)?;
     let dest = dir.join(&release.zip_name);
-    let resp = agent
-        .get(&release.zip_url)
-        .call()
-        .map_err(|e| anyhow!(crate::tr!("无法下载 Millennium：{e}", "Couldn't download Millennium: {e}")))?;
-    let total = resp
-        .header("Content-Length")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(release.size);
+    let resp = agent.get(&release.zip_url).call().map_err(|e| anyhow!(crate::tr!("无法下载 Millennium：{e}", "Couldn't download Millennium: {e}")))?;
+    let total = resp.header("Content-Length").and_then(|s| s.parse().ok()).unwrap_or(release.size);
     let mut reader = resp.into_reader().take(MAX_DOWNLOAD + 1);
     let mut file = std::fs::File::create(&dest).with_context(|| crate::tr!("无法写入 {}", "Can't write {}", dest.display()))?;
     let mut hasher = Sha256::new();
@@ -253,7 +231,10 @@ pub fn download(release: &Release, dir: &Path, progress: &dyn Fn(u64, u64)) -> R
     let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
     if actual != expected {
         let _ = std::fs::remove_file(&dest);
-        bail!(crate::tr!("Millennium 安装包校验失败（SHA-256 不一致），请稍后重试", "The Millennium package failed its check (SHA-256 mismatch). Try again later"));
+        bail!(crate::tr!(
+            "Millennium 安装包校验失败（SHA-256 不一致），请稍后重试",
+            "The Millennium package failed its check (SHA-256 mismatch). Try again later"
+        ));
     }
     Ok(dest)
 }
@@ -407,14 +388,7 @@ mod tests {
     fn extracts_release_into_steam() {
         let d = steam();
         let zip = d.path().join("m.zip");
-        make_zip(
-            &zip,
-            &[
-                ("wsock32.dll", b"boot"),
-                ("millennium/lib/millennium.dll", b"core"),
-                ("millennium/ext/data/assets/a.js", b"js"),
-            ],
-        );
+        make_zip(&zip, &[("wsock32.dll", b"boot"), ("millennium/lib/millennium.dll", b"core"), ("millennium/ext/data/assets/a.js", b"js")]);
         let root = d.path().join("Steam");
         std::fs::create_dir_all(&root).unwrap();
         extract(&zip, &root).unwrap();
@@ -433,14 +407,7 @@ mod tests {
         assert!(extract(&other, &root).is_err());
 
         let evil = d.path().join("evil.zip");
-        make_zip(
-            &evil,
-            &[
-                ("wsock32.dll", b"boot"),
-                ("millennium/lib/millennium.dll", b"core"),
-                ("../outside.txt", b"x"),
-            ],
-        );
+        make_zip(&evil, &[("wsock32.dll", b"boot"), ("millennium/lib/millennium.dll", b"core"), ("../outside.txt", b"x")]);
         assert!(extract(&evil, &root).is_err());
         assert!(!d.path().join("outside.txt").exists());
         assert!(!root.join("wsock32.dll").exists(), "nothing is written when the archive is rejected");

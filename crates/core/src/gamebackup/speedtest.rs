@@ -33,12 +33,7 @@ pub struct SpeedOptions {
 
 impl Default for SpeedOptions {
     fn default() -> Self {
-        SpeedOptions {
-            total_bytes: 200 * MIB,
-            object_bytes: 8 * MIB,
-            threads: 4,
-            max_secs: 90,
-        }
+        SpeedOptions { total_bytes: 200 * MIB, object_bytes: 8 * MIB, threads: 4, max_secs: 90 }
     }
 }
 
@@ -170,13 +165,7 @@ impl Run<'_> {
 
     /// Run `job(i)` for object `0..count` on `threads` workers until done,
     /// cancelled, failed or out of time. `job` returns the bytes it moved.
-    fn phase(
-        &self,
-        phase: &'static str,
-        threads: usize,
-        count: usize,
-        job: &(dyn Fn(usize) -> Result<u64> + Sync),
-    ) -> PhaseResult {
+    fn phase(&self, phase: &'static str, threads: usize, count: usize, job: &(dyn Fn(usize) -> Result<u64> + Sync)) -> PhaseResult {
         let total = count as u64 * self.opts.object_bytes;
         let next = AtomicUsize::new(0);
         let done = AtomicU64::new(0);
@@ -184,14 +173,8 @@ impl Run<'_> {
         let error: Mutex<Option<String>> = Mutex::new(None);
         let started = Instant::now();
         let deadline = started + Duration::from_secs(self.opts.max_secs.max(1));
-        let report = |bytes: u64| {
-            (self.progress)(&SpeedProgress {
-                phase,
-                done_bytes: bytes,
-                total_bytes: total,
-                elapsed_secs: started.elapsed().as_secs_f64(),
-            })
-        };
+        let report =
+            |bytes: u64| (self.progress)(&SpeedProgress { phase, done_bytes: bytes, total_bytes: total, elapsed_secs: started.elapsed().as_secs_f64() });
         report(0);
         let finished = Mutex::new(started);
         std::thread::scope(|s| {
@@ -297,12 +280,7 @@ impl Run<'_> {
                         failed.lock().unwrap().push(format!("{name}: {e:#}"));
                     }
                     let n = done.fetch_add(1, Ordering::SeqCst) + 1;
-                    (self.progress)(&SpeedProgress {
-                        phase: "cleanup",
-                        done_bytes: n,
-                        total_bytes: total,
-                        elapsed_secs: started.elapsed().as_secs_f64(),
-                    });
+                    (self.progress)(&SpeedProgress { phase: "cleanup", done_bytes: n, total_bytes: total, elapsed_secs: started.elapsed().as_secs_f64() });
                 });
             }
         });
@@ -322,17 +300,9 @@ pub fn run(store: &dyn Store, opts: &SpeedOptions, cancel: &AtomicBool, progress
         threads: opts.threads.clamp(1, 16),
         max_secs: opts.max_secs.max(1),
     };
-    let run = Run {
-        store,
-        id: ulid::Ulid::new().to_string().to_lowercase(),
-        opts: opts.clone(),
-        cancel,
-        progress,
-        written: Mutex::new(Vec::new()),
-    };
+    let run = Run { store, id: ulid::Ulid::new().to_string().to_lowercase(), opts: opts.clone(), cancel, progress, written: Mutex::new(Vec::new()) };
     if let Ok(old) = store.list("") {
-        let leftovers: Vec<String> =
-            old.into_iter().filter(|e| !e.is_dir && e.name.starts_with(PREFIX)).map(|e| e.name).collect();
+        let leftovers: Vec<String> = old.into_iter().filter(|e| !e.is_dir && e.name.starts_with(PREFIX)).map(|e| e.name).collect();
         let _ = run.cleanup(&leftovers);
     }
 
@@ -382,9 +352,7 @@ pub fn run(store: &dyn Store, opts: &SpeedOptions, cancel: &AtomicBool, progress
     })();
     let written = std::mem::take(&mut *run.written.lock().unwrap());
     report.cleanup_error = run.cleanup(&written);
-    let best = |a: &Option<PhaseResult>, b: &Option<PhaseResult>| {
-        a.iter().chain(b.iter()).map(|p| p.bytes_per_sec).fold(0.0, f64::max)
-    };
+    let best = |a: &Option<PhaseResult>, b: &Option<PhaseResult>| a.iter().chain(b.iter()).map(|p| p.bytes_per_sec).fold(0.0, f64::max);
     report.upload_bps = best(&report.upload_serial, &report.upload_parallel);
     report.download_bps = best(&report.download_serial, &report.download_parallel);
     report.verdict = verdict(report.upload_bps, report.download_bps, result.is_err());

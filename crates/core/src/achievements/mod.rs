@@ -249,12 +249,7 @@ impl GameDb {
             _ => {
                 self.unlocks.insert(
                     u.id.clone(),
-                    Record {
-                        unlocked_at: u.unlocked_at,
-                        hardcore: u.hardcore,
-                        device: device.to_string(),
-                        device_name: device_name.to_string(),
-                    },
+                    Record { unlocked_at: u.unlocked_at, hardcore: u.hardcore, device: device.to_string(), device_name: device_name.to_string() },
                 );
                 true
             }
@@ -296,10 +291,7 @@ fn lock() -> Result<FileLock> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
-    std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+    std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 pub fn settings() -> Settings {
@@ -459,8 +451,7 @@ pub fn after_exit(ctx: &crate::sync::Ctx, game: &GameEntry) {
 /// Merge other devices' records and upload this device's. Errors are logged.
 pub fn sync_cloud(ctx: &crate::sync::Ctx, key: &str) {
     let Ok(cloud) = ctx.cloud() else { return };
-    let result = crate::cloud::gamedata::Folders::of(cloud, key)
-        .and_then(|at| cloud::sync(cloud.files(), &at, &ctx.cfg.device.id, &ctx.cfg.device.name));
+    let result = crate::cloud::gamedata::Folders::of(cloud, key).and_then(|at| cloud::sync(cloud.files(), &at, &ctx.cfg.device.id, &ctx.cfg.device.name));
     if let Err(e) = result {
         log(format!("{key}: achievement cloud sync failed: {e:#}"));
     }
@@ -636,9 +627,7 @@ pub fn game_icon(cfg: &AppConfig, g: &GameEntry) -> Option<PathBuf> {
         return Some(f);
     }
     let shortcut = steam.as_ref().and_then(|(r, l)| crate::steam::find_shortcut(r, &l.account, l.appid).ok().flatten());
-    shortcut
-        .and_then(|sc| icon_file(Path::new(sc.icon.trim())))
-        .or_else(|| g.exe.as_deref().and_then(icon_file))
+    shortcut.and_then(|sc| icon_file(Path::new(sc.icon.trim()))).or_else(|| g.exe.as_deref().and_then(icon_file))
 }
 
 /// [`game_icon`] of the game `key`.

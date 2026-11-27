@@ -56,16 +56,8 @@ impl Quark {
         let password = openlist::webdav_password()?;
         let admin = openlist::admin_password()?;
         // The WebDAV user's base path is the Ludonimbus folder itself.
-        let dav = WebDav::new(&format!("http://127.0.0.1:{}/dav/", run.port), openlist::webdav_user(), &password, "", timeout)?
-            .direct_uploads();
-        Ok(Quark {
-            dav,
-            port: run.port,
-            admin,
-            folder: folder.trim_matches('/').to_string(),
-            api: Mutex::new(None),
-            refreshed: Mutex::new(HashMap::new()),
-        })
+        let dav = WebDav::new(&format!("http://127.0.0.1:{}/dav/", run.port), openlist::webdav_user(), &password, "", timeout)?.direct_uploads();
+        Ok(Quark { dav, port: run.port, admin, folder: folder.trim_matches('/').to_string(), api: Mutex::new(None), refreshed: Mutex::new(HashMap::new()) })
     }
 
     /// List `dir` (relative to the Ludonimbus folder) straight from Quark,
@@ -111,10 +103,7 @@ impl Quark {
                 if text.to_lowercase().contains("not found") {
                     Ok(false)
                 } else if openlist::is_login_error(&text) {
-                    Err(anyhow!(tr!(
-                        "夸克网盘登录已失效，请在设置里重新扫码登录",
-                        "The Quark sign-in has expired. Scan the QR code again in Settings"
-                    )))
+                    Err(anyhow!(tr!("夸克网盘登录已失效，请在设置里重新扫码登录", "The Quark sign-in has expired. Scan the QR code again in Settings")))
                 } else if e.downcast_ref::<Unavailable>().is_some() {
                     Err(e)
                 } else {
@@ -300,7 +289,9 @@ mod tests {
                     serde_json::json!({ "code": 200, "message": "success", "data": { "token": self.token } })
                 }
                 "/api/fs/list" if auth != self.token => serde_json::json!({ "code": 401, "message": "token is expired", "data": null }),
-                "/api/fs/list" if self.quark_signed_out => serde_json::json!({ "code": 500, "message": "failed get objs: failed to list objs: require login [guest]", "data": null }),
+                "/api/fs/list" if self.quark_signed_out => {
+                    serde_json::json!({ "code": 500, "message": "failed get objs: failed to list objs: require login [guest]", "data": null })
+                }
                 "/api/fs/list" => serde_json::json!({ "code": 200, "message": "success", "data": { "content": [], "total": 0 } }),
                 other => panic!("unexpected request {other}"),
             }
@@ -331,9 +322,7 @@ mod tests {
                                 Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(hyper::body::Bytes::from(reply.to_string()))))
                             }
                         });
-                        let _ = hyper::server::conn::http1::Builder::new()
-                            .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                            .await;
+                        let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), service).await;
                     });
                 }
             });

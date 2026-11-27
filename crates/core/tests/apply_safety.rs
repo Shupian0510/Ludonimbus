@@ -104,7 +104,7 @@ fn all_or_nothing() {
     // Two names that differ in case only are one file on Windows: the later
     // one is what the file holds, and a write that fails still changes nothing.
     fs::write(from.join("install/save/A.SAV"), "A3").unwrap();
-    let twice = vec![entry("a.sav", "A2"), entry("b.sav", "B2"), entry("A.SAV", "A3")];
+    let twice = [entry("a.sav", "A2"), entry("b.sav", "B2"), entry("A.SAV", "A3")];
     if fs::read_to_string(from.join("install/save/a.sav")).unwrap() == "A3" {
         // The download folder is on a file system that ignores case too.
         before(&[]);

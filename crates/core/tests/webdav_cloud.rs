@@ -18,10 +18,8 @@ fn start_server() -> u16 {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
-            let handler = dav_server::DavHandler::builder()
-                .filesystem(dav_server::memfs::MemFs::new())
-                .locksystem(dav_server::fakels::FakeLs::new())
-                .build_handler();
+            let handler =
+                dav_server::DavHandler::builder().filesystem(dav_server::memfs::MemFs::new()).locksystem(dav_server::fakels::FakeLs::new()).build_handler();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             tx.send(listener.local_addr().unwrap().port()).unwrap();
             loop {
@@ -32,9 +30,7 @@ fn start_server() -> u16 {
                         let handler = handler.clone();
                         async move { Ok::<_, Infallible>(handler.handle(req).await) }
                     });
-                    let _ = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                        .await;
+                    let _ = hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream), service).await;
                 });
             }
         });
@@ -43,11 +39,7 @@ fn start_server() -> u16 {
 }
 
 fn dav_config(port: u16, folder: &str) -> CloudConfig {
-    CloudConfig::WebDav {
-        url: format!("http://127.0.0.1:{port}/"),
-        username: "player".into(),
-        folder: folder.into(),
-    }
+    CloudConfig::WebDav { url: format!("http://127.0.0.1:{port}/"), username: "player".into(), folder: folder.into() }
 }
 
 fn dav_store(port: u16, folder: &str) -> Box<dyn Store> {
@@ -211,11 +203,7 @@ fn layout_and_migration(port: u16, tmp: &Path) {
 
     // An unreachable server is reported as "offline", not as a hard error.
     let gone = cloud::build_store(
-        &CloudConfig::WebDav {
-            url: "http://127.0.0.1:9/".into(),
-            username: "x".into(),
-            folder: "x".into(),
-        },
+        &CloudConfig::WebDav { url: "http://127.0.0.1:9/".into(), username: "x".into(), folder: "x".into() },
         Some("x"),
         Duration::from_secs(3),
     )

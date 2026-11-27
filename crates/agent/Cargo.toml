@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 # Ludonimbus without a window, for Steam Deck Game Mode (systemd user service).
+
+[lints]
+workspace = true
+
 [[bin]]
 name = "ludonimbus-agent"
 path = "src/main.rs"

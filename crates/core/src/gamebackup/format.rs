@@ -110,13 +110,7 @@ impl Component {
     }
 
     pub fn summary(&self) -> ComponentSummary {
-        ComponentSummary {
-            kind: self.kind,
-            name: self.name.clone(),
-            version: self.version.clone(),
-            total_size: self.total_size,
-            file_count: self.files.len(),
-        }
+        ComponentSummary { kind: self.kind, name: self.name.clone(), version: self.version.clone(), total_size: self.total_size, file_count: self.files.len() }
     }
 }
 
@@ -219,11 +213,7 @@ impl Manifest {
     /// Read a `.manifest` checked against its summary.
     pub fn decode(bytes: &[u8], summary: &Summary) -> Result<Manifest> {
         if blake3::hash(bytes).to_hex().as_str() != summary.manifest_hash {
-            bail!(crate::tr!(
-                "版本 {} 的清单已损坏（哈希不一致）",
-                "The manifest of version {} is damaged (hash mismatch)",
-                summary.id
-            ));
+            bail!(crate::tr!("版本 {} 的清单已损坏（哈希不一致）", "The manifest of version {} is damaged (hash mismatch)", summary.id));
         }
         let json = zstd::stream::decode_all(bytes).map_err(|e| anyhow!(e))?;
         let v: serde_json::Value = serde_json::from_slice(&json)?;
@@ -236,11 +226,7 @@ impl Manifest {
             ));
         }
         if format < FORMAT {
-            bail!(crate::tr!(
-                "版本 {} 是测试版做的旧格式，请删掉它重新备份",
-                "Version {} uses an old test format. Delete it and back up again",
-                summary.id
-            ));
+            bail!(crate::tr!("版本 {} 是测试版做的旧格式，请删掉它重新备份", "Version {} uses an old test format. Delete it and back up again", summary.id));
         }
         Ok(serde_json::from_value(v)?)
     }

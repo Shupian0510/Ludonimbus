@@ -171,9 +171,7 @@ pub fn to_canon_as(binds: &[Bind], local: &str, codec: &Codec) -> Option<String>
 
 /// [`to_local`], with the codec of the binding it goes through.
 pub fn to_local_with(binds: &[Bind], canon: &str) -> Option<(String, Codec)> {
-    holding(binds, canon, |b| &b.canon)
-        .max_by_key(|(b, _)| b.canon.len())
-        .map(|(b, rest)| (format!("{}{rest}", b.local), b.codec.clone()))
+    holding(binds, canon, |b| &b.canon).max_by_key(|(b, _)| b.canon.len()).map(|(b, rest)| (format!("{}{rest}", b.local), b.codec.clone()))
 }
 
 /// Whether `path` is the folder `dir` or below it.
@@ -387,7 +385,7 @@ mod tests {
         let newer: Bind = serde_json::from_str(r#"{"canon":"a","local":"b","codec":"nx"}"#).unwrap();
         assert_eq!(newer.codec, Codec::Other("nx".into()));
         assert!(serde_json::to_string(&newer).unwrap().contains(r#""codec":"nx""#));
-        assert!(!known(&[newer.clone()]) && known(&[x.clone(), old.clone()]));
+        assert!(!known(std::slice::from_ref(&newer)) && known(&[x.clone(), old.clone()]));
         assert!(has_wgs(&[old.clone(), x]) && !has_wgs(&[old, newer]));
     }
 
@@ -499,7 +497,8 @@ mod tests {
 
     #[test]
     fn the_same_files_in_another_folder() {
-        let line = v(&["appdata/Game/Steam/7656/saves/slot1.sav", "appdata/Game/Steam/7656/saves/slot2.sav", "appdata/Game/Steam/7656/saves/steam_autocloud.vdf"]);
+        let line =
+            v(&["appdata/Game/Steam/7656/saves/slot1.sav", "appdata/Game/Steam/7656/saves/slot2.sav", "appdata/Game/Steam/7656/saves/steam_autocloud.vdf"]);
         let here = v(&["documents/My Games/Game/saves/slot1.sav", "documents/My Games/Game/saves/slot3.sav", "documents/My Games/Game/settings.ini"]);
         let p = propose(&line, &here);
         // The deepest folder that holds what both have: the settings beside

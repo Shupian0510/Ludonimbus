@@ -29,16 +29,9 @@ pub struct GoogleClient {
 impl GoogleClient {
     /// Configured values win; otherwise fall back to the ids baked in at build time.
     pub fn resolve(id: &str, secret: &str) -> Option<Self> {
-        let id = if id.trim().is_empty() {
-            option_env!("LUDONIMBUS_GOOGLE_CLIENT_ID").unwrap_or("").to_string()
-        } else {
-            id.trim().to_string()
-        };
-        let secret = if secret.trim().is_empty() {
-            option_env!("LUDONIMBUS_GOOGLE_CLIENT_SECRET").unwrap_or("").to_string()
-        } else {
-            secret.trim().to_string()
-        };
+        let id = if id.trim().is_empty() { option_env!("LUDONIMBUS_GOOGLE_CLIENT_ID").unwrap_or("").to_string() } else { id.trim().to_string() };
+        let secret =
+            if secret.trim().is_empty() { option_env!("LUDONIMBUS_GOOGLE_CLIENT_SECRET").unwrap_or("").to_string() } else { secret.trim().to_string() };
         (!id.is_empty()).then_some(GoogleClient { id, secret })
     }
 
@@ -114,7 +107,14 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
                         bail!(msg);
                     }
                     Callback::Code(code) => {
-                        page(&mut s, true, &crate::tr!("Google Drive 已连接，可以关闭此页面并回到 Ludonimbus。", "Google Drive is connected. You can close this page and go back to Ludonimbus."));
+                        page(
+                            &mut s,
+                            true,
+                            &crate::tr!(
+                                "Google Drive 已连接，可以关闭此页面并回到 Ludonimbus。",
+                                "Google Drive is connected. You can close this page and go back to Ludonimbus."
+                            ),
+                        );
                         break code;
                     }
                 }
@@ -142,10 +142,8 @@ pub fn authorize(client: &GoogleClient, timeout: Duration) -> Result<Authorized>
     if !grants_drive(&resp) {
         return Err(no_drive_scope());
     }
-    let refresh_token = resp["refresh_token"]
-        .as_str()
-        .ok_or_else(|| anyhow!(crate::tr!("Google 没有返回 refresh token", "Google returned no refresh token")))?
-        .to_string();
+    let refresh_token =
+        resp["refresh_token"].as_str().ok_or_else(|| anyhow!(crate::tr!("Google 没有返回 refresh token", "Google returned no refresh token")))?.to_string();
     let email = resp["id_token"].as_str().and_then(email_from_id_token);
     Ok(Authorized { refresh_token, email })
 }
@@ -189,19 +187,12 @@ fn page(s: &mut impl Write, ok: bool, msg: &str) {
         if ok { crate::tr!("✅ 完成", "✅ Done") } else { crate::tr!("⚠️ 未完成", "⚠️ Not finished") },
         html_text(msg)
     );
-    let _ = write!(
-        s,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
-    );
+    let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
 }
 
 fn email_from_id_token(token: &str) -> Option<String> {
     let payload = token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload.trim_end_matches('='))
-        .ok()?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     v["email"].as_str().map(str::to_string)
 }
@@ -220,7 +211,9 @@ pub fn refresh(agent: &ureq::Agent, client: &GoogleClient, refresh_token: &str) 
         .into_json()?;
     let token = resp["access_token"]
         .as_str()
-        .ok_or_else(|| anyhow!(crate::tr!("Google 登录已失效，请在设置里重新连接 Google Drive", "The Google sign-in has expired. Reconnect Google Drive in Settings")))?
+        .ok_or_else(|| {
+            anyhow!(crate::tr!("Google 登录已失效，请在设置里重新连接 Google Drive", "The Google sign-in has expired. Reconnect Google Drive in Settings"))
+        })?
         .to_string();
     Ok((token, resp["expires_in"].as_u64().unwrap_or(3600)))
 }
@@ -236,7 +229,10 @@ pub fn describe(e: ureq::Error) -> anyhow::Error {
 /// Map an HTTP error status and its body.
 pub fn describe_status(code: u16, body: &str) -> anyhow::Error {
     if code == 400 && body.contains("invalid_grant") {
-        anyhow!(crate::tr!("Google 登录已失效（{code}），请在设置里重新连接 Google Drive", "The Google sign-in has expired ({code}). Reconnect Google Drive in Settings"))
+        anyhow!(crate::tr!(
+            "Google 登录已失效（{code}），请在设置里重新连接 Google Drive",
+            "The Google sign-in has expired ({code}). Reconnect Google Drive in Settings"
+        ))
     } else if code >= 500 {
         anyhow!(super::Unavailable(crate::tr!("Google 服务器错误 {code}", "Google server error {code}")))
     } else {
@@ -255,9 +251,7 @@ pub fn no_drive_scope() -> anyhow::Error {
 /// Whether the token response grants Drive access. A response that doesn't
 /// list its scopes is trusted.
 fn grants_drive(token_response: &serde_json::Value) -> bool {
-    token_response["scope"]
-        .as_str()
-        .is_none_or(|s| s.split_whitespace().any(|x| x == DRIVE_SCOPE))
+    token_response["scope"].as_str().is_none_or(|s| s.split_whitespace().any(|x| x == DRIVE_SCOPE))
 }
 
 pub fn store_refresh_token(token: &str) -> Result<()> {
