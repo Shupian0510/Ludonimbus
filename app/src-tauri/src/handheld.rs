@@ -18,6 +18,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tauri::{AppHandle, WebviewWindow};
+use ts_rs::TS;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
@@ -43,10 +44,11 @@ pub fn mode() -> &'static Mode {
     })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchInfo {
     /// "desktop", "handheld" or "prompt".
+    #[ts(type = r#""desktop" | "handheld" | "prompt""#)]
     mode: &'static str,
     prompt: Option<Request>,
 }
@@ -89,14 +91,14 @@ pub async fn quit_handheld(app: AppHandle, window: WebviewWindow) -> CmdResult<(
     Ok(())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct InSteam {
     account: String,
     appid: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct HandheldInfo {
     /// The handheld this is, by its firmware ("ROG Ally"…).

@@ -9,6 +9,7 @@ use ludonimbus_core::config::{self, CloudConfig};
 use ludonimbus_core::sync::Ctx;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 /// Folders kept in sync by OneDrive, Dropbox, Google Drive for desktop and
 /// the like, for the "local folder" cloud.
@@ -116,7 +117,7 @@ pub async fn cloud_connect_baidu(app: tauri::AppHandle, app_key: String, secret_
 }
 
 /// What the Quark option shows before downloading OpenList.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenListInfo {
     installed: bool,

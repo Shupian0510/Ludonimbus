@@ -10,6 +10,7 @@ use ludonimbus_core::join;
 use ludonimbus_core::sync::{self, Outcome};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 /// The save lines the game can follow on this device.
 #[tauri::command]
@@ -63,7 +64,7 @@ pub async fn join_answer(key: String, answer: String, suggestion: Option<join::S
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LineList {
     lines: Vec<sync::LineInfo>,
@@ -83,13 +84,14 @@ pub async fn game_line_members(key: String) -> CmdResult<LineList> {
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OtherSaves {
     saves: Vec<sync::OtherSave>,
     platforms: BTreeMap<String, PlatformMark>,
     /// As [`SnapshotList::too_new`](super::saves::SnapshotList::too_new).
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     too_new: Vec<String>,
 }
 

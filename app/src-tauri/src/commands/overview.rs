@@ -5,14 +5,15 @@
 use super::{blocking, CmdResult};
 use crate::{art, watcher};
 use ludonimbus_core::cloud::{self, CloudGame};
-use ludonimbus_core::config::{self, AppConfig, CloudConfig, GameEntry};
+use ludonimbus_core::config::{self, AppConfig, CloudConfig, CloudKind, GameEntry};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx};
 use ludonimbus_core::{adapters, games, localart, logos, playtime, process, savelib, spec, steam, steamcloud};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
+use ts_rs::TS;
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtView {
     cover: Option<String>,
@@ -22,7 +23,7 @@ pub struct ArtView {
     icon: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SteamView {
     account: String,
@@ -32,7 +33,7 @@ pub struct SteamView {
     created: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct GameView {
     key: String,
@@ -67,6 +68,9 @@ pub struct GameView {
     conflict: Option<ConflictInfo>,
     last_error: Option<String>,
     pending: usize,
+    /// The last check of the game, as `check_game` returned it (kept as JSON
+    /// in the game's state, `saves::cache_check`).
+    #[ts(as = "Option<sync::StatusReport>")]
     last_check: Option<serde_json::Value>,
     /// Playtime over all devices (from local data; refreshed by every sync).
     playtime: PlaytimeView,
@@ -91,10 +95,11 @@ pub struct GameView {
     store: Option<StoreView>,
     /// The collection's shelves its card is on (`finished`, `archived`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     shelves: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct StoreView {
     appid: u32,
@@ -103,7 +108,7 @@ pub struct StoreView {
     wrapper: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplacedView {
     /// Whose saves they were replaced with.
@@ -175,7 +180,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
 }
 
 /// A game the cloud has but this PC doesn't: shown grey in the library.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudOnlyView {
     key: String,
@@ -193,6 +198,7 @@ pub struct CloudOnlyView {
     family: String,
     link: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     shelves: Vec<String>,
 }
 
@@ -228,15 +234,15 @@ pub(crate) fn cloud_only_views(
         .collect()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudView {
-    kind: String,
+    kind: CloudKind,
     label: Option<String>,
     error: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Overview {
     device_id: String,
@@ -252,20 +258,20 @@ pub struct Overview {
 }
 
 fn cloud_view(cfg: &AppConfig) -> CloudView {
-    let (kind, label) = match &cfg.cloud {
-        CloudConfig::None => ("none", None),
-        CloudConfig::LocalFolder { path } => ("localFolder", Some(path.display().to_string())),
-        CloudConfig::GoogleDrive { account, .. } => ("googleDrive", account.clone().or(Some("Google Drive".into()))),
-        CloudConfig::WebDav { url, folder, .. } => ("webDav", Some(format!("{}/{}", url.trim_end_matches('/'), folder))),
-        CloudConfig::S3 { bucket, prefix, .. } => ("s3", Some(format!("{bucket}/{prefix}"))),
-        CloudConfig::BaiduPan { account, .. } => ("baiduPan", account.clone().or(Some(ludonimbus_core::tr!("百度网盘", "Baidu Netdisk")))),
-        CloudConfig::Quark { folder } => ("quark", Some(ludonimbus_core::tr!("夸克网盘 · {folder}", "Quark · {folder}"))),
+    let label = match &cfg.cloud {
+        CloudConfig::None => None,
+        CloudConfig::LocalFolder { path } => Some(path.display().to_string()),
+        CloudConfig::GoogleDrive { account, .. } => account.clone().or(Some("Google Drive".into())),
+        CloudConfig::WebDav { url, folder, .. } => Some(format!("{}/{}", url.trim_end_matches('/'), folder)),
+        CloudConfig::S3 { bucket, prefix, .. } => Some(format!("{bucket}/{prefix}")),
+        CloudConfig::BaiduPan { account, .. } => account.clone().or(Some(ludonimbus_core::tr!("百度网盘", "Baidu Netdisk"))),
+        CloudConfig::Quark { folder } => Some(ludonimbus_core::tr!("夸克网盘 · {folder}", "Quark · {folder}")),
     };
     let error = match cloud::open(cfg) {
         Ok(_) => None,
         Err(e) => Some(format!("{e:#}")),
     };
-    CloudView { kind: kind.into(), label, error }
+    CloudView { kind: cfg.cloud.kind(), label, error }
 }
 
 #[tauri::command]
@@ -292,7 +298,7 @@ pub async fn get_overview() -> CmdResult<Overview> {
 /// How a version's platform ([`sync::platform`]) is shown: a name, and the
 /// logo of the program when a game of this device runs on the same thing
 /// (logos come from the programs installed here, never from Ludonimbus).
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformMark {
     label: String,
@@ -320,13 +326,15 @@ fn platform_mark(cfg: &config::AppConfig, platform: &str) -> PlatformMark {
 
 /// A game's playtime as the app shows it: the summary, and what each
 /// platform it was played on is called.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PlaytimeSummary")]
 pub struct PlaytimeView {
     #[serde(flatten)]
     summary: playtime::Summary,
     /// Platform ([`playtime::PlatformTotal::platform`]) → its name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     platform_names: BTreeMap<String, String>,
 }
 
@@ -357,7 +365,7 @@ pub async fn set_shelf(keys: Vec<String>, tag: String, on: bool) -> CmdResult<()
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionStats {
     /// Achievements unlocked, and how many the games have, over the games

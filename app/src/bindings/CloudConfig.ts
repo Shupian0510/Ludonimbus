@@ -1,0 +1,3 @@
+// Generated from the Rust types by ts-rs. Don't edit: change the Rust type, then run `cargo test -p ludonimbus-app export_bindings` (docs/development.md).
+
+export type CloudConfig = { "kind": "none" } | { "kind": "localFolder", path: string, } | { "kind": "googleDrive", clientId: string, clientSecret: string, folder: string, account: string | null, } | { "kind": "webDav", url: string, username: string, folder: string, } | { "kind": "s3", endpoint: string, region: string, bucket: string, prefix: string, accessKeyId: string, pathStyle: boolean, } | { "kind": "baiduPan", appKey: string, secretKey: string, appName: string, account: string | null, } | { "kind": "quark", folder: string, };

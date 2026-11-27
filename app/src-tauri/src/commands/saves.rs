@@ -14,6 +14,7 @@ use ludonimbus_core::{ludusavi, savelib, share, spec};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 pub(crate) fn cache_check(key: &str, report: &StatusReport) {
     let v = serde_json::to_value(report).ok();
@@ -61,7 +62,7 @@ pub async fn undo_replace(key: String) -> CmdResult<Outcome> {
     blocking(move || with_free_game(&key, restoring_while_running(), sync::undo)).await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotList {
     snapshots: Vec<SnapshotSummary>,
@@ -73,10 +74,12 @@ pub struct SnapshotList {
     /// that wrote the saves here, which the game's rule says an older game
     /// can't load ([`sync::too_new`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     too_new: Vec<String>,
     /// Versions made on this PC that couldn't be uploaded complete
     /// ([`sync::unsent`]): listed once, as this PC's, until dismissed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     unsent: Vec<state::Unsent>,
 }
 
@@ -217,7 +220,7 @@ pub async fn import_shared_save(key: String) -> CmdResult<Option<String>> {
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalFiles {
     files: Vec<snapshot::LocalFile>,

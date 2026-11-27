@@ -17,6 +17,7 @@ use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 pub const FORMAT: u32 = 2;
 
@@ -52,8 +53,9 @@ pub struct ChunkRef {
     pub z: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, Hash, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PartKind")]
 pub enum Kind {
     /// Emulator, recompilation, port.
     Program,
@@ -146,8 +148,9 @@ pub struct Manifest {
     pub comment: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PartSummary")]
 pub struct ComponentSummary {
     pub kind: Kind,
     pub name: String,
@@ -157,8 +160,9 @@ pub struct ComponentSummary {
     pub file_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "VersionSummary")]
 pub struct Summary {
     pub format: u32,
     pub id: String,

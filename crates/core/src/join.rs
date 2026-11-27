@@ -56,10 +56,12 @@ use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
 /// Whether a version can share a line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "JoinFit")]
 pub enum Fit {
     /// Every file of the line has a folder here.
     Ready,
@@ -71,8 +73,9 @@ pub enum Fit {
 }
 
 /// A save line a game on this device could share ([`suggestion`]).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "JoinSuggestion")]
 pub struct Suggestion {
     /// The game record to belong to.
     pub record: String,

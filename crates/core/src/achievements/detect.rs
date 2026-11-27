@@ -5,9 +5,11 @@ use super::{Binding, SourceKind};
 use crate::config::GameEntry;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AchievementCandidate")]
 pub struct Candidate {
     pub binding: Binding,
     /// Game title from the trophy files, when known.

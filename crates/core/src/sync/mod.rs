@@ -95,6 +95,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use ts_rs::TS;
 
 // The notes in this file name these; only the documentation needs them here.
 #[cfg(doc)]
@@ -158,7 +159,7 @@ impl Ctx {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
     NoCloud,
@@ -190,7 +191,7 @@ impl From<decide::Status> for Status {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusReport {
     pub status: Status,
@@ -225,7 +226,7 @@ pub enum Resolution {
     UseCloud,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Outcome {
     UpToDate,

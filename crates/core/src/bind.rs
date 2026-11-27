@@ -33,6 +33,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use ts_rs::TS;
 
 /// How a version keeps the files of a binding.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,8 +78,9 @@ impl From<Codec> for String {
 
 /// One folder of a save line, and the folder that holds the same files in
 /// a version of the game.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SaveBind")]
 pub struct Bind {
     /// The folder in the line's files.
     pub canon: String,
@@ -86,7 +88,9 @@ pub struct Bind {
     pub local: String,
     /// How the version keeps them. Plain files unless it says otherwise,
     /// and then not written, so bindings of plain files read as before.
+    /// In JSON a string (`files`, `wgs`, or a newer Ludonimbus's codec).
     #[serde(default, skip_serializing_if = "Codec::is_files")]
+    #[ts(as = "String")]
     pub codec: Codec,
     /// Which files in the folder belong to the binding: a wildcard relative
     /// to it, matched as a cross-platform rule's `files` are (any letter

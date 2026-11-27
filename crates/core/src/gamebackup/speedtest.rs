@@ -15,6 +15,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use ts_rs::TS;
 
 pub const PREFIX: &str = ".ludonimbus-speed-";
 const MIB: u64 = 1024 * 1024;
@@ -37,8 +38,9 @@ impl Default for SpeedOptions {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SpeedPhase")]
 pub struct PhaseResult {
     pub threads: usize,
     pub bytes: u64,
@@ -50,7 +52,7 @@ pub struct PhaseResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum Verdict {
     /// Fine for game backups (both directions at least 5 MB/s).
@@ -63,7 +65,7 @@ pub enum Verdict {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeedReport {
     pub kind: String,
@@ -87,10 +89,11 @@ pub struct SpeedReport {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeedProgress {
     /// latency | uploadSerial | uploadParallel | downloadSerial | downloadParallel | cleanup
+    #[ts(type = r#""latency" | "uploadSerial" | "uploadParallel" | "downloadSerial" | "downloadParallel" | "cleanup""#)]
     pub phase: &'static str,
     pub done_bytes: u64,
     pub total_bytes: u64,

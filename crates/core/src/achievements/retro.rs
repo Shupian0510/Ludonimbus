@@ -10,6 +10,7 @@ use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 use std::time::Duration;
+use ts_rs::TS;
 
 const API: &str = "https://retroachievements.org/API";
 pub const SITE: &str = "https://retroachievements.org";
@@ -73,8 +74,9 @@ fn media(path: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 // Account
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "RaProfile")]
 pub struct Profile {
     pub user: String,
     pub ulid: Option<String>,
@@ -136,7 +138,7 @@ fn account(st: &Settings) -> Result<(String, String)> {
 // ---------------------------------------------------------------------------
 // Games
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RaGame {
     pub id: String,

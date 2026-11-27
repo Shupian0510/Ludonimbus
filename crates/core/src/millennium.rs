@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use ts_rs::TS;
 
 /// Plugin id from `plugin-millennium/millennium.toml` (what `enabledPlugins` lists).
 pub const PLUGIN_ID: &str = "io.github.shupian0510.ludonimbus";
@@ -31,8 +32,9 @@ pub const PLUGIN_FILE: &str = "ludonimbus.star";
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/SteamClientHomebrew/Millennium/releases/latest";
 const MAX_DOWNLOAD: u64 = 200 * 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "MillenniumInstall")]
 pub enum Install {
     Missing,
     /// Millennium 2.x (`user32.dll` + `ext/`): too old for `.star` plugins.

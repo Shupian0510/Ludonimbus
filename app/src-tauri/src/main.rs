@@ -3,6 +3,8 @@
 mod achievements;
 mod agent;
 mod art;
+#[cfg(test)]
+mod bindings;
 mod busy;
 mod commands;
 mod gamebackup;

@@ -1,5 +1,5 @@
 // Browser-preview answers for the achievements commands (see mock.ts).
-import type { AchievementItem, AchievementSettings, AchievementsView, Candidate, RaGame, ToastPayload } from "./achievementsApi";
+import type { AchievementItem, AchievementSettings, AchievementsView, Candidate, RaGame, RaProfile, ToastPayload } from "./achievementsApi";
 
 const lang = (() => {
   const fromUrl = new URLSearchParams(location.search).get("lang");
@@ -173,7 +173,7 @@ export async function mockAchievements(cmd: string, args: Record<string, unknown
     case "ra_connect":
       settings.raUser = args.user as string;
       settings.raConnected = true;
-      return delay({ user: args.user, ulid: null, avatar: null, points: 1234 }, 600);
+      return delay<RaProfile>({ user: args.user as string, ulid: null, avatar: null, points: 1234 }, 600);
     case "ra_disconnect":
       settings.raUser = null;
       settings.raConnected = false;

@@ -14,9 +14,11 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SaveCandidate")]
 pub struct Candidate {
     pub path: String,
     pub files: usize,

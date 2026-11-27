@@ -27,17 +27,20 @@ use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashSet;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "MigrateProgress")]
 pub struct Progress {
     pub game: String,
     pub done: usize,
     pub total: usize,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "MigrateReport")]
 pub struct Report {
     /// Games with at least one version in the old cloud.
     pub games: usize,

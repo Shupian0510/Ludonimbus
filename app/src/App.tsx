@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport, UpdateInfo } from "./api";
+import { api, errorText, GameView, inTauri, Overview, StatusReport, SyncEvent, UpdateInfo } from "./api";
 import { AddGame } from "./components/AddGame";
 import { Onboarding } from "./components/Onboarding";
 import { scene, SCENE_ADD, SCENE_GAME, SCENE_SETTINGS } from "./scene";
@@ -109,7 +109,7 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
     reload();
     check(key);
   });
-  useTauriEvent<{ key: string; name: string; outcome: Outcome | null; error: string | null }>("sync-finished", ({ key, name, outcome, error }) => {
+  useTauriEvent<SyncEvent>("sync-finished", ({ key, name, outcome, error }) => {
     if (error) ui.toast(msg().app.backgroundSyncFailed(name, error), "bad");
     else if (outcome && outcome.kind !== "upToDate") ui.toast(outcomeText(outcome, name), outcome.kind === "conflict" ? "warn" : "ok");
     reload();

@@ -32,6 +32,7 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 /// The folder of a game's screenshots.
 const KIND: &str = "screenshots";
@@ -101,8 +102,9 @@ pub fn cache_file(key: &str, device: &str, name: &str, thumb: bool) -> PathBuf {
 // ---------------------------------------------------------------------------
 // Sync
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "ScreenshotReport")]
 pub struct Report {
     pub uploaded: usize,
     pub downloaded: usize,
@@ -260,8 +262,9 @@ pub fn sync_at(store: &dyn Store, cfg: &AppConfig, at: &Folders, game: &GameEntr
 // ---------------------------------------------------------------------------
 // Gallery
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "ScreenshotEntry")]
 pub struct Shot {
     pub name: String,
     /// Device that took it: the name of its folder in the cloud, which is

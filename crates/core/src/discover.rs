@@ -12,8 +12,9 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Found {
     /// Unique within one scan, e.g. `steam:123:4000000000`.
@@ -21,6 +22,7 @@ pub struct Found {
     pub name: String,
     /// `steam`, `epic`, `gog`, `xbox`, `recomplauncher`, `emulator` (saves in
     /// an emulator's data folder), `ludusavi` or `folder`.
+    #[ts(type = r#""steam" | "epic" | "gog" | "xbox" | "recomplauncher" | "emulator" | "ludusavi" | "folder""#)]
     pub source: String,
     pub exe: Option<String>,
     pub install: Option<String>,
@@ -673,7 +675,7 @@ pub fn clean_store_name(name: &str) -> String {
 // Where games are installed
 
 /// A folder games are commonly installed in, offered when picking a game exe.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 pub struct GameFolder {
     pub label: String,
     pub path: String,

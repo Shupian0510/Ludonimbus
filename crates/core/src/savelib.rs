@@ -17,6 +17,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use ts_rs::TS;
 
 /// A [`GameEntry::game`] value that keeps an entry apart from all others.
 pub const SOLO: &str = "solo:";
@@ -320,8 +321,9 @@ pub fn version_label(g: &GameEntry) -> String {
 
 /// Another version of a game whose newest saves are newer than anything
 /// this version has.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "NewerVersion")]
 pub struct Newer {
     pub key: String,
     pub name: String,

@@ -22,6 +22,23 @@ cd ..
 
 只改 Steam 插件时运行 `./scripts/build-plugin.ps1`。插件源码在 `plugin-millennium/`，用 Millennium 官方的 starlight 工具打包成 `.star`，说明见 [steam-plugin.md](steam-plugin.md)。
 
+### 界面和 Rust 之间的类型
+
+命令的参数和返回值、事件的内容，在 TypeScript 里的类型是用 [ts-rs](https://github.com/Aleph-Alpha/ts-rs) 从 Rust 的类型生成的：`app/src/bindings/`，一个类型一个文件，加一个汇总的 `index.ts`，都提交进仓库。`app/src/api.ts`、`achievementsApi.ts`、`gameBackupApi.ts` 从这里导入并按界面用惯的名字导出，模拟数据（`mock.ts` 等）也按这些类型检查；不要再手写一份。
+
+```powershell
+cargo test -p ludonimbus-app export_bindings   # 重新生成；和其他桌面应用测试一样，要先有 sidecar 和 app/dist
+```
+
+- 改了这些 Rust 类型（加字段、改名、改 serde 属性）之后运行一次，把 `app/src/bindings/` 的变化一起提交。CI（Windows 的 `test`）会重新生成，有差别或多出文件就失败。
+- 新命令用到新的类型时：在类型上加 `#[derive(TS)]`（和 `Serialize` 并列；它里面用到的类型也要加），再在 [`app/src-tauri/src/bindings.rs`](../app/src-tauri/src/bindings.rs) 的 `roots` 里加一行。里面的类型会自动带上。
+- 名字：默认和 Rust 一样。重名（两个 `Candidate`）或界面一直用另一个名字时，用 `#[ts(rename = "…")]`；两个类型生成到同一个文件时，这个测试会失败。
+- 对应规则跟着 serde：`rename_all`、`tag`、`flatten`、`skip` 照搬；`u64` / `i64` 是 `number`（JSON 里本来就是 JavaScript 的数），`DateTime` 和 `PathBuf` 是 `string`。
+- `skip_serializing_if` 的字段只有同时有 `#[serde(default)]` 时才自动成为可选（`name?:`）；没有的话，`Option` 加 `#[ts(optional)]`，`Vec` / `String` 等加 `#[ts(as = "Option<_>", optional)]`。只当参数用、缺了就不改的结构（`GamePatch` 等）在结构上加 `#[ts(optional_fields)]`。
+- Rust 里不精确的地方写明：`serde_json::Value` 用 `#[ts(type = "unknown")]` 或 `#[ts(as = "…")]`（存成 JSON 的 `StatusReport`），只有几个固定值的 `&'static str` / `String` 用 `#[ts(type = r#""a" | "b""#)]`。
+- 用 `json!` 拼的事件内容（`openlist-progress`、`game-backup-progress`）没有 Rust 类型，类型写在监听它的组件里。
+- 构建 core 时 ts-rs 会提示一次 `failed to parse serde attribute … other`：`Trigger` 的 `#[serde(other)]` 只管读取，可以不管。
+
 ### Linux（WSL2）
 
 Steam Deck 版的基础（[plan-phase5.md](plan-phase5.md)）。在 WSL2 的 Ubuntu 24.04 里直接用 Windows 这边的源码文件夹，编译输出放在 Linux 自己的磁盘上（快得多，也不和 Windows 的 `target/` 混在一起）：

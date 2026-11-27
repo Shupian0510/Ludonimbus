@@ -23,9 +23,10 @@ use std::path::{Component as PathPart, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use ts_rs::TS;
 
 /// Where a restore puts things.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Targets {
     /// The program's folder (or the whole folder). Also where the game's

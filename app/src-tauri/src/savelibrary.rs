@@ -13,8 +13,9 @@ use ludonimbus_core::{artsync, config, installs, logger, logos, playtime, proces
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudLibrary {
     cloud_only: Vec<CloudOnlyView>,
@@ -57,8 +58,9 @@ pub async fn refresh_cloud_library() -> CmdResult<CloudLibrary> {
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "CloudGameBackup")]
 pub struct GameBackupView {
     versions: usize,
     size: u64,
@@ -66,7 +68,7 @@ pub struct GameBackupView {
     device_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudGameInfo {
     playtime: crate::commands::PlaytimeView,
@@ -118,8 +120,9 @@ pub async fn unlink_game(key: String) -> CmdResult<()> {
 }
 
 /// A version of a game installed on this PC that isn't in the library.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "OtherInstall")]
 pub struct InstallView {
     /// `steam:<app id>` or `xbox:<folder>`.
     id: String,

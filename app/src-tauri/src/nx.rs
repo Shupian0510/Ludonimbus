@@ -6,6 +6,7 @@ use ludonimbus_core::{config, logger, nxlan};
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Duration;
+use ts_rs::TS;
 
 static SERVER: Mutex<Option<nxlan::Server>> = Mutex::new(None);
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
@@ -43,8 +44,9 @@ pub fn spawn() {
     });
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "NxDevice")]
 pub struct Device {
     id: String,
     name: String,
@@ -52,7 +54,7 @@ pub struct Device {
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct NxStatus {
     enabled: bool,

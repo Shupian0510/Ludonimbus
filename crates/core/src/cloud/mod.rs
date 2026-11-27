@@ -60,6 +60,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 use store::Store;
+use ts_rs::TS;
 
 pub use client::{own_line_id, wanted_line, Cloud, OpenLine};
 
@@ -93,7 +94,7 @@ pub fn is_not_configured(e: &anyhow::Error) -> bool {
     e.chain().any(|c| c.downcast_ref::<NotConfigured>().is_some())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceInfo {
     pub id: String,
@@ -116,7 +117,7 @@ fn is_zero(n: &u32) -> bool {
 
 /// One game on a device, as other devices need to know it: retention keeps
 /// the snapshot each device synced last ([`retention::DeviceBase`]).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DeviceInstall {
     /// Id of the game record.
@@ -126,21 +127,25 @@ pub struct DeviceInstall {
     pub dir: String,
     /// The snapshot this device synced last, and when.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub synced: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub synced_at: Option<DateTime<Utc>>,
     /// What the game runs on there ([`crate::sync::platform`]), so other
     /// devices can show who is on a line with what.
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     pub platform: String,
     /// The snapshots versions waiting on that device take files from: kept
     /// for it like `synced`, until those versions are uploaded.
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     pub borrows: Vec<String>,
 }
 
 /// Game definition stored in the cloud so other devices can recognise it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudGame {
     pub key: String,
@@ -194,7 +199,7 @@ pub const TRASH_DAYS: i64 = 30;
 
 /// A version the user deleted: hidden from the history on every device and
 /// restorable until it is purged [`TRASH_DAYS`] after `deleted_at`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TrashedSnapshot {
     pub snapshot: SnapshotSummary,
@@ -209,7 +214,7 @@ pub struct TrashedSnapshot {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountInfo {
     pub label: String,

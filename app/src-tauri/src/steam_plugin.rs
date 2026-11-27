@@ -9,6 +9,7 @@ use ludonimbus_core::{config, logger, paths, steam};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
+use ts_rs::TS;
 
 type CmdResult<T> = std::result::Result<T, String>;
 
@@ -47,8 +48,9 @@ pub fn refresh_installed(app: &AppHandle) {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamPluginStatus")]
 pub struct PluginView {
     steam_root: Option<String>,
     steam_running: bool,
@@ -80,17 +82,20 @@ pub async fn steam_plugin_status(app: AppHandle) -> CmdResult<PluginView> {
     .await
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct Progress {
+#[ts(rename = "SteamPluginProgress")]
+pub(crate) struct Progress {
     /// "download" | "install"
+    #[ts(type = r#""download" | "install""#)]
     stage: &'static str,
     done: u64,
     total: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamPluginInstall")]
 pub struct InstallResult {
     /// Millennium version installed by this run, if any.
     millennium_installed: Option<String>,

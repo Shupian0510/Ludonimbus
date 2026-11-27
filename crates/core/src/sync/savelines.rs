@@ -25,6 +25,7 @@ use crate::vv::Vv;
 use anyhow::{anyhow, bail, Result};
 use chrono::Utc;
 use serde::Serialize;
+use ts_rs::TS;
 
 /// Upload what waits for the cloud to the line the game follows now: the
 /// first step of following another one.
@@ -54,8 +55,9 @@ pub(crate) fn start_over(key: &str) -> Result<()> {
 }
 
 /// A save line a game on this device can follow.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SaveLine")]
 pub struct LineInfo {
     pub id: String,
     /// What a device called the line it keeps to itself. Empty for the
@@ -72,7 +74,7 @@ pub struct LineInfo {
 }
 
 /// One version of a game on one device, on a save line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LineMember {
     pub device: String,
@@ -164,7 +166,7 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
 
 /// The newest version of a save line of the game that this device does
 /// not follow.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OtherSave {
     /// [`LineInfo::id`].

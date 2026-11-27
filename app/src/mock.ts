@@ -22,6 +22,45 @@ import type {
   TrashedSnapshot,
   UnsentSave,
 } from "./api";
+import type {
+  AccountInfo,
+  AdapterInfo,
+  CloudGame,
+  CloudGameInfo,
+  CloudLibrary,
+  CollectionStats,
+  DeviceInfo,
+  Gallery,
+  GameFolder,
+  GamePatch,
+  HandheldInfo,
+  HandheldMode,
+  LaunchInfo,
+  LineList,
+  LocalFiles,
+  MigrateReport,
+  NewerVersion,
+  NxStatus,
+  Onboarding,
+  OpenListInfo,
+  OtherSaves,
+  SaveCandidate,
+  ScreenshotReport,
+  Settings,
+  SgdbGame,
+  SgdbImage,
+  SgdbStatus,
+  ShortcutView,
+  SnapshotList,
+  SnapshotMeta,
+  SteamAccounts,
+  SteamAddResult,
+  SteamPluginInstall,
+  SteamPluginStatus,
+  SyncFolder,
+  TransferPlan,
+  UpdateInfo,
+} from "./bindings";
 
 // Sample data in the preview's language (?lang=, the saved choice, or the browser's).
 const mockLang = (() => {
@@ -309,7 +348,7 @@ const overview: Overview = {
     }),
     game("bloodborne-lantern", "Bloodborne", 4000695018, L("Lantern Engine（shadPS4）", "Lantern Engine (shadPS4)"), "C:\\Users\\me\\Desktop\\Switch\\Bloodborne\\BloodbornePC\\Bloodborne.exe", ["{install}/user/savedata/1/CUSA00207/**"], {
       art: { cover: art(4000695018, "p.png"), wide: null, hero: art(4000695018, "_hero.jpg"), logo: art(4000695018, "_logo.png"), icon: art(4000695018, "_icon.png") },
-      conflict: { cloudId: "01BB2", cloudDevice: "GPD-Win-Mini", cloudCreatedAt: ago(300), localHash: "y", detectedAt: ago(10) },
+      conflict: { cloudId: "01BB2", cloudDevice: "GPD-Win-Mini", cloudCreatedAt: ago(300), localHash: "y", detectedAt: ago(10), localIsCandidate: true },
     }),
     game("celeste", "Celeste", 0, "", "D:\\Games\\Celeste\\Celeste.exe", ["{data}/Saves/**"], {
       adapter: null,
@@ -419,6 +458,7 @@ function found(id: string, name: string, source: Found["source"], extra: Partial
     saveSample: [],
     steamCloud: false,
     storeGame: false,
+    storeAppid: null,
     addedKey: null,
     registryOnly: false,
     installStore: null,
@@ -563,7 +603,7 @@ function mockSteamTakeOver(key: string, wrapper = true): SteamCloudStatus {
   return mockSteamStatus(key);
 }
 
-let mockHandheldMode = "auto";
+let mockHandheldMode: HandheldMode = "auto";
 const mockNx = {
   enabled: false,
   running: false,
@@ -602,7 +642,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     }
     case "get_onboarding":
       // ?guide shows the first-run guide in the browser preview.
-      return delay({ doneAt: new URLSearchParams(location.search).has("guide") || mockScene.startsWith("guide-") ? null : ago(60), usage: [] });
+      return delay<Onboarding>({ doneAt: new URLSearchParams(location.search).has("guide") || mockScene.startsWith("guide-") ? null : ago(60), usage: [] });
     case "finish_onboarding":
       return delay(undefined, 50);
     case "set_language":
@@ -614,7 +654,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined, 50);
     case "check_game":
       if (mockScene === "game-detail-pending" && key === "zelda-oot-longshot")
-        return delay({ ...checks[key], status: "offline", message: L("云端暂时无法访问：网络连接超时", "The cloud can't be reached right now: connection timed out") }, 400);
+        return delay<StatusReport>({ ...checks[key], status: "offline", message: L("云端暂时无法访问：网络连接超时", "The cloud can't be reached right now: connection timed out") }, 400);
       return delay(checks[key], 400);
     case "sync_game":
     case "backup_game":
@@ -622,7 +662,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "game_lines":
       return delay(mockLines(key), 200);
     case "game_line_members":
-      return delay({ lines: mockLines(key), platforms: platformMarks }, 200);
+      return delay<LineList>({ lines: mockLines(key), platforms: platformMarks }, 200);
     case "use_game_line":
       lineOf[key] = args.kind === "shared" ? "main" : args.kind === "independent" ? "own" : String(args.line);
       return delay<Outcome>({ kind: "upToDate" }, 500);
@@ -633,7 +673,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       const head = (snapshots[key] ?? []).find((s) => s.id === headOf(key));
       if (at !== "main" && head) saves.push({ line: "main", name: "", shared: true, snapshot: head });
       if (key === "zelda-oot-longshot" && at !== kidLine().id) saves.push({ line: kidLine().id, name: kidLine().name, shared: false, snapshot: kidSave() });
-      return delay({ saves, platforms: platformMarks }, 250);
+      return delay<OtherSaves>({ saves, platforms: platformMarks }, 250);
     }
     case "restore_snapshot":
     case "take_save":
@@ -697,6 +737,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         onlyHere: 1,
         uncovered: [],
         outside: ["savegame/crash.dmp"],
+        others: 0,
       };
       // A Switch emulator's version and the PC version's line: the same files by the game's rule.
       const byRule: JoinSuggestion = {
@@ -734,11 +775,11 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "screenshot_fetch":
       return delay(shotImage(String(args.name), Boolean(args.thumb)), 200);
     case "screenshot_sync":
-      return delay({ uploaded: 1, downloaded: 2, failed: 0 }, 900);
+      return delay<ScreenshotReport>({ uploaded: 1, downloaded: 2, failed: 0 }, 900);
     case "screenshot_reveal":
       return delay(undefined);
     case "list_snapshots":
-      return delay({
+      return delay<SnapshotList>({
         snapshots: snapshots[key] ?? [],
         headId: headOf(key),
         // The PC's newest save is too new for the emulator's game: this device is a version behind.
@@ -773,10 +814,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     }
     case "get_snapshot": {
       const s = (snapshots[key] ?? []).find((x) => x.id === args.id)!;
-      return delay({ ...s, game: key, roots: {}, appVersion: "0.1.0", files: [{ path: "install/save/slot_00/progress.sav", size: 162099, hash: "", mtime: now / 1000 }] });
+      return delay<SnapshotMeta>({ ...s, game: key, roots: {}, appVersion: "0.1.0", files: [{ path: "install/save/slot_00/progress.sav", size: 162099, hash: "", mtime: now / 1000 }] });
     }
     case "local_files":
-      return delay({
+      return delay<LocalFiles>({
         files: [
           { logical: "install/save/account/0100000000000000706d635257464546/000/Auto", size: 30822, mtime: now / 1000 - 3600 },
           { logical: "install/save/account/0100000000000000706d635257464546/000/Global", size: 64, mtime: now / 1000 - 3600 },
@@ -784,7 +825,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         roots: { install: "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7" },
       });
     case "steam_accounts":
-      return delay({
+      return delay<SteamAccounts>({
         accounts: [
           { id: "12345678", persona: "player", accountName: null, mostRecent: true, shortcutCount: 3 },
           { id: "87654321", persona: "player-2", accountName: null, mostRecent: false, shortcutCount: 1 },
@@ -793,18 +834,19 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         root: "C:\\Program Files (x86)\\Steam",
       });
     case "steam_shortcuts":
-      return delay(
+      return delay<ShortcutView[]>(
         overview.games.map((g) => ({
           account: "12345678",
           appid: g.steam!.appid,
           name: g.name,
           nameCorrupted: false,
           suggestedName: g.name,
-          exe: g.exe,
-          startDir: g.install,
+          exe: g.exe ?? "",
+          startDir: g.install ?? "",
           launchOptions: "",
           adapter: g.adapter,
           adapterName: g.name,
+          saves: [],
           addedKey: g.key === "bloodborne-lantern" ? null : g.key,
           wrappedKey: null,
           cover: g.art.cover,
@@ -812,7 +854,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         })),
       );
     case "get_settings": {
-      const s = {
+      const s: Settings = {
         deviceId: "d-mock",
         deviceName: "DESKTOP-MAIN",
         retention: { keepRecent: 20, keepDailyDays: 30 },
@@ -835,22 +877,22 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         launchWaitSecs: 10,
         exitWaitSecs: 10,
         waitForUpload: false,
-      } as Record<string, unknown>;
+      };
       if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
       if (noCloudScene) s.cloud = { kind: "none" };
       if (mockScene === "settings-cloud-folder") s.cloud = { kind: "localFolder", path: "D:\\Cloud\\Ludonimbus" };
       return delay(s);
     }
     case "cloud_test":
-      return delay({ label: "https://dav.jianguoyun.com/dav/Ludonimbus", used: 1.2e9, total: 3e9 });
+      return delay<AccountInfo>({ label: "https://dav.jianguoyun.com/dav/Ludonimbus", used: 1.2e9, total: 3e9 });
     case "cloud_connect":
       return delay("https://dav.jianguoyun.com/dav/Ludonimbus");
     case "cloud_migrate":
-      return delay({ games: 3, copied: 42, skipped: 0, bytes: 6.4e8 }, 1500);
+      return delay<MigrateReport>({ games: 3, copied: 42, skipped: 0, bytes: 6.4e8 }, 1500);
     case "cloud_connect_baidu":
       return delay(L("玩家", "player"), 4000);
     case "openlist_status":
-      return delay({
+      return delay<OpenListInfo>({
         installed: false,
         version: "v4.2.10",
         size: 59999218,
@@ -870,10 +912,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "cloud_dismiss_previous":
       return delay(undefined);
     case "cloud_account":
-      if (mockScene === "settings-cloud-folder") return delay({ label: "D:\\Cloud\\Ludonimbus", used: null, total: null });
-      return delay({ label: "player@example.com", used: 3.2e9, total: 15e9 });
+      if (mockScene === "settings-cloud-folder") return delay<AccountInfo>({ label: "D:\\Cloud\\Ludonimbus", used: null, total: null });
+      return delay<AccountInfo>({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":
-      return delay([
+      return delay<DeviceInfo[]>([
         { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(1), layout: 2 },
         { id: "d-laptop", name: "LAPTOP", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(300), layout: 2 },
         // Still on 0.6: its record says no layout.
@@ -888,13 +930,13 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       if (cmd === "nx_start_pairing") mockNx.pairingCode = "482915";
       if (cmd === "nx_cancel_pairing") mockNx.pairingCode = null;
       if (cmd === "nx_remove_device") mockNx.devices = [];
-      return delay({ ...mockNx, running: mockNx.enabled });
+      return delay<NxStatus>({ ...mockNx, running: mockNx.enabled });
     }
     case "launch_mode": {
       // Browser preview: `?handheld` opens the handheld view, `?prompt` a launch question.
       const q = new URLSearchParams(location.search);
       if (q.has("prompt"))
-        return delay({
+        return delay<LaunchInfo>({
           mode: "prompt",
           prompt: {
             title: L("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"),
@@ -910,7 +952,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
             ],
           },
         });
-      return delay({ mode: q.has("handheld") ? "handheld" : "desktop", prompt: null });
+      return delay<LaunchInfo>({ mode: q.has("handheld") ? "handheld" : "desktop", prompt: null });
     }
     case "prompt_answer":
       console.info("prompt answer:", args.choice);
@@ -920,14 +962,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "dismiss_newer":
       return delay(undefined);
     case "handheld_info":
-      return delay({ device: "ROG Ally", steamGamepadUi: false, mode: mockHandheldMode, inSteam: null });
+      return delay<HandheldInfo>({ device: "ROG Ally", steamGamepadUi: false, mode: mockHandheldMode, inSteam: null });
     case "set_handheld_mode":
-      mockHandheldMode = args.mode as string;
+      mockHandheldMode = args.mode as HandheldMode;
       return delay(undefined);
     case "steam_add_ludonimbus":
       return delay(3123456789, 600);
     case "newer_version":
-      return delay(
+      return delay<NewerVersion | null>(
         key === "celeste"
           ? { key: "celeste-gog", name: "Celeste", label: "GOG", snapshot: snap("01NEWER", 90, "LAPTOP", "auto-exit", 30_000, 3) }
           : null,
@@ -943,15 +985,15 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined, 300);
     }
     case "collection_stats":
-      return delay({ achievementsUnlocked: 87, achievementsTotal: 142 }, 100);
+      return delay<CollectionStats>({ achievementsUnlocked: 87, achievementsTotal: 142 }, 100);
     case "refresh_cloud_library": {
       const families: Record<string, string> = {};
       for (const g of overview.games) families[g.key] = g.family;
       for (const c of overview.cloudOnly) families[c.key] = c.family;
-      return delay({ cloudOnly: overview.cloudOnly, families, fetchedAt: ago(0), error: null }, 300);
+      return delay<CloudLibrary>({ cloudOnly: overview.cloudOnly, families, fetchedAt: ago(0), error: null }, 300);
     }
     case "cloud_game_info":
-      return delay(
+      return delay<CloudGameInfo>(
         {
           playtime: overview.cloudOnly.find((c) => c.key === key)?.playtime ?? devicePlaytime(0, 0, 0),
           gameBackup: key === "hollow-knight" ? { versions: 2, size: 9.1e9, createdAt: ago(60 * 26), deviceName: "GPD-Win-Mini" } : null,
@@ -991,7 +1033,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         ? "C:\\Users\\me\\AppData\\Local\\Packages\\X_y\\SystemAppData\\wgs\\0009_00AB"
         : "C:\\Users\\me\\AppData\\Local\\Celeste\\Saves";
       const files = ["0.celeste", "1.celeste", "settings.celeste"];
-      return delay(
+      return delay<TransferPlan>(
         {
           same: false,
           fromXbox: false,
@@ -1015,23 +1057,23 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       );
     }
     case "transfer_apply":
-      return delay({ kind: "uploaded", id: "01APPLIED" }, 600);
+      return delay<Outcome>({ kind: "uploaded", id: "01APPLIED" }, 600);
     case "game_backup_request_install":
       return delay(undefined);
     case "cloud_games":
-      return delay([{ key: "hollow-knight", name: "Hollow Knight", adapter: null, saves: [], ludusaviTitle: "Hollow Knight" }]);
+      return delay<CloudGame[]>([{ key: "hollow-knight", name: "Hollow Knight", adapter: null, saves: [], exclude: [], waitFor: [], roots: {}, ludusaviTitle: "Hollow Knight" }]);
     case "ludusavi_search":
       return delay(["Hollow Knight", "Hollow Knight: Silksong"]);
     case "ludusavi_preview":
       return delay(["C:\\Users\\me\\AppData\\LocalLow\\Team Cherry\\Hollow Knight\\user1.dat"]);
     case "check_update":
-      if (mockScene) return delay({ current: "0.5.0", available: false, version: null, notes: null, date: null });
-      return delay(
+      if (mockScene) return delay<UpdateInfo>({ current: "0.5.0", available: false, version: null, notes: null, date: null });
+      return delay<UpdateInfo>(
         { current: "0.1.0", available: true, version: "0.1.1", notes: "### 中文\n\n- 修复：示例更新说明\n- 新增：示例功能\n\n### English\n\n- Fixed: sample release note\n- New: sample feature", date: new Date().toISOString() },
         600,
       );
     case "steam_plugin_status":
-      return delay({
+      return delay<SteamPluginStatus>({
         steamRoot: "C:\Program Files (x86)\Steam",
         steamRunning: true,
         bundled: true,
@@ -1042,7 +1084,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       });
     case "steam_plugin_install":
       steamPluginOn = true;
-      return delay({ millenniumInstalled: "v3.6.3", steamRestarted: true }, 1500);
+      return delay<SteamPluginInstall>({ millenniumInstalled: "v3.6.3", steamRestarted: true }, 1500);
     case "steam_plugin_remove":
       steamPluginOn = false;
       return delay(undefined, 800);
@@ -1053,7 +1095,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "scan_folder":
       return delay(folderScan, 600);
     case "game_folders":
-      return delay([
+      return delay<GameFolder[]>([
         { label: "Steam C:", path: "C:\\Program Files (x86)\\Steam\\steamapps\\common" },
         { label: "Steam D:", path: "D:\\SteamLibrary\\steamapps\\common" },
         { label: "Xbox", path: "C:\\XboxGames" },
@@ -1068,7 +1110,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "steam_set_root":
       return delay((args.path as string | null) ?? "C:\\Program Files (x86)\\Steam");
     case "cloud_folder_suggestions":
-      return delay(
+      return delay<SyncFolder[]>(
         [
           { label: "OneDrive", path: "C:\\Users\\me\\OneDrive\\Ludonimbus", existing: false },
           { label: "Google Drive", path: "G:\\My Drive\\Ludonimbus", existing: true },
@@ -1079,40 +1121,40 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay((args.found as Found).addedKey ?? (args.name as string).toLowerCase().replace(/[^a-z0-9]+/g, "-"), 300);
     case "detect_adapter": {
       const exe = (args.exe as string).toLowerCase();
-      if (exe.endsWith("dolphin.exe")) return delay({ key: "dolphin", name: "Dolphin", label: L("Dolphin（整个模拟器的存档）", "Dolphin (whole emulator)"), emulator: true });
-      if (exe.endsWith("soh.exe")) return delay({ key: "soh", name: L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), label: L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), emulator: false });
+      if (exe.endsWith("dolphin.exe")) return delay<AdapterInfo>({ key: "dolphin", name: "Dolphin", label: L("Dolphin（整个模拟器的存档）", "Dolphin (whole emulator)"), emulator: true });
+      if (exe.endsWith("soh.exe")) return delay<AdapterInfo>({ key: "soh", name: L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), label: L("塞尔达传说：时之笛", "The Legend of Zelda: Ocarina of Time"), emulator: false });
       return delay(null);
     }
     case "savefind_suggest":
-      return delay([
+      return delay<SaveCandidate[]>([
         { path: "C:\\Users\\me\\AppData\\LocalLow\\Indie Studio\\Some Indie", files: 3, bytes: 48213, modified: ago(60 * 20), sample: ["save0.dat", "settings.json"], reason: L("名字和游戏相近", "similar name") },
         { path: "D:\\Games\\Some Indie\\saves", files: 2, bytes: 20480, modified: ago(60 * 24 * 3), sample: ["slot1.sav"], reason: L("在游戏目录里", "in the game folder") },
       ]);
     case "savefind_watch_start":
       return delay(undefined);
     case "savefind_watch_stop":
-      return delay([{ path: "C:\\Users\\me\\Saved Games\\Some Indie", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: L("刚才被写入", "just written") }], 600);
+      return delay<SaveCandidate[]>([{ path: "C:\\Users\\me\\Saved Games\\Some Indie", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: L("刚才被写入", "just written") }], 600);
     case "folder_to_pattern":
       return delay(args.path as string);
     case "sgdb_status":
-      return delay({ hasKey: !["settings-sgdb", "guide-art"].includes(mockScene), keyPage: "https://www.steamgriddb.com/profile/preferences/api" });
+      return delay<SgdbStatus>({ hasKey: !["settings-sgdb", "guide-art"].includes(mockScene), keyPage: "https://www.steamgriddb.com/profile/preferences/api" });
     case "sgdb_set_key":
     case "sgdb_clear_key":
       return delay(undefined);
     case "sgdb_search":
-      return delay([
+      return delay<SgdbGame[]>([
         { id: 1, name: args.term as string, year: 2018, verified: true },
         { id: 2, name: `${args.term as string}: Farewell`, year: 2019, verified: false },
       ]);
     case "sgdb_images": {
       const pool = args.kind === "hero" || args.kind === "wide" ? sgdbHeroes : args.kind === "logo" ? sgdbLogos : args.kind === "icon" ? sgdbIcons : sgdbCovers;
-      return delay(pool.map((u, i) => ({ id: i + 10, url: u, thumb: u, width: 600, height: 900, score: 3 - i, style: "alternate", author: "someone" })), 400);
+      return delay<SgdbImage[]>(pool.map((u, i) => ({ id: i + 10, url: u, thumb: u, width: 600, height: 900, score: 3 - i, style: "alternate", author: "someone" })), 400);
     }
     case "art_set_url":
     case "art_set_file":
       return delay(undefined, 500);
     case "steam_add_games":
-      return delay((args.keys as string[]).map((k) => ({ key: k, error: null })), 1200);
+      return delay<SteamAddResult[]>((args.keys as string[]).map((k) => ({ key: k, error: null })), 1200);
     case "steam_cloud_apps":
       return delay(steamCloudApps.map((a) => ({ ...a })), 300);
     case "steam_cloud_add":
@@ -1162,7 +1204,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(key === "starfield" ? null : "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.8\\fefw.exe");
     case "update_game": {
       const g = overview.games.find((x) => x.key === key);
-      const patch = args.patch as { name?: string; autoSync?: boolean; source?: string };
+      const patch = args.patch as GamePatch;
       if (g && patch.name?.trim()) g.name = patch.name.trim();
       if (g && patch.autoSync !== undefined) g.autoSync = patch.autoSync;
       if (g && patch.source !== undefined) g.source = { ...g.source, label: patch.source.trim() || null };
@@ -1183,7 +1225,7 @@ function shotImage(name: string, thumb: boolean): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function mockGallery(key: string) {
+function mockGallery(key: string): Gallery {
   const shots = [
     ["20261122223831_1.jpg", "d-mock", "DESKTOP-MAIN", true, true],
     ["20261122153202_1.jpg", "d-mock", "DESKTOP-MAIN", true, true],

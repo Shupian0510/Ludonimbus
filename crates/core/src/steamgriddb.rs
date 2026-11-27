@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
+use ts_rs::TS;
 
 const API: &str = "https://www.steamgriddb.com/api/v2";
 const KEYRING_USER: &str = "steamgriddb-api-key";
@@ -27,7 +28,7 @@ pub fn clear_key() -> Result<()> {
     secrets::clear(KEYRING_USER)
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SgdbGame {
     pub id: u64,
@@ -36,7 +37,7 @@ pub struct SgdbGame {
     pub verified: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SgdbImage {
     pub id: u64,

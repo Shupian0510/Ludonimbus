@@ -25,6 +25,8 @@
    cargo clippy --workspace --all-targets -- -D warnings
    ```
    格式按根目录的 `rustfmt.toml`（一行最多 160 个字符），CI 会检查；clippy 的警告在 CI 里算错误。clippy 要先有桌面应用的 sidecar（`./scripts/prepare-sidecars.ps1`）。
+
+   改了界面和 Rust 之间传递的类型（命令的参数和返回值、事件的内容）时，再运行 `cargo test -p ludonimbus-app export_bindings`，把 `app/src/bindings/` 的变化一起提交。这些 TypeScript 类型是从 Rust 生成的，CI 会重新生成，和提交的不一样就失败（见 [docs/development.md](docs/development.md)）。
 3. 向 `dev` 提 PR。标题用一句英文说清做了什么（合并后它就是 `dev` 上的提交信息）。
 4. CI 的 `ok` 通过后，用 **Squash and merge** 合并，删掉分支。
 5. 合并后 CI 会用 `dev` 打一个开发版安装包（Actions 的构建产物，不是正式发布），要试的人从那里下载。
@@ -74,7 +76,7 @@ Neither long-lived branch takes direct or forced pushes.
 **A change, step by step**
 
 1. Branch from `dev`.
-2. Before you push, run `cargo fmt --all`, `cargo test --workspace --exclude ludonimbus-app`, `npm --prefix app run build` and `cargo clippy --workspace --all-targets -- -D warnings`. CI checks the formatting (`rustfmt.toml`, lines up to 160 characters) and treats clippy warnings as errors; clippy needs the desktop app's sidecars (`./scripts/prepare-sidecars.ps1`).
+2. Before you push, run `cargo fmt --all`, `cargo test --workspace --exclude ludonimbus-app`, `npm --prefix app run build` and `cargo clippy --workspace --all-targets -- -D warnings`. CI checks the formatting (`rustfmt.toml`, lines up to 160 characters) and treats clippy warnings as errors; clippy needs the desktop app's sidecars (`./scripts/prepare-sidecars.ps1`). When you change a type the web UI and Rust send each other (a command's arguments or result, an event's payload), also run `cargo test -p ludonimbus-app export_bindings` and commit what it changes in `app/src/bindings/`: those TypeScript types are generated from Rust, and CI fails when generating them again gives something else (see [docs/development.md](docs/development.md)).
 3. Open a pull request into `dev`. The title says in one sentence what it does; it becomes the commit message on `dev`.
 4. When the `ok` check passes, merge with **Squash and merge** and delete the branch.
 5. CI then builds a development installer from `dev` (a workflow artifact, not a release).

@@ -26,6 +26,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 /// Sessions shorter than this are launch failures, not play.
 const MIN_SESSION_SECS: i64 = 10;
@@ -122,8 +123,9 @@ impl DeviceLog {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PlaytimeDevice")]
 pub struct DeviceTotal {
     pub device: String,
     pub device_name: String,
@@ -134,16 +136,18 @@ pub struct DeviceTotal {
     pub steam_minutes: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PlaytimePlatform")]
 pub struct PlatformTotal {
     pub platform: String,
     pub secs: u64,
 }
 
 /// Total playtime of a game over all devices.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PlaytimeTotals")]
 pub struct Summary {
     pub total_secs: u64,
     pub last_played: Option<DateTime<Utc>>,

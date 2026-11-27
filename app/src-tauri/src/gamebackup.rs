@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use ts_rs::TS;
 
 fn log(msg: impl AsRef<str>) {
     logger::log("gamebackup", msg);
@@ -86,10 +87,12 @@ impl Throttle {
 // ---------------------------------------------------------------------------
 // Jobs
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "BackupJob")]
 pub struct JobView {
     /// backup | restore | delete
+    #[ts(type = r#""backup" | "restore" | "delete""#)]
     pub kind: &'static str,
     pub phase: String,
     pub done: u64,
@@ -114,14 +117,21 @@ pub fn job(key: &str) -> Option<JobView> {
     jobs().lock().unwrap().get(key).map(|j| j.view.clone())
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct Finished {
+#[ts(rename = "BackupFinished")]
+pub(crate) struct Finished {
     key: String,
+    /// As [`JobView::kind`].
+    #[ts(type = r#""backup" | "restore" | "delete""#)]
     kind: &'static str,
     ok: bool,
     cancelled: bool,
     message: String,
+    /// What the job reported, a different shape for each kind: a backup's
+    /// `backup::Outcome`, a restore's report and path fixes (`json!`), a
+    /// deletion's clean-up.
+    #[ts(type = "unknown")]
     outcome: Option<Value>,
 }
 
@@ -194,7 +204,7 @@ pub async fn game_backup_job(key: String) -> CmdResult<Option<JobView>> {
 // Info
 
 /// Where a restore goes by default and what is already on this PC.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreDefaults {
     /// The version has a program (or whole folder) part.
@@ -214,15 +224,17 @@ pub struct RestoreDefaults {
     content_dir: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PendingRestore")]
 pub struct PendingView {
     version: String,
     targets: restore::Targets,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "BackupInfo")]
 pub struct Info {
     has_cloud: bool,
     cloud_kind: String,
@@ -383,8 +395,9 @@ pub async fn game_backup_preview(key: String) -> CmdResult<Vec<backup::PreviewCo
     .await
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(rename_all = "camelCase", default)]
+#[ts(rename = "BackupSettingsPatch", optional_fields)]
 pub struct SettingsPatch {
     /// `""` = back to the game's folder.
     root: Option<String>,
