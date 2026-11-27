@@ -8,22 +8,39 @@ use ludonimbus_core::savefind::{self, Candidate};
 use ludonimbus_core::steamgriddb::{self as sgdb, SgdbGame, SgdbImage};
 use ludonimbus_core::{config, games, localart, steam, util};
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
 // Scanning
 
+/// Programs the user picked or a scan found since the app started: with the
+/// library's own, the ones "start with the game" may run.
+static OFFERED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+/// Remember a program the user picked (see [`savefind_watch_start`]).
+pub fn offer_exe(path: &str) {
+    OFFERED.lock().unwrap().insert(util::norm_path(path));
+}
+
+fn offer_found(found: Vec<Found>) -> Vec<Found> {
+    for exe in found.iter().filter_map(|f| f.exe.as_deref()) {
+        offer_exe(exe);
+    }
+    found
+}
+
 /// Steam shortcuts (all accounts), Epic and GOG games. Fast.
 #[tauri::command]
 pub async fn scan_quick() -> CmdResult<Vec<Found>> {
-    blocking(|| Ok(discover::quick(&config::load()?))).await
+    blocking(|| Ok(offer_found(discover::quick(&config::load()?)))).await
 }
 
 /// Games Ludusavi finds saves for. Takes up to a minute.
 #[tauri::command]
 pub async fn scan_ludusavi() -> CmdResult<Vec<Found>> {
-    blocking(|| discover::ludusavi_scan(&config::load()?)).await
+    blocking(|| discover::ludusavi_scan(&config::load()?).map(offer_found)).await
 }
 
 /// Library folders of Steam, Xbox, Epic, GOG, EA and Ubisoft on this PC.
@@ -40,7 +57,7 @@ pub async fn scan_folder(path: String) -> CmdResult<Vec<Found>> {
         if !dir.is_dir() {
             bail!(ludonimbus_core::tr!("文件夹不存在：{path}", "The folder doesn't exist: {path}"));
         }
-        Ok(discover::folder_scan(&config::load()?, &dir))
+        Ok(offer_found(discover::folder_scan(&config::load()?, &dir)))
     })
     .await
 }
@@ -103,11 +120,21 @@ pub async fn savefind_suggest(name: String, exe: Option<String>, install: Option
 
 static WATCH: Mutex<Option<savefind::Watch>> = Mutex::new(None);
 
+/// A program the user picked, a scan found, or a library game's.
+fn may_launch(exe: &Path) -> bool {
+    let key = util::norm_path(&exe.to_string_lossy());
+    OFFERED.lock().unwrap().contains(&key)
+        || config::load().is_ok_and(|cfg| cfg.games.iter().filter_map(|g| g.exe.as_deref()).any(|e| util::norm_path(&e.to_string_lossy()) == key))
+}
+
 /// Start recording file changes; launches the game when `exe` is given.
 #[tauri::command]
 pub async fn savefind_watch_start(exe: Option<String>, args: Option<String>, install: Option<String>) -> CmdResult<()> {
     blocking(move || {
         let exe = exe.map(PathBuf::from).filter(|e| e.is_file());
+        if let Some(exe) = exe.as_deref().filter(|e| !may_launch(e)) {
+            bail!(ludonimbus_core::tr!("只启动你选择的程序：{}", "Only programs you chose are started: {}", exe.display()));
+        }
         let install = install.map(PathBuf::from).or_else(|| exe.as_deref().and_then(Path::parent).map(Path::to_path_buf));
         let mut roots = savefind::save_roots();
         roots.extend(install.clone());

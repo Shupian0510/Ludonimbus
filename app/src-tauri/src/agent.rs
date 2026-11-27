@@ -31,7 +31,7 @@ use chrono::{DateTime, Utc};
 use ludonimbus_core::config::{self, GameEntry};
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution, Status, StatusReport};
-use ludonimbus_core::{logger, paths, playtime, process, state, steam, steamcloud, util};
+use ludonimbus_core::{logger, paths, playtime, process, state, steam, steamcloud};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -90,7 +90,7 @@ pub fn spawn(app: AppHandle) {
             version: ludonimbus_core::APP_VERSION.to_string(),
             api_version: API_VERSION,
         };
-        match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| util::atomic_write(&agent_file(), &b)) {
+        match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| write_private(&agent_file(), &b)) {
             Ok(()) => log(format!("local API listening on 127.0.0.1:{port}")),
             Err(e) => {
                 log(format!("could not write {}: {e:#}", agent_file().display()));
@@ -103,6 +103,31 @@ pub fn spawn(app: AppHandle) {
             std::thread::spawn(move || handle(&app, req, &token, port));
         }
     });
+}
+
+/// Write `agent.json`, which holds the token: on Linux and macOS only this
+/// user can read it, from the moment it exists (the temporary file too).
+/// Windows keeps a user's app data private already.
+#[cfg(unix)]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.lntmp");
+    // A file left over keeps its old mode: start a new one.
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    file.write_all(bytes)?;
+    drop(file);
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    ludonimbus_core::util::atomic_write(path, bytes)
 }
 
 /// Remove `agent.json` when this process wrote it (called on exit).
@@ -520,4 +545,20 @@ fn start_restore(app: &AppHandle, key: &str, id: &str) -> ApiResult {
         );
     });
     Ok(json!({ "started": true }))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn agent_file_only_for_this_user() {
+        let dir = std::env::temp_dir().join(format!("ludonimbus-agent-test-{}", std::process::id()));
+        let path = dir.join("agent.json");
+        super::write_private(&path, b"{}").unwrap();
+        super::write_private(&path, b"{\"token\":\"x\"}").unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"token\":\"x\"}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

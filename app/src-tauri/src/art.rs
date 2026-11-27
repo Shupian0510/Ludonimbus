@@ -10,11 +10,19 @@
 //!
 //! On Windows the webview reaches it as `http://ludoart.localhost/...`. URLs
 //! carry the file's modification time so a replaced image is not cached.
+//!
+//! Only the app's own windows get the images: every webview has the
+//! protocol, the Quark sign-in window (a web page) too. Files are read off
+//! the webview's thread.
 
 use ludonimbus_core::{config, localart, logos, screenshots, steam};
 use std::path::Path;
 use tauri::http::{Request, Response};
-use tauri::{Runtime, UriSchemeContext};
+use tauri::{Runtime, UriSchemeContext, UriSchemeResponder};
+
+/// The windows that show the app itself (`main`, also in handheld mode, and
+/// the achievement popup).
+const APP_WINDOWS: [&str; 2] = ["main", crate::achievements::TOAST_LABEL];
 
 fn version(file: &Path) -> u64 {
     std::fs::metadata(file)
@@ -82,8 +90,7 @@ fn resolve(parts: &[&str]) -> Option<std::path::PathBuf> {
     }
 }
 
-pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    let path = req.uri().path().trim_start_matches('/').to_string();
+fn respond(path: &str) -> Response<Vec<u8>> {
     let parts: Vec<&str> = path.split('/').collect();
     let Some(file) = resolve(&parts) else {
         return not_found();
@@ -97,10 +104,22 @@ pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>) 
         Some("webp") => "image/webp",
         _ => "application/octet-stream",
     };
+    // No CORS header: the app shows these with <img> and CSS, which don't
+    // need one, and no other page may read them.
     Response::builder()
         .header("Content-Type", mime)
         .header("Cache-Control", "max-age=3600")
-        .header("Access-Control-Allow-Origin", "*")
         .body(bytes)
         .unwrap()
+}
+
+/// Registered with `register_asynchronous_uri_scheme_protocol`: reading the
+/// configuration and the image would otherwise hold up the window.
+pub fn handle<R: Runtime>(ctx: UriSchemeContext<'_, R>, req: Request<Vec<u8>>, responder: UriSchemeResponder) {
+    if !APP_WINDOWS.contains(&ctx.webview_label()) {
+        responder.respond(Response::builder().status(403).body(Vec::new()).unwrap());
+        return;
+    }
+    let path = req.uri().path().trim_start_matches('/').to_string();
+    tauri::async_runtime::spawn_blocking(move || responder.respond(respond(&path)));
 }

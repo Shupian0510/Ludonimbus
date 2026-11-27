@@ -786,14 +786,25 @@ pub async fn local_files(key: String) -> CmdResult<LocalFiles> {
     .await
 }
 
+/// Open a web page in the browser or a folder in the file manager, or show
+/// a file in its folder. Nothing else: a program or a script is shown, never
+/// run, and names the system would look up (`calc`, `ms-settings:`) are refused.
 #[tauri::command]
 pub async fn open_path(path: String) -> CmdResult<()> {
     blocking(move || {
+        if let Ok(url) = tauri::Url::parse(&path) {
+            if matches!(url.scheme(), "http" | "https") {
+                opener::open_browser(url.as_str())?;
+                return Ok(());
+            }
+        }
         let p = PathBuf::from(&path);
-        if p.is_file() {
+        if p.is_absolute() && p.is_dir() {
+            opener::open(&p)?;
+        } else if p.is_absolute() && p.is_file() {
             opener::reveal(&p)?;
         } else {
-            opener::open(&p)?;
+            bail!(ludonimbus_core::tr!("找不到「{path}」", "Can't find {path}"));
         }
         Ok(())
     })
@@ -1058,7 +1069,7 @@ pub async fn pick_exe(start: Option<String>) -> CmdResult<Option<String>> {
         if let Some(s) = start.map(PathBuf::from).and_then(|p| p.ancestors().find(|a| a.is_dir()).map(Path::to_path_buf)) {
             d = d.set_directory(s);
         }
-        Ok(d.pick_file().map(|p| p.display().to_string()))
+        Ok(d.pick_file().map(|p| p.display().to_string()).inspect(|p| crate::library::offer_exe(p)))
     })
     .await
 }

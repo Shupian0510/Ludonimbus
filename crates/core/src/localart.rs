@@ -13,7 +13,12 @@ pub fn dir(key: &str) -> PathBuf {
     paths::data_dir().join("art").join(key)
 }
 
+/// The game's image of one kind. `None` for a kind that isn't one of
+/// [`steam::ART_KINDS`], so a name from a URL can't point at another file.
 pub fn file(key: &str, kind: &str) -> Option<PathBuf> {
+    if !steam::ART_KINDS.contains(&kind) {
+        return None;
+    }
     let d = dir(key);
     EXTS.iter().map(|e| d.join(format!("{kind}.{e}"))).find(|p| p.is_file())
 }
