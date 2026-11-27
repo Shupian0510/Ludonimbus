@@ -6,6 +6,7 @@ import type {
   Found,
   GameView,
   JoinSuggestion,
+  OtherInstall,
   OtherSave,
   Outcome,
   Overview,
@@ -90,6 +91,9 @@ const snapshots: Record<string, SnapshotSummary[]> = {
     snap("01SDV1", 60 * 26, "Steam Deck", "auto-exit", 398000, 4, { platform: "emu:ryujinx", gameVersion: "1.6.8" }),
   ],
 };
+
+// Played on the Xbox app, to send to its Steam version (`mockInstalls`); not in the docs screenshots.
+if (!mockScene) snapshots["doom-eternal"] = [snap("01DOOM1", 90, "DESKTOP-MAIN", "auto-exit", 2140000, 12, { platform: "pc:xbox" })];
 
 // What each game's saves are made on, and how the app shows that (the logo
 // is the program's own icon when this PC has it).
@@ -477,6 +481,46 @@ function mockStore(g: GameView): GameView["store"] {
   if (!a) return null;
   const managed = a.state === "managed";
   return { appid: a.appid, mode: managed ? "managed" : g.autoSync ? "backup" : "steam", wrapper: managed && !mockNoWrapper.has(g.key) };
+}
+
+/**
+ * Versions installed here that aren't in the library (`other_installs`):
+ * Steam's games not added yet, and the Steam version of the Xbox game DOOM
+ * Eternal (not in the docs screenshots).
+ */
+function mockInstalls(key: string | null): OtherInstall[] {
+  const norm = (n: string) => n.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const all = [...overview.games, ...overview.cloudOnly];
+  const of = all.find((g) => g.key === key);
+  const names = new Set(all.filter((g) => of && g.family === of.family).map((g) => norm(g.name)));
+  const extra = mockScene ? [] : [{ appid: 782330, name: "DOOM Eternal" }];
+  return [...extra.filter((e) => !all.some((g) => g.key === `steam-${e.appid}`)), ...steamCloudApps.filter((a) => !a.key)].map((a) => ({
+    id: `steam:${a.appid}`,
+    name: a.name,
+    store: "steam",
+    logo: null,
+    same: names.has(norm(a.name)),
+  }));
+}
+
+/** Adds a version installed here as the backend would: a game Steam installed comes in backup only. */
+function mockAddInstall(id: string): string {
+  const appid = Number(id.replace("steam:", ""));
+  const listed = steamCloudApps.find((a) => a.appid === appid);
+  if (listed) return mockSteamAdd([appid])[0].key!;
+  const key = `steam-${appid}`;
+  const twin = overview.games.find((g) => g.key === "doom-eternal");
+  overview.games.push({
+    ...twin!,
+    key,
+    exe: "D:\\SteamLibrary\\steamapps\\common\\DOOMEternal\\DOOMEternalx64vk.exe",
+    lastCheck: null,
+    lastSyncAt: null,
+    lastSyncedDevice: null,
+    source: { kind: "pc", name: null, detail: null, label: null, logo: null },
+  });
+  steamCloudApps.push({ appid, name: "DOOM Eternal", key, state: "backup", syncState: "synchronized", cloudEnabled: true, cloudUsed: true });
+  return key;
 }
 
 /** Adds games Steam installed to the mock library, backup only. */
@@ -894,6 +938,19 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         },
         300,
       );
+    case "other_installs":
+      return delay(mockInstalls((args.key as string | null) ?? null), 200);
+    case "add_install":
+      return delay(mockAddInstall(args.id as string), 400);
+    case "remove_game": {
+      const i = overview.games.findIndex((g) => g.key === key);
+      if (i >= 0) overview.games.splice(i, 1);
+      const a = steamCloudApps.findIndex((x) => x.key === key);
+      // The extra Steam version (see `mockInstalls`) is listed from there again.
+      if (a >= 0 && key.startsWith("steam-")) steamCloudApps.splice(a, 1);
+      else if (a >= 0) Object.assign(steamCloudApps[a], { key: null, state: "steam" });
+      return delay(undefined);
+    }
     case "link_games": {
       const keys = args.keys as string[];
       const all = [...overview.games, ...overview.cloudOnly];
@@ -909,6 +966,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "transfer_plan": {
       const target = overview.games.find((g) => g.key === args.target);
       const xbox = target?.source.kind === "xbox";
+      const store = target ? mockStore(target) : null;
       const base = xbox
         ? "C:\\Users\\me\\AppData\\Local\\Packages\\X_y\\SystemAppData\\wgs\\0009_00AB"
         : "C:\\Users\\me\\AppData\\Local\\Celeste\\Saves";
@@ -931,6 +989,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           targetVersion: "1.6.9",
           tooNew: true,
           cloudTarget: false,
+          steamCloud: !!store && store.mode !== "managed",
         },
         500,
       );

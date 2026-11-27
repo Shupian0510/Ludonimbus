@@ -2549,6 +2549,15 @@ button.member:hover {
 .chip.chip-missing:not(.on) {
   color: var(--muted);
 }
+/* A version installed here that isn't in the library yet: click to add it. */
+.chip.chip-add {
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+}
+.chip.chip-add:hover:not(:disabled) {
+  color: var(--text);
+}
 .pick-list {
   display: flex;
   flex-direction: column;

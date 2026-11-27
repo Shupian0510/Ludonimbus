@@ -157,6 +157,13 @@ export const savelib: typeof Zh.savelib = {
   linkSearch: "Search games",
   linked: "Linked",
   unlinked: "Now a game of its own",
+  notAdded: "not added",
+  addInstallTitle: (store) =>
+    store === "steam"
+      ? "Add it to the library, so saves can be sent to it. Steam Cloud keeps syncing it; Ludonimbus only backs it up and never changes its saves by itself."
+      : "Add it to the library, so saves can be sent to it",
+  installAdded: (store) => `Added the ${store} version`,
+  notAddedSection: "Installed here, not added yet",
   cloudBannerTitle: "Only in the cloud: this game isn't on this PC yet",
   cloudBannerText: "Its saves and playtime are in the cloud. Add it to this PC to sync; if you backed up the game itself, you can install it from the cloud.",
   addHere: "Add to this PC…",

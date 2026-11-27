@@ -16,7 +16,7 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// A [`GameEntry::game`] value that keeps an entry apart from all others.
 pub const SOLO: &str = "solo:";
@@ -53,7 +53,7 @@ pub fn ids(g: &GameEntry) -> Vec<String> {
     let mut out = Vec::new();
     let scope = save_scope(g);
     push_common(&mut out, &g.saves, g.ludusavi_title.as_deref(), &g.name, &scope);
-    if let Some(p) = g.exe.as_deref().and_then(xbox_package) {
+    if let Some(p) = g.exe.as_deref().and_then(xbox::package_name) {
         out.push(format!("xbox:{}", p.to_lowercase()));
     }
     push_format(&mut out, &scope);
@@ -97,18 +97,6 @@ fn push_common(out: &mut Vec<String>, saves: &[String], ludusavi: Option<&str>, 
     if k.chars().count() >= 3 {
         out.push(format!("name:{scope}:{k}"));
     }
-}
-
-/// The package name of an Xbox app game (`BethesdaSoftworks.ProjectGold`),
-/// from the `appxmanifest.xml` next to its program.
-fn xbox_package(exe: &Path) -> Option<String> {
-    let dir = xbox::content_dir(exe)?;
-    let text = std::fs::read_dir(&dir)
-        .ok()?
-        .flatten()
-        .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("appxmanifest.xml"))
-        .and_then(|e| std::fs::read_to_string(e.path()).ok())?;
-    xbox::xml_attr(&text, "Identity", "Name").filter(|n| !n.is_empty())
 }
 
 /// One library entry for [`families`]: a game on this device or one only

@@ -2,7 +2,7 @@
 // Xbox, emulator version… on this PC or only in the cloud), linking them by
 // hand, and applying a save version from one to another.
 import { useEffect, useMemo, useState } from "react";
-import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, Outcome, Overview, PlatformMarks, SaveLine, SnapshotSummary, TransferPlan } from "../api";
+import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, OtherInstall, Outcome, Overview, PlatformMarks, SaveLine, SnapshotSummary, TransferPlan } from "../api";
 import { bytes, dateTime, outcomeText, relTime } from "../format";
 import { currentLang, msg, useT } from "../i18n";
 import { Badge, Button, Hint, Icon, Menu, MenuItem, Modal, Spinner, useUi } from "./ui";
@@ -31,6 +31,41 @@ export function familyOf(overview: Overview, key: string): Member[] {
   const all = membersOf(overview);
   const fam = all.find((m) => m.key === key)?.family ?? key;
   return all.filter((m) => m.family === fam);
+}
+
+/** The store of a version installed here that isn't in the library. */
+const storeName = (i: OtherInstall) => (i.store === "steam" ? "Steam" : "Xbox");
+
+/**
+ * Versions installed on this PC that aren't in the library (a game Steam
+ * installed is left to Steam Cloud until it is added): with `key`, which of
+ * them are versions of that game. Read again when `stamp` changes.
+ */
+function useOtherInstalls(key: string | null, stamp: unknown, skip = false): [OtherInstall[], (f: (l: OtherInstall[]) => OtherInstall[]) => void] {
+  const [list, setList] = useState<OtherInstall[]>([]);
+  useEffect(() => {
+    if (skip) return setList([]);
+    let live = true;
+    api.otherInstalls(key).then(
+      (l) => live && setList(l),
+      () => live && setList([]),
+    );
+    return () => void (live = false);
+  }, [key, stamp, skip]);
+  return [list, setList];
+}
+
+/** Add a version installed here to the library; its key. The toast takes it back. */
+async function addInstall(i: OtherInstall, ui: ReturnType<typeof useUi>, onChanged: () => Promise<void>): Promise<string | null> {
+  try {
+    const key = await api.addInstall(i.id);
+    const m = msg().savelib;
+    ui.toast(m.installAdded(storeName(i)), "ok", { label: m.undo, run: () => api.removeGame(key).then(onChanged, (e) => ui.toast(errorText(e), "bad")) });
+    return key;
+  } catch (e) {
+    ui.toast(errorText(e), "bad");
+    return null;
+  }
 }
 
 /** What a version runs on: its emulator, Steam, Xbox… */
@@ -83,6 +118,18 @@ export function VersionBar({
   // Read again when a sync changed where the game is, and after a change made here.
   const stamp = game?.lastSyncAt ?? "";
   const [tick, setTick] = useState(0);
+  // The same game installed here but not in the library (a Steam version left to Steam Cloud): one click adds it.
+  const [installs] = useOtherInstalls(current, `${tick}/${members.length}`);
+  const fresh = installs.filter((i) => i.same);
+  const [adding, setAdding] = useState(false);
+  const add = async (i: OtherInstall) => {
+    setAdding(true);
+    if (await addInstall(i, ui, onChanged)) {
+      setTick((n) => n + 1);
+      await onChanged();
+    }
+    setAdding(false);
+  };
 
   useEffect(() => {
     if (!game || !hasCloud) return setLines(null);
@@ -209,13 +256,22 @@ export function VersionBar({
         </span>
       ))}
       {(game || groups.length > 0) && <Hint text={s.linesHint} />}
-      {others.length > 0 && (
+      {(others.length > 0 || fresh.length > 0) && (
         <div className="chips">
-          {(game ? others : members).map((m) => (
-            <button key={m.key} className={`chip${m.key === current ? " on" : ""}${m.playable ? "" : " chip-missing"}`} onClick={() => onOpen(m.key)} title={s.openVersion}>
-              {m.source.logo && <img className="src-logo" src={m.source.logo} alt="" width={15} height={15} />}
-              {variantLabel(m)}
-              <span className="chip-count">{m.cloud ? s.cloudOnly : m.playable ? s.here : s.notInstalled}</span>
+          {others.length > 0 &&
+            (game ? others : members).map((m) => (
+              <button key={m.key} className={`chip${m.key === current ? " on" : ""}${m.playable ? "" : " chip-missing"}`} onClick={() => onOpen(m.key)} title={s.openVersion}>
+                {m.source.logo && <img className="src-logo" src={m.source.logo} alt="" width={15} height={15} />}
+                {variantLabel(m)}
+                <span className="chip-count">{m.cloud ? s.cloudOnly : m.playable ? s.here : s.notInstalled}</span>
+              </button>
+            ))}
+          {fresh.map((i) => (
+            <button key={i.id} className="chip chip-add" disabled={adding} onClick={() => add(i)} title={s.addInstallTitle(i.store)}>
+              {i.logo && <img className="src-logo" src={i.logo} alt="" width={15} height={15} />}
+              {storeName(i)}
+              <span className="chip-count">{s.notAdded}</span>
+              <Icon name="plus" size={12} />
             </button>
           ))}
         </div>
@@ -343,21 +399,35 @@ function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overvi
   const s = t.savelib;
   const ui = useUi();
   const [query, setQuery] = useState("");
+  const [installs] = useOtherInstalls(current.key, null);
+  const [busy, setBusy] = useState(false);
   const others = useMemo(() => {
     const q = query.trim().toLowerCase();
     return membersOf(overview)
       .filter((m) => m.family !== current.family && m.name.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, currentLang()));
   }, [overview, current, query]);
+  // Installed here but not in the library: the same game first.
+  const fresh = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return installs.filter((i) => i.name.toLowerCase().includes(q)).sort((a, b) => Number(b.same) - Number(a.same));
+  }, [installs, query]);
 
-  const link = async (m: Member) => {
+  const link = async (key: string) => {
     try {
-      await api.linkGames([current.key, m.key]);
+      await api.linkGames([current.key, key]);
       ui.toast(msg().savelib.linked);
       await onLinked();
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
+  };
+  /** Added first, then linked. */
+  const addAndLink = async (i: OtherInstall) => {
+    setBusy(true);
+    const key = await addInstall(i, ui, onLinked);
+    if (key) await link(key);
+    setBusy(false);
   };
 
   return (
@@ -371,7 +441,7 @@ function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overvi
       </div>
       <div className="pick-list">
         {others.map((m) => (
-          <button key={m.key} className="pick-row" onClick={() => link(m)}>
+          <button key={m.key} className="pick-row" disabled={busy} onClick={() => link(m.key)}>
             <b>{m.name}</b>
             <span className="muted small">
               {variantLabel(m)} · {m.cloud ? s.cloudOnly : m.playable ? s.here : s.notInstalled}
@@ -379,6 +449,21 @@ function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overvi
           </button>
         ))}
       </div>
+      {fresh.length > 0 && (
+        <>
+          <p className="muted small">{s.notAddedSection}</p>
+          <div className="pick-list">
+            {fresh.map((i) => (
+              <button key={i.id} className="pick-row" disabled={busy} onClick={() => addAndLink(i)}>
+                <b>{i.name}</b>
+                <span className="muted small">
+                  {storeName(i)} · {s.notAdded}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </Modal>
   );
 }
@@ -395,6 +480,7 @@ export function ApplyDialog({
   target: preset,
   onClose,
   onApplied,
+  onAdded,
 }: {
   overview: Overview;
   sourceKey: string;
@@ -404,11 +490,24 @@ export function ApplyDialog({
   target?: string;
   onClose: () => void;
   onApplied: (target: string) => Promise<void>;
+  /** A version installed here was added to the library (to send to it): told when the dialog closes or applies. */
+  onAdded?: () => Promise<void>;
 }) {
   const t = useT();
   const s = t.savelib;
   const ui = useUi();
   const [target, setTarget] = useState<Member | null>(() => membersOf(overview).find((m) => m.key === preset) ?? null);
+  // The game's versions installed here but not in the library: picking one adds it first.
+  const [installs, setInstalls] = useOtherInstalls(sourceKey, null, !!preset);
+  const fresh = installs.filter((i) => i.same);
+  const [adding, setAdding] = useState(false);
+  // The page is told about what was added when the dialog is done: telling it
+  // at once would reload the tab this dialog is open in.
+  const [added, setAdded] = useState<Member | null>(null);
+  const close = async () => {
+    onClose();
+    if (added) await onAdded?.();
+  };
   const [base, setBase] = useState<string | null>(null);
   const [plan, setPlan] = useState<TransferPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -421,6 +520,8 @@ export function ApplyDialog({
   // (for games a save rule covers; the plan says when it isn't).
   const consoles = versions.filter((m) => m.cloud && m.key !== sourceKey && m.source.kind === "console");
   const same = [...locals.filter((m) => family.includes(m.key)), ...consoles];
+  // Added in this dialog: the library hears of it when the dialog is done.
+  if (added && !membersOf(overview).some((m) => m.key === added.key)) same.push(added);
   const other = locals.filter((m) => !family.includes(m.key)).sort((a, b) => a.name.localeCompare(b.name, currentLang()));
 
   useEffect(() => {
@@ -436,6 +537,22 @@ export function ApplyDialog({
     return () => void (live = false);
   }, [target, base, sourceKey, snapshot.id]);
 
+  const pickInstall = async (i: OtherInstall) => {
+    setAdding(true);
+    const key = await addInstall(i, ui, async () => {
+      setTarget(null);
+      setAdded(null);
+      await onAdded?.();
+    });
+    if (key) {
+      const m: Member = { key, name: i.name, playable: true, family: "", source: { kind: "pc", name: null, detail: null, label: storeName(i), logo: i.logo } };
+      setAdded(m);
+      setInstalls((l) => l.filter((x) => x.id !== i.id));
+      setTarget(m);
+    }
+    setAdding(false);
+  };
+
   const pickFolder = async () => {
     const f = await api.pickFolder(msg().savelib.pickFolder, plan?.base ?? null);
     if (f) setBase(f);
@@ -447,6 +564,8 @@ export function ApplyDialog({
     try {
       const o = await api.transferApply(sourceKey, snapshot.id, target.key, base);
       ui.toast(o.kind === "uploaded" ? msg().savelib.applied(target.name) : outcomeText(o, target.name));
+      // The library knows the version added here before its page opens.
+      if (added) await onAdded?.();
       await onApplied(target.key);
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -475,16 +594,26 @@ export function ApplyDialog({
   );
 
   return (
-    <Modal title={s.applyTitle(sourceName)} onClose={onClose} wide footer={footer || undefined}>
+    <Modal title={s.applyTitle(sourceName)} onClose={close} wide footer={footer || undefined}>
       <p className="muted small">{s.applySource(snapshot.deviceName, dateTime(snapshot.createdAt))}</p>
       {!target ? (
         <>
           <h3>{s.pickTarget}</h3>
-          {same.length + other.length === 0 && <p className="muted">{s.noTargets}</p>}
-          {same.length > 0 && (
+          {same.length + other.length + fresh.length === 0 && <p className="muted">{s.noTargets}</p>}
+          {same.length + fresh.length > 0 && (
             <>
               <p className="muted small">{s.sameGame}</p>
-              <div className="pick-list">{same.map(row)}</div>
+              <div className="pick-list">
+                {same.map(row)}
+                {fresh.map((i) => (
+                  <button key={i.id} className="pick-row" disabled={adding} onClick={() => pickInstall(i)} title={s.addInstallTitle(i.store)}>
+                    <b>{i.name}</b>
+                    <span className="muted small">
+                      {storeName(i)} · {s.notAdded}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </>
           )}
           {other.length > 0 && (
@@ -527,6 +656,7 @@ export function ApplyDialog({
                   {s.crossShort} <Hint text={s.crossPlatform} />
                 </div>
               )}
+              {plan.steamCloud && <div className="banner banner-info">{t.steamCloud.restoreNote}</div>}
               {plan.cloudTarget && (
                 <div className="banner banner-info">
                   {s.cloudTargetShort} <Hint text={s.cloudTarget} />

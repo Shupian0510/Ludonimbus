@@ -630,7 +630,8 @@ pub fn scan_own(game: &GameEntry) -> Result<(Vec<LocalFile>, BTreeMap<String, Pa
 
     if let Some(title) = &spec.ludusavi_title {
         let mut out = BTreeMap::new();
-        for abs in ludusavi::resolve_files_in(title, spec::proton_prefix(game).as_deref())? {
+        let found = ludusavi::resolve_files_in(title, spec::proton_prefix(game).as_deref())?;
+        for abs in crate::storefiles::of_version(game, found) {
             let logical = spec::tokenize(&abs, &roots);
             let root_name = logical.split('/').next().unwrap_or_default().to_string();
             if let Some(p) = spec::resolve_root_name(&root_name, &roots) {

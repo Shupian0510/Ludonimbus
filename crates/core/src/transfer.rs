@@ -92,6 +92,10 @@ pub struct Plan {
     /// the result is uploaded as its newest version, and the Switch gets it
     /// at its next sync.
     pub cloud_target: bool,
+    /// The target is a game Steam installed whose saves Steam Cloud keeps
+    /// too (not taken over): Steam notices the new saves at its next sync
+    /// and may ask which to keep.
+    pub steam_cloud: bool,
 }
 
 /// What [`apply`] writes.
@@ -254,6 +258,29 @@ pub fn align(sources: &[String], targets: &[PathBuf]) -> Option<(PathBuf, usize,
         }
     }
     best
+}
+
+/// Files read from an Xbox version's containers by the generic rule are
+/// named after their container, which rarely carries the extension the
+/// game's other versions give the file (`Slot1` for `Slot1.sav`: most
+/// Unreal games). A name without an extension takes the one of the target
+/// files named like it, when they all have the same one.
+fn with_target_extensions(srcs: &mut [Src], targets: &[PathBuf]) {
+    let mut by_stem: HashMap<String, HashSet<String>> = HashMap::new();
+    for t in targets {
+        if let (Some(stem), Some(ext)) = (t.file_stem(), t.extension()) {
+            by_stem.entry(stem.to_string_lossy().to_lowercase()).or_default().insert(ext.to_string_lossy().into_owned());
+        }
+    }
+    for s in srcs {
+        let name = s.rel.rsplit('/').next().unwrap_or_default();
+        if name.contains('.') {
+            continue;
+        }
+        if let Some(ext) = by_stem.get(&name.to_lowercase()).filter(|e| e.len() == 1).and_then(|e| e.iter().next()) {
+            s.rel = format!("{}.{ext}", s.rel);
+        }
+    }
 }
 
 /// The deepest folder all `paths` are in.
@@ -460,6 +487,11 @@ fn build(src_def: &CloudGame, meta: &SnapshotMeta, files: &BTreeMap<String, Vec<
         Some(b) => current.iter().map(|f| f.abs.clone()).filter(|p| p.starts_with(b)).collect(),
         None => current.iter().map(|f| f.abs.clone()).collect(),
     };
+    let mut srcs = srcs;
+    if plan.from_xbox && plan.xbox_rule.is_none() {
+        with_target_extensions(&mut srcs, &targets);
+    }
+    let rels: Vec<String> = srcs.iter().map(|s| s.rel.clone()).collect();
     let placed = align(&rels, &targets).or_else(|| match base {
         Some(b) => Some((b.to_path_buf(), 0, 0)),
         None => common_dir(&targets).map(|d| (d, 0, 0)),
@@ -490,7 +522,9 @@ pub fn plan(ctx: &Ctx, source: &str, id: &str, target: &str, base: Option<&Path>
         return Ok(cloud_build(ctx, &def, &meta, &files, target)?.0);
     }
     let tgt = ctx.game(target)?;
-    Ok(build(&def, &meta, &files, &tgt, base)?.0)
+    let mut plan = build(&def, &meta, &files, &tgt, base)?.0;
+    plan.steam_cloud = tgt.store.is_some() && crate::steamcloud::state(&tgt) != crate::steamcloud::State::Managed;
+    Ok(plan)
 }
 
 fn applied_comment(def: &CloudGame, meta: &SnapshotMeta) -> String {
@@ -619,6 +653,21 @@ mod tests {
         // Relative targets (an Xbox version's save slots).
         let (base, k, n) = align(&["0123/Level.sav".to_string()], &[t("0123/Level.sav")]).unwrap();
         assert_eq!((norm(&base), k, n), (String::new(), 0, 1));
+    }
+
+    #[test]
+    fn names_from_the_generic_xbox_rule_take_the_targets_extension() {
+        let t = |p: &str| PathBuf::from(p);
+        let src = |rel: &str| Src { rel: rel.to_string(), data: Vec::new() };
+        // The Steam version of an Unreal game; one name has two extensions.
+        let targets = vec![t("C:/L/Game/Saved/SaveGames/7656/DA_Main.sav"), t("C:/L/Game/Saved/SaveGames/7656/Profile.sav"), t("C:/L/Game/Saved/SaveGames/7656/Two.sav"), t("C:/L/Game/Saved/SaveGames/7656/Two.bak")];
+        let mut srcs = vec![src("DA_Main"), src("profile"), src("Two"), src("New"), src("Has.ext")];
+        with_target_extensions(&mut srcs, &targets);
+        let rels: Vec<&str> = srcs.iter().map(|s| s.rel.as_str()).collect();
+        assert_eq!(rels, vec!["DA_Main.sav", "profile.sav", "Two", "New", "Has.ext"]);
+        let rels: Vec<String> = srcs.iter().map(|s| s.rel.clone()).collect();
+        let (base, k, n) = align(&rels, &targets).unwrap();
+        assert_eq!((norm(&base), k, n), ("c:/l/game/saved/savegames/7656".to_string(), 0, 2));
     }
 
     #[test]

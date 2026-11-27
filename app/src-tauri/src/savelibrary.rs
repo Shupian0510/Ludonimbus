@@ -1,6 +1,7 @@
 //! Commands for the save library (docs/plan-phase5.md §5): games only the
-//! cloud has, linking versions of one game, and applying saves from one
-//! version to another.
+//! cloud has, versions installed here that aren't in the library yet,
+//! linking versions of one game, and applying saves from one version to
+//! another.
 
 use crate::commands::{blocking, cloud_only_views, CloudOnlyView, CmdResult};
 use crate::{busy, watcher};
@@ -8,9 +9,9 @@ use anyhow::bail;
 use ludonimbus_core::cloud::gamedata::Folders;
 use ludonimbus_core::gamebackup::{self, remote};
 use ludonimbus_core::sync::{Ctx, Outcome};
-use ludonimbus_core::{artsync, config, logger, playtime, process, savelib, tr, transfer};
+use ludonimbus_core::{artsync, config, installs, logger, logos, playtime, process, savelib, tr, transfer};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Serialize)]
@@ -120,6 +121,57 @@ pub async fn unlink_game(key: String) -> CmdResult<()> {
     blocking(move || {
         let ctx = Ctx::load()?;
         savelib::unlink(ctx.cloud().ok(), &key)
+    })
+    .await
+}
+
+/// A version of a game installed on this PC that isn't in the library.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallView {
+    /// `steam:<app id>` or `xbox:<folder>`.
+    id: String,
+    name: String,
+    /// `steam` or `xbox`.
+    store: String,
+    /// Its store's logo.
+    logo: Option<String>,
+    /// A version of the game asked about.
+    same: bool,
+}
+
+/// Versions installed on this PC that aren't in the library (games Steam
+/// or the Xbox app installed); with `key`, which of them are versions of
+/// that game.
+#[tauri::command]
+pub async fn other_installs(key: Option<String>) -> CmdResult<Vec<InstallView>> {
+    blocking(move || {
+        let cfg = config::load()?;
+        let list = installs::list(&cfg);
+        let same: HashSet<String> = match &key {
+            Some(k) => installs::same_game(&cfg, &savelib::cached(&cfg).games, k, &list).into_iter().map(|i| i.id.clone()).collect(),
+            None => HashSet::new(),
+        };
+        Ok(list
+            .into_iter()
+            .map(|i| InstallView {
+                logo: logos::for_game(&i.entry, None).and_then(|f| crate::art::logo_url(&f)),
+                same: same.contains(&i.id),
+                id: i.id,
+                name: i.name,
+                store: i.store,
+            })
+            .collect())
+    })
+    .await
+}
+
+/// Add a version installed on this PC (one of `other_installs`); its key.
+#[tauri::command]
+pub async fn add_install(id: String) -> CmdResult<String> {
+    blocking(move || {
+        let g = installs::add(&config::load()?, &id)?;
+        Ok(crate::commands::adopt_cloud_key(g.key))
     })
     .await
 }

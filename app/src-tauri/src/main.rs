@@ -259,6 +259,8 @@ fn main() {
             gamebackup::game_backup_request_install,
             savelibrary::refresh_cloud_library,
             savelibrary::cloud_game_info,
+            savelibrary::other_installs,
+            savelibrary::add_install,
             savelibrary::link_games,
             savelibrary::unlink_game,
             savelibrary::transfer_plan,
