@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { msg, useT } from "../i18n";
 
 // ---------------------------------------------------------------------------
@@ -527,13 +527,18 @@ export function UiProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // One object for the provider's lifetime: pages list `ui` in effect
+  // dependencies, and a new object on every toast re-ran those effects, so a
+  // failing load toasted, re-ran, and toasted again without end.
+  const value = useMemo(() => ({ toast, confirm, prompt }), [toast, confirm, prompt]);
+
   const close = (v: string | null) => {
     ask?.resolve(v);
     setAsk(null);
   };
 
   return (
-    <UiCtx.Provider value={{ toast, confirm, prompt }}>
+    <UiCtx.Provider value={value}>
       {children}
       <div className="toasts">
         {toasts.map((t) => (
