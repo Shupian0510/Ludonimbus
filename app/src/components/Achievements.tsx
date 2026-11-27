@@ -1,25 +1,20 @@
 // Achievements in the app: the game page's "Achievements" tab, the
 // Settings panel (RetroAchievements account, popups) and the small fallback
 // popup window (`index.html?toast`). Backend: app/src-tauri/src/achievements.rs.
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, inTauri } from "../api";
 import { AchievementItem, achievementsApi, AchievementSettings, AchievementsView, Candidate, RaGame, ToastPayload } from "../achievementsApi";
 import { relTime } from "../format";
 import { msg, useT } from "../i18n";
+import { useTauriEvent } from "../useTauriEvent";
 import { Badge, Button, Hint, Icon, Spinner, Toggle, useUi } from "./ui";
 
 const RA_KEYS_URL = "https://retroachievements.org/settings";
 
 function useAchievementsChanged(key: string | null, reload: () => void) {
-  useEffect(() => {
-    if (!inTauri) return;
-    let off: (() => void) | undefined;
-    listen<string>("achievements-changed", (e) => {
-      if (!key || e.payload === key) reload();
-    }).then((u) => (off = u));
-    return () => off?.();
-  }, [key, reload]);
+  useTauriEvent<string>("achievements-changed", (k) => {
+    if (!key || k === key) reload();
+  });
 }
 
 function open(url: string) {

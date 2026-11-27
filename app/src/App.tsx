@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport, UpdateInfo } from "./api";
 import { AddGame } from "./components/AddGame";
@@ -14,6 +13,7 @@ import { Icon, Spinner, useUi } from "./components/ui";
 import { UpdateDialog } from "./components/Update";
 import { outcomeText } from "./format";
 import { msg, useT } from "./i18n";
+import { useTauriEvent } from "./useTauriEvent";
 
 export type Page = { name: "library" } | { name: "collection" } | { name: "game"; key: string; from?: "collection" } | { name: "devices" } | { name: "settings" };
 
@@ -96,32 +96,28 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
     if (o) await checkAll(o.games);
   }, [reload, refreshCloud, checkAll]);
 
+  useTauriEvent("library-changed", () => reload());
+  // Clicked in Steam (Millennium plugin): show that game.
+  useTauriEvent<string>("open-game", (key) => {
+    setAdding(false);
+    setPage({ name: "game", key });
+    reload();
+    check(key);
+  });
+  // A game (and the Steam wrapper's upload) finished: refresh its status.
+  useTauriEvent<string>("game-stopped", (key) => {
+    reload();
+    check(key);
+  });
+  useTauriEvent<{ key: string; name: string; outcome: Outcome | null; error: string | null }>("sync-finished", ({ key, name, outcome, error }) => {
+    if (error) ui.toast(msg().app.backgroundSyncFailed(name, error), "bad");
+    else if (outcome && outcome.kind !== "upToDate") ui.toast(outcomeText(outcome, name), outcome.kind === "conflict" ? "warn" : "ok");
+    reload();
+    check(key);
+  });
+
   useEffect(() => {
     refresh();
-    const unlisten: Array<() => void> = [];
-    if (inTauri) {
-      listen("library-changed", () => reload()).then((u) => unlisten.push(u));
-      // Clicked in Steam (Millennium plugin): show that game.
-      listen<string>("open-game", (e) => {
-        setAdding(false);
-        setPage({ name: "game", key: e.payload });
-        reload();
-        check(e.payload);
-      }).then((u) => unlisten.push(u));
-      // A game (and the Steam wrapper's upload) finished: refresh its status.
-      listen<string>("game-stopped", (e) => {
-        reload();
-        check(e.payload);
-      }).then((u) => unlisten.push(u));
-      listen<{ key: string; name: string; outcome: Outcome | null; error: string | null }>("sync-finished", (e) => {
-        const { key, name, outcome, error } = e.payload;
-        if (error) ui.toast(msg().app.backgroundSyncFailed(name, error), "bad");
-        else if (outcome && outcome.kind !== "upToDate")
-          ui.toast(outcomeText(outcome, name), outcome.kind === "conflict" ? "warn" : "ok");
-        reload();
-        check(key);
-      }).then((u) => unlisten.push(u));
-    }
     const timer = setInterval(() => reload(), 30000);
     // Re-check every game against the cloud now and then (other devices may have uploaded).
     const recheck = setInterval(() => {
@@ -129,11 +125,10 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
       reload().then((o) => o && checkAll(o.games));
     }, 10 * 60 * 1000);
     return () => {
-      unlisten.forEach((u) => u());
       clearInterval(timer);
       clearInterval(recheck);
     };
-  }, [refresh, refreshCloud, reload, check, checkAll, ui]);
+  }, [refresh, refreshCloud, reload, checkAll]);
 
   // First-run guide: only for someone who has not used Ludonimbus yet
   // (no cloud, no games). The browser preview shows it with ?guide.
