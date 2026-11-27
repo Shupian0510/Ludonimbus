@@ -2,13 +2,13 @@
 // versions and playtime from the cloud, adding it here, installing it from
 // a backup of the game itself, and applying its saves to another version.
 import { useEffect, useState } from "react";
-import { api, CloudGameInfo, CloudOnlyView, errorText, Overview, ShortcutView } from "../api";
+import { api, CloudGameInfo, CloudOnlyView, errorText, Overview, playtimePlatforms, ShortcutView } from "../api";
 import { bytes, dateTime, duration } from "../format";
 import { msg, useT } from "../i18n";
 import { AccountPicker, useAccounts } from "./AddGame";
 import { VersionBar } from "./SaveLibrary";
-import { Versions } from "./Versions";
-import { Button, Icon, Modal, useUi } from "./ui";
+import { Saves } from "./Saves";
+import { Button, Hint, Icon, Modal, useUi } from "./ui";
 
 export function CloudGameDetail({
   game,
@@ -86,8 +86,7 @@ export function CloudGameDetail({
         <div className="banner banner-info not-here">
           <Icon name="cloud" />
           <div>
-            <b>{s.cloudBannerTitle}</b>
-            <p>{s.cloudBannerText}</p>
+            <b>{s.cloudBannerTitle}</b> <Hint text={s.cloudBannerText} />
             {info && (
               <p className="muted small">
                 {info.gameBackup
@@ -112,13 +111,19 @@ export function CloudGameDetail({
                 <span className="muted">{duration(d.secs)}</span>
               </div>
             ))}
+            {playtimePlatforms(playtime).map(([name, secs]) => (
+              <div key={name} className="row space muted small">
+                <span>{name}</span>
+                <span>{duration(secs)}</span>
+              </div>
+            ))}
           </section>
         )}
 
         <div className="tabs">
           <button className="on">{t.game.tabVersions}</button>
         </div>
-        <Versions game={game} overview={overview} disabled cloudOnly onChanged={async () => undefined} onApplied={async (k) => onOpen(k)} />
+        <Saves game={game} overview={overview} disabled cloudOnly onChanged={async () => undefined} onApplied={async (k) => onOpen(k)} />
       </div>
 
       {adding && <AddHere game={game} onClose={() => setAdding(false)} onAdded={onAdded} />}

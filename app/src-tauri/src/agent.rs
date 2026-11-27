@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! GET  /v1/ping
-//! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut
+//! GET  /v1/steam/apps/{appid}[?account={id}&refresh=1]   cloud save status of a Steam shortcut, or of a game Steam installed (API 4)
 //! GET  /v1/steam/playtime[?account={id}]                  playtime totals of every linked shortcut (API 2)
 //! POST /v1/games/{key}/sync[?resolution=cloud|local]     start "sync now" in the background (resolution: API 3)
 //! POST /v1/games/{key}/open                               show the game in the Ludonimbus window
@@ -31,7 +31,7 @@ use chrono::{DateTime, Utc};
 use ludonimbus_core::config::{self, GameEntry};
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution, Status, StatusReport};
-use ludonimbus_core::{logger, paths, playtime, process, state, steam, util};
+use ludonimbus_core::{logger, paths, playtime, process, state, steam, steamcloud, util};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -41,7 +41,9 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 /// 2 (0.6.0): version history, restore, playtime.
 /// 3 (0.7.0): conflict resolution on sync, newer saves in another version.
-pub const API_VERSION: u32 = 3;
+/// 4 (1.0.0): what a game still owes the cloud after playing (`backlog`);
+/// games Steam installed (`store`); each version's `platform`.
+pub const API_VERSION: u32 = 4;
 
 /// A cached status younger than this is returned as is, even with `refresh=1`.
 const FRESH_SECS: i64 = 60;
@@ -255,10 +257,15 @@ struct GameStatus {
     key: String,
     name: String,
     auto_sync: bool,
-    /// The Steam shortcut launches through `ludonimbus-run`.
+    /// The Steam shortcut (or the launch options of a game Steam
+    /// installed) goes through `ludonimbus-run`.
     steam_enabled: bool,
     /// `steam::Health` state, e.g. "ok", "disabled", "changed".
     health: String,
+    /// A game Steam installed: who keeps its saves (API 4).
+    store: Option<steamcloud::State>,
+    /// What is left to do in the background after playing (API 4).
+    backlog: Option<sync::Backlog>,
     /// What is happening right now: idle | syncing | preLaunch | playing | uploading.
     phase: &'static str,
     status: Option<Status>,
@@ -301,15 +308,10 @@ fn find_by_key(cfg: &config::AppConfig, key: &str) -> Result<GameEntry, ApiError
         .ok_or_else(|| ApiError::new(404, ludonimbus_core::tr!("Ludonimbus 里没有这个游戏（{key}）", "This game isn't in Ludonimbus ({key})")))
 }
 
+/// The game behind a Steam app id: a shortcut's, or the id of a game Steam
+/// installed.
 pub(crate) fn find_game(cfg: &config::AppConfig, appid: u32, account: Option<&str>) -> Option<GameEntry> {
-    let linked = |g: &&GameEntry| g.steam.as_ref().is_some_and(|l| l.appid == appid);
-    let same_account = |g: &&GameEntry| account.is_none_or(|a| g.steam.as_ref().is_some_and(|l| l.account == a));
-    cfg.games
-        .iter()
-        .filter(linked)
-        .find(same_account)
-        .or_else(|| cfg.games.iter().find(linked))
-        .cloned()
+    steam::game_of_app(cfg, appid, account).cloned()
 }
 
 fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResult {
@@ -331,17 +333,22 @@ fn steam_app_status(appid: u32, account: Option<&str>, refresh: bool) -> ApiResu
         report = Some(r);
         st = state::game(&g.key);
     }
-    let health = serde_json::to_value(steam::health(&cfg, &g))
-        .ok()
-        .and_then(|v| v["state"].as_str().map(str::to_string))
-        .unwrap_or_default();
+    let health = match &g.store {
+        Some(_) => steamcloud::wrapper_word(&cfg, &g).to_string(),
+        None => serde_json::to_value(steam::health(&cfg, &g))
+            .ok()
+            .and_then(|v| v["state"].as_str().map(str::to_string))
+            .unwrap_or_default(),
+    };
     let body = GameStatus {
         managed: true,
         key: g.key.clone(),
         name: g.name.clone(),
         auto_sync: g.auto_sync,
-        steam_enabled: g.steam.as_ref().is_some_and(|l| l.enabled),
+        steam_enabled: g.steam.as_ref().is_some_and(|l| l.enabled) || g.store.as_ref().is_some_and(|l| l.wrapper),
         health,
+        store: g.store.as_ref().map(|_| steamcloud::state(&g)),
+        backlog: sync::backlog(&g.key),
         phase,
         status: report.as_ref().map(|r| r.status),
         message: report.as_ref().and_then(|r| r.message.clone()),

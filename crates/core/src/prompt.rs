@@ -4,6 +4,10 @@
 //! writes the chosen button to `<file>.answer` and exits. System dialogs can
 //! hide behind Steam Big Picture, need a mouse and may not show at all in
 //! Deck Game Mode; a child window of the game's process does.
+//!
+//! [`open_window`] shows one without waiting, for a question that only
+//! matters until something else happens (a download that finishes first
+//! closes it).
 
 use crate::paths;
 use anyhow::{anyhow, Context, Result};
@@ -91,26 +95,76 @@ pub fn write_answer(request: &Path, choice: Option<&str>) -> Result<()> {
 /// without choosing. `Err`: the window couldn't be shown (the caller falls
 /// back to a system dialog).
 pub fn ask_window(req: &Request) -> Result<Option<String>> {
+    open_window(req)?.wait()
+}
+
+/// Show a question in a full-screen window and go on: [`Window::poll`] for
+/// the answer. Dropping the [`Window`] closes it. `Err`: the app isn't
+/// there to show it.
+pub fn open_window(req: &Request) -> Result<Window> {
     let app = app_exe();
     if !app.is_file() {
         return Err(anyhow!("{} not found", app.display()));
     }
     let file = paths::staging_dir().join(format!("prompt-{}.json", ulid::Ulid::new()));
     std::fs::write(&file, serde_json::to_vec(req)?)?;
-    let answer = answer_path(&file);
-    let status = std::process::Command::new(&app).arg("--prompt").arg(&file).status();
-    let result = (|| {
-        let status = status.with_context(|| app.display().to_string())?;
-        match std::fs::read(&answer) {
-            Ok(b) => Ok(serde_json::from_slice::<Answer>(&b)?.choice.or_else(|| req.cancel_id().map(str::to_string))),
-            // Exited without writing an answer: it never showed (old version, crashed).
-            Err(_) if !status.success() => Err(anyhow!("the prompt window exited with {status}")),
-            Err(_) => Ok(req.cancel_id().map(str::to_string)),
+    let child = std::process::Command::new(&app).arg("--prompt").arg(&file).spawn();
+    let child = match child.with_context(|| app.display().to_string()) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&file);
+            return Err(e);
         }
-    })();
-    let _ = std::fs::remove_file(&file);
-    let _ = std::fs::remove_file(&answer);
-    result
+    };
+    Ok(Window { child, file, cancel: req.cancel_id().map(str::to_string), done: false })
+}
+
+/// A question showing in its own window ([`open_window`]).
+pub struct Window {
+    child: std::process::Child,
+    file: PathBuf,
+    /// What closing the window answers.
+    cancel: Option<String>,
+    /// The window is gone and its answer was read.
+    done: bool,
+}
+
+impl Window {
+    /// `Ok(None)` while the window is open; `Ok(Some(choice))` once it is
+    /// gone, `choice` being what [`ask_window`] returns. `Err`: it exited
+    /// without ever showing (old version, crashed).
+    pub fn poll(&mut self) -> Result<Option<Option<String>>> {
+        match self.child.try_wait()? {
+            None => Ok(None),
+            Some(status) => self.answer(status).map(Some),
+        }
+    }
+
+    /// Wait until the window is gone, and its answer.
+    pub fn wait(mut self) -> Result<Option<String>> {
+        let status = self.child.wait()?;
+        self.answer(status)
+    }
+
+    fn answer(&mut self, status: std::process::ExitStatus) -> Result<Option<String>> {
+        self.done = true;
+        match std::fs::read(answer_path(&self.file)) {
+            Ok(b) => Ok(serde_json::from_slice::<Answer>(&b)?.choice.or_else(|| self.cancel.clone())),
+            Err(_) if !status.success() => Err(anyhow!("the prompt window exited with {status}")),
+            Err(_) => Ok(self.cancel.clone()),
+        }
+    }
+}
+
+impl Drop for Window {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        let _ = std::fs::remove_file(answer_path(&self.file));
+        let _ = std::fs::remove_file(&self.file);
+    }
 }
 
 #[cfg(test)]

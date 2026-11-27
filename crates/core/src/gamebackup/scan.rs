@@ -142,7 +142,7 @@ pub fn save_excludes(game: &GameEntry, root: &Path) -> Vec<String> {
             }
         }
     }
-    if let Ok((files, _)) = snapshot::scan(game) {
+    if let Ok((files, _)) = snapshot::scan_own(game) {
         for f in files {
             if let Some(rel) = inside(&f.abs).filter(|r| !r.is_empty()) {
                 out.push(globset::escape(&rel));

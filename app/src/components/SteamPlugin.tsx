@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText, inTauri, SteamPluginProgress, SteamPluginStatus } from "../api";
 import { bytes } from "../format";
 import { msg, useT } from "../i18n";
-import { Badge, Button, Icon, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, useUi } from "./ui";
 
 export const MILLENNIUM_URL = "https://github.com/SteamClientHomebrew/Millennium";
 
@@ -95,7 +95,9 @@ export function SteamPluginRows({ st }: { st: SteamPluginStatus }) {
   return (
     <>
       <label>
-        <span>Millennium</span>
+        <button className="link" onClick={() => api.openPath(MILLENNIUM_URL)}>
+          Millennium
+        </button>
         <span className={st.millennium === "legacy" ? "health health-warn" : "muted"}>
           {st.millennium === "installed" ? p.mInstalled : st.millennium === "legacy" ? p.mLegacy : p.mMissing}
         </span>
@@ -168,15 +170,9 @@ export function SteamPluginPanel() {
       <div className="panel-head">
         <Icon name="steam" />
         <h3>{p.title}</h3>
+        <Hint text={`${p.introBefore} Millennium ${p.introAfter}`} />
         {badge}
       </div>
-      <p className="muted small">
-        {p.introBefore}{" "}
-        <button className="link small" onClick={() => api.openPath(MILLENNIUM_URL)}>
-          Millennium
-        </button>{" "}
-        {p.introAfter}
-      </p>
       {st.steamRoot && <SteamPluginRows st={st} />}
       {st.steamRoot && !st.bundled && <div className="health health-warn">{p.notBundled}</div>}
       {working && (

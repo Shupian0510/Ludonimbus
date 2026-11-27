@@ -11,6 +11,7 @@ Ludonimbus 是开源项目（MIT 许可），欢迎提交 [Issue](https://github
 | [`adapters/builtin.yaml`](https://github.com/Shupian0510/Ludonimbus/blob/main/adapters/builtin.yaml) | 重编译 / 移植游戏 |
 | [`adapters/emulators.yaml`](https://github.com/Shupian0510/Ludonimbus/blob/main/adapters/emulators.yaml) | 模拟器 |
 | `adapters/recomplauncher.yaml` | 从 RecompLauncher 目录自动生成，**不要手改**；要修正某个游戏，在 `builtin.yaml` 写同一个 key 的规则 |
+| [`rules/games/<id>.yaml`](https://github.com/Shupian0510/Ludonimbus/tree/main/rules) | 一个游戏一个文件：它在几个平台上（比如 Switch 和 PC）存的是同样的文件，这几个版本可以共用进度 |
 
 一条游戏规则大概是这样：
 
@@ -29,6 +30,8 @@ Ludonimbus 是开源项目（MIT 许可），欢迎提交 [Issue](https://github
 - 按游戏源码、官方说明或 [PCGamingWiki](https://www.pcgamingwiki.com/) 核对存档位置，只写存档，不要写整个游戏目录、缓存或日志；
 - 在 PR 里写上你是怎么核对的；
 - 有条件的话，用开发版实际添加这个游戏试一次。
+
+跨平台的游戏规则（`rules/games/`）还要在旁边放一份各平台的样例存档，并用 `ludonimbus rules check <文件>` 检查，写法见 [rules/README.md](https://github.com/Shupian0510/Ludonimbus/blob/main/rules/README.md)。
 
 规则怎么匹配、怎么测试，见开发说明里的[内置存档规则](https://github.com/Shupian0510/Ludonimbus/blob/main/docs/development.md#内置存档规则)。
 

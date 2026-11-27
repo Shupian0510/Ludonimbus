@@ -1,4 +1,4 @@
-//! Stardew Valley across Switch and PC (adapters/cross-saves.yaml,
+//! Stardew Valley across Switch and PC (rules/games/stardew-valley.yaml,
 //! docs/plan-phase5.md §5.6): the Switch uploads its farm through the PC; the
 //! PC's Steam-style version sees the Switch version as the same game, gets
 //! the Switch farm applied into `StardewValley/Saves` (settings left out),
@@ -137,7 +137,8 @@ fn stardew_valley_between_switch_and_pc() {
     // settings left out, and a warning that 1.6.15 is newer than 1.6.9.
     let ctx = Ctx::load().unwrap();
     let plan = transfer::plan(&ctx, &switch_key, &from_switch, "stardew", None).unwrap();
-    assert_eq!(plan.format_rule.as_deref(), Some("Stardew Valley"));
+    // The game's name in the language the app shows.
+    assert_eq!(plan.format_rule.as_deref(), Some(ludonimbus_core::crosssaves::by_id("stardew-valley").unwrap().display_name()));
     assert!(!plan.cross_platform && !plan.same && !plan.needs_folder);
     assert_eq!(PathBuf::from(plan.base.clone().unwrap()), pc_saves);
     let mut to: Vec<(String, PathBuf)> = plan.items.iter().map(|i| (i.from.clone(), PathBuf::from(&i.to))).collect();

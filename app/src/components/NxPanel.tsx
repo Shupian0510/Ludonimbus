@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, NxStatus } from "../api";
 import { dateTime, relTime } from "../format";
 import { useT } from "../i18n";
-import { Badge, Button, Icon, Toggle, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Toggle, useUi } from "./ui";
 
 export function NxPanel() {
   const t = useT();
@@ -38,9 +38,9 @@ export function NxPanel() {
       <div className="panel-head">
         <Icon name="devices" />
         <h3>{n.title}</h3>
+        <Hint text={n.intro} />
         {st?.enabled && (st.running ? <Badge tone="ok">{n.on}</Badge> : <Badge tone="warn">{n.notRunning}</Badge>)}
       </div>
-      <p className="muted small">{n.intro}</p>
       <label className="row space">
         <span>{n.allow}</span>
         <Toggle checked={!!st?.enabled} onChange={(v) => run(() => api.nxSetEnabled(v))} />
@@ -49,7 +49,9 @@ export function NxPanel() {
         <>
           {st.error && <div className="banner banner-warn">{st.error}</div>}
           <label>
-            <span>{n.address}</span>
+            <span>
+              {n.address} <Hint text={n.firewall} />
+            </span>
             <code className="path small">{st.address ? `${st.address}:${st.port}` : `:${st.port}`}</code>
           </label>
           {st.fingerprint && (
@@ -58,7 +60,6 @@ export function NxPanel() {
               <code className="path small">{st.fingerprint.slice(0, 16).replace(/(....)/g, "$1 ").trim()}</code>
             </label>
           )}
-          <p className="muted small">{n.firewall}</p>
           {st.pairingCode ? (
             <div className="banner banner-info nx-code">
               <div>

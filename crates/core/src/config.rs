@@ -38,6 +38,17 @@ pub struct AppConfig {
     /// own instead of joining the one its other devices share
     /// (docs/plan-v2.md, section 7).
     pub independent_saves: bool,
+    /// Before playing, how long the launch wrapper waits for the cloud at
+    /// most; then the game starts with the saves on this device. A newer
+    /// version that is being downloaded by then is waited for, unless the
+    /// user says not to (docs/plan-v2.md, section 5.5).
+    pub launch_wait_secs: u64,
+    /// After playing, how long the launch wrapper waits for the upload; the
+    /// rest is done in the background.
+    pub exit_wait_secs: u64,
+    /// After playing, always wait until the upload is done (for someone who
+    /// turns the device off right after).
+    pub wait_for_upload: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,10 +82,16 @@ pub struct Onboarding {
     pub usage: Vec<String>,
 }
 
+/// The configuration's version. 2 since 1.0: a game may say which save line
+/// it shares and through which folders. Older versions of Ludonimbus read a
+/// newer file as it is and leave out what they don't know when they write
+/// it.
+pub const VERSION: u32 = 2;
+
 impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
-            version: 1,
+            version: VERSION,
             device: DeviceConfig::generate(),
             cloud: CloudConfig::None,
             steam: SteamConfig::default(),
@@ -88,6 +105,9 @@ impl Default for AppConfig {
             handheld: HandheldMode::Auto,
             nx_lan: false,
             independent_saves: false,
+            launch_wait_secs: 10,
+            exit_wait_secs: 10,
+            wait_for_upload: false,
         }
     }
 }
@@ -238,6 +258,11 @@ pub struct GameEntry {
     /// launcher to close. `None` = the adapter's default.
     pub upload_on_game_exit: Option<bool>,
     pub steam: Option<SteamLink>,
+    /// A game installed through Steam itself (not a non-Steam shortcut,
+    /// that is [`GameEntry::steam`]): whether Steam Cloud or Ludonimbus
+    /// keeps its saves (docs/plan-v2.md, section 8; [`crate::steamcloud`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<StoreLink>,
     #[serde(default = "yes")]
     pub auto_sync: bool,
     /// Library group chosen by the user (e.g. an emulator's name for a game
@@ -262,6 +287,17 @@ pub struct GameEntry {
     /// record named like its key. Forgotten when another cloud is connected.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record: Option<String>,
+    /// Which folder of the save line it shares is which folder of this
+    /// version, when it keeps the same saves elsewhere than the version the
+    /// line began with ([`crate::bind`]). Empty: its files are the line's
+    /// as they are. Goes with `record`, and is forgotten with it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bind: Vec<crate::bind::Bind>,
+    /// Save lines of the game the user chose not to share with this
+    /// version, by the files they hold ([`crate::cloud::v2::Line::def`]):
+    /// not suggested again.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub declined: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -290,6 +326,54 @@ pub struct OriginalShortcut {
     pub start_dir: String,
     pub launch_options: String,
     pub icon: String,
+}
+
+/// A game installed through Steam, in the library. Its three states: not
+/// syncing by itself (`auto_sync` off) is Steam's; [`StoreMode::Backup`]
+/// keeps versions of what Steam Cloud syncs; [`StoreMode::Managed`] syncs
+/// it like any other game, with Steam Cloud off for it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StoreLink {
+    /// The Steam account (the folder name under `userdata`).
+    pub account: String,
+    pub appid: u32,
+    pub mode: StoreMode,
+    /// The game's launch options in Steam go through the wrapper
+    /// (`"<runner>" --game <key> -- %command%`). Stays set when the game
+    /// goes back to backup only by itself: the wrapper does no harm there.
+    pub wrapper: bool,
+    /// The launch options before the wrapper was put in, given back on
+    /// hand-back. `None`: there were none.
+    pub original_options: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StoreMode {
+    /// Steam Cloud stays on; Ludonimbus stores versions and never writes
+    /// into the game's saves by itself.
+    #[default]
+    Backup,
+    /// Steam Cloud is off for the game; Ludonimbus pulls and uploads.
+    Managed,
+}
+
+impl GameEntry {
+    /// Forget what was settled about this game in the cloud that is
+    /// connected: another cloud knows nothing of it.
+    pub fn forget_cloud(&mut self) {
+        self.record = None;
+        self.bind.clear();
+        self.declined.clear();
+    }
+
+    /// A game installed through Steam whose saves Steam Cloud keeps:
+    /// Ludonimbus records their history and writes nothing into them by
+    /// itself (docs/plan-v2.md, section 8.2).
+    pub fn backup_only(&self) -> bool {
+        self.store.as_ref().is_some_and(|s| s.mode != StoreMode::Managed)
+    }
 }
 
 impl AppConfig {
@@ -329,8 +413,31 @@ fn read_file() -> Result<Option<AppConfig>> {
     Ok(Some(cfg))
 }
 
+/// The first time this version changes a configuration an older one wrote,
+/// that file is kept next to it as `config.v1.json`: what to put back when
+/// going back to the older version (docs/plan-v2.md, 12.4). Kept once, and
+/// never changed afterwards.
+fn keep_older(path: &std::path::Path) {
+    let copy = path.with_file_name("config.v1.json");
+    if copy.exists() {
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else { return };
+    let older = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("version").and_then(|n| n.as_u64()))
+        .is_some_and(|n| n < u64::from(VERSION));
+    if older {
+        let _ = std::fs::write(copy, text);
+    }
+}
+
 fn write_file(cfg: &AppConfig) -> Result<()> {
-    util::atomic_write(&paths::config_file(), &serde_json::to_vec_pretty(cfg)?)
+    let path = paths::config_file();
+    keep_older(&path);
+    let mut cfg = cfg.clone();
+    cfg.version = VERSION;
+    util::atomic_write(&path, &serde_json::to_vec_pretty(&cfg)?)
 }
 
 /// Load the configuration, creating (and persisting) defaults on first run so

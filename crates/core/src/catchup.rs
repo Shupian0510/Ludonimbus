@@ -105,7 +105,9 @@ pub fn screenshots(cfg: &AppConfig, key: &str, log: &dyn Fn(String)) {
     let Some(g) = cfg.game(key) else { return };
     match crate::cloud::open(cfg) {
         Ok(Some(cloud)) => {
-            if let Err(e) = crate::screenshots::sync(cloud.files(), cfg, g, log) {
+            let result = crate::cloud::gamedata::Folders::of(&cloud, key)
+                .and_then(|at| crate::screenshots::sync_at(cloud.files(), cfg, &at, g, log));
+            if let Err(e) = result {
                 log(format!("{key}: screenshots: {e:#}"));
             }
         }

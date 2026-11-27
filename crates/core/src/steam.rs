@@ -196,7 +196,6 @@ impl Shortcut {
     /// program itself (Windows), or a launch-options prefix
     /// `"<wrapper>" --game <key> -- %command%` (Linux, so Proton keeps working).
     pub fn wrapper(&self) -> Option<(String, String)> {
-        let is_runner = |p: &str| util::file_name_lower(Path::new(&util::native_sep(&util::unquote(p)))).starts_with("ludonimbus-run");
         let args = util::split_args(&self.launch_options);
         let key = |args: &[String]| args.iter().position(|a| a == "--game").and_then(|i| args.get(i + 1).cloned());
         if is_runner(&self.exe) {
@@ -205,6 +204,11 @@ impl Shortcut {
         let first = args.first().filter(|a| is_runner(a))?;
         key(&args).map(|k| (first.clone(), k))
     }
+}
+
+/// A program that is a Ludonimbus launch wrapper.
+fn is_runner(p: &str) -> bool {
+    util::file_name_lower(Path::new(&util::native_sep(&util::unquote(p)))).starts_with("ludonimbus-run")
 }
 
 pub fn shortcuts_path(root: &Path, account: &str) -> PathBuf {
@@ -319,19 +323,26 @@ pub struct NewShortcut {
     pub icon: String,
 }
 
+/// Keep a copy of one of Steam's files before it is changed, named
+/// `<name>-<time>.vdf` in [`paths::steam_backups_dir`].
+fn back_up(path: &Path, name: &str) -> Result<()> {
+    let dir = paths::steam_backups_dir();
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
+    // Two writes within a millisecond each keep their backup.
+    let mut backup = dir.join(format!("{name}-{stamp}.vdf"));
+    let mut n = 2;
+    while backup.exists() {
+        backup = dir.join(format!("{name}-{stamp}-{n}.vdf"));
+        n += 1;
+    }
+    std::fs::copy(path, &backup)?;
+    Ok(())
+}
+
 fn save_doc(root: &Path, account: &str, doc: &vdf::Value) -> Result<()> {
     let path = shortcuts_path(root, account);
     if path.exists() {
-        let dir = paths::steam_backups_dir();
-        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S%.3f").to_string();
-        // Two writes within a millisecond each keep their backup.
-        let mut backup = dir.join(format!("shortcuts-{account}-{stamp}.vdf"));
-        let mut n = 2;
-        while backup.exists() {
-            backup = dir.join(format!("shortcuts-{account}-{stamp}-{n}.vdf"));
-            n += 1;
-        }
-        std::fs::copy(&path, &backup)?;
+        back_up(&path, &format!("shortcuts-{account}"))?;
     }
     util::atomic_write(&path, &vdf::write(doc))
 }
@@ -538,16 +549,34 @@ pub fn shutdown(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A running Steam overwrites `shortcuts.vdf` in its own install folder, so
-/// edits there need Steam closed. Other folders (tests, copies) are fine.
-fn ensure_steam_closed(root: &Path) -> Result<()> {
+/// Steam runs from `root`, and overwrites its files there when it exits.
+/// Other folders (tests, copies) are never in use.
+fn running_in(root: &Path) -> bool {
     // A folder picked in Settings may differ from the registry entry; it is
     // still the real Steam when it holds steam.exe.
     let live = root.join("steam.exe").is_file()
         || root.join("steam.sh").is_file()
         || detect_root().is_some_and(|r| util::same_path(&r.to_string_lossy(), &root.to_string_lossy()));
-    if live && !cfg!(test) && is_running() {
+    live && !cfg!(test) && is_running()
+}
+
+/// A running Steam overwrites `shortcuts.vdf` in its own install folder, so
+/// edits there need Steam closed.
+fn ensure_steam_closed(root: &Path) -> Result<()> {
+    if running_in(root) {
         bail!(crate::tr!("STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）", "STEAM_RUNNING: Steam needs to be closed before changing its shortcuts (it overwrites changes while running)"));
+    }
+    Ok(())
+}
+
+/// Steam writes `localconfig.vdf` (launch options among it) when it exits,
+/// so changing a game's launch options needs Steam closed too.
+pub(crate) fn ensure_closed_for_options(root: &Path) -> Result<()> {
+    if running_in(root) {
+        bail!(crate::tr!(
+            "STEAM_RUNNING: 修改游戏的启动选项前需要先关闭 Steam（Steam 退出时会覆盖修改）",
+            "STEAM_RUNNING: Steam needs to be closed before changing a game's launch options (it overwrites changes when it exits)"
+        ));
     }
     Ok(())
 }
@@ -600,10 +629,11 @@ pub fn wrap(root: &Path, account: &str, appid: u32, key: &str, runner: &Path) ->
     Ok(original)
 }
 
-/// Launch options that run a game through the wrapper on Linux: Steam
-/// replaces `%command%` with the whole command (Proton and the game's exe
-/// included). Whatever the user had stays: `gamemoderun %command%` keeps
-/// its place inside, other options go after the command.
+/// Launch options that run a game through the wrapper (a non-Steam
+/// shortcut on Linux, a game Steam installed anywhere): Steam replaces
+/// `%command%` with the whole command (Proton and the game's exe included).
+/// Whatever the user had stays: `gamemoderun %command%` keeps its place
+/// inside, other options go after the command.
 pub fn wrapper_options(runner: &Path, key: &str, original: &str) -> String {
     let prefix = format!("{} --game {key} --", util::quote(&runner.to_string_lossy()));
     let original = original.trim();
@@ -614,6 +644,54 @@ pub fn wrapper_options(runner: &Path, key: &str, original: &str) -> String {
     } else {
         format!("{prefix} %command% {original}")
     }
+}
+
+/// Launch options that start a game through a Ludonimbus wrapper
+/// ([`wrapper_options`]), taken apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wrapped {
+    /// The wrapper, as written.
+    pub runner: String,
+    pub key: String,
+    /// What the user had: [`wrapper_options`] of it gives the same launch
+    /// options again. `-x` and `%command% -x` mean the same to Steam; the
+    /// shorter is given.
+    pub original: String,
+}
+
+/// Take launch options made by [`wrapper_options`] apart: which wrapper,
+/// which game, and what the user had before. `None` for any other options.
+pub fn parse_wrapped(options: &str) -> Option<Wrapped> {
+    let s = options.trim();
+    let (runner, rest) = match s.strip_prefix('"') {
+        Some(r) => {
+            let end = r.find('"')?;
+            (&r[..end], &r[end + 1..])
+        }
+        None => s.split_at(s.find(char::is_whitespace).unwrap_or(s.len())),
+    };
+    if !is_runner(runner) {
+        return None;
+    }
+    // `--game <key> --`, each apart from the next.
+    let word = |s: &str| {
+        let s = s.trim_start();
+        let end = s.find(char::is_whitespace).unwrap_or(s.len());
+        (s[..end].to_string(), s[end..].to_string())
+    };
+    let (flag, rest) = word(rest);
+    let (key, rest) = word(&rest);
+    let (dashes, command) = word(&rest);
+    if flag != "--game" || key.is_empty() || dashes != "--" {
+        return None;
+    }
+    let command = command.trim();
+    let original = match command.strip_prefix("%command%") {
+        Some("") => "",
+        Some(more) if more.starts_with(char::is_whitespace) && !more.contains("%command%") => more.trim_start(),
+        _ => command,
+    };
+    Some(Wrapped { runner: runner.to_string(), key, original: original.to_string() })
 }
 
 /// Restore the shortcut fields saved by [`wrap`], pointing at the current exe.
@@ -639,6 +717,25 @@ pub fn unwrap(root: &Path, account: &str, appid: u32, game: &GameEntry, original
         e.set_str("LaunchOptions", &args);
         e.set_str("icon", &if icon.is_empty() { String::new() } else { util::quote(&icon) });
     })
+}
+
+/// The game behind a Steam app id: the one linked to that shortcut, or the
+/// one Steam installed under that id. The one of `account` when it has one,
+/// else of any account.
+pub fn game_of_app<'a>(cfg: &'a AppConfig, appid: u32, account: Option<&str>) -> Option<&'a GameEntry> {
+    fn account_of(g: &GameEntry, appid: u32) -> Option<&str> {
+        let shortcut = g.steam.as_ref().filter(|l| l.appid == appid).map(|l| l.account.as_str());
+        shortcut.or_else(|| g.store.as_ref().filter(|l| l.appid == appid).map(|l| l.account.as_str()))
+    }
+    let mut any = None;
+    for g in &cfg.games {
+        match account_of(g, appid) {
+            Some(a) if account.is_none_or(|want| want == a) => return Some(g),
+            Some(_) if any.is_none() => any = Some(g),
+            _ => {}
+        }
+    }
+    any
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -702,12 +799,216 @@ pub fn health(cfg: &AppConfig, game: &GameEntry) -> Health {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Games installed through Steam: launch options and Steam Cloud
+// (docs/plan-v2.md, section 8)
+
+/// Steam's settings of one account on this PC: among them each game's
+/// launch options and how its last Steam Cloud sync went. Steam writes the
+/// file when it exits, so it is changed only while Steam is closed.
+pub fn localconfig_path(root: &Path, account: &str) -> PathBuf {
+    root.join("userdata").join(account).join("config").join("localconfig.vdf")
+}
+
+/// The account's settings Steam keeps in its own cloud, the Steam Cloud
+/// switches among them.
+pub fn sharedconfig_path(root: &Path, account: &str) -> PathBuf {
+    root.join("userdata").join(account).join("7").join("remote").join("sharedconfig.vdf")
+}
+
+/// Where the games' blocks are in `localconfig.vdf`.
+const LOCAL_APPS: [&str; 5] = ["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"];
+/// Where Steam's own settings are in `sharedconfig.vdf`.
+const SHARED_STEAM: [&str; 4] = ["UserRoamingConfigStore", "Software", "Valve", "Steam"];
+
+fn read_text(path: &Path) -> Option<vdf::Text> {
+    std::fs::read_to_string(path).ok().and_then(|s| vdf::parse_text(&s).ok())
+}
+
+/// What Steam's files say about Steam Cloud and one game.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppCloud {
+    /// How the last sync went (`last_sync_state`: `synchronized`,
+    /// `changesincloud`, …); `None` when Steam has noted nothing.
+    pub sync_state: Option<String>,
+    /// Steam has synced the game with Steam Cloud on this device: its
+    /// settings have a `cloud` block for the game, or it keeps the list of
+    /// the game's files in the cloud (`remotecache.vdf`). A game without
+    /// Steam Cloud has neither. Assumed when Steam's settings can't be read.
+    pub used: bool,
+    /// The game's own switch ("Keep game saves in the Steam Cloud").
+    pub enabled: bool,
+    /// The account's switch for every game.
+    pub global: bool,
+}
+
+impl Default for AppCloud {
+    /// What is assumed without proof: Steam Cloud is on.
+    fn default() -> Self {
+        AppCloud { sync_state: None, used: true, enabled: true, global: true }
+    }
+}
+
+impl AppCloud {
+    /// Steam's last sync of the game left nothing behind on either side.
+    pub fn synchronized(&self) -> bool {
+        self.sync_state.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("synchronized"))
+    }
+
+    /// Steam Cloud syncs the game's saves.
+    pub fn on(&self) -> bool {
+        self.used && self.enabled && self.global
+    }
+}
+
+/// Steam Cloud and the game `appid`, as Steam's files say. A switch counts
+/// as off only when it is written down as off: a missing file or key is on.
+/// A game counts as one Steam Cloud doesn't keep only when the account's
+/// settings were read and say nothing of a cloud sync of it.
+pub fn app_cloud(root: &Path, account: &str, appid: u32) -> AppCloud {
+    let id = appid.to_string();
+    let local = read_text(&localconfig_path(root, account));
+    let block = local.as_ref().and_then(|d| LOCAL_APPS.iter().copied().chain([id.as_str(), "cloud"]).try_fold(d, |t, k| t.get(k)));
+    let sync_state = block.and_then(|c| c.get("last_sync_state")).and_then(vdf::Text::as_str).map(str::to_string);
+    let used = local.is_none() || block.is_some() || root.join("userdata").join(account).join(&id).join("remotecache.vdf").is_file();
+    let shared = read_text(&sharedconfig_path(root, account));
+    let steam = shared.as_ref().and_then(|d| SHARED_STEAM.iter().try_fold(d, |t, k| t.get(k)));
+    AppCloud { sync_state, used, enabled: !game_cloud_off(steam, appid), global: !global_cloud_off(steam) }
+}
+
+/// Whether Steam Cloud is on for the account as a whole (its switch for
+/// every game). On unless written down as off.
+pub fn cloud_on_for_account(root: &Path, account: &str) -> bool {
+    let shared = read_text(&sharedconfig_path(root, account));
+    !global_cloud_off(shared.as_ref().and_then(|d| SHARED_STEAM.iter().try_fold(d, |t, k| t.get(k))))
+}
+
+fn global_cloud_off(shared_steam: Option<&vdf::Text>) -> bool {
+    shared_steam.and_then(|s| s.get("CloudEnabled")).and_then(vdf::Text::as_str) == Some("0")
+}
+
+/// Whether the game's own Steam Cloud switch is written down as off.
+///
+/// Not verified: where Steam keeps this switch (docs/plan-v2.md, section
+/// 15). The one place known so far is `apps > <appid> > CloudEnabled` in
+/// the Steam block of `sharedconfig.vdf`; another place goes here.
+fn game_cloud_off(shared_steam: Option<&vdf::Text>, appid: u32) -> bool {
+    shared_steam.and_then(|s| vdf::text_value(s, &["apps", &appid.to_string(), "CloudEnabled"])) == Some("0")
+}
+
+fn launch_options_path(appid: &str) -> Vec<&str> {
+    LOCAL_APPS.iter().copied().chain([appid, "LaunchOptions"]).collect()
+}
+
+/// The launch options of a game installed through Steam; `None` when it has
+/// none.
+pub fn launch_options(root: &Path, account: &str, appid: u32) -> Result<Option<String>> {
+    let path = localconfig_path(root, account);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&path).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display()))?;
+    let id = appid.to_string();
+    Ok(vdf::text_value(&vdf::parse_text(&text)?, &launch_options_path(&id)).map(str::to_string))
+}
+
+/// `localconfig.vdf` before and after setting the launch options of a game.
+fn edit_launch_options(root: &Path, account: &str, appid: u32, options: Option<&str>) -> Result<(PathBuf, String, String)> {
+    let path = localconfig_path(root, account);
+    let before = std::fs::read_to_string(&path).with_context(|| crate::tr!("找不到这个 Steam 账号的设置文件 {}", "The settings of this Steam account weren't found: {}", path.display()))?;
+    let id = appid.to_string();
+    let after = vdf::set_text_value(&before, &launch_options_path(&id), options).with_context(|| crate::tr!("无法修改 {}", "Can't change {}", path.display()))?;
+    Ok((path, before, after))
+}
+
+/// Whether the launch options of the game can be changed: Steam's file is
+/// there and Ludonimbus understands it. Changes nothing.
+pub fn can_set_launch_options(root: &Path, account: &str, appid: u32) -> Result<()> {
+    edit_launch_options(root, account, appid, Some("")).map(|_| ())
+}
+
+/// Set the launch options of a game installed through Steam (`None`: none).
+/// Only that one value of `localconfig.vdf` changes; every other byte stays
+/// as Steam wrote it. Needs Steam closed. A copy of the file is kept first,
+/// and the file is read back afterwards: when it doesn't hold just what was
+/// written, it is put back as it was and this fails.
+pub fn set_launch_options(root: &Path, account: &str, appid: u32, options: Option<&str>) -> Result<()> {
+    ensure_closed_for_options(root)?;
+    let (path, before, after) = edit_launch_options(root, account, appid, options)?;
+    if after == before {
+        return Ok(());
+    }
+    back_up(&path, &format!("localconfig-{account}"))?;
+    util::atomic_write(&path, after.as_bytes())?;
+    let id = appid.to_string();
+    let written = std::fs::read_to_string(&path).ok().filter(|t| vdf::text_well_formed(t)).and_then(|t| vdf::parse_text(&t).ok());
+    let holds = written.as_ref().is_some_and(|d| vdf::text_value(d, &launch_options_path(&id)) == options);
+    if !holds {
+        let _ = util::atomic_write(&path, before.as_bytes());
+        bail!(crate::tr!(
+            "修改启动选项后读回的结果不对，已恢复原来的 {}",
+            "The launch options didn't read back as written; {} was put back as it was",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a game's launch options still go through this installation's
+/// wrapper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WrapperHealth {
+    Ok,
+    /// The game has no launch options any more.
+    Missing,
+    /// They were changed and no longer go through the wrapper for this game.
+    Changed,
+    /// They go through a wrapper at another place (app moved or reinstalled).
+    RunnerMoved,
+}
+
+/// [`WrapperHealth`] of the launch options `options` of the game `key`.
+pub fn wrapper_health(options: Option<&str>, key: &str, runner: &Path) -> WrapperHealth {
+    let Some(options) = options.filter(|o| !o.trim().is_empty()) else { return WrapperHealth::Missing };
+    match parse_wrapped(options) {
+        Some(w) if w.key == key && util::same_path(&w.runner, &runner.to_string_lossy()) => WrapperHealth::Ok,
+        Some(w) if w.key == key => WrapperHealth::RunnerMoved,
+        _ => WrapperHealth::Changed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::SteamLink;
+    use crate::config::{SteamLink, StoreLink};
 
     const APPID: i32 = -1633758279;
+
+    #[test]
+    fn a_steam_app_id_finds_its_game() {
+        let shortcut = |key: &str, account: &str, appid: u32| GameEntry {
+            key: key.into(),
+            steam: Some(SteamLink { account: account.into(), appid, ..Default::default() }),
+            ..Default::default()
+        };
+        let installed = |key: &str, account: &str, appid: u32| GameEntry {
+            key: key.into(),
+            store: Some(StoreLink { account: account.into(), appid, ..Default::default() }),
+            ..Default::default()
+        };
+        let mut cfg = AppConfig::default();
+        cfg.games = vec![shortcut("a", "111", 0x8000_0001), shortcut("b", "222", 0x8000_0001), installed("c", "111", 646570), installed("d", "222", 646570)];
+        let key = |appid, account| game_of_app(&cfg, appid, account).map(|g| g.key.as_str());
+        // A shortcut's id, and the id of a game Steam installed.
+        assert_eq!(key(0x8000_0001, Some("222")), Some("b"));
+        assert_eq!(key(646570, Some("222")), Some("d"));
+        // No account given, or one that has none: the first.
+        assert_eq!(key(0x8000_0001, None), Some("a"));
+        assert_eq!(key(646570, Some("333")), Some("c"));
+        assert_eq!(key(413150, None), None);
+    }
     const EXE: &str = r"C:\Games\fefw\fefw.exe";
 
     #[test]
@@ -761,6 +1062,87 @@ mod tests {
             last_play_time: 0,
         };
         assert_eq!(sc.wrapper(), Some((r.to_string_lossy().into_owned(), "fe".to_string())));
+    }
+
+    #[test]
+    fn wrapped_launch_options_come_apart_again() {
+        let r = Path::new(r"C:\Program Files\Ludonimbus\ludonimbus-run.exe");
+        for original in ["", "-novid", "gamemoderun %command% -x", r#"-config "C:\My Games\a.cfg""#, "  -windowed  "] {
+            let options = wrapper_options(r, "hollow-knight", original);
+            let w = parse_wrapped(&options).unwrap_or_else(|| panic!("{options}"));
+            assert_eq!(w.runner, r.to_string_lossy());
+            assert_eq!(w.key, "hollow-knight");
+            // What the user had, or what means the same to Steam.
+            assert_eq!(wrapper_options(r, "hollow-knight", &w.original), options);
+        }
+        assert_eq!(parse_wrapped(&wrapper_options(r, "k", "-novid")).unwrap().original, "-novid");
+        assert_eq!(parse_wrapped(&wrapper_options(r, "k", "%command% -novid")).unwrap().original, "-novid");
+        assert_eq!(parse_wrapped("/opt/ludonimbus-run --game k -- %command%").unwrap().original, "");
+        for other in ["", "-novid", "\"C:\\other.exe\" --game k -- %command%", "\"C:\\ludonimbus-run.exe\" --game", "\"C:\\ludonimbus-run.exe\" --game k %command%"] {
+            assert_eq!(parse_wrapped(other), None, "{other}");
+        }
+        let health = |o: Option<&str>| wrapper_health(o, "k", r);
+        assert_eq!(health(Some(&wrapper_options(r, "k", "-x"))), WrapperHealth::Ok);
+        assert_eq!(health(Some(&wrapper_options(Path::new(r"D:\Old\ludonimbus-run.exe"), "k", ""))), WrapperHealth::RunnerMoved);
+        assert_eq!(health(Some(&wrapper_options(r, "other", ""))), WrapperHealth::Changed);
+        assert_eq!(health(Some("-novid")), WrapperHealth::Changed);
+        assert_eq!(health(None), WrapperHealth::Missing);
+        assert_eq!(health(Some(" ")), WrapperHealth::Missing);
+    }
+
+    /// A Steam folder with one account and the two settings files.
+    fn steam_files(local: &str, shared: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Steam");
+        let local_path = localconfig_path(&root, "111111111");
+        std::fs::create_dir_all(local_path.parent().unwrap()).unwrap();
+        std::fs::write(&local_path, local).unwrap();
+        if let Some(shared) = shared {
+            let p = sharedconfig_path(&root, "111111111");
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, shared).unwrap();
+        }
+        (tmp, root)
+    }
+
+    fn local_app(app: &str, eol: &str) -> String {
+        format!(
+            "\"UserLocalConfigStore\"\n{{\n\t\"Software\"\n\t{{\n\t\t\"Valve\"\n\t\t{{\n\t\t\t\"Steam\"\n\t\t\t{{\n\t\t\t\t\"apps\"\n\t\t\t\t{{\n{app}\t\t\t\t}}\n\t\t\t}}\n\t\t}}\n\t}}\n}}\n"
+        )
+        .replace('\n', eol)
+    }
+
+    #[test]
+    fn steam_cloud_switches_are_on_unless_written_down_as_off() {
+        let app = "\t\t\t\t\t\"1000\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"cloud\"\n\t\t\t\t\t\t{\n\t\t\t\t\t\t\t\"last_sync_state\"\t\t\"changesincloud\"\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n";
+        // No sharedconfig.vdf: on.
+        let (_t, root) = steam_files(&local_app(app, "\r\n"), None);
+        let c = app_cloud(&root, "111111111", 1000);
+        assert_eq!(c, AppCloud { sync_state: Some("changesincloud".into()), used: true, enabled: true, global: true });
+        assert!(!c.synchronized() && c.on());
+        // A game Steam's settings say nothing of a cloud sync of: Steam
+        // Cloud doesn't keep it. Until Steam keeps its list of cloud files.
+        let other = app_cloud(&root, "111111111", 2000);
+        assert_eq!(other, AppCloud { sync_state: None, used: false, enabled: true, global: true });
+        assert!(!other.on());
+        let cache = root.join("userdata").join("111111111").join("2000").join("remotecache.vdf");
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::fs::write(&cache, "\"2000\"\n{\n}\n").unwrap();
+        assert!(app_cloud(&root, "111111111", 2000).on());
+        // Another account, no Steam at all: on, nothing known.
+        assert_eq!(app_cloud(&root, "222222222", 1000), AppCloud::default());
+        assert!(AppCloud::default().on());
+
+        let shared = |steam: &str| format!("\"UserRoamingConfigStore\"\n{{\n\t\"software\"\n\t{{\n\t\t\"valve\"\n\t\t{{\n\t\t\t\"Steam\"\n\t\t\t{{\n{steam}\t\t\t}}\n\t\t}}\n\t}}\n}}\n");
+        let synced = app.replace("changesincloud", "synchronized");
+        // The global switch, in other key case; the game's switch.
+        let (_t, root) = steam_files(&local_app(&synced, "\n"), Some(&shared("\t\t\t\t\"CloudEnabled\"\t\t\"0\"\n")));
+        let c = app_cloud(&root, "111111111", 1000);
+        assert!(c.synchronized() && c.enabled && !c.global && !c.on());
+        let (_t, root) = steam_files(&local_app(&synced, "\n"), Some(&shared("\t\t\t\t\"CloudEnabled\"\t\t\"1\"\n\t\t\t\t\"apps\"\n\t\t\t\t{\n\t\t\t\t\t\"1000\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"cloudenabled\"\t\t\"0\"\n\t\t\t\t\t}\n\t\t\t\t}\n")));
+        let c = app_cloud(&root, "111111111", 1000);
+        assert!(!c.enabled && c.global && !c.on());
+        assert!(!app_cloud(&root, "111111111", 2000).used);
     }
 
     #[test]

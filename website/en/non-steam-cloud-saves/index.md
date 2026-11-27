@@ -48,7 +48,7 @@ Games that are not in Steam at all can be added with [one click](../steam/add-to
 
 ## What you get besides sync
 
-- **[Version history](../sync/versions.md)**: every upload is a version with its time, device and trigger. Restore it, export it as a zip, lock it or add a note.
+- **[Version history](../sync/versions.md)**: every upload leaves a save with its time, device and source. Make it current, keep it, name it or export it for a friend.
 - **[Conflicts keep both sides](../sync/conflicts.md)**: if two PCs both changed the saves, you choose which one to use, and the other stays in the history.
 - **[Offline play](../sync/offline.md)**: if the cloud can't be reached, the game starts anyway and uploads later.
 - **[Moved games are found again](../games/moved.md)**: saves are tracked relative to the game folder, so a reinstall, a new folder or a new PC picks them up on the first launch.
@@ -84,7 +84,7 @@ Starting from Steam is what lets Ludonimbus pull the newest saves first. If you 
 Only the shortcuts of games you turn auto-sync on for, and only what they start. Turning auto-sync off restores the original shortcut.
 
 **Does it work on macOS, Linux or the Steam Deck?**
-Not yet. Ludonimbus runs on Windows 10 and 11.
+Windows 10 and 11 are the main platform. Since 1.0 there is a [Linux and Steam Deck version](../platforms/linux.md) (preview). macOS isn't supported yet.
 
 **Is it free?**
 Yes. Ludonimbus is open source under the MIT license, and you only need storage you already have.

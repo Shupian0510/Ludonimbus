@@ -17,7 +17,9 @@ export type Trigger =
   | "manual"
   | "restore"
   | "pre-restore"
-  | "conflict-keep";
+  | "conflict-keep"
+  /** A save someone exported, taken in beside the history. */
+  | "shared";
 
 export type Status =
   | "noCloud"
@@ -56,6 +58,44 @@ export interface SnapshotSummary {
   gameVersion?: string | null;
   /** The game version installed on the device that saved. */
   installedVersion?: string | null;
+  /** What it was made on (`pc`, `pc:xbox`, `emu:<rule>`…); absent when not known. */
+  platform?: string;
+  /** The newest version of its save line. */
+  head?: boolean;
+  /** Kept beside the history (the saves a restore replaced). */
+  side?: boolean;
+}
+
+/** How a platform is shown: its name, and the program's own logo when it is on this PC. */
+export interface PlatformMark {
+  label: string;
+  logo: string | null;
+}
+
+export type PlatformMarks = Record<string, PlatformMark>;
+
+export interface SnapshotList {
+  snapshots: SnapshotSummary[];
+  headId: string | null;
+  lastSyncedId: string | null;
+  platforms: PlatformMarks;
+  /** Versions saved on another platform by a newer game than the one that wrote the saves here, which an older game can't load. */
+  tooNew?: string[];
+}
+
+/** One version of a game on one device, on a save line. */
+export interface LineMember {
+  device: string;
+  platform: string;
+  here: boolean;
+}
+
+/** The newest version of a save line this device doesn't follow. */
+export interface OtherSave {
+  line: string;
+  name: string;
+  shared: boolean;
+  snapshot: SnapshotSummary;
 }
 
 export interface FileEntry {
@@ -92,6 +132,8 @@ export interface StatusReport {
   lastSyncAt: string | null;
   pending: number;
   checkedAt: string;
+  /** The game version that saved the newest version on another platform, when it is newer than here and an older game can't load it: not taken by itself. */
+  tooNew?: string;
 }
 
 export interface ConflictInfo {
@@ -146,6 +188,14 @@ export interface GameView {
   family: string;
   /** The user's "same game" link (`solo:…` = kept apart); null = detected. */
   link: string | null;
+  /** It shares the save line of another version through matched folders. */
+  joined: boolean;
+  /** It reads and writes that line through the Xbox app's save containers: writing into them is experimental. */
+  xboxContainers: boolean;
+  /** The last time saves of the cloud replaced the ones here, while that can still be undone. */
+  replaced: { device: string; at: string } | null;
+  /** For a game Steam installed: who keeps its saves, and whether its launch options go through the wrapper. */
+  store: { appid: number; mode: SteamCloudState; wrapper: boolean } | null;
 }
 
 /** A game the cloud has but this PC doesn't: grey in the library. */
@@ -189,7 +239,7 @@ export interface TransferPlan {
   needsFolder: boolean;
   /** Different save formats: only versions the user linked by hand. */
   crossPlatform: boolean;
-  /** Both versions follow this cross-platform rule (`adapters/cross-saves.yaml`). */
+  /** Both versions follow this cross-platform rule (`rules/games/`), by the game's name. */
   formatRule: string | null;
   /** Source files that aren't saves under that rule (settings…): not written. */
   skipped: string[];
@@ -275,6 +325,16 @@ export interface PlaytimeSummary {
   totalSecs: number;
   lastPlayed: string | null;
   devices: PlaytimeDevice[];
+  /** Time per platform, most first. Sessions from before they said where they were played are only in the total. */
+  platforms?: { platform: string; secs: number }[];
+  /** What each of those platforms is called. */
+  platformNames?: Record<string, string>;
+}
+
+/** A game's playtime per platform, when it was played on more than one: `[name, seconds]`. */
+export function playtimePlatforms(p: PlaytimeSummary): Array<[string, number]> {
+  const list = (p.platforms ?? []).filter((x) => x.secs > 0);
+  return list.length > 1 ? list.map((x) => [p.platformNames?.[x.platform] ?? x.platform, x.secs]) : [];
 }
 
 export interface Overview {
@@ -359,6 +419,8 @@ export interface Found {
   saveSample: string[];
   steamCloud: boolean;
   storeGame: boolean;
+  /** Its app id in Steam when it is known which installed game it is: added as a game Steam installed (backup only). */
+  storeAppid?: number | null;
   addedKey: string | null;
   registryOnly: boolean;
   /** Where the install of a game found by its saves was found. */
@@ -525,6 +587,12 @@ export interface Settings {
   version: string;
   /** Games new to this device keep their saves to themselves. */
   independentSaves: boolean;
+  /** Before playing, how long the launch wrapper waits for the cloud (seconds). */
+  launchWaitSecs: number;
+  /** After playing, how long it waits for the upload before handing it over (seconds). */
+  exitWaitSecs: number;
+  /** After playing, always wait until the upload is done. */
+  waitForUpload: boolean;
 }
 
 /** A save line a game can follow on this device. */
@@ -537,6 +605,93 @@ export interface SaveLine {
   current: boolean;
   /** Names of the devices on it. */
   devices: string[];
+  /** The same, one for each version of the game a device has on it. */
+  members: LineMember[];
+}
+
+/** One folder of a save line and the folder of this version that holds the same files. */
+export interface SaveBind {
+  canon: string;
+  local: string;
+  /** How this version keeps them: plain files when absent, "wgs" in the Xbox app's save containers. */
+  codec?: string;
+}
+
+/** A save line this version could share although it keeps its saves in other folders. */
+export interface JoinSuggestion {
+  /** The game record to belong to. */
+  record: string;
+  /** Which files the line holds (what a decline remembers). */
+  def: string;
+  /** The line's newest version: who made it, on what, when. */
+  device: string;
+  platform: string;
+  createdAt: string;
+  /** Confirmed on another device already. */
+  confirmed: boolean;
+  /** ready: can be shared. needsSaves: play once on this device first. noMatch: the files don't correspond. */
+  fit: "ready" | "needsSaves" | "noMatch";
+  binds: SaveBind[];
+  matched: number;
+  onlyInLine: number;
+  onlyHere: number;
+  /** Files of the line with no folder here. */
+  uncovered: string[];
+  /** Files here that stay outside and are no longer uploaded once shared. */
+  outside: string[];
+  /** The cross-platform rule, by name, when the line is another platform's and the bindings are the rule's. */
+  rule?: string;
+  /** That platform ("Switch", "PC"). */
+  from?: string;
+  /** Files of the line that are that platform's own (settings and the like): they stay as they are. */
+  others?: number;
+}
+
+/**
+ * A game Steam installed, in one of three states: Steam Cloud keeps it and Ludonimbus does nothing,
+ * Ludonimbus stores versions of what Steam Cloud syncs (backup), or Steam Cloud is off for it and
+ * Ludonimbus syncs it (managed).
+ */
+export type SteamCloudState = "steam" | "backup" | "managed";
+
+/** A game Steam installed on this PC. */
+export interface SteamCloudApp {
+  appid: number;
+  name: string;
+  /** Its library entry, once added. */
+  key: string | null;
+  state: SteamCloudState;
+  /** How Steam's last cloud sync of it went ("synchronized", "changesincloud", …). */
+  syncState: string | null;
+  /** Its own Steam Cloud switch. */
+  cloudEnabled: boolean;
+  /** Steam Cloud syncs it on this device (false: the game has none). */
+  cloudUsed: boolean;
+}
+
+/** Whether a managed game's launch options still go through the wrapper. */
+export type SteamWrapperHealth = "ok" | "missing" | "changed" | "runnerMoved";
+
+export interface SteamCloudStatus {
+  mode: SteamCloudState;
+  syncState: string | null;
+  /** Steam's last cloud sync of the game left nothing behind (taking over needs it). */
+  synchronized: boolean;
+  cloudEnabled: boolean;
+  /** Steam Cloud syncs it on this device (false: the game has none). */
+  cloudUsed: boolean;
+  /** The account's Steam Cloud switch for every game. */
+  globalEnabled: boolean;
+  steamRunning: boolean;
+  /** null when the launch options aren't meant to go through the wrapper. */
+  wrapper: SteamWrapperHealth | null;
+}
+
+/** What a batch did for one game Steam installed. */
+export interface SteamCloudDone {
+  appid: number;
+  key: string | null;
+  error: string | null;
 }
 
 export interface DeviceInfo {
@@ -545,6 +700,8 @@ export interface DeviceInfo {
   os: string;
   appVersion: string;
   lastSeen: string;
+  /** The newest cloud layout its Ludonimbus knows; missing for a version before 1.0. */
+  layout?: number;
 }
 
 export interface UpdateInfo {
@@ -586,6 +743,17 @@ export const api = {
     invoke<Outcome>("sync_game", { key, resolution }),
   backup: (key: string, comment: string) => invoke<Outcome>("backup_game", { key, comment }),
   lines: (key: string) => invoke<SaveLine[]>("game_lines", { key }),
+  lineMembers: (key: string) => invoke<{ lines: SaveLine[]; platforms: PlatformMarks }>("game_line_members", { key }),
+  otherSaves: (key: string) => invoke<{ saves: OtherSave[]; platforms: PlatformMarks; tooNew?: string[] }>("other_saves", { key }),
+  /** Take back the last time saves of the cloud replaced the ones here. */
+  undoReplace: (key: string) => invoke<Outcome>("undo_replace", { key }),
+  /** Make a version of another save line the progress here. */
+  takeSave: (key: string, line: string, id: string) => invoke<Outcome>("take_save", { key, line, id }),
+  /** The line this version could share with one that keeps the same saves elsewhere; null when there is none. */
+  joinSuggestion: (key: string) => invoke<JoinSuggestion | null>("join_suggestion", { key }),
+  /** Share the suggested line (then sync with it), never suggest it again, or stop sharing. */
+  joinAnswer: (key: string, answer: "accept" | "decline" | "leave", suggestion?: JoinSuggestion) =>
+    invoke<Outcome | null>("join_answer", { key, answer, suggestion: suggestion ?? null }),
   /** Follow another save line: the shared one, one of this device's own, or the one another device keeps. */
   useLine: (key: string, choice: { kind: "shared" } | { kind: "independent"; name?: string } | { kind: "follow"; line: string }) =>
     invoke<Outcome>("use_game_line", {
@@ -594,11 +762,7 @@ export const api = {
       line: choice.kind === "follow" ? choice.line : null,
       name: choice.kind === "independent" ? (choice.name ?? null) : null,
     }),
-  snapshots: (key: string) =>
-    invoke<{ snapshots: SnapshotSummary[]; headId: string | null; lastSyncedId: string | null }>(
-      "list_snapshots",
-      { key },
-    ),
+  snapshots: (key: string) => invoke<SnapshotList>("list_snapshots", { key }),
   snapshot: (key: string, id: string) => invoke<SnapshotMeta>("get_snapshot", { key, id }),
   restore: (key: string, id: string) => invoke<Outcome>("restore_snapshot", { key, id }),
   setSnapshot: (key: string, id: string, patch: { locked?: boolean; comment?: string }) =>
@@ -609,7 +773,10 @@ export const api = {
   /** Resolves to whether the version was also locked (so retention keeps it). */
   restoreDeletedSnapshot: (key: string, id: string) => invoke<boolean>("restore_deleted_snapshot", { key, id }),
   purgeDeletedSnapshot: (key: string, id: string) => invoke<void>("purge_deleted_snapshot", { key, id }),
+  /** Save one version as a .lnsave file (to keep, or to give to someone); the path, or null when cancelled. */
   exportSnapshot: (key: string, id: string) => invoke<string | null>("export_snapshot", { key, id }),
+  /** Take in a .lnsave file the user picks, beside the game's history; its id, or null when cancelled. */
+  importSharedSave: (key: string) => invoke<string | null>("import_shared_save", { key }),
   localFiles: (key: string) =>
     invoke<{ files: LocalFile[]; roots: Record<string, string> }>("local_files", { key }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
@@ -686,6 +853,26 @@ export const api = {
   steamSetEnabled: (key: string, enabled: boolean, closeSteam: boolean) =>
     invoke<void>("steam_set_enabled", { key, enabled, closeSteam }),
   steamRepair: (key: string, closeSteam: boolean) => invoke<void>("steam_repair", { key, closeSteam }),
+  /** Games Steam installed and their state. */
+  steamCloudApps: () => invoke<SteamCloudApp[]>("steam_cloud_apps"),
+  /** Add games Steam installed, backup only. */
+  steamCloudAdd: (appids: number[]) => invoke<SteamCloudDone[]>("steam_cloud_add", { appids }),
+  steamCloudStatus: (key: string) => invoke<SteamCloudStatus>("steam_cloud_status", { key }),
+  /**
+   * Let Ludonimbus keep the game's saves (Steam Cloud must be off for it). Errors start with
+   * STEAM_RUNNING (with the wrapper: close Steam, see withSteamClosed), STEAM_NOT_SYNCED or STEAM_CLOUD_ON.
+   */
+  steamCloudTakeOver: (key: string, wrapper: boolean, closeSteam: boolean) =>
+    invoke<SteamCloudStatus>("steam_cloud_take_over", { key, wrapper, closeSteam }),
+  /** Back to Steam Cloud: launch options as before, backup only. */
+  steamCloudHandBack: (key: string, closeSteam: boolean) => invoke<SteamCloudStatus>("steam_cloud_hand_back", { key, closeSteam }),
+  /** Open the game's properties in Steam (its Steam Cloud switch is there). */
+  steamCloudOpenProperties: (key: string) => invoke<void>("steam_cloud_open_properties", { key }),
+  /** Every game Steam installed whose save location is known, backup only. */
+  steamCloudBackupAll: () => invoke<SteamCloudDone[]>("steam_cloud_backup_all"),
+  /** Take over every backed-up game; refused (STEAM_CLOUD_ON) unless Steam Cloud is off for all games. */
+  steamCloudTakeOverAll: (wrapper: boolean, closeSteam: boolean) =>
+    invoke<SteamCloudDone[]>("steam_cloud_take_over_all", { wrapper, closeSteam }),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (patch: {
     deviceName?: string;
@@ -695,6 +882,9 @@ export const api = {
     steamAccount?: string;
     screenshots?: ScreenshotMode;
     independentSaves?: boolean;
+    launchWaitSecs?: number;
+    exitWaitSecs?: number;
+    waitForUpload?: boolean;
   }) => invoke<void>("save_settings", { patch }),
   screenshots: (key: string) => invoke<Gallery>("screenshot_gallery", { key }),
   screenshotFetch: (key: string, device: string, name: string, thumb: boolean) =>

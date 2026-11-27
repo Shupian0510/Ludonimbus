@@ -26,13 +26,25 @@
 //! **Which line.** A game syncs with the save line it follows on this
 //! device: the one its devices share, or one a device keeps to itself
 //! ([`lines`], [`use_line`]). Everything above is about that line.
+//!
+//! **Not waiting.** Playing doesn't wait for the cloud unless there really
+//! is newer progress to get (docs/plan-v2.md, section 5.5). Whoever waits
+//! for a sync can stop waiting ([`Gate`]); a sync given up never replaces
+//! the save files afterwards. That is safe because of the version vectors:
+//! what wasn't waited for is at worst a fork the user is asked about later,
+//! never saves silently overwritten. One sync of a game runs at a time on
+//! a device, across processes ([`lock_game`]), and a sync after playing the
+//! launch wrapper didn't wait for is finished by someone else
+//! ([`finish_owed`]).
 
 use crate::cloud::decide::{self, Action, Local};
 use crate::cloud::line::LineView;
 use crate::cloud::saves::{self, Draft, Place};
+use crate::cloud::store::{Entry, Store};
 use crate::cloud::v2::{self, FileRef, IndexEntry, Manifest, Origin, Pin};
 use crate::cloud::{self, library, line, packs, retention, Cloud, CloudGame, OpenLine};
 use crate::config::{self, AppConfig, GameEntry};
+use crate::lockfile::FileLock;
 use crate::snapshot::{self, LocalState, SnapshotMeta, SnapshotSummary, Trigger};
 use crate::state::{self, ConflictInfo, GameState};
 use crate::vv::{self, Vv};
@@ -40,8 +52,10 @@ use crate::{logger, paths, util};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// Old versions and unused packs of a game are cleaned up this often.
 const CLEAN_EVERY_HOURS: i64 = 24;
@@ -152,6 +166,12 @@ pub struct StatusReport {
     pub last_sync_at: Option<DateTime<Utc>>,
     pub pending: usize,
     pub checked_at: DateTime<Utc>,
+    /// The game version that saved `head` on another platform, when that is
+    /// newer than the one that wrote the saves here and the game's rule says
+    /// an older game can't load it ([`too_new`]): a sync nobody chose
+    /// doesn't take it, and the app says so before the user does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub too_new: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +194,15 @@ pub enum Outcome {
     NothingToSave,
     NoCloud,
     Offline { message: String },
+}
+
+impl Outcome {
+    /// Nothing is left for a later sync to do: the cloud has the saves, or
+    /// the user is asked (a conflict). Not so for a version that waits in
+    /// the queue, or a cloud that wasn't reached.
+    pub fn is_final(&self) -> bool {
+        !matches!(self, Outcome::Queued { .. } | Outcome::Offline { .. })
+    }
 }
 
 /// The newest version in a list of a game's versions: the one its save line
@@ -214,6 +243,13 @@ fn mark_synced(key: &str, id: &str, vv: &Vv, hash: &str, device_name: &str, own_
         g.conflict = None;
         g.last_error = None;
     })
+}
+
+/// Remember what the saves here were (`back`) before the version `now`
+/// replaced them, for [`undo`]. Nothing to remember when there were none.
+fn note_replaced(key: &str, back: Option<String>, now: &str, device: &str) {
+    let replaced = back.filter(|b| b != now).map(|back| state::Replaced { back, now: now.to_string(), device: device.to_string(), at: Utc::now() });
+    let _ = state::update_game(key, |g| g.replaced = replaced);
 }
 
 fn base_file(key: &str) -> PathBuf {
@@ -267,12 +303,211 @@ fn local_of(local: &LocalState, st: &GameState) -> Local {
 }
 
 /// Where the saves of a game come from, for the manifest's `platform`.
-fn platform(game: &GameEntry) -> String {
+/// A PC game says which store's version it is where that is known
+/// (`pc:xbox`, `pc:steam`): versions of several stores can share one line,
+/// and the app shows which one each version was played on.
+pub fn platform(game: &GameEntry) -> String {
     match game.adapter.as_deref().and_then(crate::adapters::find) {
         Some(a) if a.is_emulator() => format!("emu:{}", a.key),
         Some(a) => format!("recomp:{}", a.key),
+        None if game.store.is_some() => "pc:steam".to_string(),
+        None if crate::games::source(game).kind == crate::games::SourceKind::Xbox => "pc:xbox".to_string(),
         None => "pc".to_string(),
     }
+}
+
+// ------------------------------------------ another platform's files on a line
+
+/// The manifest of the version this device is at on the game's line, when
+/// this device kept it ([`remember_base`]).
+fn known_base(key: &str, st: &GameState) -> Option<Manifest> {
+    let manifest: Manifest = serde_json::from_slice(&std::fs::read(base_file(key)).ok()?).ok()?;
+    (Some(&manifest.id) == st.last_synced_id.as_ref()).then_some(manifest)
+}
+
+/// The version of the line a version that shares another platform's line
+/// carries that platform's files over from: the one this device is at, else
+/// the line's newest. At most one read (a manifest is read once and then
+/// kept), none when this device kept the one it is at.
+fn carry_source(cloud: Option<&Cloud>, game: &GameEntry, st: &GameState, line: Option<(&Place, &LineView)>) -> Result<Option<Manifest>> {
+    if let Some(m) = known_base(&game.key, st) {
+        return Ok(Some(m));
+    }
+    let (Some(cloud), Some((place, view))) = (cloud, line) else { return Ok(None) };
+    let at = st.last_synced_id.as_deref().filter(|id| view.get(id).is_some());
+    let Some(id) = at.or_else(|| view.head_entries().last().map(|h| h.id.as_str())) else { return Ok(None) };
+    let manifest = saves::manifest(cloud.files(), place, view, id)?;
+    if at.is_some() {
+        remember_base(&game.key, Some(&manifest));
+    }
+    Ok(Some(manifest))
+}
+
+fn carried_dir(key: &str) -> PathBuf {
+    paths::data_dir().join("carried").join(key)
+}
+
+/// The files of `from` (a version of the line) that a version sharing
+/// another platform's line through a rule has no place for, as a new version
+/// of it carries them over: by reference to the pack that holds each
+/// ([`FileRef::pack`]), and nothing of them uploaded.
+///
+/// A version of the layout of 0.6 keeps its files in a zip beside its
+/// manifest, which no new version may point into (0.6 deletes those by its
+/// own rules). Its files are fetched once (`fetch`; one download) and kept on
+/// this device, and a new version packs them anew. Without them at hand they
+/// are named without a pack: enough to compare, and a version made of them
+/// can't be put together (the error says which file is missing) rather than
+/// leave them out.
+fn carry(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, from: &Manifest, fetch: bool) -> Result<(Vec<FileRef>, Vec<packs::LocalFile>)> {
+    let theirs: Vec<&FileRef> = from.files.iter().filter(|f| crate::bind::to_local(&game.bind, &f.path).is_none()).collect();
+    if theirs.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    if from.v >= v2::LAYOUT && from.unsupported().is_empty() {
+        let refs = theirs.into_iter().map(|f| FileRef { pack: Some(f.pack.clone().unwrap_or_else(|| from.id.clone())), ..f.clone() }).collect();
+        return Ok((refs, Vec::new()));
+    }
+    let dir = carried_dir(&game.key).join(&from.id);
+    let kept = |f: &FileRef| {
+        let at = snapshot::resolve_in(&dir, &f.path).ok()?;
+        packs::LocalFile::from_disk(f.path.clone(), at).ok().filter(|l| l.size == f.size && (f.hash.is_empty() || l.hash == f.hash))
+    };
+    let mut have: Vec<packs::LocalFile> = theirs.iter().filter_map(|f| kept(f)).collect();
+    if have.len() < theirs.len() && fetch {
+        if let (Some(cloud), Some((place, view))) = (cloud, line.filter(|(_, v)| v.get(&from.id).is_some())) {
+            let work = paths::staging_dir().join(format!("carry-{}", ulid::Ulid::new()));
+            let only: Vec<String> = theirs.iter().map(|f| f.path.clone()).collect();
+            let got = saves::fetch(cloud.files(), place, view, from, Some(&only), &work.join("files"), &work.join("packs")).and_then(|_| {
+                // Only the version at hand is kept.
+                let _ = std::fs::remove_dir_all(carried_dir(&game.key));
+                std::fs::create_dir_all(carried_dir(&game.key))?;
+                std::fs::rename(work.join("files"), &dir)?;
+                Ok(())
+            });
+            let _ = std::fs::remove_dir_all(&work);
+            got?;
+            log(format!("{}: fetched {} file(s) of the line's other platform from {} to carry over", game.key, theirs.len(), from.id));
+            have = theirs.iter().filter_map(|f| kept(f)).collect();
+        }
+    }
+    let refs = theirs
+        .into_iter()
+        .filter(|f| !have.iter().any(|h| h.path == f.path))
+        .map(|f| FileRef { pack: None, ..f.clone() })
+        .collect();
+    Ok((refs, have))
+}
+
+/// The saves of `game` on this device as the line compares them
+/// ([`LocalState::hash`]). For a version that shares another platform's line
+/// through a rule ([`crate::join::by_rule`]) that is its files and the other
+/// platform's files of the version it is based on ([`carry`]), as a version
+/// it uploads holds them: saves that differ from a version of the line only
+/// in that platform's files are the same saves. Every other game: its files,
+/// and no request.
+///
+/// `line` is the game's line as just read, `fetch` whether files of a
+/// version of 0.6 may be downloaded to carry them over.
+fn local_here(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, fetch: bool) -> Result<LocalState> {
+    with_carried(cloud, game, line, fetch, snapshot::local_state(game)?)
+}
+
+/// [`local_here`], for saves scanned already.
+fn with_carried(cloud: Option<&Cloud>, game: &GameEntry, line: Option<(&Place, &LineView)>, fetch: bool, local: LocalState) -> Result<LocalState> {
+    if crate::join::by_rule(game).is_none() {
+        return Ok(local);
+    }
+    let st = state::game(&game.key);
+    let Some(from) = carry_source(cloud, game, &st, line)? else { return Ok(local) };
+    let (refs, files) = carry(cloud, game, line, &from, fetch)?;
+    Ok(local.carrying(refs, files))
+}
+
+/// What a sync nobody chose ([`Resolution::Auto`]) does with a version
+/// written on another platform by a newer game than the one that wrote the
+/// saves here, when the game's rule says an older game can't load it
+/// ([`too_new`]): it is left in the cloud, as [`not_into_containers`] leaves
+/// what would go into the Xbox app's containers. Nothing is written, the
+/// game shows that the cloud has newer saves ([`check`]), and the user can
+/// still make it current; the app says first that this game may not load
+/// it. Versions whose game versions aren't known are pulled as ever.
+fn not_too_new(game: &GameEntry, action: Action, view: &LineView, local: &LocalState) -> Action {
+    let Action::Pull { id } = &action else { return action };
+    let Some(target) = view.get(id) else { return action };
+    let Some(rule) = crate::crosssaves::rule_for(game).filter(|r| r.newer_only) else { return action };
+    if target.game_version.is_none() || scope_of_platform(&target.platform).is_none_or(|s| s == crate::savelib::save_scope(game)) {
+        return action;
+    }
+    let here = crate::crosssaves::local_version(game, &local.files, &local.roots);
+    if !crate::crosssaves::too_new(rule, target.game_version.as_deref(), here.as_deref()) {
+        return action;
+    }
+    log(format!(
+        "{}: {id} in the cloud was saved by {} {}, newer than the saves here ({}); taken only when the user says so",
+        game.key,
+        target.platform,
+        target.game_version.as_deref().unwrap_or_default(),
+        here.as_deref().unwrap_or_default()
+    ));
+    Action::Nothing
+}
+
+/// For files handed to this device for a version of `game` that shares
+/// another platform's line through a rule (a Switch's, over the local
+/// network): the other platform's files of version `from` of the line (its
+/// newest when `from` is none or not there) that a version of these files
+/// takes over. By reference ([`queue_files_carrying`]), and as content where
+/// they have to be packed anew ([`carry`]). Nothing for any other game.
+pub fn carried_for(cloud: &Cloud, game: &GameEntry, line: &OpenLine, from: Option<&str>) -> Result<(Vec<FileRef>, Vec<(String, Vec<u8>)>)> {
+    if crate::join::by_rule(game).is_none() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let view = &line.view;
+    let Some(id) = from.filter(|id| view.get(id).is_some()).or_else(|| view.head_entries().last().map(|h| h.id.as_str())) else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let manifest = saves::manifest(cloud.files(), &line.place, view, id)?;
+    let (refs, files) = carry(Some(cloud), game, Some((&line.place, view)), &manifest, true)?;
+    let mut content = Vec::with_capacity(files.len());
+    for f in files {
+        content.push((f.path.clone(), std::fs::read(&f.source)?));
+    }
+    Ok((refs, content))
+}
+
+/// The save scope ([`crate::savelib::save_scope`]) of what a version says it
+/// was made on ([`platform`]); `None` when it doesn't say.
+fn scope_of_platform(platform: &str) -> Option<String> {
+    let (kind, rest) = platform.split_once(':').unwrap_or((platform, ""));
+    match kind {
+        "pc" => Some("pc".to_string()),
+        "console" if !rest.is_empty() => Some(rest.to_string()),
+        "emu" | "recomp" => crate::adapters::find(rest).map(|_| crate::savelib::save_scope(&GameEntry { adapter: Some(rest.to_string()), ..Default::default() })),
+        _ => None,
+    }
+}
+
+/// The game version that wrote the saves of `game` on this device, when its
+/// cross-platform rule says an older game can't load a save a newer one
+/// wrote (`newerOnly`). `None` otherwise, or when it can't be read.
+pub fn saves_version(game: &GameEntry) -> Option<String> {
+    crate::crosssaves::rule_for(game).filter(|r| r.newer_only)?;
+    let local = snapshot::local_state(game).ok()?;
+    crate::crosssaves::local_version(game, &local.files, &local.roots)
+}
+
+/// Whether a version of the line (made on `platform` by game version
+/// `version`) was saved on another platform by a newer game than the one
+/// that wrote the saves here (`here`, [`saves_version`]), and the game's rule
+/// says an older game can't load it. Unknown versions or platforms never
+/// are. Versions of the same platform are not compared: they get the game's
+/// updates the same way (a store updates them), and the saves here may be
+/// older than the game installed.
+pub fn too_new(game: &GameEntry, here: Option<&str>, platform: &str, version: Option<&str>) -> bool {
+    let Some(rule) = crate::crosssaves::rule_for(game) else { return false };
+    let other = scope_of_platform(platform).is_some_and(|s| s != crate::savelib::save_scope(game));
+    other && crate::crosssaves::too_new(rule, version, here)
 }
 
 // ------------------------------------------------------------------ the queue
@@ -530,6 +765,7 @@ fn flush(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>) -> Result
 pub fn upload_pending(cloud: &Cloud, m: &SnapshotMeta) -> Result<()> {
     let key = m.game.as_str();
     let Some((mut manifest, old)) = queued(key).into_iter().find(|(q, _)| q.id == m.id) else { return Ok(()) };
+    let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
     ready_to_write(cloud, &mut line, None)?;
     let done = publish_queued(cloud, &mut line, &mut manifest, old);
@@ -552,6 +788,7 @@ pub fn flush_pending(cloud: &Cloud, key: &str) -> Result<usize> {
     if queued(key).is_empty() {
         return Ok(0);
     }
+    let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
     flush(cloud, &mut line, None)
 }
@@ -572,10 +809,20 @@ struct Shot {
 }
 
 /// Put a snapshot of `files` into the queue of `key`: complete on this
-/// device, not yet in the cloud.
+/// device, not yet in the cloud. `carried`: files it takes over from an
+/// earlier version without having them ([`saves::draft_with`]).
 #[allow(clippy::too_many_arguments)]
-fn enqueue(key: &str, place: &Place, draft: &Draft, files: &[packs::LocalFile], roots: &BTreeMap<String, String>, comment: &str, base: Option<&Manifest>) -> Result<Manifest> {
-    let mut manifest = saves::draft(place, draft, files, base, &packs::Policy::default());
+fn enqueue(
+    key: &str,
+    place: &Place,
+    draft: &Draft,
+    files: &[packs::LocalFile],
+    carried: &[FileRef],
+    roots: &BTreeMap<String, String>,
+    comment: &str,
+    base: Option<&Manifest>,
+) -> Result<Manifest> {
+    let mut manifest = saves::draft_with(place, draft, files, carried, base, &packs::Policy::default());
     if !roots.is_empty() {
         manifest.extra.insert(snapshot::ROOTS.to_string(), serde_json::json!(roots));
     }
@@ -634,7 +881,7 @@ fn stage_local(ctx: &Ctx, game: &GameEntry, place: &Place, view: &LineView, loca
         info: None,
         origin: shot.origin.clone(),
     };
-    let manifest = enqueue(&game.key, place, &draft, &local.pack_files(), &local.used_roots(), &shot.comment, shot.base.as_ref())?;
+    let manifest = enqueue(&game.key, place, &draft, &local.pack_files(), &local.carried, &local.used_roots(), &shot.comment, shot.base.as_ref())?;
     if !shot.side {
         mark_synced(&game.key, &manifest.id, &manifest.vv, &manifest.content_hash, device.1, device.0)?;
         remember_base(&game.key, Some(&manifest));
@@ -668,6 +915,13 @@ pub struct Foreign<'a> {
 /// A version of a kind that never is the newest (`pre-restore`) goes beside
 /// the history.
 pub fn queue_files(line: &OpenLine, f: &Foreign) -> Result<SnapshotMeta> {
+    queue_files_carrying(line, f, &[])
+}
+
+/// [`queue_files`] for files of a version that shares another platform's
+/// line through a rule: `carried` are that platform's files the version
+/// takes over ([`carried_for`]).
+pub fn queue_files_carrying(line: &OpenLine, f: &Foreign, carried: &[FileRef]) -> Result<SnapshotMeta> {
     let work = paths::staging_dir().join(format!("files-{}", ulid::Ulid::new()));
     let result = (|| -> Result<Manifest> {
         let mut files = Vec::with_capacity(f.files.len());
@@ -705,7 +959,7 @@ pub fn queue_files(line: &OpenLine, f: &Foreign) -> Result<SnapshotMeta> {
             info: None,
             origin: f.origin.clone(),
         };
-        enqueue(f.key, &line.place, &draft, &files, &BTreeMap::new(), f.comment, None)
+        enqueue(f.key, &line.place, &draft, &files, carried, &BTreeMap::new(), f.comment, None)
     })();
     let _ = std::fs::remove_dir_all(&work);
     Ok(SnapshotMeta::of(&result?, f.key, None))
@@ -724,16 +978,25 @@ fn best_effort_housekeeping(ctx: &Ctx, cloud: &Cloud, game: &GameEntry) {
     if due && cloud.put_device(&cloud::device_info(&ctx.cfg)).is_ok() {
         let _ = state::update(|s| s.device_seen_at = Some(Utc::now()));
     }
+    // Playtime and artwork are the game's: in its record's folders. Known
+    // without a request once the game has synced.
+    let at = match cloud::gamedata::Folders::of(cloud, &game.key) {
+        Ok(at) => at,
+        Err(e) => {
+            logger::log("sync", format!("{}: the game's folders are unknown: {e:#}", game.key));
+            return;
+        }
+    };
     // Upload this device's playtime, fetch the other devices'.
-    if let Err(e) = crate::playtime::sync(cloud.files(), &ctx.cfg, &game.key) {
+    if let Err(e) = crate::playtime::sync(cloud.files(), &ctx.cfg, &at) {
         logger::log("sync", format!("{}: playtime sync failed: {e:#}", game.key));
     }
     // Artwork: send what this device shows, fetch what it has none of.
-    if let Err(e) = crate::artsync::push(cloud.files(), &ctx.cfg, game) {
+    if let Err(e) = crate::artsync::push(cloud.files(), &ctx.cfg, &at, game) {
         logger::log("sync", format!("{}: artwork upload failed: {e:#}", game.key));
     }
     if crate::artsync::KINDS.iter().any(|k| crate::artsync::shown(&ctx.cfg, game, k).is_none()) {
-        if let Err(e) = crate::artsync::pull(cloud.files(), &ctx.cfg, &game.key, Some(game)) {
+        if let Err(e) = crate::artsync::pull(cloud.files(), &ctx.cfg, &at, Some(game)) {
             logger::log("sync", format!("{}: artwork download failed: {e:#}", game.key));
         }
     }
@@ -816,6 +1079,366 @@ fn clean_if_due(ctx: &Ctx, cloud: &Cloud, key: &str) {
     let _ = state::update_game(key, |g| g.cleaned_at = Some(Utc::now()));
 }
 
+// -------------------------------------------------------------- not waiting
+
+/// What a sync is doing, for whoever waits for it ([`Gate::phase`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Phase {
+    /// Waiting for another sync of the game, reading its save line,
+    /// deciding.
+    #[default]
+    Checking,
+    /// Getting a newer version: `done` of `total` bytes of its files, as
+    /// each content pack comes in.
+    Downloading { done: u64, total: u64 },
+    /// Replacing the save files with it, until the next step. Quick, on
+    /// this device, and not to be given up.
+    Applying,
+    /// Uploading versions of this device, and what goes with them.
+    Uploading,
+    /// The sync has ended, or is about to.
+    Done,
+}
+
+/// Inside a sync: whoever waited for it stopped. It ends as
+/// [`Outcome::Offline`].
+#[derive(Debug)]
+struct GaveUp;
+
+impl std::fmt::Display for GaveUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", crate::tr!("没有等云盘，存档留到下次同步", "Didn't wait for the cloud; the saves are synced next time"))
+    }
+}
+
+impl std::error::Error for GaveUp {}
+
+fn is_gave_up(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.downcast_ref::<GaveUp>().is_some())
+}
+
+#[derive(Default)]
+struct GateState {
+    phase: Phase,
+    given_up: bool,
+}
+
+type Watcher = Arc<dyn Fn(Phase) + Send + Sync>;
+
+#[derive(Default)]
+struct GateInner {
+    state: Mutex<GateState>,
+    watcher: Mutex<Option<Watcher>>,
+}
+
+/// Shared by a sync and whoever waits for it: what the sync is doing, and
+/// a way to stop waiting ([`Gate::give_up`]).
+///
+/// A sync that was given up doesn't replace the save files any more: the
+/// check and the start of replacing them are one step
+/// ([`Gate::start_applying`]). It also starts no further request and ends
+/// as [`Outcome::Offline`]. A version it put in the queue stays there, and
+/// an upload already under way may finish: packs go up first and the
+/// manifest last, so an upload cut off is never half a version.
+///
+/// `Gate::default()` is one nobody gives up.
+#[derive(Clone, Default)]
+pub struct Gate(Arc<GateInner>);
+
+impl Gate {
+    pub fn new() -> Gate {
+        Gate::default()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, GateState> {
+        self.0.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn tell(&self, phase: Phase) {
+        let watcher = self.0.watcher.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some(w) = watcher {
+            w(phase);
+        }
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.state().phase
+    }
+
+    pub fn given_up(&self) -> bool {
+        self.state().given_up
+    }
+
+    /// Stop waiting. From here on the sync changes no save files. `false`
+    /// when it is replacing them right now: then wait for it to end (that
+    /// is quick, and on this device).
+    pub fn give_up(&self) -> bool {
+        let mut s = self.state();
+        if s.phase == Phase::Applying {
+            return false;
+        }
+        s.given_up = true;
+        true
+    }
+
+    /// Be told of every change of phase, on the thread of the sync.
+    pub fn watch(&self, f: impl Fn(Phase) + Send + Sync + 'static) {
+        *self.0.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(f));
+    }
+
+    /// What the work the gate is about does now. The sync calls this; so may
+    /// something that stands in for a sync.
+    pub fn set_phase(&self, phase: Phase) {
+        self.state().phase = phase;
+        self.tell(phase);
+    }
+
+    /// Move on to replacing the save files, unless the waiting was given
+    /// up: `false` then, and nothing may be replaced. One step with
+    /// [`Gate::give_up`], so the two can't cross.
+    pub fn start_applying(&self) -> bool {
+        {
+            let mut s = self.state();
+            if s.given_up {
+                return false;
+            }
+            s.phase = Phase::Applying;
+        }
+        self.tell(Phase::Applying);
+        true
+    }
+
+    fn add_done(&self, bytes: u64) {
+        let phase = {
+            let mut s = self.state();
+            match &mut s.phase {
+                Phase::Downloading { done, total } => *done = (*done + bytes).min(*total),
+                _ => return,
+            }
+            s.phase
+        };
+        self.tell(phase);
+    }
+
+    /// An error once the waiting was given up: the next step isn't taken.
+    fn check(&self) -> Result<()> {
+        if self.given_up() {
+            return Err(GaveUp.into());
+        }
+        Ok(())
+    }
+}
+
+/// The store as [`Session::pull`] downloads from it: no new request once
+/// the waiting was given up, and each content pack counted when it is in.
+struct Watched<'a> {
+    inner: &'a dyn Store,
+    gate: &'a Gate,
+    /// Bytes of the wanted files in each pack, by pack id.
+    packs: BTreeMap<String, u64>,
+}
+
+impl Store for Watched<'_> {
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+    fn label(&self) -> String {
+        self.inner.label()
+    }
+    fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
+        self.inner.quota()
+    }
+    fn check(&self) -> Result<()> {
+        self.gate.check()?;
+        self.inner.check()
+    }
+    fn list(&self, dir: &str) -> Result<Vec<Entry>> {
+        self.gate.check()?;
+        self.inner.list(dir)
+    }
+    fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.gate.check()?;
+        self.inner.read(path)
+    }
+    fn download(&self, path: &str, dest: &Path) -> Result<()> {
+        self.gate.check()?;
+        self.inner.download(path, dest)?;
+        let name = path.rsplit('/').next().unwrap_or(path);
+        if let Some(bytes) = self.packs.get(name.strip_suffix(".zip").unwrap_or(name)) {
+            self.gate.add_done(*bytes);
+        }
+        Ok(())
+    }
+    fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+        self.gate.check()?;
+        self.inner.write(path, data)
+    }
+    fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        self.gate.check()?;
+        self.inner.upload(path, src)
+    }
+    fn remove(&self, path: &str) -> Result<()> {
+        self.gate.check()?;
+        self.inner.remove(path)
+    }
+    fn cache_scope(&self) -> Option<String> {
+        self.inner.cache_scope()
+    }
+}
+
+// ------------------------------------------------------ one sync at a time
+
+thread_local! {
+    /// Games whose lock this thread holds: an operation that holds it may
+    /// run another one (choosing a line runs a sync).
+    static HELD: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+fn lock_file(key: &str) -> PathBuf {
+    paths::locks_dir().join(format!("sync-{key}.lock"))
+}
+
+/// The right to read, decide about and write a game's save line on this
+/// device, until dropped ([`lock_game`]).
+pub struct GameLock {
+    key: Option<String>,
+    _file: Option<FileLock>,
+}
+
+impl Drop for GameLock {
+    fn drop(&mut self) {
+        if let Some(key) = &self.key {
+            let _ = HELD.try_with(|h| h.borrow_mut().remove(key));
+        }
+    }
+}
+
+/// One sync of a game at a time on this device: the launch wrapper, the
+/// process that finishes its upload, the tray app and the command line all
+/// take this lock first. Waits for whoever has it, however long that takes,
+/// unless `gate` is given up meanwhile (an error that ends a sync as
+/// [`Outcome::Offline`]). A holder that is gone doesn't keep it
+/// ([`FileLock::hold`]).
+pub fn lock_game(key: &str, gate: &Gate) -> Result<GameLock> {
+    if HELD.with(|h| h.borrow().contains(key)) {
+        return Ok(GameLock { key: None, _file: None });
+    }
+    let mut told = false;
+    let file = FileLock::hold(&lock_file(key), &mut || {
+        if !told {
+            log(format!("{key}: waiting for another sync of this game to finish"));
+            told = true;
+        }
+        !gate.given_up()
+    })?;
+    let Some(file) = file else { return Err(GaveUp.into()) };
+    HELD.with(|h| h.borrow_mut().insert(key.to_string()));
+    Ok(GameLock { key: Some(key.to_string()), _file: Some(file) })
+}
+
+/// Whether a sync of `key` runs on this device right now, in any process.
+pub fn sync_running(key: &str) -> bool {
+    FileLock::is_held(&lock_file(key))
+}
+
+// ---------------------------------------------------- owed after playing
+
+fn owed_file(key: &str) -> PathBuf {
+    paths::owed_dir().join(format!("{key}.json"))
+}
+
+/// Note that the sync of `key` after playing is still owed: the launch
+/// wrapper stopped waiting for it and exits. Whoever syncs the game next
+/// with a final outcome settles it; [`finish_owed`] is there for just that.
+pub fn owe(key: &str) -> Result<()> {
+    let note = serde_json::json!({ "since": Utc::now(), "pid": std::process::id() });
+    util::atomic_write(&owed_file(key), note.to_string().as_bytes())
+}
+
+pub fn is_owed(key: &str) -> bool {
+    owed_file(key).is_file()
+}
+
+/// The games whose sync after playing is still owed.
+pub fn owed_keys() -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(paths::owed_dir()) else { return Vec::new() };
+    let mut keys: Vec<String> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+        .collect();
+    keys.sort();
+    keys
+}
+
+/// What a game still owes the cloud after playing, done in the background.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Backlog {
+    pub state: BacklogState,
+    /// Versions waiting on this device.
+    pub versions: usize,
+    /// How much there is to upload for them.
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BacklogState {
+    /// A sync of the game runs right now, in any process.
+    Uploading,
+    /// Nobody is at it: the cloud couldn't be reached, and it is tried again later.
+    Waiting,
+}
+
+/// What `key` still owes the cloud: versions that wait in the queue, or a
+/// sync after playing a wrapper handed over ([`owe`]). `None` when nothing.
+pub fn backlog(key: &str) -> Option<Backlog> {
+    let versions = queued(key).len();
+    if versions == 0 && !is_owed(key) {
+        return None;
+    }
+    let bytes = std::fs::read_dir(queue_dir(key))
+        .map(|rd| rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "zip")).filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+        .unwrap_or(0);
+    let state = if sync_running(key) { BacklogState::Uploading } else { BacklogState::Waiting };
+    Some(Backlog { state, versions, bytes })
+}
+
+fn settle_owed(key: &str) {
+    if std::fs::remove_file(owed_file(key)).is_ok() {
+        log(format!("{key}: the sync after playing is done"));
+    }
+}
+
+/// Do the sync of `key` after playing that is still owed ([`owe`]): the
+/// usual sync, as right after the game. `None` when nothing is owed (any
+/// more). The note goes once the outcome is final ([`Outcome::is_final`]),
+/// and stays while the cloud can't be reached. A conflict is only noted:
+/// the next launch of the game asks.
+pub fn finish_owed(ctx: &Ctx, key: &str) -> Result<Option<Outcome>> {
+    let gate = Gate::default();
+    let _lock = lock_game(key, &gate)?;
+    // Whoever had the lock may have done it meanwhile.
+    if !is_owed(key) {
+        return Ok(None);
+    }
+    // Being played again: no sync may change its saves now, and the one
+    // after this session settles it.
+    if matches!(crate::catchup::runner_phase(key).as_deref(), Some("preLaunch" | "playing")) {
+        log(format!("{key}: being played again; the sync after this session does what was owed"));
+        return Ok(None);
+    }
+    let Some(game) = ctx.cfg.game(key).filter(|g| g.auto_sync).cloned() else {
+        // The game is gone from this device, or doesn't sync by itself now.
+        settle_owed(key);
+        return Ok(None);
+    };
+    sync_with(ctx, &game, Resolution::Auto, Trigger::AutoExit, &gate).map(Some)
+}
+
 // ---------------------------------------------------------------- one sync
 
 /// One game's save line, opened for a sync.
@@ -824,15 +1447,36 @@ struct Session<'a> {
     cloud: &'a Cloud,
     game: &'a GameEntry,
     line: OpenLine,
+    /// Whoever waits for this sync, and whether they still do.
+    gate: Gate,
 }
 
 impl<'a> Session<'a> {
     fn open(ctx: &'a Ctx, cloud: &'a Cloud, game: &'a GameEntry) -> Result<Session<'a>> {
-        Ok(Session { ctx, cloud, game, line: cloud.open(&game.key)? })
+        Ok(Session { ctx, cloud, game, line: cloud.open(&game.key)?, gate: Gate::default() })
     }
 
     fn key(&self) -> &str {
         &self.game.key
+    }
+
+    /// The saves here as the line compares them ([`local_here`]).
+    fn local(&self) -> Result<LocalState> {
+        local_here(Some(self.cloud), self.game, Some((&self.line.place, &self.line.view)), true)
+    }
+
+    /// The saves here, about to become the newest version over every head
+    /// (the user chose them in a conflict): another platform's files go
+    /// along from the newest version, not from the one this device was at.
+    fn over_all(&self, local: LocalState) -> Result<LocalState> {
+        if crate::join::by_rule(self.game).is_none() {
+            return Ok(local);
+        }
+        let Some(head) = self.line.view.head_entries().last() else { return Ok(local) };
+        let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, &head.id)?;
+        let (refs, files) = carry(Some(self.cloud), self.game, Some((&self.line.place, &self.line.view)), &manifest, true)?;
+        // In place of what went along before.
+        Ok(local.carrying(refs, files))
     }
 
     fn summary(&self, id: &str) -> Option<SnapshotSummary> {
@@ -855,6 +1499,12 @@ impl<'a> Session<'a> {
             log(format!("{}: queued {id} (the cloud is upgraded after playing)", self.key()));
             return Ok(Outcome::Queued { id, reason });
         }
+        // Nobody waits any more: it waits in the queue, as one made offline.
+        if self.gate.given_up() {
+            log(format!("{}: queued {id} (not waited for)", self.key()));
+            return Ok(Outcome::Queued { id, reason: GaveUp.to_string() });
+        }
+        self.gate.set_phase(Phase::Uploading);
         match flush(self.cloud, &mut self.line, Some(self.game)) {
             Ok(_) => Ok(Outcome::Uploaded { id }),
             Err(e) if must_wait(&e) => {
@@ -867,26 +1517,37 @@ impl<'a> Session<'a> {
 
     /// Save the saves here beside the history, unless the cloud already has
     /// the same content. Always a complete copy, and one stays on this
-    /// device too.
-    fn protect(&mut self, local: &LocalState, trigger: Trigger) -> Result<()> {
-        if local.is_empty() || self.line.view.snapshots.iter().any(|s| s.content_hash == local.hash) {
-            return Ok(());
+    /// device too. Returns the version that holds them (none when there are
+    /// no saves here).
+    fn protect(&mut self, local: &LocalState, trigger: Trigger) -> Result<Option<String>> {
+        if local.is_empty() {
+            return Ok(None);
+        }
+        if let Some(same) = self.line.view.snapshots.iter().find(|s| s.content_hash == local.hash) {
+            return Ok(Some(same.id.clone()));
         }
         let shot = Shot { parent: state::game(self.key()).last_synced_id, trigger: Some(trigger), side: true, ..Shot::default() };
         let manifest = stage_local(self.ctx, self.game, &self.line.place, &self.line.view, local, &shot)?;
         keep_local_copy(self.key(), &manifest)?;
+        // Nobody waits any more: it waits in the queue.
+        if self.gate.given_up() {
+            return Ok(Some(manifest.id));
+        }
+        self.gate.set_phase(Phase::Uploading);
         match flush(self.cloud, &mut self.line, Some(self.game)) {
             Ok(_) => {
                 log(format!("{}: protected local saves as {} ({})", self.key(), manifest.id, manifest.trigger));
-                Ok(())
+                Ok(Some(manifest.id))
             }
             // It waits in the queue.
-            Err(e) if must_wait(&e) => Ok(()),
+            Err(e) if must_wait(&e) => Ok(Some(manifest.id)),
             Err(e) => Err(e),
         }
     }
 
-    /// Replace the saves here with version `id`.
+    /// Replace the saves here with version `id`. Once the waiting is given
+    /// up ([`Gate`]) the saves stay as they are, however far the download
+    /// got.
     fn pull(&mut self, local: &LocalState, id: &str) -> Result<Outcome> {
         let target = self
             .line
@@ -900,17 +1561,36 @@ impl<'a> Session<'a> {
                 "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
             ));
         }
-        self.protect(local, Trigger::PreRestore)?;
+        let back = self.protect(local, Trigger::PreRestore)?;
+        self.gate.check()?;
         let manifest = saves::manifest(self.cloud.files(), &self.line.place, &self.line.view, id)?;
+        self.gate.check()?;
+        // A version that shares the line through bindings needs a folder
+        // for every file; one that shares another platform's line through a
+        // rule gets the files its bindings name, the rest are that
+        // platform's.
+        let all = SnapshotMeta::of(&manifest, self.key(), None).files;
+        crate::join::no_place(self.game, &all)?;
+        let wanted = crate::join::held(self.game, &all);
+        let only: Option<Vec<String>> = (wanted.len() != all.len()).then(|| wanted.iter().map(|f| f.path.clone()).collect());
+        let mut packs: BTreeMap<String, u64> = BTreeMap::new();
+        for f in manifest.files.iter().filter(|f| only.as_ref().is_none_or(|o| o.contains(&f.path))) {
+            *packs.entry(f.pack.clone().unwrap_or_else(|| manifest.id.clone())).or_default() += f.size;
+        }
+        self.gate.set_phase(Phase::Downloading { done: 0, total: packs.values().sum() });
+        let store = Watched { inner: self.cloud.files(), gate: &self.gate, packs };
         let work = paths::staging_dir().join(format!("pull-{id}"));
         let _ = std::fs::remove_dir_all(&work);
         let files = work.join("files");
-        let result = saves::fetch(self.cloud.files(), &self.line.place, &self.line.view, &manifest, None, &files, &work.join("packs"))
-            .and_then(|_| snapshot::apply_dir(&files, &SnapshotMeta::of(&manifest, self.key(), None).files, self.game));
+        let result = saves::fetch(&store, &self.line.place, &self.line.view, &manifest, only.as_deref(), &files, &work.join("packs"))
+            // Whoever waited may have stopped while it downloaded.
+            .and_then(|_| if self.gate.start_applying() { Ok(()) } else { Err(GaveUp.into()) })
+            .and_then(|_| snapshot::apply_dir(&files, &wanted, self.game));
         let _ = std::fs::remove_dir_all(&work);
         result?;
         mark_synced(self.key(), id, &target.vv, &target.content_hash, &target.device_name, self.ctx.device().0)?;
         remember_base(self.key(), Some(&manifest));
+        note_replaced(self.key(), back, id, &target.device_name);
         log(format!("{}: pulled {id} from {}", self.key(), target.device_name));
         Ok(Outcome::Pulled {
             id: id.to_string(),
@@ -921,12 +1601,14 @@ impl<'a> Session<'a> {
 
     /// After [`Session::pull`] of a version that is not the one newest
     /// version: upload the saves as they are now on top of every head, so
-    /// the line has one newest version again and it is this one.
-    fn make_current(&mut self, from: &str, trigger: Trigger) -> Result<Option<Outcome>> {
+    /// the line has one newest version again and it is this one. Before
+    /// playing (`launching`) a cloud that needs upgrading first gets the
+    /// version after the game, as with any upload then.
+    fn make_current(&mut self, from: &str, trigger: Trigger, launching: bool) -> Result<Option<Outcome>> {
         if self.line.view.head().is_some_and(|h| h.id == from) {
             return Ok(None);
         }
-        let local = snapshot::local_state(self.game)?;
+        let local = self.local()?;
         let loc = local_of(&local, &state::game(self.key()));
         let Action::Push { bases, .. } = decide::settle(&loc, &self.line.view) else { return Ok(None) };
         let origin = Origin {
@@ -937,7 +1619,15 @@ impl<'a> Session<'a> {
             extra: v2::Extra::new(),
         };
         let shot = Shot { bases, parent: Some(from.to_string()), trigger: Some(trigger), origin: Some(origin), ..Shot::default() };
-        self.push(&local, shot, false).map(Some)
+        let outcome = self.push(&local, shot, launching)?;
+        if let Outcome::Uploaded { id } | Outcome::Queued { id, .. } = &outcome {
+            let _ = state::update_game(self.key(), |g| {
+                if let Some(r) = g.replaced.as_mut().filter(|r| r.now == from) {
+                    r.now = id.clone();
+                }
+            });
+        }
+        Ok(Some(outcome))
     }
 
     fn conflict(&mut self, local: &LocalState, candidates: &[String], local_is_candidate: bool, trigger: Trigger) -> Result<Outcome> {
@@ -1013,7 +1703,7 @@ fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) ->
     if matches!(trigger, Trigger::PreLaunch) {
         return Ok(Outcome::Offline { message });
     }
-    let local = snapshot::local_state(game)?;
+    let local = local_here(None, game, None, false)?;
     let st = state::game(&game.key);
     if local.is_empty() || st.last_synced_hash.as_deref() == Some(local.hash.as_str()) {
         return Ok(Outcome::Offline { message });
@@ -1031,32 +1721,103 @@ fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) ->
 
 /// Sync one game. `trigger` labels a snapshot uploaded by this call.
 pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger) -> Result<Outcome> {
+    sync_with(ctx, game, resolution, trigger, &Gate::default())
+}
+
+/// [`sync`], for a caller that may stop waiting for it ([`Gate`]). Another
+/// sync of the game on this device is waited for first ([`lock_game`]),
+/// and that wait can be given up too.
+pub fn sync_with(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
+    gate.set_phase(Phase::Checking);
+    let result = gate.check().and_then(|_| {
+        let _lock = lock_game(&game.key, gate)?;
+        let outcome = sync_locked(ctx, game, resolution, trigger, gate)?;
+        // A sync after playing that was owed is done by any sync that ends.
+        if outcome.is_final() {
+            settle_owed(&game.key);
+        }
+        Ok(outcome)
+    });
+    gate.set_phase(Phase::Done);
+    match result {
+        Err(e) if is_gave_up(&e) => {
+            log(format!("{}: not waited for, stopped", game.key));
+            Ok(Outcome::Offline { message: GaveUp.to_string() })
+        }
+        other => other,
+    }
+}
+
+/// The game as it is settled now. Which record it belongs to and through
+/// which folders it reads that record's line ([`GameEntry::record`],
+/// [`GameEntry::bind`]) may have changed since `game` was read: by an
+/// earlier sync in this process (the launch wrapper reads the game once,
+/// before the first), or by another process. Scanning or writing saves with
+/// what was true before would put one version's files into the line of
+/// another, so everything that does either starts here. The configuration
+/// on this device is what counts. So it does for whether Steam Cloud keeps
+/// the saves of a game Steam installed ([`GameEntry::store`]): Steam Cloud
+/// may have been found on again since ([`crate::steamcloud::recheck`]).
+fn fresh(ctx: &Ctx, game: &GameEntry) -> GameEntry {
+    let now = config::load().ok().and_then(|c| c.game(&game.key).cloned());
+    let Some(now) = now else { return game.clone() };
+    let game = GameEntry { record: now.record, bind: now.bind, declined: now.declined, store: now.store, ..game.clone() };
+    if let Ok(cloud) = ctx.cloud() {
+        cloud.know(&game);
+    }
+    game
+}
+
+fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
+    // A game Steam installed is managed only while Steam Cloud stays off.
+    let game = &crate::steamcloud::rechecked(&ctx.cfg, fresh(ctx, game));
     let cloud = match ctx.cloud() {
         Ok(c) => c,
         Err(e) if cloud::is_not_configured(&e) => return Ok(Outcome::NoCloud),
         Err(e) => return offline(ctx, game, trigger, e),
     };
+    // A game new to this device may share a line through folders a user
+    // confirmed on another device. Settled before anything is scanned.
+    let joined = crate::join::auto(cloud, game);
+    let game = joined.as_ref().unwrap_or(game);
     let launching = trigger == Trigger::PreLaunch;
     let mut s = match Session::open(ctx, cloud, game) {
         Ok(s) => s,
         Err(e) if cloud::is_unavailable(&e) => return offline(ctx, game, trigger, e),
         Err(e) => return Err(e),
     };
+    s.gate = gate.clone();
+    // Given up while the line was read: nothing more happens.
+    gate.check()?;
     // What waits from earlier comes first: the decision below has to see it.
     // Before playing it waits on when the cloud needs upgrading first.
     if !(launching && cloud.is_legacy().unwrap_or(false)) {
+        if !queued(&game.key).is_empty() {
+            gate.set_phase(Phase::Uploading);
+        }
         if let Err(e) = flush(cloud, &mut s.line, Some(game)) {
             if must_wait(&e) {
                 return offline(ctx, game, trigger, e);
             }
             return Err(e);
         }
+        gate.check()?;
+        gate.set_phase(Phase::Checking);
     }
-    let local = snapshot::local_state(game)?;
+    let local = s.local()?;
     let st = state::game(&game.key);
     let seen = with_queue(&s.line.view, &s.line.place, &game.key);
     let loc = local_of(&local, &st);
-    let action = decide::decide(&loc, &seen);
+    let mut action = decide::decide(&loc, &seen);
+    if game.backup_only() && resolution == Resolution::Auto {
+        action = backup_only(&game.key, action, &loc, &seen);
+    }
+    if crate::bind::has_wgs(&game.bind) && resolution == Resolution::Auto {
+        action = not_into_containers(&game.key, action);
+    }
+    if resolution == Resolution::Auto {
+        action = not_too_new(game, action, &seen, &local);
+    }
     let device = ctx.device();
 
     let outcome = match (action, resolution) {
@@ -1084,7 +1845,7 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
                 bail!(crate::tr!("云端还没有这个游戏的存档", "The cloud has no saves of this game yet"));
             };
             let pulled = s.pull(&local, &target)?;
-            s.make_current(&target, Trigger::Restore)?;
+            s.make_current(&target, Trigger::Restore, launching)?;
             pulled
         }
         (_, Resolution::UseLocal) => {
@@ -1093,6 +1854,7 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
             }
             let Action::Push { bases, parent } = decide::settle(&loc, &seen) else { return Ok(Outcome::NothingToSave) };
             let comment = crate::tr!("冲突时选择保留本地存档", "Kept this PC's saves in a conflict");
+            let local = s.over_all(local)?;
             s.push(&local, Shot { bases, parent, trigger: Some(Trigger::SyncNow), comment, ..Shot::default() }, launching)?
         }
         (Action::Pull { id }, Resolution::Auto) => s.pull(&local, &id)?,
@@ -1104,6 +1866,7 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
     // (which version it is at) is then true, and a cloud nobody has used
     // yet gets its layout before anything else is written to it.
     if !launching {
+        gate.set_phase(Phase::Uploading);
         best_effort_housekeeping(ctx, cloud, game);
         // An index that didn't cover the line is written again for the next
         // device (an upload has done that already).
@@ -1118,6 +1881,56 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
         }
     }
     Ok(outcome)
+}
+
+/// What a sync that nobody chose for does with a game whose saves Steam
+/// Cloud keeps ([`GameEntry::backup_only`], docs/plan-v2.md, section 8.2):
+/// Steam decides which saves are current, Ludonimbus keeps their history,
+/// and writes nothing into the game's saves by itself.
+///
+/// - A newer version in the cloud is left there: Steam Cloud brings that
+///   progress, and once the saves here are the same, [`Action::Adopt`]
+///   marks them synced.
+/// - Saves here that differ from what the cloud has are uploaded as the
+///   newest version, on top of every newest one, without a question.
+///
+/// What the user asks for (a version from the cloud, a restore) still is
+/// done: that is not decided here.
+fn backup_only(key: &str, action: Action, local: &Local, view: &LineView) -> Action {
+    match action {
+        Action::Pull { id } => {
+            log(format!("{key}: {id} in the cloud is newer; Steam Cloud keeps this game's saves, so nothing is written"));
+            Action::Nothing
+        }
+        Action::Conflict { .. } => {
+            log(format!("{key}: these saves differ from the cloud's; Steam Cloud decided they are current, so they are uploaded"));
+            decide::settle(local, view)
+        }
+        other => other,
+    }
+}
+
+/// What a sync that nobody chose for does with a version that keeps its
+/// saves in the Xbox app's containers ([`crate::bind::Codec::Wgs`],
+/// docs/plan-v2.md, section 6): writing into them is experimental (the Xbox
+/// app's own cloud sync may put its saves back), so it never happens by
+/// itself.
+///
+/// - A newer version in the cloud is left there; the game shows that the
+///   cloud has newer saves ([`check`]), and the user makes it current.
+/// - Everything else as for any game: an upload goes ahead, and saves here
+///   that went another way than the cloud's are a conflict the user settles.
+///
+/// What the user asks for (a version from the cloud, a restore, another
+/// line's save) is written; that is not decided here.
+fn not_into_containers(key: &str, action: Action) -> Action {
+    match action {
+        Action::Pull { id } => {
+            log(format!("{key}: {id} in the cloud is newer; it goes into the Xbox app's containers only when the user says so"));
+            Action::Nothing
+        }
+        other => other,
+    }
 }
 
 /// Compare local and cloud without changing anything.
@@ -1135,6 +1948,7 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
         last_sync_at: st.last_sync_at,
         pending: st.pending.len(),
         checked_at: Utc::now(),
+        too_new: None,
     };
     let local = match snapshot::local_state(game) {
         Ok(l) => l,
@@ -1159,16 +1973,38 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
             return report;
         }
     };
-    let view = match cloud.open(&game.key) {
-        Ok(l) => with_queue(&l.view, &l.place, &game.key),
+    let (line, view) = match cloud.open(&game.key) {
+        Ok(l) => {
+            let view = with_queue(&l.view, &l.place, &game.key);
+            (l, view)
+        }
         Err(e) => {
             report.status = if cloud::is_unavailable(&e) { Status::Offline } else { Status::Error };
             report.message = Some(format!("{e:#}"));
             return report;
         }
     };
+    // Another platform's files that go with the saves here, for a version
+    // that shares that platform's line through a rule. Nothing is fetched
+    // for a check.
+    let local = match with_carried(Some(cloud), game, Some((&line.place, &line.view)), false, local) {
+        Ok(l) => l,
+        Err(e) => {
+            report.status = if cloud::is_unavailable(&e) { Status::Offline } else { Status::Error };
+            report.message = Some(format!("{e:#}"));
+            return report;
+        }
+    };
+    report.local_hash = Some(local.hash.clone());
     report.snapshot_count = view.snapshots.len();
     report.head = view.heads.last().and_then(|&i| view.snapshots.get(i)).map(|s| SnapshotSummary::of(s, true));
+    if let Some(head) = &report.head {
+        // Only read when the rule says an older game can't load a newer save.
+        let here = crate::crosssaves::rule_for(game).filter(|r| r.newer_only).and_then(|_| crate::crosssaves::local_version(game, &local.files, &local.roots));
+        if too_new(game, here.as_deref(), &head.platform, head.game_version.as_deref()) {
+            report.too_new = head.game_version.clone();
+        }
+    }
     let loc = local_of(&local, &st);
     let action = decide::decide(&loc, &view);
     report.status = decide::Status::of(&action, &loc, &view).into();
@@ -1183,6 +2019,8 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
 /// history when not (the cloud has something newer, or there is a conflict
 /// to settle), so that keeping a save never decides anything for the user.
 pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let local = snapshot::local_state(game)?;
     if local.is_empty() {
         bail!(crate::tr!("没有找到「{}」的存档文件", "No save files of \"{}\" found", game.name));
@@ -1193,6 +2031,7 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
         Err(e) if cloud::is_unavailable(&e) => {
             // Not reachable: it waits in the queue, built on what this
             // device synced last.
+            let local = with_carried(None, game, None, false, local)?;
             let st = state::game(&game.key);
             let place = match &st.line {
                 Some(l) => Place { game: l.game.clone(), line: l.line.clone(), folders: l.folders.clone(), dirs: l.dirs.clone() },
@@ -1211,6 +2050,7 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
         Err(e) => return Err(e),
     };
     flush(cloud, &mut s.line, Some(game))?;
+    let local = with_carried(Some(cloud), game, Some((&s.line.place, &s.line.view)), true, local)?;
     let same = s.line.view.snapshots.iter().rev().find(|x| x.content_hash == local.hash).map(|x| x.id.clone());
     let outcome = if let Some(id) = same {
         ready_to_write(cloud, &mut s.line, Some(game))?;
@@ -1230,27 +2070,50 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
 
 /// Restore a specific snapshot and make it the newest version.
 pub fn restore(ctx: &Ctx, game: &GameEntry, id: &str) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
-    let local = snapshot::local_state(game)?;
+    let local = s.local()?;
     let pulled = s.pull(&local, id)?;
     // Make the restored content the head so the next sync keeps it.
-    Ok(s.make_current(id, Trigger::Restore)?.unwrap_or(pulled))
+    Ok(s.make_current(id, Trigger::Restore, false)?.unwrap_or(pulled))
+}
+
+/// What [`undo`] would take back: the last time saves of the cloud replaced
+/// the ones here, while the device is still at what they were replaced with.
+pub fn undoable(key: &str) -> Option<state::Replaced> {
+    let st = state::game(key);
+    st.replaced.filter(|r| st.last_synced_id.as_deref() == Some(r.now.as_str()))
+}
+
+/// Take back the last time saves of the cloud replaced the ones here (a
+/// sync that brought another device's progress, "make current"): the saves
+/// that were here are current again, as with [`restore`] of the version
+/// that holds them. What is here now is kept the same way, so undoing can
+/// itself be undone.
+pub fn undo(ctx: &Ctx, game: &GameEntry) -> Result<Outcome> {
+    let Some(r) = undoable(&game.key) else {
+        bail!(crate::tr!("没有可以撤销的更改", "There is nothing to undo"));
+    };
+    restore(ctx, game, &r.back)
 }
 
 /// Change a game's saves from outside a sync (the save library's "apply
 /// to…"): keep the current saves in the cloud first (a pre-restore version),
 /// run `change`, then upload the result as the newest version.
 pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game))?;
-    if let Ok(local) = snapshot::local_state(game) {
+    if let Ok(local) = s.local() {
         s.protect(&local, Trigger::PreRestore)?;
     }
     change()?;
-    let after = snapshot::local_state(game)?;
+    let after = s.local()?;
     if after.is_empty() {
         bail!(crate::tr!("应用后没有找到「{}」的存档文件", "No save files of \"{}\" found after applying", game.name));
     }
@@ -1338,6 +2201,33 @@ pub fn export_snapshot(ctx: &Ctx, game: &GameEntry, id: &str, dest: &std::path::
 
 // ----------------------------------------------------------------- save lines
 
+/// Upload what waits for the cloud to the line the game follows now: the
+/// first step of following another one.
+pub(crate) fn flush_queue(cloud: &Cloud, game: &GameEntry) -> Result<()> {
+    let mut line = cloud.open(&game.key)?;
+    flush(cloud, &mut line, Some(game))?;
+    Ok(())
+}
+
+/// Forget what this device synced of the game: on the line it follows from
+/// here on it has synced nothing yet.
+pub(crate) fn start_over(key: &str) -> Result<()> {
+    state::update_game(key, |g| {
+        g.last_synced_id = None;
+        g.last_synced_hash = None;
+        g.last_synced_vv = Vv::new();
+        g.last_synced_device = None;
+        g.last_sync_at = None;
+        g.counter = 0;
+        g.line = None;
+        g.conflict = None;
+        g.last_error = None;
+        g.replaced = None;
+    })?;
+    remember_base(key, None);
+    Ok(())
+}
+
 /// A save line a game on this device can follow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1352,6 +2242,20 @@ pub struct LineInfo {
     pub current: bool,
     /// The devices on it, by name, as far as each has told the cloud.
     pub devices: Vec<String>,
+    /// The same, one for each version of the game a device has on it.
+    pub members: Vec<LineMember>,
+}
+
+/// One version of a game on one device, on a save line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineMember {
+    pub device: String,
+    /// [`platform`]; empty when the device hasn't said (a record written
+    /// before it did).
+    pub platform: String,
+    /// It is this device.
+    pub here: bool,
 }
 
 /// Which save line a game follows on this device (docs/plan-v2.md,
@@ -1376,30 +2280,129 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
     let known = cloud.lines_of(&game.key)?;
     let devices = cloud.list_devices().unwrap_or_default();
     let (own_id, own_name) = ctx.device();
+    let me = || LineMember { device: own_name.to_string(), platform: platform(game), here: true };
+    // A device with two versions of the game on one line is named once.
+    let names = |members: &[LineMember]| {
+        let mut out: Vec<String> = Vec::new();
+        for m in members {
+            if !out.contains(&m.device) {
+                out.push(m.device.clone());
+            }
+        }
+        out
+    };
     let mut out: Vec<LineInfo> = known
         .iter()
         .map(|l| {
             let current = l.path == here.dir();
             // This device's own record may be hours old: it is where the
             // game says it is.
-            let mut on: Vec<String> =
-                devices.iter().filter(|d| d.id != own_id && d.installs.iter().any(|i| i.dir == l.path)).map(|d| d.name.clone()).collect();
+            let mut members: Vec<LineMember> = devices
+                .iter()
+                .filter(|d| d.id != own_id)
+                .flat_map(|d| d.installs.iter().filter(|i| i.dir == l.path).map(|i| LineMember { device: d.name.clone(), platform: i.platform.clone(), here: false }))
+                .collect();
             if current {
-                on.push(own_name.to_string());
+                members.push(me());
             }
-            LineInfo { id: l.id.clone(), name: l.name.clone().unwrap_or_default(), shared: l.scope != v2::SCOPE_INDEPENDENT, current, devices: on }
+            members.dedup();
+            LineInfo { id: l.id.clone(), name: l.name.clone().unwrap_or_default(), shared: l.scope != v2::SCOPE_INDEPENDENT, current, devices: names(&members), members }
         })
         .collect();
     out.sort_by_key(|l| !l.shared);
     if !out.iter().any(|l| l.shared) {
         let current = here.line == library::MAIN_LINE && !out.iter().any(|l| l.current);
-        let devices = if current { vec![own_name.to_string()] } else { Vec::new() };
-        out.insert(0, LineInfo { id: library::MAIN_LINE.to_string(), name: String::new(), shared: true, current, devices });
+        let members = if current { vec![me()] } else { Vec::new() };
+        out.insert(0, LineInfo { id: library::MAIN_LINE.to_string(), name: String::new(), shared: true, current, devices: names(&members), members });
     }
     if !out.iter().any(|l| l.current) {
-        out.push(LineInfo { id: here.line.clone(), name: own_name.to_string(), shared: false, current: true, devices: vec![own_name.to_string()] });
+        out.push(LineInfo { id: here.line.clone(), name: own_name.to_string(), shared: false, current: true, devices: vec![own_name.to_string()], members: vec![me()] });
     }
     Ok(out)
+}
+
+/// The newest version of a save line of the game that this device does
+/// not follow.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OtherSave {
+    /// [`LineInfo::id`].
+    pub line: String,
+    /// What a device called the line it keeps to itself; empty for the
+    /// shared line.
+    pub name: String,
+    pub shared: bool,
+    pub snapshot: SnapshotSummary,
+}
+
+/// The newest version of every other save line the game could follow
+/// ([`lines`]): the shared one when this device keeps its saves to itself,
+/// and the lines other devices keep. What [`take_from`] can bring here.
+/// Each line costs what opening a line costs (a listing, and its index
+/// when the listing is new to this device). A line that has forked, or has
+/// nothing yet, is left out.
+pub fn other_saves(ctx: &Ctx, game: &GameEntry) -> Result<Vec<OtherSave>> {
+    let cloud = ctx.cloud()?;
+    let mut out = Vec::new();
+    for (line, place) in cloud.other_lines(&game.key)? {
+        let view = cloud.peek(&place)?;
+        let Some(head) = view.head() else { continue };
+        out.push(OtherSave {
+            line: line.id.clone(),
+            name: line.name.clone().unwrap_or_default(),
+            shared: line.scope != v2::SCOPE_INDEPENDENT,
+            snapshot: SnapshotSummary::of(head, true),
+        });
+    }
+    Ok(out)
+}
+
+/// Make a version of another save line of the game the progress here
+/// (docs/plan-v2.md, section 9: "copy"). The saves here are kept beside the
+/// history first, then replaced by that version, and the result is the
+/// newest version of the line this device follows; the line it came from
+/// stays as it is. The new version says where it came from.
+pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
+    let cloud = ctx.cloud()?;
+    let mut s = Session::open(ctx, cloud, game)?;
+    flush(cloud, &mut s.line, Some(game))?;
+    let Some((_, place)) = cloud.other_lines(&game.key)?.into_iter().find(|(l, _)| l.id == line) else {
+        bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
+    };
+    let view = cloud.peek(&place)?;
+    let target = view.get(id).cloned().ok_or_else(|| anyhow!(crate::tr!("云端找不到这个版本", "This version wasn't found in the cloud")))?;
+    if !target.unsupported().is_empty() {
+        bail!(crate::tr!(
+            "这个版本是更新版本的 Ludonimbus 存的，这台设备上的 Ludonimbus 需要先更新",
+            "This version was saved by a newer Ludonimbus. Update Ludonimbus on this device first"
+        ));
+    }
+    let local = s.local()?;
+    let back = s.protect(&local, Trigger::PreRestore)?;
+    let manifest = saves::manifest(cloud.files(), &place, &view, id)?;
+    let all = SnapshotMeta::of(&manifest, &game.key, None).files;
+    crate::join::no_place(game, &all)?;
+    let files = crate::join::held(game, &all);
+    let only: Option<Vec<String>> = (files.len() != all.len()).then(|| files.iter().map(|f| f.path.clone()).collect());
+    let work = paths::staging_dir().join(format!("take-{id}"));
+    let _ = std::fs::remove_dir_all(&work);
+    let dir = work.join("files");
+    let result = saves::fetch(cloud.files(), &place, &view, &manifest, only.as_deref(), &dir, &work.join("packs")).and_then(|_| snapshot::apply_dir(&dir, &files, game));
+    let _ = std::fs::remove_dir_all(&work);
+    result?;
+    log(format!("{}: took {id} of the line {line} ({})", game.key, target.device_name));
+    let after = s.local()?;
+    let loc = local_of(&after, &state::game(&game.key));
+    let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
+    let origin = Origin { game: place.game.clone(), line: place.line.clone(), snapshot: id.to_string(), how: "copy".to_string(), extra: v2::Extra::new() };
+    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), origin: Some(origin), ..Shot::default() }, false)?;
+    if let Outcome::Uploaded { id: made } | Outcome::Queued { id: made, .. } = &outcome {
+        note_replaced(&game.key, back, made, &target.device_name);
+    }
+    best_effort_housekeeping(ctx, cloud, game);
+    Ok(outcome)
 }
 
 fn set_line(key: &str, line: &str) -> Result<()> {
@@ -1431,6 +2434,8 @@ fn set_line(key: &str, line: &str) -> Result<()> {
 /// (`Independent` with one), and settles the choice: the device's default
 /// no longer applies to this game.
 pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outcome> {
+    let _lock = lock_game(&game.key, &Gate::default())?;
+    let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let key = game.key.as_str();
     let from = cloud.following(key);
@@ -1440,12 +2445,14 @@ pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outco
         LineChoice::Follow { line } => line.clone(),
     };
     let staying = to == from;
-    let local = snapshot::local_state(game)?;
+    let mut local = snapshot::local_state(game)?;
     // Where the saves here come from, and what they can share content with.
     let mut carried: (Option<Origin>, Option<Manifest>) = (None, None);
     if !staying {
         let mut old = cloud.open(key)?;
         flush(cloud, &mut old, Some(game))?;
+        // Another platform's files go along to the line it continues on.
+        local = with_carried(Some(cloud), game, Some((&old.place, &old.view)), true, local)?;
         if to != library::MAIN_LINE && !matches!(choice, LineChoice::Independent { .. }) && !cloud.lines_of(key)?.iter().any(|l| l.id == to) {
             bail!(crate::tr!("云端没有这条存档线", "The cloud doesn't have this save line"));
         }
@@ -1463,18 +2470,7 @@ pub fn use_line(ctx: &Ctx, game: &GameEntry, choice: LineChoice) -> Result<Outco
     cloud.follow(key, &to);
     if !staying {
         // On the other line this device has synced nothing yet.
-        state::update_game(key, |g| {
-            g.last_synced_id = None;
-            g.last_synced_hash = None;
-            g.last_synced_vv = Vv::new();
-            g.last_synced_device = None;
-            g.last_sync_at = None;
-            g.counter = 0;
-            g.line = None;
-            g.conflict = None;
-            g.last_error = None;
-        })?;
-        remember_base(key, None);
+        start_over(key)?;
         log(format!("{key}: follows the save line {to} now (was {from})"));
     }
     let game = &GameEntry { line: Some(to), ..game.clone() };

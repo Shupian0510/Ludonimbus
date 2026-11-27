@@ -13,7 +13,8 @@
 //!
 //! - [`plan`] (pure) decides which files of a new snapshot go into which new
 //!   pack and which are referenced from the packs of the base, the snapshot
-//!   this device synced last.
+//!   this device synced last. Alongside an upload it also takes the files
+//!   still in use out of a pack that is mostly dead weight ([`PACK_SIZES`]).
 //! - [`upload`] builds the new packs as zips ([`build`]) and uploads them.
 //!   The caller then writes the manifest ([`super::line::write_manifest`]):
 //!   that is what makes the snapshot exist.
@@ -55,6 +56,17 @@ pub const GRACE_DAYS: i64 = 7;
 /// is given. [`verify`] relies on it: the packs a device has just uploaded
 /// for a snapshot it has just made need no second look.
 const FRESH_HOURS: i64 = 24;
+
+/// The manifest field (an extension, docs/plan-v2.md section 3.9) that says
+/// how many bytes each pack a snapshot uses holds, before compression and
+/// with the files no snapshot uses any more: what [`plan`] goes by to see
+/// that a pack is mostly dead weight. Written for large saves only, and
+/// only for the packs whose size is known.
+pub const PACK_SIZES: &str = "packSizes";
+
+/// The packs a snapshot uses may hold this many times its content before
+/// the next upload tidies up.
+const REPACK_ABOVE: u64 = 2;
 
 /// From this size on a zip entry is written with 64-bit sizes. A little
 /// below 4 GiB, because a file that doesn't compress grows slightly.
@@ -128,6 +140,9 @@ pub struct Plan {
     /// The manifest's `files`, sorted by path, each saying where its content
     /// is.
     pub files: Vec<FileRef>,
+    /// For the manifest's [`PACK_SIZES`]: what every pack the snapshot uses
+    /// holds, as far as known. Empty for a save uploaded whole.
+    pub sizes: BTreeMap<String, u64>,
 }
 
 impl Plan {
@@ -153,6 +168,13 @@ impl Plan {
 ///   paths, a pack being closed when the next file would take it past
 ///   `split_above`. Every file is whole in one pack; a file larger than the
 ///   limit is alone in its pack.
+/// - Tidying up: when the packs the snapshot would use hold more than twice
+///   its content (the base says what each holds, [`PACK_SIZES`]), the
+///   files still taken from the pack with the most dead weight are packed
+///   anew, so that the pack can go once the older snapshots do. Only
+///   alongside an upload (a snapshot that brings nothing new stays a
+///   manifest alone), and never more than the upload itself, or
+///   `full_below` when that is more.
 ///
 /// The result depends on nothing but the arguments, not even on the order of
 /// `local` (which holds each path once).
@@ -160,21 +182,30 @@ pub fn plan(id: &str, local: &[LocalFile], base: Option<&Manifest>, policy: &Pol
     let mut sorted: Vec<&LocalFile> = local.iter().collect();
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
     let total = sorted.iter().fold(0u64, |sum, f| sum.saturating_add(f.size));
+    let large = total > policy.full_below;
 
     // What may be referenced: only what the base itself uses, because that is
     // all the cloud is known to keep for this device.
+    let base = base.filter(|b| large && can_reference(b));
     let kept: BTreeMap<&str, (&FileRef, &str)> = match base {
-        Some(b) if total > policy.full_below && can_reference(b) => {
-            b.files.iter().map(|f| (f.path.as_str(), (f, pack_of(b, f)))).collect()
-        }
-        _ => BTreeMap::new(),
+        Some(b) => b.files.iter().map(|f| (f.path.as_str(), (f, pack_of(b, f)))).collect(),
+        None => BTreeMap::new(),
     };
+    // The files that are as the base has them, and the pack each is in.
+    let mut borrowed: BTreeMap<&str, &str> = sorted
+        .iter()
+        .filter_map(|f| {
+            let (b, pack) = kept.get(f.path.as_str())?;
+            (b.size == f.size && b.hash == f.hash).then_some((f.path.as_str(), *pack))
+        })
+        .collect();
+    let known = base.map(pack_sizes).unwrap_or_default();
+    repack(&sorted, &mut borrowed, &known, total, policy);
 
     let mut plan = Plan::default();
     for f in sorted {
-        let unchanged = kept.get(f.path.as_str()).filter(|(b, _)| b.size == f.size && b.hash == f.hash);
-        let pack = match unchanged {
-            Some((_, pack)) => Some(pack.to_string()),
+        let pack = match borrowed.get(f.path.as_str()) {
+            Some(pack) => Some(pack.to_string()),
             None => {
                 let full = plan.packs.last().is_none_or(|p| p.size.saturating_add(f.size) > policy.split_above);
                 if full {
@@ -199,7 +230,66 @@ pub fn plan(id: &str, local: &[LocalFile], base: Option<&Manifest>, policy: &Pol
             extra: Extra::new(),
         });
     }
+    if large {
+        plan.sizes = plan.packs.iter().map(|p| (p.id.clone(), p.size)).collect();
+        for pack in borrowed.values() {
+            if let Some(size) = known.get(*pack) {
+                plan.sizes.insert(pack.to_string(), *size);
+            }
+        }
+    }
     plan
+}
+
+/// What a manifest says its packs hold ([`PACK_SIZES`]).
+fn pack_sizes(manifest: &Manifest) -> BTreeMap<String, u64> {
+    let sizes = manifest.extra.get(PACK_SIZES).and_then(|v| v.as_object());
+    sizes.map(|m| m.iter().filter_map(|(pack, size)| Some((pack.clone(), size.as_u64()?))).collect()).unwrap_or_default()
+}
+
+/// The tidying up of [`plan`]: while the packs the snapshot would use hold
+/// more than [`REPACK_ABOVE`] times its content, stop taking files from the
+/// pack with the most dead weight (they are packed anew with the rest). A
+/// pack is only given up when it holds more than that many times what is
+/// still taken from it: sending 3 MB again to get rid of 1 is no gain.
+/// `known` says what a pack holds; one it doesn't name counts as holding
+/// just what is taken from it.
+fn repack<'a>(sorted: &[&'a LocalFile], borrowed: &mut BTreeMap<&'a str, &'a str>, known: &BTreeMap<String, u64>, total: u64, policy: &Policy) {
+    let size_of: BTreeMap<&str, u64> = sorted.iter().map(|f| (f.path.as_str(), f.size)).collect();
+    let taken = |borrowed: &BTreeMap<&'a str, &'a str>| {
+        let mut per_pack: BTreeMap<&'a str, u64> = BTreeMap::new();
+        for (path, pack) in borrowed {
+            let n = per_pack.entry(*pack).or_default();
+            *n = n.saturating_add(size_of.get(path).copied().unwrap_or(0));
+        }
+        per_pack
+    };
+    let fresh = total.saturating_sub(taken(borrowed).values().sum());
+    if fresh == 0 {
+        return;
+    }
+    let mut budget = fresh.max(policy.full_below);
+    loop {
+        let per_pack = taken(borrowed);
+        let live: u64 = per_pack.values().sum();
+        let held = per_pack.iter().fold(total.saturating_sub(live), |sum, (pack, used)| sum.saturating_add(known.get(*pack).copied().unwrap_or(*used).max(*used)));
+        if held <= total.saturating_mul(REPACK_ABOVE) {
+            return;
+        }
+        // Of the packs that are themselves mostly dead weight, the one with
+        // the most first; among equals the same one every time.
+        let worst = per_pack
+            .iter()
+            .filter(|(_, used)| **used <= budget)
+            .filter_map(|(pack, used)| {
+                let holds = *known.get(*pack)?;
+                (holds > used.saturating_mul(REPACK_ABOVE)).then(|| (holds - *used, *pack, *used))
+            })
+            .max();
+        let Some((_, pack, used)) = worst else { return };
+        borrowed.retain(|_, p| *p != pack);
+        budget -= used;
+    }
 }
 
 /// Whether a new snapshot may point into the packs of `base`. A 0.6 snapshot
@@ -742,6 +832,79 @@ mod tests {
         // The same hash with another size is not the same file.
         let odd = [file("saves/a", 5 * KIB, "ha")];
         assert_eq!(refs(&plan("S5", &odd, Some(&base), &POLICY)), [("saves/a", None)]);
+    }
+
+    /// A base that takes 1 KiB from the pack `S1` (which holds `s1` bytes)
+    /// and 3 + 1 KiB from its own, and says what its packs hold.
+    fn wasteful_base(a: u64, s1: Option<u64>) -> Manifest {
+        let mut base = manifest(
+            "S2",
+            vec![
+                FileRef { path: "saves/a".into(), size: a, hash: "ha".into(), pack: Some("S1".into()), ..Default::default() },
+                FileRef { path: "saves/b".into(), size: 3 * KIB, hash: "hb".into(), ..Default::default() },
+                FileRef { path: "saves/c".into(), size: KIB, hash: "hc".into(), ..Default::default() },
+            ],
+        );
+        let mut sizes = serde_json::json!({ "S2": 4 * KIB });
+        if let Some(s1) = s1 {
+            sizes["S1"] = s1.into();
+        }
+        base.extra.insert(PACK_SIZES.into(), sizes);
+        base
+    }
+
+    #[test]
+    fn a_pack_that_is_mostly_dead_weight_is_packed_anew_alongside_an_upload() {
+        let base = wasteful_base(KIB, Some(10 * KIB));
+        let changed = [file("saves/a", KIB, "ha"), file("saves/b", 3 * KIB, "hb"), file("saves/c", KIB, "new")];
+        // 1 KiB new, 10 + 4 KiB of packs for 5 KiB of saves: the file still
+        // taken from `S1` goes into the new pack, and `S1` is used no more.
+        let p = plan("S3", &changed, Some(&base), &POLICY);
+        assert_eq!(refs(&p), [("saves/a", None), ("saves/b", Some("S2")), ("saves/c", None)]);
+        assert_eq!(p.packs, vec![NewPack { id: "S3".into(), files: vec!["saves/a".into(), "saves/c".into()], size: 2 * KIB }]);
+        assert_eq!(p.sizes, BTreeMap::from([("S2".to_string(), 4 * KIB), ("S3".to_string(), 2 * KIB)]));
+        // The same answer in whatever order the files come.
+        let mut turned = changed.clone();
+        turned.reverse();
+        assert_eq!(plan("S3", &turned, Some(&base), &POLICY), p);
+
+        // Within twice the content nothing is packed anew.
+        let fine = wasteful_base(KIB, Some(5 * KIB));
+        let p = plan("S3", &changed, Some(&fine), &POLICY);
+        assert_eq!(refs(&p), [("saves/a", Some("S1")), ("saves/b", Some("S2")), ("saves/c", None)]);
+        assert_eq!(p.sizes, BTreeMap::from([("S1".to_string(), 5 * KIB), ("S2".to_string(), 4 * KIB), ("S3".to_string(), KIB)]));
+
+        // A pack nobody said the size of counts as holding what is taken
+        // from it: left alone, and not named in the new manifest either.
+        let unknown = wasteful_base(KIB, None);
+        let p = plan("S3", &changed, Some(&unknown), &POLICY);
+        assert_eq!(refs(&p), [("saves/a", Some("S1")), ("saves/b", Some("S2")), ("saves/c", None)]);
+        assert_eq!(p.sizes, BTreeMap::from([("S2".to_string(), 4 * KIB), ("S3".to_string(), KIB)]));
+
+        // Nothing new (a restore, a copy): a manifest alone, however much
+        // dead weight there is.
+        let same = [file("saves/a", KIB, "ha"), file("saves/b", 3 * KIB, "hb"), file("saves/c", KIB, "hc")];
+        let p = plan("S3", &same, Some(&base), &POLICY);
+        assert!(p.packs.is_empty());
+        assert_eq!(refs(&p), [("saves/a", Some("S1")), ("saves/b", Some("S2")), ("saves/c", Some("S2"))]);
+        assert_eq!(p.sizes, BTreeMap::from([("S1".to_string(), 10 * KIB), ("S2".to_string(), 4 * KIB)]));
+
+        // Never more on the side than the upload itself, or than a small
+        // save is: 6 KiB still taken from the wasteful pack stay there. And
+        // the other pack, a quarter of it dead, is not worth sending again.
+        let heavy = wasteful_base(6 * KIB, Some(40 * KIB));
+        let changed = [file("saves/a", 6 * KIB, "ha"), file("saves/b", 3 * KIB, "hb"), file("saves/c", KIB, "new")];
+        let p = plan("S3", &changed, Some(&heavy), &POLICY);
+        assert_eq!(refs(&p), [("saves/a", Some("S1")), ("saves/b", Some("S2")), ("saves/c", None)]);
+        // With an upload of that size it goes along.
+        let changed = [file("saves/a", 6 * KIB, "ha"), file("saves/b", 3 * KIB, "new"), file("saves/c", 3 * KIB, "new")];
+        let p = plan("S3", &changed, Some(&heavy), &POLICY);
+        assert!(refs(&p).iter().all(|(_, pack)| pack.is_none_or(|p| p.starts_with("S3"))), "{:?}", refs(&p));
+        let own: BTreeSet<&str> = p.packs.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(p.sizes.keys().map(String::as_str).collect::<BTreeSet<_>>(), own);
+
+        // A save uploaded whole says nothing about its packs.
+        assert!(plan("S1", &[file("saves/a", KIB, "ha")], None, &POLICY).sizes.is_empty());
     }
 
     #[test]

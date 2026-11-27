@@ -1,10 +1,11 @@
-// The version history of a game's cloud saves, shown in a Steam dialog when
-// the Ludonimbus status item is clicked. Restoring runs in the Ludonimbus app;
-// the play bar follows its progress like any other sync.
+// The saves of a game in the cloud, shown in a Steam dialog when the
+// Ludonimbus status item is clicked, in the app's words: "current", "kept",
+// "make current". Making one current runs in the Ludonimbus app; the play bar
+// follows its progress like any other sync.
 
 import { DialogBody, DialogButton, DialogButtonPrimary, DialogFooter, DialogHeader, ModalRoot, showModal } from 'millennium';
 import { useEffect, useState } from 'react';
-import { bytes, dateTime, parseReply, Snapshot, SnapshotList, t } from './status';
+import { bytes, dateTime, parseReply, Snapshot, SnapshotList, StoreState, t } from './status';
 
 type Load = { state: 'loading' } | { state: 'error'; message: string } | { state: 'ok'; list: SnapshotList };
 
@@ -18,6 +19,7 @@ function errorMessage(reply: unknown): string | null {
 function Row({
 	s,
 	list,
+	steamToo,
 	confirming,
 	onRestore,
 	onConfirm,
@@ -25,6 +27,8 @@ function Row({
 }: {
 	s: Snapshot;
 	list: SnapshotList;
+	/** Steam Cloud syncs the game as well. */
+	steamToo: boolean;
 	confirming: boolean;
 	onRestore: () => void;
 	onConfirm: () => void;
@@ -42,7 +46,7 @@ function Row({
 						{s.deviceName}
 						{s.deviceId === list.deviceId ? m.thisPc : ''}
 					</span>
-					{isHead && <span className="ludonimbus-tag">{m.latest}</span>}
+					{isHead && !isCurrent && <span className="ludonimbus-tag">{m.latest}</span>}
 					{isCurrent && <span className="ludonimbus-tag ludonimbus-tag-blue">{m.current}</span>}
 					{s.locked && <span className="ludonimbus-tag">{m.locked}</span>}
 				</div>
@@ -53,7 +57,8 @@ function Row({
 				{confirming && (
 					<div className="ludonimbus-version-confirm">
 						<div>
-							<b>{m.restoreTitle}</b> {m.restoreText(s.deviceName, dateTime(s.createdAt))} {m.restoreSafe}
+							<b>{m.restoreTitle}</b> {m.restoreText(s.deviceName, dateTime(s.createdAt))}
+							{steamToo ? ` ${m.restoreSteam}` : ''}
 						</div>
 						<div className="ludonimbus-version-actions">
 							<DialogButtonPrimary onClick={onConfirm}>{m.confirmRestore}</DialogButtonPrimary>
@@ -74,11 +79,13 @@ function Row({
 function VersionsDialog({
 	gameKey,
 	name,
+	store,
 	closeModal,
 	onStarted,
 }: {
 	gameKey: string;
 	name: string;
+	store: StoreState | null;
 	closeModal?: () => void;
 	onStarted: () => void;
 }) {
@@ -140,6 +147,7 @@ function VersionsDialog({
 								key={s.id}
 								s={s}
 								list={list}
+								steamToo={store === 'backup'}
 								confirming={confirm === s.id}
 								onRestore={() => setConfirm(s.id)}
 								onConfirm={() => !working && restore(s.id)}
@@ -170,9 +178,9 @@ function VersionsDialog({
 	);
 }
 
-/** Show the version history over the given Steam window. */
-export function showVersions(win: Window | null, gameKey: string, name: string, onStarted: () => void): void {
-	showModal(<VersionsDialog gameKey={gameKey} name={name} onStarted={onStarted} />, win ?? window, {
+/** Show the saves over the given Steam window. */
+export function showVersions(win: Window | null, gameKey: string, name: string, store: StoreState | null, onStarted: () => void): void {
+	showModal(<VersionsDialog gameKey={gameKey} name={name} store={store} onStarted={onStarted} />, win ?? window, {
 		strTitle: t().versionsTitle(name),
 		bNeverPopOut: true,
 	});

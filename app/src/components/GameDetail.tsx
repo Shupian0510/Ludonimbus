@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, SaveCandidate, StatusReport } from "../api";
+import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, playtimePlatforms, SaveCandidate, StatusReport } from "../api";
 import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
@@ -11,10 +11,11 @@ import { PlatformFolders } from "./PlatformFolders";
 import { StatusBadge } from "./Library";
 import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
-import { Badge, Button, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
-import { Versions } from "./Versions";
-import { ApplyDialog, familyOf, VersionBar } from "./SaveLibrary";
+import { Saves } from "./Saves";
+import { ApplyDialog, familyOf, JoinRow, UndoRow, VersionBar } from "./SaveLibrary";
+import { handBack, StorePanel, TakeOverDialog } from "./SteamCloud";
 import { GameAchievements } from "./Achievements";
 
 type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
@@ -61,7 +62,7 @@ export function GameDetail({
   useEffect(() => {
     const target = sceneIs("game-files")
       ? () => document.getElementById("game-backup")
-      : sceneIs("game-screenshots", "game-achievements")
+      : sceneIs("game-screenshots", "game-achievements", "versions")
         ? () => document.querySelector(".detail-body .tabs")
         : null;
     if (!target) return;
@@ -78,7 +79,7 @@ export function GameDetail({
   const [versionsKey, setVersionsKey] = useState(0);
   const [heroFailed, setHeroFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
-  const [dialog, setDialog] = useState<"art" | "steam" | null>(sceneIs("art-picker") ? "art" : null);
+  const [dialog, setDialog] = useState<"art" | "steam" | "takeover" | null>(sceneIs("art-picker") ? "art" : null);
   useEffect(() => setHeroFailed(false), [game.art.hero]);
   useEffect(() => setLogoFailed(false), [game.art.logo]);
 
@@ -111,6 +112,12 @@ export function GameDetail({
   };
 
   const syncNow = (res: "auto" | "local" | "cloud" = "auto") => run(() => api.sync(game.key, res), after);
+
+  /** The cloud's saves replace the ones here: into the Xbox app's containers only once the user has read that it is experimental. */
+  const takeCloud = async () => {
+    if (game.xboxContainers && !(await ui.confirm({ title: g.useCloud, text: t.saves.xboxNote, confirm: g.useCloud }))) return;
+    await syncNow("cloud");
+  };
 
   const backupNow = async () => {
     const comment = await ui.prompt({
@@ -274,11 +281,16 @@ export function GameDetail({
               </p>
             </div>
             <div className="conflict-actions">
-              <Button kind="primary" onClick={() => syncNow("cloud")}>
+              <Button kind="primary" onClick={takeCloud}>
                 {g.useCloud}
               </Button>
               <Button onClick={() => syncNow("local")}>{g.useLocal}</Button>
             </div>
+          </div>
+        )}
+        {check?.tooNew && check.status === "cloudNewer" && (
+          <div className="banner banner-info">
+            <Icon name="warn" /> {g.tooNew(check.tooNew)} <Hint text={g.tooNewHint} />
           </div>
         )}
         {check?.message && check.status !== "conflict" && (
@@ -300,8 +312,7 @@ export function GameDetail({
           <div className="banner banner-info not-here">
             <Icon name="locate" />
             <div>
-              <b>{!game.exe ? g.notHere.noExe : !game.exeExists ? g.notHere.moved : g.notHere.noFile}</b>
-              <p>{g.notHere.hint}</p>
+              <b>{!game.exe ? g.notHere.noExe : !game.exeExists ? g.notHere.moved : g.notHere.noFile}</b> <Hint text={g.notHere.hint} />
             </div>
             <Button small onClick={findExe}>
               {g.findAuto}
@@ -313,8 +324,7 @@ export function GameDetail({
           <div className="banner banner-info not-here">
             <Icon name="transfer" />
             <div>
-              <b>{t.savelib.newerTitle(newer.label)}</b>
-              <p>{t.savelib.newerText(newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))}</p>
+              <b>{t.savelib.newerTitle(newer.label)}</b> <Hint text={t.savelib.newerText(newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))} />
             </div>
             <Button small kind="primary" onClick={() => setApplyNewer(true)}>
               {t.savelib.applyHere}
@@ -347,59 +357,73 @@ export function GameDetail({
           />
         )}
 
-        <VersionBar overview={overview} current={game.key} onOpen={onOpen} onChanged={onChanged} />
+        <VersionBar
+          overview={overview}
+          current={game.key}
+          disabled={game.running}
+          onOpen={onOpen}
+          onChanged={() => after()}
+          onEditSaves={() => {
+            setTab("config");
+            setTimeout(() => document.querySelector(".detail-body .tabs")?.scrollIntoView({ block: "start" }), 0);
+          }}
+          store={game.store ? { onTakeOver: () => setDialog("takeover"), onHandBack: () => handBack(ui, game, () => after()) } : undefined}
+        />
+        <UndoRow game={game} onChanged={() => after()} />
+        {overview.cloud.kind !== "none" && !game.joined && <JoinRow key={game.key} gameKey={game.key} name={game.name} disabled={game.running} onChanged={() => after()} />}
 
         <div className="cards2">
-          <section className="panel">
-            <div className="panel-head">
-              <Icon name="steam" />
-              <h3>{g.steamTitle}</h3>
-              {game.steam && (
-                <Toggle
-                  checked={game.steam.enabled}
-                  onChange={(v) =>
-                    steamAction(
-                      (close) => api.steamSetEnabled(game.key, v, close),
-                      v ? msg().game.steamOn : msg().game.steamOff,
-                    )
-                  }
-                />
+          {game.store && <StorePanel game={game} onChanged={() => after()} onTakeOver={() => setDialog("takeover")} />}
+          {!game.store && (
+            <section className="panel">
+              <div className="panel-head">
+                <Icon name="steam" />
+                <h3>{g.steamTitle}</h3>
+                {game.steam ? (
+                  <Hint text={g.steamHint} />
+                ) : (
+                  game.health.state !== "noSteam" && <Hint text={game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe} />
+                )}
+                {game.steam && (
+                  <Toggle
+                    checked={game.steam.enabled}
+                    onChange={(v) =>
+                      steamAction(
+                        (close) => api.steamSetEnabled(game.key, v, close),
+                        v ? msg().game.steamOn : msg().game.steamOff,
+                      )
+                    }
+                  />
+                )}
+              </div>
+              <p className={`health health-${health.tone}`}>{health.text}</p>
+              {health.fixable && (
+                <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
+                  {g.repair}
+                </Button>
               )}
-            </div>
-            <p className={`health health-${health.tone}`}>{health.text}</p>
-            {health.fixable && (
-              <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
-                {g.repair}
-              </Button>
-            )}
-            {game.steam && (
-              <p className="muted small">{g.steamHint}</p>
-            )}
-            {!game.steam && game.health.state !== "noSteam" && (
-              <>
-                <p className="muted small">
-                  {game.exe && game.exeExists ? g.addSteamHint : g.addSteamNeedsExe}
-                </p>
+              {!game.steam && game.health.state !== "noSteam" && (
                 <div className="row">
                   <Button small kind="primary" icon="steam" onClick={() => setDialog("steam")} disabled={!game.exe || !game.exeExists}>
                     {g.addSteam}
                   </Button>
                 </div>
-              </>
-            )}
-            {game.steam?.created && (
-              <div className="row">
-                <Button small kind="ghost" icon="trash" onClick={removeFromSteam}>
-                  {g.removeSteam}
-                </Button>
-              </div>
-            )}
-          </section>
+              )}
+              {game.steam?.created && (
+                <div className="row">
+                  <Button small kind="ghost" icon="trash" onClick={removeFromSteam}>
+                    {g.removeSteam}
+                  </Button>
+                </div>
+              )}
+            </section>
+          )}
 
           <section className="panel">
             <div className="panel-head">
               <Icon name="locate" />
               <h3>{g.location}</h3>
+              {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && <Hint text={g.xboxHelper} />}
               {game.exe && (game.exeExists ? <Badge tone="ok">{g.ok}</Badge> : <Badge tone="warn">{g.missing}</Badge>)}
             </div>
             {game.exe && !game.exeExists && (
@@ -420,17 +444,13 @@ export function GameDetail({
               )}
             </PathField>
             {xboxProtected && game.exeExists && (
-              <>
-                <p className="health health-warn">{g.xboxProtected}</p>
-                <div className="row">
-                  <Button small kind="primary" icon="check" onClick={switchToXboxHelper}>
-                    {g.useHelper}
-                  </Button>
-                </div>
-              </>
-            )}
-            {game.exe && game.exeExists && XBOX_HELPER.test(game.exe) && (
-              <p className="muted small">{g.xboxHelper}</p>
+              <div className="row">
+                <span className="health health-warn">{g.xboxProtectedShort}</span>
+                <Hint text={g.xboxProtected} />
+                <Button small kind="primary" icon="check" onClick={switchToXboxHelper}>
+                  {g.useHelper}
+                </Button>
+              </div>
             )}
             {(!game.exe || !game.exeExists) && (
               <PlatformFolders
@@ -469,7 +489,7 @@ export function GameDetail({
         </div>
 
         {tab === "versions" && (
-          <Versions key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} onApplied={async (k) => onOpen(k)} />
+          <Saves key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} onApplied={async (k) => onOpen(k)} />
         )}
         {tab === "files" && <Files game={game} />}
         {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
@@ -482,6 +502,16 @@ export function GameDetail({
           <ArtPicker gameKey={game.key} name={game.name} current={game.art} onApplied={onChanged} />
           {game.steam && <p className="muted small">{g.artSteamNote}</p>}
         </Modal>
+      )}
+      {dialog === "takeover" && (
+        <TakeOverDialog
+          game={game}
+          onClose={() => setDialog(null)}
+          onDone={async () => {
+            setDialog(null);
+            await after();
+          }}
+        />
       )}
       {dialog === "steam" && (
         <Modal title={g.addSteamTitle(game.name)} onClose={() => setDialog(null)}>
@@ -499,13 +529,18 @@ export function GameDetail({
   );
 }
 
-/** Per-device breakdown shown when hovering the playtime. */
+/** Shown when hovering the playtime: per device, and per platform when there are several. */
 function playtimeTip(game: GameView): string {
   const g = msg().game;
   const lines = [g.playtimeTitle];
   for (const d of game.playtime.devices) {
     lines.push(g.playtimeDevice(d.deviceName, duration(d.secs), d.thisDevice));
     if (d.steamMinutes) lines.push(g.playtimeSteam(duration(d.steamMinutes * 60)));
+  }
+  const platforms = playtimePlatforms(game.playtime);
+  if (platforms.length > 0) {
+    lines.push("", g.playtimePlatforms);
+    for (const [name, secs] of platforms) lines.push(g.playtimePlatform(name, duration(secs)));
   }
   return lines.join("\n");
 }
@@ -519,7 +554,7 @@ function Files({ game }: { game: GameView }) {
     api.localFiles(game.key).then(setData, (e) => setError(errorText(e)));
   }, [game.key]);
   if (error) return <div className="banner banner-bad">{error}</div>;
-  if (!data) return <div className="muted pad">{t.versions.reading}</div>;
+  if (!data) return <div className="muted pad">{t.saves.reading}</div>;
   return (
     <div className="panel">
       <div className="roots">
@@ -662,11 +697,13 @@ function Config({
                 <option key={n} value={n} />
               ))}
             </datalist>
-            <span className="muted small">{t.source.fieldHint}</span>
+            <Hint text={t.source.fieldHint} />
           </div>
         </label>
         <label>
-          <span>{c.autoSync}</span>
+          <span>
+            {c.autoSync} <Hint text={c.autoSyncHint} />
+          </span>
           <div className="row">
             <Toggle
               checked={game.autoSync}
@@ -674,29 +711,26 @@ function Config({
                 api.updateGame(game.key, { autoSync: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
               }
             />
-            <span className="muted small">{c.autoSyncHint}</span>
           </div>
         </label>
         <label>
           <span>{c.uploadWhen}</span>
-          <div>
-            <div className="row">
-              <Toggle
-                checked={game.uploadOnGameExit}
-                disabled={!game.hasGameProcess}
-                onChange={(v) =>
-                  api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
-                }
-              />
-              <span>{c.uploadOnExit}</span>
-            </div>
-            <p className="muted small">
-              {game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess}
-            </p>
+          <div className="row">
+            <Toggle
+              checked={game.uploadOnGameExit}
+              disabled={!game.hasGameProcess}
+              onChange={(v) =>
+                api.updateGame(game.key, { uploadOnGameExit: v }).then(onChanged, (e) => ui.toast(errorText(e), "bad"))
+              }
+            />
+            <span>{c.uploadOnExit}</span>
+            <Hint text={game.hasGameProcess ? c.uploadOnExitHint(game.waitFor.length ? game.waitFor : game.defaultWaitFor) : c.uploadNeedsProcess} />
           </div>
         </label>
         <label>
-          <span>{c.saves}</span>
+          <span>
+            {c.saves} <Hint text={c.savesHint} />
+          </span>
           <div className="field-stack">
             <textarea
               className="input mono"
@@ -713,7 +747,6 @@ function Config({
                 {c.addFolder}
               </Button>
             </div>
-            <span className="muted small">{c.savesHint}</span>
           </div>
         </label>
         <label>

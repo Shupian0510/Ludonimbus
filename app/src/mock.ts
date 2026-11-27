@@ -1,7 +1,25 @@
 // Browser-only mock backend, used when the UI runs outside Tauri
 // (`npm run dev` in a normal browser) so the interface can be developed and
 // reviewed without the Rust side. Never loaded inside the app.
-import type { CloudOnlyView, Found, GameView, Outcome, Overview, PlaytimeDevice, PlaytimeSummary, SnapshotSummary, StatusReport, TrashedSnapshot } from "./api";
+import type {
+  CloudOnlyView,
+  Found,
+  GameView,
+  JoinSuggestion,
+  OtherSave,
+  Outcome,
+  Overview,
+  PlatformMarks,
+  PlaytimeDevice,
+  PlaytimeSummary,
+  SaveLine,
+  SnapshotSummary,
+  StatusReport,
+  SteamCloudApp,
+  SteamCloudDone,
+  SteamCloudStatus,
+  TrashedSnapshot,
+} from "./api";
 
 // Sample data in the preview's language (?lang=, the saved choice, or the browser's).
 const mockLang = (() => {
@@ -56,7 +74,64 @@ const snapshots: Record<string, SnapshotSummary[]> = {
   ],
   "fe-fortunes-weave": [snap("01FE2", 60 * 3, "DESKTOP-MAIN", "auto-exit", 56422, 4, { gameVersion: "0.2.7" }), snap("01FE1", 60 * 30, "DESKTOP-MAIN", "auto-exit", 40100, 3)],
   "bloodborne-lantern": [snap("01BB2", 60 * 5, "GPD-Win-Mini", "auto-exit", 15309618, 16), snap("01BB1", 60 * 48, "DESKTOP-MAIN", "auto-exit", 15309618, 16)],
+  "slay-the-spire": [snap("01STS2", 60 * 2, "DESKTOP-MAIN", "auto-exit", 48200, 6), snap("01STS1", 60 * 28, "DESKTOP-MAIN", "auto-exit", 47100, 6)],
+  hades: [snap("01HAD2", 60 * 4, "Steam Deck", "auto-exit", 2310000, 5), snap("01HAD1", 60 * 52, "DESKTOP-MAIN", "auto-exit", 2290000, 5)],
+  // Two store versions on one save line: the newest of each comes first.
+  celeste: [
+    snap("01CE4", 50, "DESKTOP-MAIN", "auto-exit", 6210, 3),
+    snap("01CE3", 60 * 5, "LAPTOP", "auto-exit", 6100, 3, { platform: "pc:xbox" }),
+    snap("01CE2", 60 * 30, "DESKTOP-MAIN", "manual", 5900, 3, { comment: L("第七章之前", "Before chapter 7"), locked: true }),
+    snap("01CE1", 60 * 72, "LAPTOP", "auto-exit", 5040, 3, { platform: "pc:xbox" }),
+    snap("01CE0", 60 * 96, "DESKTOP-MAIN", "auto-exit", 4800, 3),
+  ],
+  // The PC saved the newest with a newer game than the emulator's (see STARDEW_NX).
+  "ryujinx-0100e65002bb8000": [
+    snap("01SDV2", 60 * 2, "DESKTOP-MAIN", "auto-exit", 412000, 4, { platform: "pc", gameVersion: "1.6.15" }),
+    snap("01SDV1", 60 * 26, "Steam Deck", "auto-exit", 398000, 4, { platform: "emu:ryujinx", gameVersion: "1.6.8" }),
+  ],
 };
+
+// What each game's saves are made on, and how the app shows that (the logo
+// is the program's own icon when this PC has it).
+const mockPlatforms: Record<string, string> = { "zelda-oot-longshot": "recomp:longshot", "fe-fortunes-weave": "recomp:fefw", "bloodborne-lantern": "emu:shadps4", "doom-eternal": "pc:xbox", "slay-the-spire": "pc:steam", hades: "pc:steam" };
+const platformMarks: PlatformMarks = {
+  "recomp:longshot": { label: "Longshot", logo: art(4079546474, "_icon.png") },
+  "recomp:fefw": { label: "fefw recomp", logo: art(2661209017, "_icon.png") },
+  "emu:shadps4": { label: "Lantern Engine", logo: art(4000695018, "_icon.png") },
+  pc: { label: "PC", logo: null },
+  "pc:xbox": { label: "Xbox", logo: null },
+  "pc:steam": { label: "Steam", logo: null },
+};
+for (const [k, list] of Object.entries(snapshots)) for (const s of list) s.platform ??= mockPlatforms[k] ?? "pc";
+
+// The save this PC is at, where it isn't the newest one; the line each game follows here.
+const syncedId: Record<string, string> = { "bloodborne-lantern": "01BB1" };
+const lineOf: Record<string, string> = {};
+const joinAnswered = new Set<string>();
+const undoTo: Record<string, string> = {};
+let made = 0;
+const headOf = (key: string) => (snapshots[key] ?? []).find((s) => s.trigger !== "pre-restore" && s.trigger !== "conflict-keep")?.id ?? null;
+const kidLine = () => ({ id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC") });
+const kidSave = () => snap("01KID1", 60 * 20, "KID-PC", "auto-exit", 905000, 11, { platform: "recomp:longshot", head: true });
+
+/** Who is on which save line of a game. */
+function mockLines(key: string): SaveLine[] {
+  const p = mockPlatforms[key] ?? "pc";
+  const at = lineOf[key] ?? "main";
+  const lines: SaveLine[] = [{ id: "main", name: "", shared: true, current: false, devices: [], members: [] }];
+  if (key === "zelda-oot-longshot") {
+    lines[0].members.push({ device: "Steam Deck", platform: p, here: false });
+    lines.push({ ...kidLine(), shared: false, current: false, devices: [], members: [{ device: "KID-PC", platform: p, here: false }] });
+  }
+  if (key === "celeste") lines[0].members.push({ device: "LAPTOP", platform: "pc:xbox", here: false });
+  if (key === "hades") lines[0].members.push({ device: "Steam Deck", platform: p, here: false });
+  if (at === "own") lines.push({ id: "own", name: "DESKTOP-MAIN", shared: false, current: false, devices: [], members: [] });
+  const mine = lines.find((l) => l.id === at) ?? lines[0];
+  mine.current = true;
+  mine.members.push({ device: "DESKTOP-MAIN", platform: p, here: true });
+  for (const l of lines) l.devices = [...new Set(l.members.map((m) => m.device))];
+  return lines;
+}
 
 const trash: Record<string, TrashedSnapshot[]> = {
   "zelda-oot-longshot": [{ snapshot: snap("01OOT0", 60 * 24 * 6, "DESKTOP-MAIN", "auto-exit", 790000, 10), deletedAt: ago(60 * 24 * 2), deletedBy: "DESKTOP-MAIN" }],
@@ -83,6 +158,7 @@ const checks: Record<string, StatusReport> = {
   "zelda-oot-longshot": report("zelda-oot-longshot", "synced", 14, 1258291),
   "fe-fortunes-weave": report("fe-fortunes-weave", "localChanged", 4, 56422),
   "bloodborne-lantern": report("bloodborne-lantern", "conflict", 16, 15309618),
+  "ryujinx-0100e65002bb8000": { ...report("ryujinx-0100e65002bb8000", "cloudNewer", 4, 398000), tooNew: "1.6.15" },
 };
 
 function game(key: string, name: string, appid: number, platform: string, exe: string, saves: string[], extra: Partial<GameView> = {}): GameView {
@@ -122,6 +198,10 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     source: { kind: "recomp", name: null, detail: platform || null, label: null, logo: appid ? art(appid, "_icon.png") : null },
     family: key,
     link: null,
+    joined: false,
+    xboxContainers: false,
+    replaced: null,
+    store: null,
     ...extra,
   };
 }
@@ -146,6 +226,9 @@ function cloudGame(key: string, name: string, family: string, source: CloudOnlyV
 }
 
 /** An emulator game (no artwork in the preview: shows the name instead). */
+/** A Switch emulator's Stardew Valley: its PC version's line keeps the same saves by the game's rule. */
+const STARDEW_NX = "ryujinx-0100e65002bb8000";
+
 function emuGame(key: string, name: string, emulator: string, platform: string, exe: string, saves: string[], hours: number): GameView {
   return game(key, name, 0, platform, exe, saves, {
     adapter: emulator.toLowerCase(),
@@ -174,6 +257,15 @@ const playtime: Record<string, PlaytimeSummary> = {
   "zelda-oot-longshot": devicePlaytime(16.5, 4.2, 12),
   "fe-fortunes-weave": devicePlaytime(7.3, 0, 0),
   "bloodborne-lantern": devicePlaytime(31, 9.5, 20),
+  // Played as two versions: the time per platform shows with the total.
+  celeste: {
+    ...devicePlaytime(9, 3.5, 0),
+    platforms: [
+      { platform: "pc:steam", secs: 9 * 3600 },
+      { platform: "pc", secs: 3.5 * 3600 },
+    ],
+    platformNames: { "pc:steam": "Steam", pc: "PC" },
+  },
 };
 
 const overview: Overview = {
@@ -249,6 +341,8 @@ if (!mockScene || mockScene === "library-sources") {
     emuGame("dolphin-gzle01", L("塞尔达传说：风之杖", "The Legend of Zelda: The Wind Waker"), "Dolphin", gcWii, dolphin, ["{emu}/GC/*/Card ?/01-GZLE-*.gci"], 22),
     emuGame("ryujinx-0100770008dd8000", "MONSTER HUNTER GENERATIONS ULTIMATE", "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-0100770008dd8000}/**"], 64),
     emuGame("ryujinx-01006a800016e000", L("超级马力欧 奥德赛", "Super Mario Odyssey"), "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-01006a800016e000}/**"], 18),
+    // Its PC version's line keeps the same saves by the game's rule: asked once (join_suggestion).
+    emuGame("ryujinx-0100e65002bb8000", L("星露谷物语", "Stardew Valley"), "Ryujinx", L("Switch 模拟器", "Switch emulator"), ryujinx, ["{nxsave-0100e65002bb8000}/**"], 9),
     // The disc image it was started with is gone: saves only.
     { ...emuGame("pcsx2-slus21115", L("大神", "Okami"), "PCSX2", L("PS2 模拟器", "PS2 emulator"), "D:\\Emulators\\PCSX2\\pcsx2-qt.exe", ["{memcards}/Mcd001.ps2"], 31), playable: false },
     emuGame("azahar-00040000001b5000", L("宝可梦 究极之日", "Pokémon Ultra Sun"), "Azahar", L("3DS 模拟器", "3DS emulator"), "D:\\Emulators\\Azahar\\azahar.exe", ["{user}/sdmc/Nintendo 3DS/*/*/title/00040000/001b5000/data/**"], 45),
@@ -263,6 +357,26 @@ if (!mockScene || mockScene === "library-sources") {
       art: { cover: null, wide: null, hero: null, logo: null, icon: null },
       source: { kind: "custom", name: null, detail: null, label: "mGBA", logo: null },
     }),
+  );
+}
+
+// Games Steam itself installed (see `steamCloudApps`): one backed up beside
+// Steam Cloud, one Ludonimbus syncs. Not in the docs screenshots.
+if (!mockScene) {
+  const steamGame = (key: string, name: string, exe: string) =>
+    game(key, name, 0, "", exe, ["{ludusavi}"], {
+      adapter: null,
+      adapterName: null,
+      platform: null,
+      ludusaviTitle: name,
+      steam: null,
+      health: { state: "notLinked" },
+      art: { cover: null, wide: null, hero: null, logo: null, icon: null },
+      source: { kind: "pc", name: null, detail: null, label: null, logo: null },
+    });
+  overview.games.push(
+    steamGame("slay-the-spire", "Slay the Spire", "D:\\SteamLibrary\\steamapps\\common\\SlayTheSpire\\SlayTheSpire.exe"),
+    steamGame("hades", "Hades", "D:\\SteamLibrary\\steamapps\\common\\Hades\\x64\\Hades.exe"),
   );
 }
 
@@ -330,6 +444,65 @@ const sgdbIcons = [art(4079546474, "_icon.png"), art(2661209017, "_icon.png"), a
 
 const delay = <T,>(v: T, ms = 250) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 
+/** Games Steam installed: one backed up, one taken over, one left to Steam (Steam Cloud not done syncing), one without Steam Cloud. */
+const steamCloudApps: SteamCloudApp[] = [
+  { appid: 646570, name: "Slay the Spire", key: "slay-the-spire", state: "backup", syncState: "synchronized", cloudEnabled: true, cloudUsed: true },
+  { appid: 1145360, name: "Hades", key: "hades", state: "managed", syncState: "synchronized", cloudEnabled: false, cloudUsed: true },
+  { appid: 1716740, name: "Starfield", key: null, state: "steam", syncState: "changesincloud", cloudEnabled: true, cloudUsed: true },
+  { appid: 2527500, name: "MiSide", key: null, state: "steam", syncState: null, cloudEnabled: true, cloudUsed: false },
+];
+
+function mockSteamStatus(key: string): SteamCloudStatus {
+  const a = steamCloudApps.find((x) => x.key === key);
+  return {
+    mode: a?.state ?? "backup",
+    syncState: a ? a.syncState : "synchronized",
+    synchronized: (a ? a.syncState : "synchronized") === "synchronized",
+    cloudEnabled: a?.cloudEnabled ?? true,
+    cloudUsed: a?.cloudUsed ?? true,
+    globalEnabled: true,
+    steamRunning: true,
+    wrapper: a?.state === "managed" && !mockNoWrapper.has(key) ? "ok" : null,
+  };
+}
+
+/** Games taken over without the wrapper in their launch options. */
+const mockNoWrapper = new Set<string>();
+
+/** `GameView.store` of a game in the mock library. */
+function mockStore(g: GameView): GameView["store"] {
+  const a = steamCloudApps.find((x) => x.key === g.key);
+  if (!a) return null;
+  const managed = a.state === "managed";
+  return { appid: a.appid, mode: managed ? "managed" : g.autoSync ? "backup" : "steam", wrapper: managed && !mockNoWrapper.has(g.key) };
+}
+
+/** Adds games Steam installed to the mock library, backup only. */
+function mockSteamAdd(appids: number[]): SteamCloudDone[] {
+  return appids.map((appid) => {
+    const a = steamCloudApps.find((x) => x.appid === appid);
+    if (!a) return { appid, key: null, error: L("Steam 里没有装这个游戏", "This game isn't installed in Steam") };
+    a.key ??= a.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    if (a.state === "steam") a.state = a.cloudUsed ? "backup" : "managed";
+    return { appid, key: a.key, error: null };
+  });
+}
+
+/** Takes a game over as the backend would, or refuses with its error code. */
+function mockSteamTakeOver(key: string, wrapper = true): SteamCloudStatus {
+  const a = steamCloudApps.find((x) => x.key === key);
+  if (a && a.cloudUsed && a.syncState !== "synchronized")
+    throw L("STEAM_NOT_SYNCED: Steam 上次没有和云端同步完。请打开 Steam 等它同步完成，然后再接管", "STEAM_NOT_SYNCED: Steam didn't finish syncing with Steam Cloud last time. Start Steam and let it finish, then take it over");
+  if (a?.cloudUsed && a.cloudEnabled)
+    throw L("STEAM_CLOUD_ON: Steam 云存档还开着。请在 Steam 里右键这个游戏 → 属性 → 通用，关掉它，然后再接管", "STEAM_CLOUD_ON: Steam Cloud is still on. In Steam, right-click the game → Properties → General and turn it off, then take it over");
+  if (a) a.state = "managed";
+  if (wrapper) mockNoWrapper.delete(key);
+  else mockNoWrapper.add(key);
+  const g = overview.games.find((x) => x.key === key);
+  if (g) g.autoSync = true;
+  return mockSteamStatus(key);
+}
+
 let mockHandheldMode = "auto";
 const mockNx = {
   enabled: false,
@@ -354,6 +527,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         const g = o.games.find((x) => x.key === "zelda-oot-longshot")!;
         g.pending = 2;
       }
+      for (const g of o.games) g.store = mockStore(g);
       return delay(o, 150);
     }
     case "get_language": {
@@ -386,15 +560,115 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "backup_game":
       return delay<Outcome>({ kind: "uploaded", id: "01NEW" }, 700);
     case "game_lines":
-      return delay(
-        [
-          { id: "main", name: "", shared: true, current: true, devices: ["DESKTOP-MAIN", "Steam Deck"] },
-          { id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC"), shared: false, current: false, devices: ["KID-PC"] },
-        ],
-        200,
-      );
+      return delay(mockLines(key), 200);
+    case "game_line_members":
+      return delay({ lines: mockLines(key), platforms: platformMarks }, 200);
     case "use_game_line":
+      lineOf[key] = args.kind === "shared" ? "main" : args.kind === "independent" ? "own" : String(args.line);
       return delay<Outcome>({ kind: "upToDate" }, 500);
+    case "other_saves": {
+      // The newest save of each line this PC doesn't follow.
+      const saves: OtherSave[] = [];
+      const at = lineOf[key] ?? "main";
+      const head = (snapshots[key] ?? []).find((s) => s.id === headOf(key));
+      if (at !== "main" && head) saves.push({ line: "main", name: "", shared: true, snapshot: head });
+      if (key === "zelda-oot-longshot" && at !== kidLine().id) saves.push({ line: kidLine().id, name: kidLine().name, shared: false, snapshot: kidSave() });
+      return delay({ saves, platforms: platformMarks }, 250);
+    }
+    case "restore_snapshot":
+    case "take_save":
+    case "undo_replace": {
+      // The chosen save becomes a new, newest one made here; what was here can be taken back.
+      const list = snapshots[key] ?? [];
+      const g = overview.games.find((x) => x.key === key);
+      const from = cmd === "undo_replace" ? list.find((x) => x.id === undoTo[key])! : (list.find((x) => x.id === args.id) ?? kidSave());
+      undoTo[key] = syncedId[key] ?? headOf(key) ?? "";
+      if (g) g.replaced = { device: from.deviceName, at: new Date().toISOString() };
+      const id = `01NEW${++made}`;
+      snapshots[key] = [
+        { ...from, id, createdAt: new Date().toISOString(), deviceId: "d-mock", deviceName: "DESKTOP-MAIN", trigger: "restore", comment: "", locked: false, head: undefined, side: undefined },
+        ...list,
+      ];
+      delete syncedId[key];
+      return delay<Outcome>({ kind: "uploaded", id }, 600);
+    }
+    case "set_snapshot": {
+      const s = (snapshots[key] ?? []).find((x) => x.id === args.id);
+      if (s && args.locked != null) s.locked = Boolean(args.locked);
+      if (s && args.comment != null) s.comment = String(args.comment);
+      return delay(undefined);
+    }
+    case "export_snapshot":
+      return delay(`C:\\Users\\me\\Downloads\\${overview.games.find((g) => g.key === key)?.name ?? key}.lnsave`, 300);
+    case "import_shared_save": {
+      // A friend's save: beside the history, kept, from no device of this account.
+      const list = (snapshots[key] ??= []);
+      const like = list[0];
+      const id = `shared${list.length}`;
+      list.push({
+        ...(like ?? {}),
+        id,
+        deviceId: "shared",
+        deviceName: L("分享", "Shared"),
+        createdAt: new Date().toISOString(),
+        trigger: "shared",
+        comment: L("分享的存档", "Shared save"),
+        locked: true,
+        side: true,
+        head: false,
+        contentHash: id,
+      } as SnapshotSummary);
+      return delay(id, 600);
+    }
+    case "join_suggestion": {
+      // The Xbox version here keeps the same saves as the laptop's version, in other folders.
+      const s: JoinSuggestion = {
+        record: key,
+        def: "mock",
+        device: "LAPTOP",
+        platform: "pc",
+        createdAt: ago(60 * 5),
+        confirmed: false,
+        fit: "ready",
+        // Through its save containers: the files in them under the other version's names.
+        binds: [{ canon: "home/Saved Games/id Software/DOOMEternal/base/savegame", local: "localappdata/Packages/BethesdaSoftworks.DOOMEternal-PC_3275kfvn8vcwc/SystemAppData/wgs/0009_00AB", codec: "wgs" }],
+        matched: 6,
+        onlyInLine: 0,
+        onlyHere: 1,
+        uncovered: [],
+        outside: ["savegame/crash.dmp"],
+      };
+      // A Switch emulator's version and the PC version's line: the same files by the game's rule.
+      const byRule: JoinSuggestion = {
+        record: key,
+        def: "mock-pc",
+        device: "DESKTOP-MAIN",
+        platform: "pc",
+        createdAt: ago(60 * 26),
+        confirmed: false,
+        fit: "ready",
+        binds: [{ canon: "appdata/StardewValley/Saves", local: "nxsave-0100e65002bb8000" }],
+        matched: 4,
+        onlyInLine: 0,
+        onlyHere: 0,
+        uncovered: [],
+        outside: [],
+        rule: L("星露谷物语", "Stardew Valley"),
+        from: "PC",
+        others: 2,
+      };
+      if (joinAnswered.has(key)) return delay(null, 200);
+      return delay(key === "doom-eternal" ? s : key === STARDEW_NX ? byRule : null, 200);
+    }
+    case "join_answer": {
+      joinAnswered.add(key);
+      const g = overview.games.find((x) => x.key === key);
+      if (g) {
+        g.joined = args.answer === "accept";
+        g.xboxContainers = g.joined && !!(args.suggestion as JoinSuggestion | undefined)?.binds.some((b) => b.codec === "wgs");
+      }
+      return delay<Outcome | null>(args.answer === "decline" ? null : { kind: "upToDate" }, 500);
+    }
     case "screenshot_gallery":
       return delay(mockGallery(key), 300);
     case "screenshot_fetch":
@@ -404,7 +678,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "screenshot_reveal":
       return delay(undefined);
     case "list_snapshots":
-      return delay({ snapshots: snapshots[key] ?? [], headId: snapshots[key]?.[0]?.id ?? null, lastSyncedId: snapshots[key]?.[0]?.id ?? null });
+      return delay({
+        snapshots: snapshots[key] ?? [],
+        headId: headOf(key),
+        // The PC's newest save is too new for the emulator's game: this device is a version behind.
+        lastSyncedId: key === STARDEW_NX ? "01SDV1" : (syncedId[key] ?? headOf(key)),
+        platforms: platformMarks,
+        tooNew: key === STARDEW_NX ? ["01SDV2"] : undefined,
+      });
     case "delete_snapshot": {
       const list = snapshots[key] ?? [];
       const s = list.find((x) => x.id === args.id);
@@ -485,6 +766,9 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         version: "0.5.0",
         screenshots: "sync",
         independentSaves: false,
+        launchWaitSecs: 10,
+        exitWaitSecs: 10,
+        waitForUpload: false,
       } as Record<string, unknown>;
       if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
       if (noCloudScene) s.cloud = { kind: "none" };
@@ -524,8 +808,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":
       return delay([
-        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(1) },
-        { id: "d-laptop", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.1.0", lastSeen: ago(300) },
+        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(1), layout: 2 },
+        { id: "d-laptop", name: "LAPTOP", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(300), layout: 2 },
+        // Still on 0.6: its record says no layout.
+        { id: "d-handheld", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.6.2", lastSeen: ago(60 * 26) },
       ]);
     case "nx_status":
     case "nx_set_enabled":
@@ -547,8 +833,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           prompt: {
             title: L("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"),
             text: L(
-              "「Bloodborne」的存档在本机和云端都有新的改动。\n\n云端：GPD-Win-Mini 于 2026-11-24 21:30 保存（16 个文件，14.6 MB）\n本机：16 个文件，14.6 MB\n\n请选择这次要使用哪一份。没选的那份也会保存在版本历史里，随时可以恢复。",
-              "Both this PC and the cloud have new changes to the saves of \"Bloodborne\".\n\nCloud: saved by GPD-Win-Mini at 2026-11-24 21:30 (16 files, 14.6 MB)\nThis PC: 16 files, 14.6 MB\n\nChoose which one to use this time. The other one is kept in the version history and can be restored at any time.",
+              "「Bloodborne」的存档在本机和云端都有新的改动。\n\n云端：GPD-Win-Mini 于 2026-11-24 21:30 保存（16 个文件，14.6 MB）\n本机：16 个文件，14.6 MB\n\n请选择这次要使用哪一份。没选的那份也会留在「存档」里，随时可以设回去。",
+              "Both this PC and the cloud have new changes to the saves of \"Bloodborne\".\n\nCloud: saved by GPD-Win-Mini at 2026-11-24 21:30 (16 files, 14.6 MB)\nThis PC: 16 files, 14.6 MB\n\nChoose which one to use this time. The other one stays under Saves and can be made current again at any time.",
             ),
             level: "warn",
             buttons: [
@@ -735,6 +1021,42 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined, 500);
     case "steam_add_games":
       return delay((args.keys as string[]).map((k) => ({ key: k, error: null })), 1200);
+    case "steam_cloud_apps":
+      return delay(steamCloudApps.map((a) => ({ ...a })), 300);
+    case "steam_cloud_add":
+      return delay(mockSteamAdd(args.appids as number[]), 600);
+    case "steam_cloud_backup_all":
+      return delay(mockSteamAdd(steamCloudApps.filter((a) => !a.key).map((a) => a.appid)), 900);
+    case "steam_cloud_status":
+      return delay(mockSteamStatus(key), 200);
+    case "steam_cloud_take_over":
+      return delay(mockSteamTakeOver(key, args.wrapper !== false), 1200);
+    case "steam_cloud_hand_back": {
+      const a = steamCloudApps.find((x) => x.key === key);
+      if (a) a.state = "backup";
+      mockNoWrapper.delete(key);
+      return delay(mockSteamStatus(key), 800);
+    }
+    case "steam_cloud_open_properties": {
+      // As if the user then flipped the game's Steam Cloud switch in Steam.
+      const a = steamCloudApps.find((x) => x.key === key);
+      if (a) a.cloudEnabled = !a.cloudEnabled;
+      return delay(undefined, 200);
+    }
+    case "steam_cloud_take_over_all":
+      return delay<SteamCloudDone[]>(
+        steamCloudApps
+          .filter((a) => a.state === "backup")
+          .map((a) => {
+            try {
+              mockSteamTakeOver(a.key!);
+              return { appid: a.appid, key: a.key, error: null };
+            } catch (e) {
+              return { appid: a.appid, key: a.key, error: String(e) };
+            }
+          }),
+        1500,
+      );
     case "steam_add_game":
       return delay(3000000001, 800);
     case "steam_remove_game":

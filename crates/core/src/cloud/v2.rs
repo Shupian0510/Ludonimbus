@@ -242,6 +242,24 @@ pub struct Line {
     /// nothing is assumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub def: Option<String>,
+    /// Versions of the game that keep these saves in other folders, and
+    /// which folder of theirs is which folder here: what a user confirmed
+    /// once on one device, so that the next device with such a version
+    /// joins without asking (docs/plan-v2.md, section 6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binds: Vec<LineBind>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+/// How the versions of a game that look for their saves in one way take
+/// part in a save line whose files are kept in another.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LineBind {
+    /// Which files those versions keep ([`Line::def`] of a line of theirs).
+    pub def: String,
+    pub map: Vec<crate::bind::Bind>,
     #[serde(flatten)]
     pub extra: Extra,
 }
@@ -344,7 +362,8 @@ pub struct Origin {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub line: String,
     pub snapshot: String,
-    /// `restore`, `copy` or `convert:<converter>`.
+    /// `restore`, `copy`, `convert:<converter>`, or `share` (taken in from
+    /// a file someone shared: no game, line or snapshot to name).
     pub how: String,
     #[serde(flatten)]
     pub extra: Extra,

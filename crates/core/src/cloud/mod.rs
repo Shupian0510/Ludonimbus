@@ -10,14 +10,17 @@
 //! <root>/games/<folder>/game.json                  the save rules, as 0.6 wrote them
 //! <root>/games/<folder>/snapshots/<ULID>.zip       (+ .json) what 0.6 wrote, left where it is
 //! <root>/games/<folder>/playtime/<device-id>.json
+//! <root>/games/<folder>/achievements/<device-id>.json (+ schema.json)
 //! <root>/games/<folder>/screenshots/<device-id>/<name>.jpg (+ thumbnails/)
+//! <root>/games/<folder>/art/art.json               (+ the images)
 //! ```
 //!
 //! Every backend, Google Drive included, only implements the small
 //! path-based [`store::Store`] trait. [`Cloud`] is what the program talks
 //! to: the store, the layout on top of it ([`saves`], [`library`],
 //! [`upgrade`]) and what this device remembers of it. Data that is not a
-//! save snapshot (playtime, screenshots, ...) goes through [`Cloud::files`].
+//! save snapshot (playtime, screenshots, ...) goes through [`Cloud::files`],
+//! in the folders [`gamedata`] says: all of the game's to read, one to write.
 //!
 //! [`repo::Repo`] and [`CloudProvider`] are the layout of 0.6, kept as it
 //! was: tests use them to act as a device that has not been updated.
@@ -26,6 +29,7 @@ pub mod baidu;
 pub mod cached;
 pub mod client;
 pub mod decide;
+pub mod gamedata;
 pub mod gdrive;
 pub mod library;
 pub mod line;
@@ -124,6 +128,10 @@ pub struct DeviceInstall {
     pub synced: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub synced_at: Option<DateTime<Utc>>,
+    /// What the game runs on there ([`crate::sync::platform`]), so other
+    /// devices can show who is on a line with what.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub platform: String,
 }
 
 /// Game definition stored in the cloud so other devices can recognise it.
@@ -517,7 +525,7 @@ pub fn switch_to(new: CloudConfig, secret: Option<&str>) -> Result<()> {
         let old = std::mem::replace(&mut c.cloud, new.clone());
         // Which record a game belongs to is about the cloud that was left.
         if old != new {
-            c.games.iter_mut().for_each(|g| g.record = None);
+            c.games.iter_mut().for_each(GameEntry::forget_cloud);
         }
         // Google Drive and Baidu keep one sign-in each: switching accounts
         // replaces it, so there is nothing to copy from.
@@ -561,7 +569,7 @@ pub fn disconnect() -> Result<()> {
     config::update(|c| {
         c.cloud = CloudConfig::None;
         c.previous_cloud = None;
-        c.games.iter_mut().for_each(|g| g.record = None);
+        c.games.iter_mut().for_each(GameEntry::forget_cloud);
         Ok(())
     })?;
     reset_markers()
@@ -639,6 +647,7 @@ pub fn device_info(cfg: &AppConfig) -> DeviceInfo {
                 dir: line.dir().to_string(),
                 synced: st.last_synced_id.clone(),
                 synced_at: st.last_sync_at,
+                platform: crate::sync::platform(g),
             })
         })
         .collect();

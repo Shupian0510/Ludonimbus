@@ -8,7 +8,7 @@ It uploads, but it can't pull before launch. With Ludonimbus in the tray, it not
 
 ### I played on two PCs and now there's a conflict. What do I do?
 
-Before the game starts, Ludonimbus asks whether to use the cloud's saves or this PC's. Both are kept in the version history, so you can restore the other one at any time. See [Conflicts](../sync/conflicts.md).
+Before the game starts, Ludonimbus asks whether to use the cloud's saves or this PC's. Both stay on the game's Saves tab, so you can make the other one current at any time. See [Conflicts](../sync/conflicts.md).
 
 ### Can I use Baidu Netdisk, Aliyun Drive or Quark?
 
@@ -46,9 +46,9 @@ Only the non-Steam shortcuts you turned auto-sync on for, or that it added to St
 
 Turn off "Steam auto-sync" on each game's page so its Steam shortcut goes back to how it was. Your saves and versions stay in the cloud. See [Download and install → Uninstall](../guide/install.md#uninstall).
 
-### Does it support macOS or Linux?
+### Does it support macOS, Linux or the Steam Deck?
 
-Only Windows for now.
+Windows 10 / 11 is the main platform. Since 1.0 there is a Linux and Steam Deck version (preview), see [Linux and Steam Deck](../platforms/linux.md). macOS isn't supported yet.
 
 ## Troubleshooting
 

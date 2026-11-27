@@ -875,11 +875,13 @@ fn staged_snapshots_wait_on_the_device_and_go_up_as_they_were() {
     // Publishing removes nothing from the folder.
     assert!(names(&q).contains(&format!("{}.json", y.id)));
 
-    // Unstaging takes exactly that snapshot's files.
+    // Unstaging takes exactly that snapshot's files: its manifest, its
+    // packs and the notes that they were sent.
     let before = names(&q);
     saves::unstage(&q, &y).unwrap();
     let gone: BTreeSet<String> = before.difference(&names(&q)).cloned().collect();
-    assert_eq!(gone, BTreeSet::from([format!("{}.json", y.id), format!("{}.zip", y.id), format!("{}-2.zip", y.id)]));
+    let of_y = [".json", ".zip", "-2.zip", ".sent", "-2.sent"].map(|end| format!("{}{end}", y.id));
+    assert_eq!(gone, BTreeSet::from(of_y));
     assert_eq!(saves::staged(&q).unwrap(), [w.clone(), x.clone()]);
     saves::unstage(&q, &y).unwrap();
 }
@@ -913,6 +915,93 @@ fn an_interrupted_publish_leaves_nothing_to_undo() {
         // Again: the state an uninterrupted upload leaves.
         saves::publish(&store, &place, &mut cache, &m, &q, &[], a.id).unwrap();
         assert_eq!(state(&store), state(&reference), "{kind:?} {at}");
+    }
+}
+
+#[test]
+fn an_upload_of_several_packs_goes_on_where_it_broke_off() {
+    let a = Device::new("d-a", "Desktop");
+    let place = place();
+    a.save("saves/slot", b"split");
+    a.save("saves/big", &bytes(3, 9 * 1024));
+    let m = a.draft(&place, first("d-a"), None, false, tick(), None);
+    let packs: Vec<String> = m.packs().into_iter().collect();
+    assert_eq!(packs.len(), 2);
+    let q = a.queue();
+    saves::stage(&m, &a.files(), &q).unwrap();
+    let folder = place.folders.first().unwrap().clone();
+    let marks = |q: &Path| names(q).into_iter().filter(|n| n.ends_with(".sent")).count();
+
+    let reference = Memory::new();
+    let mut cache = LineCache::default();
+    saves::open(&reference, &place, &mut cache).unwrap();
+    saves::publish(&reference, &place, &mut cache, &m, &q, &[], a.id).unwrap();
+    saves::stage(&m, &a.files(), &q).unwrap();
+    assert_eq!(marks(&q), 0, "staged anew: nothing counts as sent");
+
+    // What happened to the pack that got through before the connection
+    // broke, and how many packs the next try uploads.
+    type Meanwhile = fn(&Memory, &str);
+    let cases: [(&str, Meanwhile, u32); 3] = [
+        ("still there", |_, _| {}, 1),
+        ("cleaned up by another device", |store, path| store.remove(path).unwrap(), 2),
+        ("cut short", |store, path| store.put(path, b"PK"), 2),
+    ];
+    for (what, meanwhile, uploads) in cases {
+        let store = Memory::new();
+        let mut cache = LineCache::default();
+        saves::open(&store, &place, &mut cache).unwrap();
+        let flaky = Flaky::new(&store, Kind::Upload, 2);
+        assert!(saves::publish(&flaky, &place, &mut cache, &m, &q, &[], a.id).is_err(), "{what}");
+        assert_eq!(marks(&q), 1, "{what}");
+        meanwhile(&store, &v2::pack_path(&folder, &packs[0]));
+        store.take();
+        saves::publish(&store, &place, &mut cache, &m, &q, &[], a.id).unwrap();
+        // One listing to see what arrived, then only what is missing.
+        assert_eq!(store.take(), counts(1, 0, 0, 2, uploads, 0), "{what}");
+        assert_eq!(state(&store), state(&reference), "{what}");
+        // Uploaded: nothing of it stays in the queue.
+        saves::unstage(&q, &m).unwrap();
+        assert_eq!(names(&q), BTreeSet::new(), "{what}");
+        saves::stage(&m, &a.files(), &q).unwrap();
+    }
+}
+
+#[test]
+fn packs_that_are_mostly_dead_weight_are_tidied_up() {
+    let store = Memory::new();
+    let place = place();
+    let mut a = Device::new("d-a", "Desktop");
+    let region = |a: &Device, n: usize, version: usize| a.save(&format!("saves/world/region{n}"), &bytes(n + 10 * version, 1024));
+    let sizes = |m: &Manifest| -> BTreeMap<String, u64> { serde_json::from_value(m.extra["packSizes"].clone()).unwrap() };
+    let mut made: Vec<(Manifest, BTreeMap<String, Vec<u8>>)> = Vec::new();
+
+    // Six files of 1 KiB: one pack.
+    a.large_save(1);
+    let one = a.push_at(&store, &place, tick());
+    assert_eq!(sizes(&one), BTreeMap::from([(one.id.clone(), 6 * 1024)]));
+    made.push((one.clone(), tree(&a.root())));
+    // Five of them change: the first pack still gives one file.
+    (0..5).for_each(|n| region(&a, n, 2));
+    let two = a.push_at(&store, &place, tick());
+    assert_eq!(two.packs(), BTreeSet::from([one.id.clone(), two.id.clone()]));
+    assert_eq!(sizes(&two), BTreeMap::from([(one.id.clone(), 6 * 1024), (two.id.clone(), 5 * 1024)]));
+    made.push((two.clone(), tree(&a.root())));
+    // Four change again. 4 KiB new, and 5 + 6 KiB of packs for 2 KiB: the
+    // file still taken from the first pack goes along, and that pack is
+    // used no more.
+    (0..4).for_each(|n| region(&a, n, 3));
+    let three = a.push_at(&store, &place, tick());
+    assert_eq!(three.packs(), BTreeSet::from([two.id.clone(), three.id.clone()]));
+    assert_eq!(sizes(&three), BTreeMap::from([(two.id.clone(), 5 * 1024), (three.id.clone(), 5 * 1024)]));
+    made.push((three.clone(), tree(&a.root())));
+    assert_complete(&store, &place);
+
+    // Every version is still what it was.
+    let mut b = Device::new("d-b", "Deck");
+    for (m, files) in &made {
+        b.pull(&store, &place, &m.id);
+        assert_eq!(&tree(&b.root()), files, "{}", m.id);
     }
 }
 

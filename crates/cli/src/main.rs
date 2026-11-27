@@ -1,12 +1,12 @@
 //! `ludonimbus` command line: scripting and troubleshooting.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use ludonimbus_core::cloud::{self, oauth};
 use ludonimbus_core::config::{self, CloudConfig};
 use ludonimbus_core::snapshot::{self, Trigger};
 use ludonimbus_core::sync::{self, Ctx, Resolution};
-use ludonimbus_core::{discover, games, ludusavi, paths, steam};
+use ludonimbus_core::{discover, games, join, ludusavi, paths, steam, steamcloud};
 use std::path::PathBuf;
 
 mod gamebackup;
@@ -42,6 +42,20 @@ enum Cmd {
     Snapshots { key: String },
     /// Restore a snapshot (current saves are protected first)
     Restore { key: String, id: String },
+    /// Show the save line a game could share with a version that keeps the
+    /// same saves in other folders, or answer
+    Join {
+        key: String,
+        /// Share that line from here on (then sync with it)
+        #[arg(long, conflicts_with_all = ["decline", "leave"])]
+        accept: bool,
+        /// Don't suggest that line again
+        #[arg(long, conflicts_with = "leave")]
+        decline: bool,
+        /// Stop sharing: back to this version's own line
+        #[arg(long)]
+        leave: bool,
+    },
     /// Show the save lines of a game, or make it follow another one on this
     /// device
     Lines {
@@ -62,6 +76,10 @@ enum Cmd {
     /// Steam integration
     #[command(subcommand)]
     Steam(SteamCmd),
+    /// Games installed through Steam: backup only, taking over from Steam
+    /// Cloud, handing back
+    #[command(subcommand)]
+    SteamCloud(SteamCloudCmd),
     /// Cloud provider
     #[command(subcommand)]
     Cloud(CloudCmd),
@@ -91,6 +109,19 @@ enum Cmd {
     /// Game backups: the game's own files in the cloud
     #[command(subcommand)]
     GameBackup(gamebackup::Cmd),
+    /// Games' rules (rules/games/)
+    #[command(subcommand)]
+    Rules(RulesCmd),
+}
+
+#[derive(Subcommand)]
+enum RulesCmd {
+    /// Look over game rule files before they go in: their fields and their
+    /// sample saves (rules/README.md)
+    Check {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -123,6 +154,89 @@ enum SteamCmd {
     Repair { key: String },
     /// Check every linked shortcut
     Health,
+}
+
+#[derive(Subcommand)]
+enum SteamCloudCmd {
+    /// Games Steam installed, and how each stands
+    List,
+    /// Add games Steam installed (backup only)
+    Add {
+        #[arg(required = true)]
+        appids: Vec<u32>,
+    },
+    /// How a game stands with Steam Cloud
+    Status { key: String },
+    /// Let Ludonimbus keep a game's saves (Steam Cloud must be off for it)
+    TakeOver {
+        key: String,
+        /// Leave the launch options alone: the game is synced in the
+        /// background while it isn't running
+        #[arg(long)]
+        no_wrapper: bool,
+    },
+    /// Give a game back to Steam Cloud
+    HandBack { key: String },
+    /// Add every game Steam installed whose save location is known (backup only)
+    BackupAll,
+    /// Take over every game that is backup only (Steam Cloud must be off for all games)
+    TakeOverAll {
+        #[arg(long)]
+        no_wrapper: bool,
+    },
+    /// Give every game back to Steam Cloud
+    HandBackAll,
+}
+
+fn print_done(list: &[steamcloud::Done]) {
+    for d in list {
+        let key = d.key.as_deref().unwrap_or("-");
+        match &d.error {
+            None => println!("{:<10} {key}  完成", d.appid),
+            Some(e) => println!("{:<10} {key}  失败：{e}", d.appid),
+        }
+    }
+}
+
+fn steam_cloud(cmd: SteamCloudCmd) -> Result<()> {
+    match cmd {
+        SteamCloudCmd::List => {
+            for a in steamcloud::apps(&config::load()?) {
+                println!(
+                    "{:<10} {:<40} {:<8} {:<16} {}{}",
+                    a.appid,
+                    a.name,
+                    format!("{:?}", a.state),
+                    a.sync_state.unwrap_or_else(|| "-".into()),
+                    if !a.cloud_used {
+                        "[没有 Steam 云] "
+                    } else if a.cloud_enabled {
+                        ""
+                    } else {
+                        "[Steam 云已关] "
+                    },
+                    a.key.map(|k| format!("[已添加: {k}]")).unwrap_or_default()
+                );
+            }
+        }
+        SteamCloudCmd::Add { appids } => print_done(&steamcloud::add_many(&config::load()?, &appids)),
+        SteamCloudCmd::Status { key } => {
+            let cfg = config::load()?;
+            println!("{}", serde_json::to_string_pretty(&steamcloud::status(&cfg, cfg.require_game(&key)?)?)?);
+        }
+        SteamCloudCmd::TakeOver { key, no_wrapper } => {
+            let g = steamcloud::take_over(&Ctx::load()?, &key, !no_wrapper)?;
+            println!("已接管「{}」：存档由 Ludonimbus 同步", g.name);
+        }
+        SteamCloudCmd::HandBack { key } => {
+            let g = steamcloud::hand_back(&Ctx::load()?, &key)?;
+            println!("已把「{}」交还给 Steam 云：请在 Steam 里重新打开它的云存档", g.name);
+        }
+        SteamCloudCmd::BackupAll => print_done(&steamcloud::backup_all(&config::load()?)),
+        SteamCloudCmd::TakeOverAll { no_wrapper } => print_done(&steamcloud::take_over_all(&Ctx::load()?, !no_wrapper)?),
+        SteamCloudCmd::HandBackAll => print_done(&steamcloud::hand_back_all(&Ctx::load()?)),
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -311,6 +425,24 @@ fn run(cli: Cli) -> Result<()> {
             let g = ctx.game(&key)?;
             println!("{}", serde_json::to_string_pretty(&sync::restore(&ctx, &g, &id)?)?);
         }
+        Cmd::Join { key, accept, decline, leave } => {
+            let ctx = Ctx::load()?;
+            let g = ctx.game(&key)?;
+            if leave {
+                println!("{}", serde_json::to_string_pretty(&join::leave(&ctx, &g)?)?);
+                return Ok(());
+            }
+            let Some(s) = join::suggestion(&ctx, &g)? else {
+                println!("没有可以共用的存档线");
+                return Ok(());
+            };
+            println!("{}", serde_json::to_string_pretty(&s)?);
+            if accept {
+                println!("{}", serde_json::to_string_pretty(&join::accept(&ctx, &g, &s)?)?);
+            } else if decline {
+                join::decline(&key, &s.def)?;
+            }
+        }
         Cmd::Lines { key, shared, own, follow, name } => {
             let choice = match (shared, own, follow) {
                 (true, _, _) => Some(sync::LineChoice::Shared),
@@ -333,6 +465,24 @@ fn run(cli: Cli) -> Result<()> {
                     if l.shared { "共用".to_string() } else { l.name },
                     l.devices.join(", ")
                 );
+            }
+        }
+        Cmd::SteamCloud(cmd) => steam_cloud(cmd)?,
+        Cmd::Rules(RulesCmd::Check { files }) => {
+            let mut bad = 0;
+            for f in &files {
+                let c = ludonimbus_core::crosssaves::check_file(f).with_context(|| f.display().to_string())?;
+                println!("{} {}", if c.problems.is_empty() { "ok" } else { "✗ " }, f.display());
+                for n in &c.notes {
+                    println!("    {n}");
+                }
+                for p in &c.problems {
+                    println!("  ✗ {p}");
+                }
+                bad += usize::from(!c.problems.is_empty());
+            }
+            if bad > 0 {
+                bail!("{bad} of {} rule file(s) need changes", files.len());
             }
         }
         Cmd::Steam(cmd) => match cmd {

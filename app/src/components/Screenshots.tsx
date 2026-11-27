@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, Gallery, GameView, ScreenshotMode, Shot } from "../api";
 import { bytes, dateTime } from "../format";
 import { msg, useT } from "../i18n";
-import { Badge, Button, Icon, Modal, Spinner, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Modal, Spinner, useUi } from "./ui";
 
 /** At most this many thumbnails are downloaded from the cloud at once. */
 const PARALLEL = 3;
@@ -89,10 +89,9 @@ export function Screenshots({ game, deviceId }: { game: GameView; deviceId: stri
       {data.mode === "off" && (
         <div className="banner banner-info">
           <Icon name="image" />
-          <div>
-            <b>{s.offTitle}</b>
-            <p>{s.offText}</p>
-          </div>
+          <span>
+            <b>{s.offTitle}</b> <Hint text={s.offText} />
+          </span>
         </div>
       )}
       {!data.linked && <div className="banner banner-info">{s.notLinked}</div>}

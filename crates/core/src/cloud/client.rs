@@ -314,6 +314,106 @@ impl Cloud {
         }
     }
 
+    /// The game `key` as this device defines it from here on: its entry
+    /// changed (it shares another line now, or no longer does).
+    pub fn know(&self, game: &GameEntry) {
+        let mut games = self.games.lock().unwrap();
+        let known = games.entry(game.key.clone()).or_default();
+        known.record = game.record.clone().filter(|r| !r.is_empty());
+        known.entry = Some(game.clone());
+    }
+
+    /// Whether the game `key` reads and writes its line through bindings
+    /// ([`GameEntry::bind`]): the line's files are then not at the paths
+    /// this version keeps them at.
+    fn is_bound(&self, key: &str) -> bool {
+        self.games.lock().unwrap().get(key).and_then(|g| g.entry.as_ref()).is_some_and(|g| !g.bind.is_empty())
+    }
+
+    /// What says which game `key` is and which files it keeps: its ids,
+    /// the format of its saves, the fingerprint of where they are, and the
+    /// cross-platform rule its saves follow.
+    fn identity(&self, key: &str) -> Option<(Vec<String>, String, String, Option<&'static crate::crosssaves::Rule>)> {
+        let entry = self.games.lock().unwrap().get(key).and_then(|g| g.entry.clone())?;
+        let def = CloudGame::from(&entry);
+        Some((upgrade::record_ids(&def), upgrade::line_format(&def), upgrade::line_def(&def), crate::crosssaves::rule_for(&entry)))
+    }
+
+    /// The record whose shared line the game `key` can share through
+    /// bindings confirmed on another device, and those bindings
+    /// ([`library::bound_line`]). The game records are read (not again
+    /// within a minute).
+    pub fn bound_line(&self, key: &str) -> Result<Option<(String, Vec<crate::bind::Bind>)>> {
+        if self.access()? == Access::Legacy {
+            return Ok(None);
+        }
+        let Some((ids, format, def, rule)) = self.identity(key) else { return Ok(None) };
+        let library = self.library()?;
+        // A game with a record of its own has a history of its own.
+        if library::get(&library.records, key).is_some() {
+            return Ok(None);
+        }
+        Ok(library::bound_line(&library.records, &ids, &format, &def, rule).map(|(r, map)| (r.id.clone(), map.to_vec())))
+    }
+
+    /// The shared lines the game `key` might share although it keeps its
+    /// saves elsewhere ([`library::lines_to_ask`]): the record to belong to,
+    /// the line, where it is, and the bindings another device confirmed for
+    /// versions like this one. A line of another format than the game's is
+    /// one its cross-platform rule pairs it with.
+    pub fn lines_to_ask(&self, key: &str) -> Result<Vec<(String, v2::Line, Place, Option<Vec<crate::bind::Bind>>)>> {
+        if self.access()? == Access::Legacy {
+            return Ok(Vec::new());
+        }
+        let Some((ids, format, def, rule)) = self.identity(key) else { return Ok(Vec::new()) };
+        let library = self.library()?;
+        let mut out = Vec::new();
+        for (record, line) in library::lines_to_ask(&library.records, &ids, &format, &def, rule) {
+            let Some((card, _)) = library::resolve_line(&library.records, &record.id, library::MAIN_LINE) else { continue };
+            let confirmed = library::binds_for(line, &def).map(<[_]>::to_vec);
+            out.push((record.id.clone(), line.clone(), Place::of(card, line), confirmed));
+        }
+        Ok(out)
+    }
+
+    /// Which files the shared line of the game `key` holds
+    /// ([`v2::Line::def`]), where the line says.
+    pub fn shared_def(&self, key: &str) -> Result<Option<String>> {
+        let library = self.library()?;
+        let id = self.record_of(key, &library.records);
+        Ok(line_of(&library.records, &id, library::MAIN_LINE).and_then(|(_, l)| l.def.clone()))
+    }
+
+    /// Read a save line that is not the one a game of this device follows.
+    /// Nothing of it is remembered.
+    pub fn peek(&self, place: &Place) -> Result<LineView> {
+        saves::open(&self.store, place, &mut LineCache::default())
+    }
+
+    /// Note on the shared line of `record` how versions that keep their
+    /// saves the way `def` says take part in it ([`v2::Line::binds`]), so
+    /// the next device with such a version doesn't ask.
+    pub fn add_bind(&self, record: &str, def: &str, map: &[crate::bind::Bind]) -> Result<()> {
+        self.writable()?;
+        self.forget_library();
+        let library = self.library()?;
+        let Some((card, line)) = library::resolve_line(&library.records, record, library::MAIN_LINE) else {
+            bail!(crate::tr!("云端还没有这条存档线", "The cloud doesn't have this save line yet"));
+        };
+        if library::binds_for(line, def) == Some(map) {
+            return Ok(());
+        }
+        let mut card = card.clone();
+        let path = line.path.clone();
+        if let Some(l) = card.lines.iter_mut().find(|l| l.path == path) {
+            l.binds.retain(|b| b.def != def);
+            l.binds.push(v2::LineBind { def: def.to_string(), map: map.to_vec(), extra: v2::Extra::new() });
+        }
+        library::save(&self.store, &card, &self.device_id, Utc::now())?;
+        self.forget_library();
+        Ok(())
+    }
+
     /// Whether the game `key` continues the saves of another game's card.
     fn is_version_of_another(&self, key: &str) -> bool {
         self.games.lock().unwrap().get(key).and_then(|g| g.record.as_deref()).is_some_and(|r| r != key)
@@ -568,8 +668,9 @@ impl Cloud {
             library::add_ids(&mut more.ids, &ids);
             // A line that doesn't say which files it holds (its folder had
             // no definition when the cloud was upgraded) holds the ones of
-            // the game that syncs with it.
-            if let (None, Some(def)) = (&line.def, def.filter(|d| upgrade::line_format(d) == line.format)) {
+            // the game that syncs with it; not of one that reads it through
+            // bindings, whose files are elsewhere.
+            if let (None, Some(def)) = (&line.def, def.filter(|d| upgrade::line_format(d) == line.format && !self.is_bound(key))) {
                 if let Some(l) = more.lines.iter_mut().find(|l| l.id == line.id) {
                     l.def = Some(upgrade::line_def(def));
                 }
@@ -614,6 +715,9 @@ impl Cloud {
             // keeps; for a game the device doesn't define, those of the
             // game's shared line.
             let like = record.lines.iter().find(|l| l.id == library::MAIN_LINE).or_else(|| record.lines.first());
+            // A version that reads the shared line through bindings writes
+            // the line's files to its own line too.
+            let def = def.filter(|_| !self.is_bound(key));
             let format = def.map(upgrade::line_format).or_else(|| like.map(|l| l.format.clone()));
             let files = def.map(upgrade::line_def).or_else(|| like.and_then(|l| l.def.clone()));
             let folder = record.folders.first().cloned().unwrap_or_else(|| key.to_string());
@@ -696,6 +800,27 @@ impl Cloud {
         Ok(record.lines.iter().filter(|l| fits(l)).cloned().collect())
     }
 
+    /// The save lines the game `key` could follow besides the one it
+    /// follows now ([`Cloud::lines_of`]), each with where it is.
+    pub fn other_lines(&self, key: &str) -> Result<Vec<(v2::Line, Place)>> {
+        let lines = self.lines_of(key)?;
+        if lines.is_empty() {
+            return Ok(Vec::new());
+        }
+        let here = self.place(key)?;
+        let library = self.library()?;
+        let id = self.record_of(key, &library.records);
+        let Some(record) = library::resolve(&library.records, &id) else { return Ok(Vec::new()) };
+        Ok(lines
+            .into_iter()
+            .filter(|l| l.path != here.dir())
+            .map(|l| {
+                let place = Place::of(record, &l);
+                (l, place)
+            })
+            .collect())
+    }
+
     /// Make the line of the game `key` read the folder 0.6 keeps the key's
     /// snapshots in, when the line doesn't yet and a device still on 0.6 has
     /// put something there. One listing; returns whether the line changed.
@@ -720,6 +845,13 @@ impl Cloud {
         // Looked up again the next time the line is opened.
         let _ = state::update_game(key, |g| g.line = None);
         Ok(true)
+    }
+
+    /// The folders under `games/` of the game `key` is an install of: those
+    /// of its record, where its playtime, achievements, screenshots and
+    /// artwork are ([`super::gamedata`]). What [`Cloud::place`] costs.
+    pub fn game_folders(&self, key: &str) -> Result<Vec<String>> {
+        Ok(self.place(key)?.folders)
     }
 
     fn kept_cache(key: &str, place: &Place) -> LineCache {
