@@ -117,6 +117,8 @@ export interface Card {
   /** Some version of the game is on this PC: shown in colour. */
   playable: boolean;
   secs: number;
+  /** The collection's shelves the game is on (any of its versions' cards). */
+  shelves: string[];
 }
 
 export function cardsOf(overview: Overview): Card[] {
@@ -130,13 +132,14 @@ export function cardsOf(overview: Overview): Card[] {
   return [...byFamily.values()].map((members) => {
     const main = [...members].sort((a, b) => rank(a) - rank(b))[0];
     const secs = members.reduce((n, m) => n + (m.game?.playtime.totalSecs ?? m.cloud?.playtime.totalSecs ?? 0), 0);
-    return { key: main.key, name: main.name, source: main.source, main, members, playable: members.some((m) => m.playable), secs };
+    const shelves = [...new Set(members.flatMap((m) => (m.game ?? m.cloud)?.shelves ?? []))];
+    return { key: main.key, name: main.name, source: main.source, main, members, playable: members.some((m) => m.playable), secs, shelves };
   });
 }
 
 const artOf = (m: Member) => (m.game ?? m.cloud)!.art;
 
-function Cover({ name, cover }: { name: string; cover: string | null }) {
+export function Cover({ name, cover }: { name: string; cover: string | null }) {
   const [failed, setFailed] = useState(false);
   if (cover && !failed) {
     return <img src={cover} alt="" loading="lazy" onError={() => setFailed(true)} />;
@@ -285,6 +288,7 @@ export function Library({
   onRefresh,
   onChanged,
   onSettings,
+  onCollection,
 }: {
   overview: Overview;
   checks: Record<string, StatusReport>;
@@ -295,6 +299,8 @@ export function Library({
   /** After a group action: reload and check these games again. */
   onChanged: (keys: string[]) => Promise<void>;
   onSettings: () => void;
+  /** Open the collection, where the archived games are. */
+  onCollection: () => void;
 }) {
   const t = useT();
   const ui = useUi();
@@ -328,7 +334,10 @@ export function Library({
     store(local, "ln.showMissing", v ? "1" : "0");
   };
 
-  const allCards = useMemo(() => cardsOf(overview), [overview]);
+  // Archived games are on the collection's shelf, not in the library.
+  const everything = useMemo(() => cardsOf(overview), [overview]);
+  const allCards = useMemo(() => everything.filter((c) => !c.shelves.includes("archived")), [everything]);
+  const archivedCount = everything.length - allCards.length;
   // Games on this PC first, then the grey ones (only their saves here, or
   // only in the cloud); by name within each. Groups keep this order.
   const sorted = useMemo(() => {
@@ -622,6 +631,11 @@ export function Library({
         ))
       ) : (
         renderList(cards, true)
+      )}
+      {archivedCount > 0 && (
+        <button className="link lib-archived" onClick={onCollection}>
+          <Icon name="star" size={14} /> {t.collection.inLibrary(archivedCount)}
+        </button>
       )}
     </div>
   );

@@ -278,7 +278,8 @@ const overview: Overview = {
   // Hollow Knight was added on the laptop only; so was Celeste's GOG version
   // (one game with this PC's Celeste in the save library).
   cloudOnly: [
-    cloudGame("hollow-knight", "Hollow Knight", "hollow-knight", { kind: "pc", name: null, detail: null, label: null, logo: null }),
+    // Played to the end on the laptop and put away: on the collection's shelves, not in the library.
+    cloudGame("hollow-knight", "Hollow Knight", "hollow-knight", { kind: "pc", name: null, detail: null, label: null, logo: null }, { shelves: ["finished", "archived"] }),
     cloudGame("celeste-gog", "Celeste", "celeste", { kind: "pc", name: null, detail: null, label: "GOG", logo: null }),
   ],
   games: [
@@ -867,6 +868,17 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           : null,
         300,
       );
+    case "set_shelf": {
+      // Every version of the game, as the card in the cloud.
+      for (const v of [...overview.games, ...overview.cloudOnly] as Array<{ key: string; shelves?: string[] }>) {
+        if (!(args.keys as string[]).includes(v.key)) continue;
+        const rest = (v.shelves ?? []).filter((s) => s !== args.tag);
+        v.shelves = args.on ? [...rest, String(args.tag)] : rest;
+      }
+      return delay(undefined, 300);
+    }
+    case "collection_stats":
+      return delay({ achievementsUnlocked: 87, achievementsTotal: 142 }, 100);
     case "refresh_cloud_library": {
       const families: Record<string, string> = {};
       for (const g of overview.games) families[g.key] = g.family;

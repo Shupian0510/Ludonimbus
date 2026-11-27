@@ -102,6 +102,9 @@ pub struct GameView {
     replaced: Option<ReplacedView>,
     /// For a game Steam installed: who keeps its saves.
     store: Option<StoreView>,
+    /// The collection's shelves its card is on (`finished`, `archived`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    shelves: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -121,7 +124,7 @@ pub struct ReplacedView {
     at: chrono::DateTime<chrono::Utc>,
 }
 
-fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMap<String, String>) -> GameView {
+fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMap<String, String>, shelves: &BTreeMap<String, Vec<String>>) -> GameView {
     let adapter = g.adapter.as_deref().and_then(adapters::find);
     let eff = spec::effective(g);
     let st = state::game(&g.key);
@@ -190,6 +193,7 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
             ..games::source(g)
         },
         family: families.get(&g.key).cloned().unwrap_or_else(|| g.key.clone()),
+        shelves: ludonimbus_core::shelf::of(cfg, shelves, &g.key),
         link: g.game.clone(),
         joined: !g.bind.is_empty(),
         xbox_containers: ludonimbus_core::bind::has_wgs(&g.bind),
@@ -215,9 +219,11 @@ pub struct CloudOnlyView {
     playtime: PlaytimeView,
     family: String,
     link: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    shelves: Vec<String>,
 }
 
-pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &HashMap<String, String>) -> Vec<CloudOnlyView> {
+pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &HashMap<String, String>, shelves: &BTreeMap<String, Vec<String>>) -> Vec<CloudOnlyView> {
     cloud
         .iter()
         .filter(|c| cfg.game(&c.key).is_none())
@@ -247,6 +253,7 @@ pub(crate) fn cloud_only_views(cfg: &AppConfig, cloud: &[CloudGame], families: &
                 playtime: playtime_view(cfg, playtime::summary(cfg, &c.key)),
                 family: families.get(&c.key).cloned().unwrap_or_else(|| c.key.clone()),
                 link: c.game.clone(),
+                shelves: ludonimbus_core::shelf::of(cfg, shelves, &c.key),
             }
         })
         .collect()
@@ -309,8 +316,8 @@ pub async fn get_overview() -> CmdResult<Overview> {
             cloud: cloud_view(&cfg),
             steam_found: steam::root(&cfg).is_some(),
             steam_running: procs.iter().any(|p| p == "steam.exe"),
-            games: cfg.games.iter().map(|g| game_view(&cfg, g, &procs, &families)).collect(),
-            cloud_only: cloud_only_views(&cfg, &cached.games, &families),
+            games: cfg.games.iter().map(|g| game_view(&cfg, g, &procs, &families, &cached.tags)).collect(),
+            cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags),
             cloud_fetched_at: cached.fetched_at,
         })
     })
@@ -593,6 +600,45 @@ pub async fn take_save(key: String, line: String, id: String) -> CmdResult<Outco
             }
             sync::take_from(ctx, g, &line, &id)
         })
+    })
+    .await
+}
+
+/// Put the versions `keys` of one game on the collection's shelf `tag`
+/// (`finished`, `archived`), or take them off it.
+#[tauri::command]
+pub async fn set_shelf(keys: Vec<String>, tag: String, on: bool) -> CmdResult<()> {
+    blocking(move || {
+        let ctx = Ctx::load()?;
+        ludonimbus_core::shelf::set(&ctx, &keys, &tag, on)?;
+        Ok(())
+    })
+    .await
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionStats {
+    /// Achievements unlocked, and how many the games have, over the games
+    /// of this PC whose achievements are known.
+    achievements_unlocked: usize,
+    achievements_total: usize,
+}
+
+/// What the collection page adds up that the library's views don't carry.
+/// From this PC's files; no request.
+#[tauri::command]
+pub async fn collection_stats() -> CmdResult<CollectionStats> {
+    blocking(|| {
+        let cfg = config::load()?;
+        let (mut unlocked, mut total) = (0, 0);
+        for g in &cfg.games {
+            let db = ludonimbus_core::achievements::load_db(&g.key);
+            let Some(schema) = db.schema.as_ref().filter(|s| !s.achievements.is_empty()) else { continue };
+            total += schema.achievements.len();
+            unlocked += schema.achievements.iter().filter(|a| db.unlocks.contains_key(&a.id)).count();
+        }
+        Ok(CollectionStats { achievements_unlocked: unlocked, achievements_total: total })
     })
     .await
 }

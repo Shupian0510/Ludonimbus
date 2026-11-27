@@ -15,7 +15,7 @@ use crate::{adapters, crosssaves, discover, games, paths, state, util, xbox};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 /// A [`GameEntry::game`] value that keeps an entry apart from all others.
@@ -197,6 +197,10 @@ pub struct Cached {
     /// The cloud the list is from; a list from another cloud is ignored.
     pub scope: String,
     pub games: Vec<CloudGame>,
+    /// The tags of the cloud's cards, by record id: the collection's shelves
+    /// ([`crate::shelf`]). Only cards that have any.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, Vec<String>>,
 }
 
 fn cache_file() -> PathBuf {
@@ -236,6 +240,23 @@ pub fn remember(cfg: &AppConfig, game: &CloudGame) {
     let _ = save_cache(&c);
 }
 
+/// Put the tags of cards just written ([`crate::shelf::set`]) into the copy
+/// of the list, so they show before the next fetch.
+pub fn remember_tags(cfg: &AppConfig, tags: &BTreeMap<String, Vec<String>>) {
+    let mut c = cached(cfg);
+    if c.fetched_at.is_none() && c.games.is_empty() {
+        c.scope = scope(&cfg.cloud);
+    }
+    for (id, t) in tags {
+        if t.is_empty() {
+            c.tags.remove(id);
+        } else {
+            c.tags.insert(id.clone(), t.clone());
+        }
+    }
+    let _ = save_cache(&c);
+}
+
 /// Forget the cached list (another cloud was connected).
 pub fn forget() {
     let _ = std::fs::remove_file(cache_file());
@@ -246,7 +267,12 @@ pub fn forget() {
 /// device that have none.
 pub fn refresh(cfg: &AppConfig, cloud: &Cloud) -> Result<Cached> {
     let games = cloud.list_games()?;
-    let c = Cached { fetched_at: Some(Utc::now()), scope: scope(&cfg.cloud), games };
+    // The shelves are an extra: the list stands without them.
+    let tags = cloud.record_tags().unwrap_or_else(|e| {
+        crate::logger::log("app", format!("reading the cards' shelves failed: {e:#}"));
+        cached(cfg).tags
+    });
+    let c = Cached { fetched_at: Some(Utc::now()), scope: scope(&cfg.cloud), games, tags };
     save_cache(&c)?;
     let adopt: Vec<(String, String)> = c
         .games
@@ -408,7 +434,7 @@ fn set_links(cloud: Option<&Cloud>, keys: &[String], value: &str) -> Result<()> 
         cloud.put_game(cg)?;
     }
     let cfg = config::load()?;
-    save_cache(&Cached { fetched_at: Some(Utc::now()), scope: scope(&cfg.cloud), games: list })
+    save_cache(&Cached { fetched_at: Some(Utc::now()), scope: scope(&cfg.cloud), games: list, tags: cached(&cfg).tags })
 }
 
 /// Mark `keys` as versions of one game. Keeps the link one of them already

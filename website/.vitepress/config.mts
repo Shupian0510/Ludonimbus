@@ -145,6 +145,7 @@ function sidebarZh(): DefaultTheme.SidebarItem[] {
         { text: '截图同步', link: '/features/screenshots' },
         { text: '成就', link: '/features/achievements' },
         { text: '游戏本体备份', link: '/features/game-backup' },
+        { text: '收藏', link: '/features/collection' },
       ],
     },
     {
@@ -241,6 +242,7 @@ function sidebarEn(): DefaultTheme.SidebarItem[] {
         { text: 'Screenshot sync', link: '/en/features/screenshots' },
         { text: 'Achievements', link: '/en/features/achievements' },
         { text: 'Game backup', link: '/en/features/game-backup' },
+        { text: 'Collection', link: '/en/features/collection' },
       ],
     },
     {

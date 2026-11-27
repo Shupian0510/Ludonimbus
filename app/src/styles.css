@@ -788,6 +788,31 @@ textarea.input {
 .tr.missing .cell-game b {
   color: var(--muted);
 }
+.lib-archived {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 24px;
+}
+.collection .stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 640px;
+  margin-bottom: 8px;
+}
+.collection .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--panel);
+}
+.collection .stat b {
+  font-size: 20px;
+  font-weight: 600;
+}
 .lib-divider {
   display: flex;
   align-items: center;

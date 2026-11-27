@@ -33,6 +33,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 改进：游戏卡的封面保持干净，下面一行显示平台的标志、同步状态和游戏时间。
 - 改进：界面上的文字少了，说明收在「?」里。
 - 新增：在几个平台上玩过的游戏，游戏时间按平台分别列出。
+- 新增：「收藏」页：总时长、游戏数、成就，以及「已通关」「已归档」两个书架。归档的游戏不在游戏库里显示，存档、游戏时间和成就留在云端，本机的游戏可以卸载。
 - 新增：手柄界面，适合 Windows 掌机。
 
 其他平台
@@ -73,6 +74,7 @@ Library and interface
 - Improved: covers stay clean; the row under a cover shows the platforms' logos, the sync status and the play time.
 - Improved: less text on screen; explanations are behind the "?" marks.
 - New: for a game played on several platforms, play time is listed per platform.
+- New: the Collection page: total play time, games and achievements, and two shelves, Finished and Archived. Archived games leave the library; their saves, play time and achievements stay in the cloud, and the game can be uninstalled.
 - New: a gamepad interface for Windows handhelds.
 
 Other platforms
