@@ -50,6 +50,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：云端缺了内容的存档版本标为「不完整」：不会被下载或设为当前，任何一台有这份内容的设备都会自动补好；补不回来的 14 天后移到「最近删除」。
 - 改进：S3 和 WebDAV 云盘一时繁忙时，稍等后自动重试。
 - 修复：断电或强制关机可能让配置文件变成空的；电脑睡眠唤醒后，两个程序可能同时修改配置，丢失改动或登录。
+- 修复：Windows 上状态文件正好被别的程序（杀毒软件、索引）占着的那一刻，可能清空所有游戏的同步记录。
 - 修复：本地文件夹或 NAS 云盘读不到时被当成空的云盘。
 - 修复：百度网盘刚被替换的文件被当成不存在；Google Drive 在电脑睡眠后用了过期的登录；夸克网盘长时间运行后变成离线。
 - 修复：另一台设备清理云端数据时开始备份游戏本体，新上传的数据可能被删掉。
@@ -109,6 +110,7 @@ Security and reliability
 - New: a save version whose content is missing in the cloud is marked "Incomplete": it is never downloaded or made current, any device that still has the content puts it back, and one that can't be completed goes to Recently deleted after 14 days.
 - Improved: S3 and WebDAV clouds that are busy for a moment are tried again after a short wait.
 - Fixed: a power cut could leave the settings file empty; after the PC woke from sleep, two programs could change the settings at once and lose a change or a sign-in.
+- Fixed: on Windows, if another program (a virus scanner, the indexer) had the state file open at that moment, every game's sync record could be lost.
 - Fixed: a local folder or NAS cloud that couldn't be read was taken for an empty cloud.
 - Fixed: Baidu Netdisk took a file that had just been replaced for missing; Google Drive used an expired sign-in after the PC slept; Quark went offline after running for a long time.
 - Fixed: a game backup that started while another device cleaned up the cloud could have its new data deleted.
