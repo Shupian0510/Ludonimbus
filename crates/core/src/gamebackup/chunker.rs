@@ -128,14 +128,27 @@ pub struct Chunker<R: Read> {
 
 impl<R: Read> Chunker<R> {
     pub fn new(reader: R, params: Params) -> Self {
+        Self::with_buffer(reader, params, Vec::new())
+    }
+
+    /// Like [`Chunker::new`], reusing the buffer of an earlier chunker
+    /// ([`Chunker::into_buffer`]): it holds twice the largest chunk, 48 MiB
+    /// by default, too much to allocate again for every big file.
+    pub fn with_buffer(reader: R, params: Params, mut buf: Vec<u8>) -> Self {
+        buf.clear();
+        buf.reserve(params.max * 2);
         Chunker {
             reader,
             masks: params.masks(),
             params,
-            buf: Vec::with_capacity(params.max * 2),
+            buf,
             start: 0,
             eof: false,
         }
+    }
+
+    pub fn into_buffer(self) -> Vec<u8> {
+        self.buf
     }
 
     /// The next chunk, `None` at the end of the stream.
@@ -232,6 +245,18 @@ mod tests {
         // Same cuts whatever the read sizes are.
         let trickled = Chunker::new(Trickle(&d), p).collect::<std::io::Result<Vec<_>>>().unwrap();
         assert_eq!(trickled, c);
+    }
+
+    #[test]
+    fn a_reused_buffer_cuts_the_same() {
+        let p = Params::tiny();
+        let (a, b) = (data(300_000, 6), data(200_000, 7));
+        let mut first = Chunker::new(&a[..], p);
+        let from_a: Vec<Vec<u8>> = first.by_ref().collect::<std::io::Result<_>>().unwrap();
+        let buf = first.into_buffer();
+        assert!(buf.capacity() >= p.max * 2);
+        let from_b: Vec<Vec<u8>> = Chunker::with_buffer(&b[..], p, buf).collect::<std::io::Result<_>>().unwrap();
+        assert_eq!((from_a, from_b), (chunks(&a, p), chunks(&b, p)));
     }
 
     #[test]
