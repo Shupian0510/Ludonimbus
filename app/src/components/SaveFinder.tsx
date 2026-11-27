@@ -69,11 +69,22 @@ export function SaveFinder({
   const [watching, setWatching] = useState(false);
   const [watched, setWatched] = useState<SaveCandidate[] | null>(null);
 
+  // By value: callers build `game` anew on every render, and a search for the
+  // same game shouldn't run again (nor an older one land after a newer one).
   useEffect(() => {
-    api.saveSuggest(game.name, game.exe, game.install).then(setSuggestions, () => setSuggestions([]));
-    if (game.name.trim()) api.ludusaviSearch(game.name).then(setTitles, () => setTitles([]));
+    let live = true;
+    api.saveSuggest(game.name, game.exe, game.install).then(
+      (s) => live && setSuggestions(s),
+      () => live && setSuggestions([]),
+    );
+    if (game.name.trim())
+      api.ludusaviSearch(game.name).then(
+        (t) => live && setTitles(t),
+        () => live && setTitles([]),
+      );
     else setTitles([]);
-  }, [game]);
+    return () => void (live = false);
+  }, [game.name, game.exe, game.install]);
 
   const toggle = (c: SaveCandidate) => {
     const next = new Map(picked);
