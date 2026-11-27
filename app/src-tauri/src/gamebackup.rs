@@ -559,6 +559,14 @@ pub async fn game_backup_delete(app: AppHandle, key: String, version: String) ->
                 tr!("已删除这个版本；不再使用的数据以后再清理：{}", "Version deleted; unused data is cleaned up later: {}", reason)
             } else if gc.postponed {
                 tr!("已删除这个版本；有设备正在备份，不再使用的数据以后再清理", "Version deleted; a device is backing up, so unused data is cleaned up later")
+            } else if gc.recent_bytes > 0 {
+                // Chunks written in the last day are left for a later clean-up.
+                tr!(
+                    "已删除这个版本，释放了 {} MB；最近一天上传的 {} MB 下次清理时释放",
+                    "Version deleted; {} MB freed, and {} MB uploaded in the last day at the next clean-up",
+                    gc.freed_bytes / 1_048_576,
+                    gc.recent_bytes / 1_048_576
+                )
             } else {
                 tr!("已删除这个版本，释放了 {} MB", "Version deleted; {} MB freed", gc.freed_bytes / 1_048_576)
             };

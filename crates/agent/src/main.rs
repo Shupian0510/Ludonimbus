@@ -59,6 +59,14 @@ fn main() {
         }
     };
     log(format!("local API listening on 127.0.0.1:{}", server.port()));
+    // As the desktop app does at start: save locations from Ludusavi's
+    // database for the games it finds the saves of, so restores here are
+    // checked against them too.
+    std::thread::spawn(|| {
+        if let Err(e) = ludonimbus_core::games::refresh_ludusavi_saves(None) {
+            log(format!("the save locations from Ludusavi's database were not updated: {e:#}"));
+        }
+    });
 
     let me = std::process::id();
     let mut last_shots = Instant::now() - Duration::from_secs(25 * 60);
