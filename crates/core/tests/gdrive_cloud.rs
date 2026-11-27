@@ -4,6 +4,8 @@
 //! know. Runs as one test because the folder cache is found through an
 //! environment variable.
 
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
 use ludonimbus_core::cloud;
 use ludonimbus_core::cloud::gdrive::GoogleDrive;
 use ludonimbus_core::cloud::oauth::GoogleClient;
@@ -11,6 +13,7 @@ use ludonimbus_core::cloud::store::Store;
 use md5::{Digest, Md5};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -231,24 +234,43 @@ impl Drive {
 }
 
 fn start_drive() -> (String, Arc<Mutex<Drive>>) {
-    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-    let base = format!("http://127.0.0.1:{}", server.server_addr().to_ip().unwrap().port());
-    let state = Arc::new(Mutex::new(Drive { base: base.clone(), ..Drive::default() }));
+    let state = Arc::new(Mutex::new(Drive::default()));
+    let (tx, rx) = std::sync::mpsc::channel();
     let st = state.clone();
     std::thread::spawn(move || {
-        for mut req in server.incoming_requests() {
-            let mut body = Vec::new();
-            req.as_reader().read_to_end(&mut body).unwrap();
-            let headers: HashMap<String, String> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_ascii_lowercase(), h.value.as_str().to_string())).collect();
-            let (status, extra, out) = st.lock().unwrap().handle(req.method().as_str(), req.url(), &headers, &body);
-            let mut resp = tiny_http::Response::from_data(out).with_status_code(status);
-            for (k, v) in extra {
-                resp.add_header(tiny_http::Header::from_bytes(k, v).unwrap());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+            st.lock().unwrap().base = base.clone();
+            tx.send(base).unwrap();
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let st = st.clone();
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                        let st = st.clone();
+                        async move {
+                            let method = req.method().to_string();
+                            let url = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_default();
+                            let headers: HashMap<String, String> = req.headers().iter().map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())).collect();
+                            let body = req.into_body().collect().await.unwrap().to_bytes();
+                            let (status, extra, out) = st.lock().unwrap().handle(&method, &url, &headers, &body);
+                            let mut resp = hyper::Response::builder().status(status);
+                            for (k, v) in extra {
+                                resp = resp.header(k, v);
+                            }
+                            Ok::<_, Infallible>(resp.body(Full::new(Bytes::from(out))).unwrap())
+                        }
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                        .await;
+                });
             }
-            let _ = req.respond(resp);
-        }
+        });
     });
-    (base, state)
+    (rx.recv().unwrap(), state)
 }
 
 #[test]

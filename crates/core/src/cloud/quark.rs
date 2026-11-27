@@ -290,34 +290,55 @@ mod tests {
         quark_signed_out: bool,
     }
 
+    impl FakeApi {
+        fn answer(&mut self, path: &str, auth: &str, body: &str) -> serde_json::Value {
+            match path {
+                "/api/auth/login" => {
+                    assert!(body.contains("\"admin-password\""), "{body}");
+                    self.logins += 1;
+                    self.token = format!("jwt-{}", self.logins);
+                    serde_json::json!({ "code": 200, "message": "success", "data": { "token": self.token } })
+                }
+                "/api/fs/list" if auth != self.token => serde_json::json!({ "code": 401, "message": "token is expired", "data": null }),
+                "/api/fs/list" if self.quark_signed_out => serde_json::json!({ "code": 500, "message": "failed get objs: failed to list objs: require login [guest]", "data": null }),
+                "/api/fs/list" => serde_json::json!({ "code": 200, "message": "success", "data": { "content": [], "total": 0 } }),
+                other => panic!("unexpected request {other}"),
+            }
+        }
+    }
+
     fn start_fake_api() -> (u16, Arc<Mutex<FakeApi>>) {
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-        let port = server.server_addr().to_ip().unwrap().port();
+        use http_body_util::{BodyExt, Full};
         let state = Arc::new(Mutex::new(FakeApi::default()));
+        let (tx, rx) = std::sync::mpsc::channel();
         let st = state.clone();
         std::thread::spawn(move || {
-            for mut req in server.incoming_requests() {
-                let mut body = String::new();
-                let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
-                let auth = req.headers().iter().find(|h| h.field.equiv("Authorization")).map(|h| h.value.to_string()).unwrap_or_default();
-                let mut api = st.lock().unwrap();
-                let reply = match req.url() {
-                    "/api/auth/login" => {
-                        assert!(body.contains("\"admin-password\""), "{body}");
-                        api.logins += 1;
-                        api.token = format!("jwt-{}", api.logins);
-                        serde_json::json!({ "code": 200, "message": "success", "data": { "token": api.token } })
-                    }
-                    "/api/fs/list" if auth != api.token => serde_json::json!({ "code": 401, "message": "token is expired", "data": null }),
-                    "/api/fs/list" if api.quark_signed_out => serde_json::json!({ "code": 500, "message": "failed get objs: failed to list objs: require login [guest]", "data": null }),
-                    "/api/fs/list" => serde_json::json!({ "code": 200, "message": "success", "data": { "content": [], "total": 0 } }),
-                    other => panic!("unexpected request {other}"),
-                };
-                drop(api);
-                let _ = req.respond(tiny_http::Response::from_string(reply.to_string()));
-            }
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                tx.send(listener.local_addr().unwrap().port()).unwrap();
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let st = st.clone();
+                    tokio::spawn(async move {
+                        let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                            let st = st.clone();
+                            async move {
+                                let path = req.uri().path().to_string();
+                                let auth = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                                let body = req.into_body().collect().await.unwrap().to_bytes();
+                                let reply = st.lock().unwrap().answer(&path, &auth, &String::from_utf8_lossy(&body));
+                                Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(hyper::body::Bytes::from(reply.to_string()))))
+                            }
+                        });
+                        let _ = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                            .await;
+                    });
+                }
+            });
         });
-        (port, state)
+        (rx.recv().unwrap(), state)
     }
 
     fn quark_at(port: u16) -> Quark {
