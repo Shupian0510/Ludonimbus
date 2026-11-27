@@ -192,8 +192,27 @@ fn lock() -> Result<FileLock> {
     FileLock::acquire(&paths::data_dir().join("state.lock"), Duration::from_secs(10))
 }
 
+/// The state as the file has it. No file is an empty state. A file that
+/// can't be read (another program kept it open longer than
+/// [`util::read_retrying`] waits) is an error: an empty state written back
+/// over it would forget every game's sync. One that isn't valid JSON is kept
+/// beside it as `state.json.broken`, and the state starts empty.
+fn try_read() -> Result<State> {
+    let path = paths::state_file();
+    match util::read_retrying(&path) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            let _ = std::fs::copy(&path, path.with_extension("json.broken"));
+            crate::logger::log("sync", format!("{} isn't valid ({e}); kept as state.json.broken, starting empty", path.display()));
+            State::default()
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
+        Err(e) => Err(anyhow::Error::new(e).context(crate::tr!("无法读取 {}", "Can't read {}", path.display()))),
+    }
+}
+
+/// [`try_read`] for looking only: an unreadable file looks empty.
 fn read() -> State {
-    std::fs::read_to_string(paths::state_file()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    try_read().unwrap_or_default()
 }
 
 pub fn load() -> State {
@@ -206,7 +225,7 @@ pub fn game(key: &str) -> GameState {
 
 pub fn update<T>(f: impl FnOnce(&mut State) -> T) -> Result<T> {
     let _guard = lock()?;
-    let mut s = read();
+    let mut s = try_read()?;
     let out = f(&mut s);
     util::atomic_write(&paths::state_file(), &serde_json::to_vec_pretty(&s)?)?;
     Ok(out)
@@ -214,4 +233,45 @@ pub fn update<T>(f: impl FnOnce(&mut State) -> T) -> Result<T> {
 
 pub fn update_game<T>(key: &str, f: impl FnOnce(&mut GameState) -> T) -> Result<T> {
     update(|s| f(s.games.entry(key.to_string()).or_default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A program that keeps the state file open (a virus scanner, the
+    /// indexer) makes an update fail; it never writes an empty state over
+    /// every game's sync.
+    #[cfg(windows)]
+    #[test]
+    fn an_update_never_writes_over_a_state_it_could_not_read() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut env = crate::paths::TestEnv::new();
+        env.set("LUDONIMBUS_HOME", tmp.path());
+        update_game("a", |g| g.last_synced_id = Some("01JA".into())).unwrap();
+        let before = std::fs::read(paths::state_file()).unwrap();
+
+        // Opened without sharing: nobody else can open it while it is held.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(paths::state_file()).unwrap();
+        assert!(update_game("b", |g| g.last_synced_id = Some("01JB".into())).is_err());
+        drop(held);
+
+        assert_eq!(std::fs::read(paths::state_file()).unwrap(), before);
+        assert_eq!(game("a").last_synced_id.as_deref(), Some("01JA"));
+        update_game("b", |g| g.last_synced_id = Some("01JB".into())).unwrap();
+        assert_eq!(game("a").last_synced_id.as_deref(), Some("01JA"));
+    }
+
+    #[test]
+    fn a_broken_state_file_is_kept_aside() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut env = crate::paths::TestEnv::new();
+        env.set("LUDONIMBUS_HOME", tmp.path());
+        std::fs::create_dir_all(paths::data_dir()).unwrap();
+        std::fs::write(paths::state_file(), b"{ not json").unwrap();
+        update_game("a", |g| g.last_synced_id = Some("01JA".into())).unwrap();
+        assert_eq!(std::fs::read(paths::state_file().with_extension("json.broken")).unwrap(), b"{ not json");
+        assert_eq!(game("a").last_synced_id.as_deref(), Some("01JA"));
+    }
 }
