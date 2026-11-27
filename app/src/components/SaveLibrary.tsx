@@ -425,9 +425,15 @@ export function ApplyDialog({
 
   useEffect(() => {
     if (!target) return;
+    // Only the plan for what is chosen now (target and folder can change quickly).
+    let live = true;
     setPlan(null);
     setError(null);
-    api.transferPlan(sourceKey, snapshot.id, target.key, base).then(setPlan, (e) => setError(errorText(e)));
+    api.transferPlan(sourceKey, snapshot.id, target.key, base).then(
+      (p) => live && setPlan(p),
+      (e) => live && setError(errorText(e)),
+    );
+    return () => void (live = false);
   }, [target, base, sourceKey, snapshot.id]);
 
   const pickFolder = async () => {

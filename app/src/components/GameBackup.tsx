@@ -1,9 +1,8 @@
 // Game page → "Game files": back up the game's parts (program, game files,
 // settings, firmware, or the whole folder) to the cloud, restore them to
 // folders of choice, see and delete versions (docs/plan-game-backup.md).
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, GameView, inTauri } from "../api";
+import { api, errorText, GameView } from "../api";
 import { bytes, dateTime } from "../format";
 import "../gameBackup.css";
 import {
@@ -21,6 +20,7 @@ import {
   VersionSummary,
 } from "../gameBackupApi";
 import { msg, useT } from "../i18n";
+import { useTauriEvent } from "../useTauriEvent";
 import { duration } from "./SpeedTest";
 import { withSteamClosed } from "./steamAction";
 import { Badge, Button, Hint, Icon, Modal, Spinner, useUi } from "./ui";
@@ -85,30 +85,24 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
     gameBackupApi.takeInstall(key).then((yes) => yes && setRestoreOpen(true), () => undefined);
   }, [key]);
 
-  useEffect(() => {
-    if (!inTauri) return;
-    const off: Array<() => void> = [];
-    listen<{ key: string; job: BackupJob }>("game-backup-progress", (e) => {
-      if (e.payload.key === key) setJob(e.payload.job);
-    }).then((u) => off.push(u));
-    listen<BackupFinished>("game-backup-finished", (e) => {
-      const f = e.payload;
-      if (f.key !== key) return;
-      setJob(null);
-      ui.toast(f.message, f.ok ? "ok" : f.cancelled ? "info" : "bad");
-      const fix = (f.outcome as { fix?: { shortcut?: string } } | null)?.fix;
-      if (f.kind === "restore" && fix?.shortcut === "needsSteamClosed") setNeedShortcut(true);
-      load();
-      if (f.kind === "restore") onChanged();
-    }).then((u) => off.push(u));
-    listen<string>("game-backup-install", (e) => {
-      if (e.payload === key) {
-        gameBackupApi.takeInstall(key);
-        setRestoreOpen(true);
-      }
-    }).then((u) => off.push(u));
-    return () => off.forEach((u) => u());
-  }, [key, load, onChanged, ui]);
+  useTauriEvent<{ key: string; job: BackupJob }>("game-backup-progress", (p) => {
+    if (p.key === key) setJob(p.job);
+  });
+  useTauriEvent<BackupFinished>("game-backup-finished", (f) => {
+    if (f.key !== key) return;
+    setJob(null);
+    ui.toast(f.message, f.ok ? "ok" : f.cancelled ? "info" : "bad");
+    const fix = (f.outcome as { fix?: { shortcut?: string } } | null)?.fix;
+    if (f.kind === "restore" && fix?.shortcut === "needsSteamClosed") setNeedShortcut(true);
+    load();
+    if (f.kind === "restore") onChanged();
+  });
+  useTauriEvent<string>("game-backup-install", (k) => {
+    if (k === key) {
+      gameBackupApi.takeInstall(key);
+      setRestoreOpen(true);
+    }
+  });
 
   const run = async (f: () => Promise<unknown>) => {
     try {
