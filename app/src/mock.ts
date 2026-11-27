@@ -287,6 +287,7 @@ const overview: Overview = {
     game("fe-fortunes-weave", L("火焰纹章：万缕千丝", "Fire Emblem: Fortune's Weave"), 2661209017, "fefw recomp", "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", ["{install}/save/**"], {
       art: { cover: art(2661209017, "p.jpg"), wide: null, hero: art(2661209017, "_hero.png"), logo: art(2661209017, "_logo.png"), icon: art(2661209017, "_icon.png") },
       health: { state: "changed", exe: "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", launchOptions: "" },
+      shelves: ["finished"],
     }),
     game("bloodborne-lantern", "Bloodborne", 4000695018, L("Lantern Engine（shadPS4）", "Lantern Engine (shadPS4)"), "C:\\Users\\me\\Desktop\\Switch\\Bloodborne\\BloodbornePC\\Bloodborne.exe", ["{install}/user/savedata/1/CUSA00207/**"], {
       art: { cover: art(4000695018, "p.png"), wide: null, hero: art(4000695018, "_hero.jpg"), logo: art(4000695018, "_logo.png"), icon: art(4000695018, "_icon.png") },

@@ -159,6 +159,7 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
     if (!s) return;
     if (SCENE_GAME[s]) setPage({ name: "game", key: SCENE_GAME[s] });
     else if (s in SCENE_SETTINGS) setPage({ name: "settings" });
+    else if (s === "collection") setPage({ name: "collection" });
     else if (SCENE_ADD[s]) setAdding(true);
   }, [overview]);
 

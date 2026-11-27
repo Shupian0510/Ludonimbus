@@ -2,6 +2,8 @@
 
 "Collection" in the sidebar adds up how much you have played, and has two shelves: games you finished, and games you put away.
 
+![Collection](/screenshots/en/collection.png)
+
 ## The three numbers at the top
 
 - **Play time**: all games on all devices together, see [Play time](./playtime.md).
