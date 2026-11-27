@@ -39,7 +39,10 @@ fn hash(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex()[..16].to_string()
 }
 
-/// Definitions as uploaded: local icon paths mean nothing on other PCs.
+/// Definitions as uploaded, and as read back: local icon paths mean nothing
+/// on other PCs, and one read from the cloud must never make this PC open a
+/// file of someone else's choosing (icons are read from disk and handed to
+/// the app and the Steam plugin).
 fn portable(schema: &Schema) -> Schema {
     let mut s = schema.clone();
     for a in &mut s.achievements {
@@ -86,7 +89,7 @@ pub fn pull(files: &dyn Store, at: &Folders, device: &str) -> Result<usize> {
         }
     }
     let (schema, from) = match schema_at.filter(|_| db.schema.is_none()) {
-        Some((folder, path)) => (files.read(&path)?.and_then(|b| serde_json::from_slice::<Schema>(&b).ok()), folder),
+        Some((folder, path)) => (files.read(&path)?.and_then(|b| serde_json::from_slice::<Schema>(&b).ok()).map(|s| portable(&s)), folder),
         None => (None, at.own()),
     };
     // Definitions read from another of the game's folders count as uploaded:

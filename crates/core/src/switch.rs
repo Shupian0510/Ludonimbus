@@ -335,7 +335,8 @@ pub fn parse_index(b: &[u8]) -> Result<Vec<IndexEntry>> {
         bail!(crate::tr!("Ryujinx 的存档索引格式不认识", "Ryujinx's save index format isn't recognized"));
     }
     let n = u32_le(b, 8) as usize;
-    let mut out = Vec::with_capacity(n);
+    // No more than the file has room for, whatever its header says.
+    let mut out = Vec::with_capacity(n.min((b.len() - 12) / (12 + 0x80)));
     let mut at = 12;
     for _ in 0..n {
         let ok = b.len() >= at + 12 + 0x80
@@ -824,6 +825,12 @@ mod tests {
         assert!(!e[0].plain() && e[2].plain());
         assert_eq!(write_index(&e), b);
         assert!(parse_index(b"IMKV\0\0\0\0\x01\0\0\0IMEN").is_err());
+        // A damaged header claiming four billion entries: an error, not an
+        // attempt to make room for half a terabyte.
+        assert!(parse_index(b"IMKV\0\0\0\0\xff\xff\xff\xff").is_err());
+        let mut more = b.clone();
+        more[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(parse_index(&more).is_err());
     }
 
     #[test]
