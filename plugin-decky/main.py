@@ -1,7 +1,7 @@
 """Ludonimbus for Decky Loader: the backend only forwards requests to
 Ludonimbus's local API (the desktop app's or the headless `ludonimbus-agent`,
-whichever wrote `agent.json`), adding its token. See crates/agent/src/main.rs
-for the endpoints."""
+whichever wrote `agent.json`), adding its token. Both serve the same API
+(crates/core/src/localapi); the endpoints are in docs/steam-plugin.md."""
 
 import asyncio
 import json

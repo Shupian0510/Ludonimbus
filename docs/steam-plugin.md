@@ -9,42 +9,54 @@ Steam 客户端
             ├─ 前端（TypeScript）：在「开始游戏」栏插入状态项，轮询状态
             └─ 后端（Lua）：读 agent.json，调用本机接口
                               │  HTTP，127.0.0.1，Bearer token
-桌面应用（托盘）── 本机接口（app/src-tauri/src/agent.rs）── core 同步引擎
+桌面应用（托盘）  ┐
+                  ├─ 本机接口（crates/core/src/localapi）── core 同步引擎
+ludonimbus-agent ┘   （没有窗口的后台服务：Steam Deck 游戏模式的 Decky 插件，或没开托盘应用的 Linux 桌面）
 ```
 
 插件只负责显示和转发点击：没有网盘凭据，不做同步判定。Ludonimbus 没在运行时状态栏显示「Ludonimbus 未运行」，不影响 Steam 和游戏本身。
 
 ## 本机接口
 
-托盘里的 Ludonimbus 启动时在 `127.0.0.1` 的随机端口上监听，并写入 `%APPDATA%\Ludonimbus\agent.json`：
+本机接口只有一份实现：core 的 `localapi`。托盘里的桌面应用（`app/src-tauri/src/agent.rs`）和不带界面的 `ludonimbus-agent`（`crates/agent`）都用它，两边不同的地方通过 `localapi::Host` 提供（见下面「两个程序」）。
+
+启动时在 `127.0.0.1` 的随机端口上监听，并写入数据文件夹里的 `agent.json`（Windows 是 `%APPDATA%\Ludonimbus\agent.json`，Linux 是 `~/.config/Ludonimbus/agent.json`）：
 
 ```json
-{ "port": 54262, "token": "<64 位十六进制，每次启动都会变>", "pid": 48080, "version": "0.2.0", "apiVersion": 1 }
+{ "port": 54262, "token": "<64 位十六进制，每次启动都会变>", "pid": 48080, "version": "1.0.0", "apiVersion": 4, "headless": false }
 ```
 
-正常退出时删除这个文件；被强制结束时文件会留下，插件连不上就当作「未运行」。
+`headless` 为 `true` 时是 `ludonimbus-agent` 写的。桌面应用启动时直接写这个文件，正常退出时删除（只删自己写的）；被强制结束时文件会留下，插件连不上就当作「未运行」。`ludonimbus-agent` 每 5 秒看一次：文件里的进程不在了（或没有文件）就写自己的，桌面应用在运行时让开。
 
-### 安全
+### 安全和限制
 
 - 只监听回环地址。
-- 每个请求必须带 `Authorization: Bearer <token>`，否则 401。token 只在 `agent.json` 里（当前用户的 AppData）。
+- 每个请求必须带 `Authorization: Bearer <token>`，否则 401。token 只在 `agent.json` 里（当前用户的数据文件夹；Linux 上文件权限是 0600）。
 - 带 `Origin` 头的请求一律 403：网页里的脚本发出的跨域请求都会带它，所以浏览器里的网页无法调用。
 - `Host` 必须是 `127.0.0.1:<端口>` 或 `localhost:<端口>`，防 DNS rebinding。
+- 一个连接一个请求（回答带 `Connection: close`）。同时最多处理 16 个连接，更多的在系统里排队等着被接受；请求要在 10 秒内发完，请求行和头最多 16 KiB（超过 431），请求体最多 16 KiB（没有接口要请求体；超过 413，`Transfer-Encoding` 411）。
 
 ### 接口（v1）
 
+除了 `ping`，`{key}` 不在 Ludonimbus 里时都是 404。版本 id（`restore`、`newer/{id}`）只能是字母和数字，否则 400。出错时返回 `{ "error": "<说明>" }`。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/ping` | `{ app: "ludonimbus", version, apiVersion }` |
-| GET | `/v1/steam/apps/{appid}?account={id}&refresh=1` | Steam 快捷方式对应游戏的云存档状态。`account` 是 Steam 账号 id（`userdata` 下的文件夹名），同一个快捷方式在多个账号下时用来区分。`refresh=1` 时，如果缓存的检查结果超过 60 秒、或者之后又同步过，就重新向云端检查一次 |
-| POST | `/v1/games/{key}/sync` | 在后台开始「立即同步」，立即返回 `{ started: true }`。游戏运行中或已在同步时返回 409 |
-| POST | `/v1/games/{key}/open` | 显示 Ludonimbus 窗口并打开这个游戏 |
+| GET | `/v1/ping` | `{ app: "ludonimbus", version, apiVersion, lang, headless }` |
+| GET | `/v1/steam/apps/{appid}?account={id}&refresh=1` | Steam 快捷方式（或 Steam 安装的游戏，API 4）对应游戏的云存档状态。`account` 是 Steam 账号 id（`userdata` 下的文件夹名），同一个快捷方式在多个账号下时用来区分。`refresh=1` 时，如果缓存的检查结果超过 60 秒、或者之后又同步过，就重新向云端检查一次 |
+| POST | `/v1/games/{key}/sync?resolution=cloud\|local` | 在后台开始「立即同步」，立即返回 `{ started: true }`。游戏运行中或已在同步时返回 409。`resolution`（API 3）是冲突时用哪一份，其他值 400 |
+| POST | `/v1/games/{key}/open` | 显示 Ludonimbus 窗口并打开这个游戏（只有桌面应用） |
 | GET | `/v1/games/{key}/snapshots` | （API 2，0.6）云端版本列表，新的在前，外加 `headId`、`lastSyncedId`、`deviceId`、`pending`，以及现在不能恢复的原因 `busy`（游戏运行中、正在同步） |
 | POST | `/v1/games/{key}/restore/{id}` | （API 2）在后台恢复这个版本，立即返回 `{ started: true }`，进行中状态是 `syncing`。游戏运行中或已在同步时 409。和应用里的「恢复到这个版本」走同一个 `sync::restore` |
 | GET | `/v1/steam/playtime?account={id}` | （API 2）每个关联了快捷方式的游戏在所有设备上的总时间（分钟）：`{ apps: [{ appid, key, minutes }] }`，插件用它替换 Steam 显示的游戏时间 |
 | GET | `/v1/games/{key}/playtime` | （API 2）所有设备的游戏时间：`totalSecs`、`lastPlayed`、各设备明细 |
-| GET | `/v1/games/{key}/gamebackup` | （API 2）游戏本体备份的状态：`{ exeMissing, checked, latest: { versionId, createdAt, totalSize, deviceName } \| null, job: { kind, phase, done, total, … } \| null, lang }`。不等云端：本体缺失时在后台查一次最新备份（缓存 5 分钟），还没查到时 `checked` 为 `false`。见 [plan-game-backup.md](plan-game-backup.md) |
-| POST | `/v1/games/{key}/gamebackup/install` | （API 2）显示 Ludonimbus 窗口，打开这个游戏的「从云端恢复」对话框（安装位置在应用里选） |
+| GET | `/v1/games/{key}/gamebackup` | （API 2，只有桌面应用）游戏本体备份的状态：`{ exeMissing, checked, latest: { versionId, createdAt, totalSize, deviceName } \| null, job: { kind, phase, done, total, … } \| null, lang }`。不等云端：本体缺失时在后台查一次最新备份（缓存 5 分钟），还没查到时 `checked` 为 `false`。见 [plan-game-backup.md](plan-game-backup.md) |
+| POST | `/v1/games/{key}/gamebackup/install` | （API 2，只有桌面应用）显示 Ludonimbus 窗口，打开这个游戏的「从云端恢复」对话框（安装位置在应用里选） |
+| GET | `/v1/games/{key}/newer` | （API 3）同一个游戏的另一个版本（例如 Steam 版和重编译版）在云端有更新的存档时返回 `{ key, name, label, snapshot }`，否则 `null` |
+| POST | `/v1/games/{key}/newer/{id}/apply` | （API 3）在后台把这份存档应用到这个游戏，立即返回 `{ started: true }`；`{id}` 不是 `newer` 给的那份时 404，游戏运行中或正在同步时 409 |
+| POST | `/v1/games/{key}/newer/{id}/dismiss` | （API 3）这份不再提示 |
+
+在后台做的事（同步、恢复、应用另一个版本的存档）结束后，失败时把错误写进这个游戏的 `lastError`；成功且没有剩下要做的事时清掉它；版本还在排队上传、或者没连上云端时，保留同步自己记下的原因。
 
 状态的返回值（没有关联到 Ludonimbus 的游戏返回 `{ "managed": false }`）：
 
@@ -66,14 +78,28 @@ Steam 客户端
   "conflict": false,
   "lastError": null,
   "checkedAt": "…",
+  "lang": "zh-CN",
   "playtime": { "totalSecs": 74520, "lastPlayed": "…", "devices": [ /* 各设备明细 */ ] },   // 0.6
-  "apiVersion": 2                                                                         // 0.6
+  "store": null,                   // API 4：Steam 安装的游戏由谁管存档：steam | backup | managed
+  "backlog": null,                 // API 4：玩完后还没传完的：{ state: "uploading" | "waiting", versions, bytes }
+  "apiVersion": 4
 }
 ```
 
-`apiVersion` 从 0.6 起是 2。插件按它决定点击状态项是打开版本列表（2）还是打开 Ludonimbus（旧版应用）。
+`apiVersion` 从 0.6 起是 2，0.7 是 3，1.0 是 4。插件按它决定点击状态项是打开版本列表（2 起）还是打开 Ludonimbus（旧版应用）。
 
-`phase` 的来源：应用自己正在同步（界面、本机接口、托盘监视共用一把锁，同一个游戏不会同时跑两个同步）→ `syncing`；`ludonimbus-run` 在 `running/<key>.json` 里写的阶段 → `preLaunch` / `playing` / `uploading`；否则看游戏进程是否在运行。
+`phase` 的来源：提供接口的程序自己正在同步（桌面应用里界面、本机接口、托盘监视共用一把锁，同一个游戏不会同时跑两个同步）→ `syncing`；`ludonimbus-run` 在 `running/<key>.json` 里写的阶段 → `preLaunch` / `playing` / `uploading`；否则看游戏进程是否在运行。
+
+### 两个程序
+
+| | 桌面应用（托盘） | `ludonimbus-agent` |
+|---|---|---|
+| `ping` / `agent.json` 的 `headless` | `false` | `true` |
+| 「正在同步」 | 和窗口、托盘监视共用的那一份（`app/src-tauri/src/busy.rs`） | 只有这个进程自己的 |
+| 「游戏在运行」 | `watcher::game_running` | 包装器的标记文件 + 游戏进程（core 里同样的判断） |
+| 后台的同步结束时 | 通知窗口（`sync-finished` 事件） | — |
+| `open`、`gamebackup`、`gamebackup/install` | 有 | 404（没有窗口） |
+| 成就 | 托盘里的检测线程往事件队列里放新解锁 | 读得到成就列表和图标，但不检测新解锁，`events` 一直是空的 |
 
 ## 插件
 
@@ -112,14 +138,15 @@ Steam 客户端
 
 ## 成就
 
-设计见 [plan-achievements.md](plan-achievements.md)。本机接口多了 4 个端点（`app/src-tauri/src/achievements.rs`）：
+设计见 [plan-achievements.md](plan-achievements.md)。本机接口里成就的端点（`crates/core/src/localapi`；事件队列在 `localapi::events`，桌面应用的检测线程 `app/src-tauri/src/achievements.rs` 往里放新解锁）：
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/steam/apps/{appid}/achievements?account={id}` | 游戏页的成就进度和列表；没有关联来源时 `source` 为 `null` |
-| GET | `/v1/games/{key}/achievements/{id}/icon` | 本地奖杯图标，`{ dataUrl }` |
-| GET | `/v1/achievements/events?after={seq}` | 游戏运行中新解锁的成就；`after=0` 只返回当前序号（插件重新加载后不补弹旧的） |
-| POST | `/v1/achievements/events/{seq}/ack?shown=steam\|failed&reason=` | 插件报告弹窗结果；3.5 秒内没有 `steam`（或插件 10 秒内没来取过事件）时，应用用自己的置顶小窗口提醒 |
+| GET | `/v1/steam/apps/{appid}/achievements?account={id}` | 游戏页的成就进度和列表；没有关联来源时 `source` 为 `null`；Steam 安装的游戏用 Steam 自己的成就，返回 `{ "managed": false }` |
+| GET | `/v1/games/{key}/achievements/{id}/icon` | 本地奖杯图标，`{ dataUrl }`；没有时 404 |
+| GET | `/v1/games/{key}/icon` | 游戏的图标，`{ dataUrl }`，给没有图标的成就用；没有时 404 |
+| GET | `/v1/achievements/events?after={seq}` | 游戏运行中新解锁的成就：`{ seq, events, lang }`；`after=0` 只返回当前序号（插件重新加载后不补弹旧的）。序号从启动时间开始，重启应用后继续变大 |
+| POST | `/v1/achievements/events/{seq}/ack?shown=steam\|failed&reason=` | 插件报告弹窗结果；3.5 秒内没有 `steam`（或插件 10 秒内没来取过事件）时，桌面应用用自己的置顶小窗口提醒。`shown` 是别的值、`seq` 不是数字时 400 |
 
 插件里：
 

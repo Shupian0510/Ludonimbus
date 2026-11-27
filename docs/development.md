@@ -48,7 +48,7 @@ cargo build --release -p ludonimbus-agent          # 游戏模式的后台服务
 # 下载包 = AppImage + target/release/ludonimbus-run + ludonimbus-agent + scripts/install-linux.sh
 ```
 
-**Decky 插件**（`plugin-decky/`，游戏模式的快捷菜单）：`npm ci && npm run build` 生成 `dist/index.js`；装到 Deck 时把 `dist/`、`main.py`、`plugin.json`、`package.json` 放进 `~/homebrew/plugins/Ludonimbus/`。后端只读 `~/.config/Ludonimbus/agent.json` 转发请求，本地接口的说明在 [agent/src/main.rs](../crates/agent/src/main.rs)。
+**Decky 插件**（`plugin-decky/`，游戏模式的快捷菜单）：`npm ci && npm run build` 生成 `dist/index.js`；装到 Deck 时把 `dist/`、`main.py`、`plugin.json`、`package.json` 放进 `~/homebrew/plugins/Ludonimbus/`。后端只读 `~/.config/Ludonimbus/agent.json` 转发请求。本机接口只有一份实现，在 core 的 [`localapi`](../crates/core/src/localapi/mod.rs)，桌面应用和后台服务共用，说明见 [steam-plugin.md](steam-plugin.md)；测试是 `crates/core/tests/local_api.rs`（临时端口、假的宿主和临时数据文件夹）。
 
 **后台服务**：`ludonimbus-agent --once` 只补做一次「被强制结束的包装器」然后退出，排查时有用；正常由 `systemd --user` 一直运行，日志和应用写在同一个文件夹。
 
@@ -168,11 +168,11 @@ cargo test -p ludonimbus-core adapters                     # 检查规则能解�
 ## 项目结构
 
 ```text
-crates/core          同步引擎：存档扫描、快照、云盘、Steam 快捷方式、同步判定、Millennium 安装
+crates/core          同步引擎：存档扫描、快照、云盘、Steam 快捷方式、同步判定、Millennium 安装、给 Steam 插件用的本机接口（localapi）
 crates/cli           ludonimbus 命令行
 crates/runner        ludonimbus-run，Steam 快捷方式实际启动的程序
 crates/agent         ludonimbus-agent，不带界面的后台服务（Steam Deck 游戏模式）
-app/                 桌面应用（Tauri 2 + React + TypeScript），含给 Steam 插件用的本机接口和手柄界面（app/src/handheld）
+app/                 桌面应用（Tauri 2 + React + TypeScript），含手柄界面（app/src/handheld）；托盘运行时提供本机接口
 plugin-millennium/   Steam 插件（Millennium：Lua 后端 + TypeScript 前端）
 plugin-decky/        游戏模式插件（Decky Loader：Python 后端 + TypeScript 前端）
 adapters/            内置存档规则（游戏、模拟器、从 RecompLauncher 目录生成的规则）

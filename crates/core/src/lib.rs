@@ -21,6 +21,8 @@
 //! - [`gamebackup`] game files in the cloud, speed test of the cloud
 //! - [`i18n`]     interface language for texts made in Rust (`tr!`)
 //! - [`xbox`]     Xbox app games: launch helper, real game processes
+//! - [`localapi`] the local HTTP API for the Steam plugins, served by the
+//!   desktop app and by the headless agent
 
 pub mod achievements;
 pub mod adapters;
@@ -40,6 +42,7 @@ pub mod handheld;
 pub mod i18n;
 pub mod installs;
 pub mod join;
+pub mod localapi;
 pub mod localart;
 pub mod lockfile;
 pub mod logger;

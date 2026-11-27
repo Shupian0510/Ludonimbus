@@ -103,7 +103,7 @@ Proton 前缀在 Steam 主库的 `steamapps/compatdata/<appid>/pfx`。非 Steam 
 
 游戏模式里没有托盘，也不能弹窗口（会盖在游戏上面）。
 
-- 需要一个**不带界面的后台程序** `ludonimbus-agent`：本地 API、进程监视、截图上传。现在 [agent.rs](../app/src-tauri/src/agent.rs) 和 `watcher.rs` 都依赖 Tauri 的 `AppHandle`，要先挪进一个独立的 crate（例如 `crates/agent`），Tauri 应用和后台程序共用。
+- 需要一个**不带界面的后台程序** `ludonimbus-agent`：本地 API、进程监视、截图上传。现在 [agent.rs](../app/src-tauri/src/agent.rs) 和 `watcher.rs` 都依赖 Tauri 的 `AppHandle`，要先挪进一个独立的 crate（例如 `crates/agent`），Tauri 应用和后台程序共用。（已做：本地 API 在 core 的 [`localapi`](../crates/core/src/localapi/mod.rs)，两边不同的地方通过 `localapi::Host` 提供；`crates/agent` 只剩后台服务本身。）
 - 用 `systemd --user` 服务运行，登录后自动启动。游戏模式开机自动登录，服务会跟着起来。
 - Steam 菜单里的「退出游戏」会给整个进程树发 SIGTERM，包装器也在里面，可能来不及上传。包装器要接住 SIGTERM，等游戏退出后尽快上传；被强制结束时，后台服务按 `running/<key>.json` 补传，和 Windows 上包装器被强制结束时的处理相同。
 - Deck 经常在游戏中途休眠。醒来后网络要过几秒才恢复，上传和下载要能重试。

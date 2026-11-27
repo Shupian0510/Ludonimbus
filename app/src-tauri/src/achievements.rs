@@ -3,15 +3,9 @@
 //! achievement popup), falls back to a small topmost window when Steam can't,
 //! and serves the app's achievements UI.
 //!
-//! Local API (routed from `agent.rs`):
-//! ```text
-//! GET  /v1/steam/apps/{appid}/achievements[?account=]   game page: progress and list
-//! GET  /v1/games/{key}/achievements/{id}/icon            local icon as a data URL
-//! GET  /v1/games/{key}/icon                              the game's icon, for achievements without one
-//! GET  /v1/achievements/events?after={seq}               new unlocks to show
-//! POST /v1/achievements/events/{seq}/ack?shown=steam|failed
-//! ```
-//! See `docs/plan-achievements.md`.
+//! The queue and the local API's achievement endpoints are in core
+//! (`localapi::events` and `crates/core/src/localapi`), shared with the
+//! headless agent. See `docs/plan-achievements.md`.
 
 use crate::commands::{blocking, CmdResult};
 use crate::watcher;
@@ -19,6 +13,7 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use ludonimbus_core::achievements::{self as ach, detect, retro, Binding, GameView, NewUnlock, SourceKind};
 use ludonimbus_core::config::{self, AppConfig, GameEntry};
+use ludonimbus_core::localapi::events::{self, Event};
 use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{logger, process};
 use serde::{Deserialize, Serialize};
@@ -38,68 +33,17 @@ const TICK: Duration = Duration::from_secs(2);
 const RA_EVERY: Duration = Duration::from_secs(30);
 /// How long the Steam plugin has to show a popup before the fallback window does.
 const ACK_WAIT: Duration = Duration::from_millis(3500);
-const KEEP_EVENTS: usize = 50;
 pub(crate) const TOAST_LABEL: &str = "achievement-toast";
 
 // ---------------------------------------------------------------------------
-// Event queue for the Steam plugin
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Event {
-    seq: u64,
-    key: String,
-    game_name: String,
-    /// The Steam shortcut's app id on this PC (Steam needs it for its popup).
-    appid: Option<u32>,
-    id: String,
-    name: String,
-    description: String,
-    /// `https://…` or a `data:` URL.
-    icon: Option<String>,
-    unlocked_at: chrono::DateTime<Utc>,
-    hardcore: bool,
-    points: Option<u32>,
-    grade: Option<ach::Grade>,
-    test: bool,
-    #[serde(skip)]
-    shown: Option<String>,
-}
-
-struct Queue {
-    seq: u64,
-    events: VecDeque<Event>,
-    plugin_seen: Option<Instant>,
-}
-
-static QUEUE: Mutex<Queue> = Mutex::new(Queue { seq: 0, events: VecDeque::new(), plugin_seen: None });
-
-/// Numbers start from the launch time, so they keep growing across restarts
-/// of the app: a plugin still holding the last run's number gets this run's
-/// unlocks, and a plugin that synced at 0 isn't stuck on `after=0`, which
-/// `api_events` reads as "just (re)loaded, start from now".
-fn seed(q: &mut Queue) {
-    if q.seq == 0 {
-        q.seq = u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0).max(1);
-    }
-}
-
-/// The achievement's icon, else the game's.
-fn icon_for(key: &str, a: &ach::Achievement) -> Option<String> {
-    let own = match a.icon.as_deref() {
-        Some(i) if ach::is_web(i) => return Some(i.to_string()),
-        Some(p) => ach::icon_data_url(std::path::Path::new(p)).ok(),
-        None => None,
-    };
-    own.or_else(|| game_icon_url(key))
-}
+// Unlocks for the Steam plugin
 
 fn game_icon_url(key: &str) -> Option<String> {
     ach::game_icon_path(key).and_then(|p| ach::icon_data_url(&p).ok())
 }
 
 fn push_event(app: &AppHandle, g: &GameEntry, u: &NewUnlock, test: bool) {
-    let ev = enqueue(g, u, test);
+    let ev = events::push(g, u, test);
     log(format!("{}: unlocked {} ({})", g.key, ev.id, ev.name));
     let _ = app.emit("achievement-unlocked", &ev);
     // The fallback window, unless the plugin shows it in Steam.
@@ -115,96 +59,17 @@ fn push_event(app: &AppHandle, g: &GameEntry, u: &NewUnlock, test: bool) {
 
 /// Wait for the plugin to show the popup in Steam; true when it didn't.
 fn needs_fallback(seq: u64) -> bool {
-    let plugin_alive = QUEUE.lock().unwrap().plugin_seen.is_some_and(|t| t.elapsed() < Duration::from_secs(10));
-    if !plugin_alive {
+    if !events::plugin_alive() {
         return true;
     }
     let start = Instant::now();
     while start.elapsed() < ACK_WAIT {
         std::thread::sleep(Duration::from_millis(250));
-        if shown(seq).as_deref() == Some("steam") {
+        if events::shown(seq).as_deref() == Some("steam") {
             return false;
         }
     }
     true
-}
-
-fn enqueue(g: &GameEntry, u: &NewUnlock, test: bool) -> Event {
-    let mut q = QUEUE.lock().unwrap();
-    seed(&mut q);
-    q.seq += 1;
-    let ev = Event {
-        seq: q.seq,
-        key: g.key.clone(),
-        game_name: g.name.clone(),
-        appid: g.steam.as_ref().map(|l| l.appid).filter(|a| *a != 0),
-        id: u.achievement.id.clone(),
-        name: u.achievement.name.clone(),
-        description: u.achievement.description.clone(),
-        icon: icon_for(&g.key, &u.achievement),
-        unlocked_at: u.unlocked_at,
-        hardcore: u.hardcore,
-        points: u.achievement.points,
-        grade: u.achievement.grade,
-        test,
-        shown: None,
-    };
-    q.events.push_back(ev.clone());
-    while q.events.len() > KEEP_EVENTS {
-        q.events.pop_front();
-    }
-    ev
-}
-
-fn shown(seq: u64) -> Option<String> {
-    QUEUE.lock().unwrap().events.iter().find(|e| e.seq == seq).and_then(|e| e.shown.clone())
-}
-
-pub fn api_events(query_after: Option<&str>) -> Result<Value> {
-    let after: u64 = query_after.and_then(|s| s.parse().ok()).unwrap_or(0);
-    let mut q = QUEUE.lock().unwrap();
-    seed(&mut q);
-    q.plugin_seen = Some(Instant::now());
-    // A plugin that just (re)loaded starts from now: old unlocks aren't replayed.
-    let events: Vec<&Event> = if after == 0 { Vec::new() } else { q.events.iter().filter(|e| e.seq > after).collect() };
-    Ok(json!({ "seq": q.seq, "events": events, "lang": ludonimbus_core::i18n::current().code() }))
-}
-
-/// `%XX` and `+` decoding of a query value.
-fn unescape(s: &str) -> String {
-    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'%' if i + 2 < b.len() => match (hex(b[i + 1]), hex(b[i + 2])) {
-                (Some(h), Some(l)) => {
-                    out.push(h * 16 + l);
-                    i += 3;
-                    continue;
-                }
-                _ => out.push(b'%'),
-            },
-            b'+' => out.push(b' '),
-            c => out.push(c),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
-}
-
-pub fn api_ack(seq: &str, shown: Option<&str>, reason: Option<&str>) -> Result<Value> {
-    let seq: u64 = seq.parse().map_err(|_| anyhow!("bad seq"))?;
-    let shown = shown.unwrap_or("steam").to_string();
-    let reason = reason.map(unescape).filter(|r| !r.is_empty());
-    let mut q = QUEUE.lock().unwrap();
-    if let Some(e) = q.events.iter_mut().find(|e| e.seq == seq) {
-        let how = if shown == "steam" { "shown in Steam" } else { "not shown in Steam" };
-        log(format!("{}: popup for {} {how}{}", e.key, e.id, reason.map(|r| format!(" ({r})")).unwrap_or_default()));
-        e.shown = Some(shown);
-    }
-    Ok(json!({ "ok": true }))
 }
 
 // ---------------------------------------------------------------------------
@@ -412,32 +277,6 @@ pub fn spawn(app: AppHandle) {
             }
         }
     });
-}
-
-// ---------------------------------------------------------------------------
-// Local API
-
-pub fn api_app(appid: u32, account: Option<&str>) -> Result<Value> {
-    let cfg = config::load()?;
-    // A game Steam installed has Steam's own achievements there.
-    let Some(g) = crate::agent::find_game(&cfg, appid, account).filter(|g| g.store.is_none()) else {
-        return Ok(json!({ "managed": false }));
-    };
-    let mut v = serde_json::to_value(ach::view(&g.key))?;
-    v["managed"] = json!(true);
-    v["name"] = json!(g.name);
-    v["lang"] = json!(ludonimbus_core::i18n::current().code());
-    Ok(v)
-}
-
-pub fn api_icon(key: &str, id: &str) -> Result<Value> {
-    let path = ach::icon_path(key, id).ok_or_else(|| anyhow!("no icon"))?;
-    Ok(json!({ "dataUrl": ach::icon_data_url(&path)? }))
-}
-
-pub fn api_game_icon(key: &str) -> Result<Value> {
-    let path = ach::game_icon_path(key).ok_or_else(|| anyhow!("no icon"))?;
-    Ok(json!({ "dataUrl": ach::icon_data_url(&path)? }))
 }
 
 // ---------------------------------------------------------------------------
@@ -673,31 +512,19 @@ mod tests {
             ..Default::default()
         };
         // Nothing has polled yet: the fallback window is used right away.
-        let first = enqueue(&g, &unlock("1"), false);
+        let first = events::push(&g, &unlock("1"), false);
         assert!(needs_fallback(first.seq));
-        // Not 1: numbers continue across restarts of the app.
-        assert!(first.seq > 1_000_000_000_000);
-        assert_eq!(first.appid, Some(3_000_000_001));
 
-        // A plugin that (re)loads gets the current number, not old events.
-        let v = api_events(None).unwrap();
-        assert_eq!(v["events"].as_array().unwrap().len(), 0);
-        let seq = v["seq"].as_u64().unwrap();
-
-        let second = enqueue(&g, &unlock("2"), false);
-        let v = api_events(Some(&seq.to_string())).unwrap();
-        let events = v["events"].as_array().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0]["id"], "2");
-        assert_eq!(events[0]["appid"], 3_000_000_001u64);
-
-        // Shown in Steam: no fallback. Failed: fallback.
-        api_ack(&second.seq.to_string(), Some("steam"), Some("overlay")).unwrap();
+        // The plugin polls (`GET /v1/achievements/events`). Shown in Steam:
+        // no fallback. Failed: fallback.
+        let seq = events::list(0)["seq"].as_u64().unwrap();
+        let second = events::push(&g, &unlock("2"), false);
+        assert_eq!(events::list(seq)["events"][0]["id"], "2");
+        events::ack(second.seq, "steam", Some("overlay"));
         assert!(!needs_fallback(second.seq));
-        let third = enqueue(&g, &unlock("3"), false);
-        api_events(Some(&second.seq.to_string())).unwrap();
-        api_ack(&third.seq.to_string(), Some("failed"), Some("NotificationStore%20not%20found")).unwrap();
-        assert_eq!(unescape("a%20b+c%E4%B8%AD%2"), "a b c中%2");
+        let third = events::push(&g, &unlock("3"), false);
+        events::list(second.seq);
+        events::ack(third.seq, "failed", Some("NotificationStore not found"));
         assert!(needs_fallback(third.seq));
     }
 }

@@ -41,12 +41,6 @@ pub fn runner_active(key: &str) -> bool {
     catchup::wrapper(key) == Wrapper::Running
 }
 
-/// What the wrapper is doing: "preLaunch", "playing" or "uploading";
-/// `None` when none is running.
-pub fn runner_phase(key: &str) -> Option<String> {
-    catchup::runner_phase(key)
-}
-
 /// Whether the game is being played: through the launch wrapper, or started
 /// any other way (directly, by an emulator, by the Xbox app), by the
 /// process names core goes by ([`watch_names`]).
