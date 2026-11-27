@@ -503,6 +503,14 @@ export const saves = {
   purgeText: (device: string, at: string) => `${device} 在 ${at} 的存档会从云端彻底删除，之后无法恢复。`,
   purged: "已彻底删除",
   exported: (path: string) => `已导出到 ${path}`,
+  incomplete: "不完整",
+  incompleteHint: "云端缺少这份存档的一部分文件，所以不会取回、也不能设为当前。有这些文件的设备同步时会补上；补不上的，14 天后移到「最近删除」。",
+  incompleteNoUse: "这份存档不完整，不能设为当前",
+  retired: "不完整",
+  retiredHint: (n: number) => `缺少的文件没有设备能补上，自动移到了这里。${n > 0 ? `还留 ${n} 天。` : "即将清除。"}`,
+  unsent: "未能完整上传",
+  unsentHint: "这份存档基于的旧版本在云端已经没有了，缺的文件在这台设备上也找不到，所以没有上传。它自己的文件留在这台设备上，可以导出。",
+  dismiss: "不再显示",
 };
 
 /** 收藏页：总时长、游戏数、成就，「已通关」和「已归档」两个书架（docs/plan-v2.md 10.5）。 */
@@ -873,6 +881,8 @@ export const game = {
   playtimePlatform: (name: string, time: string) => `${name}：${time}`,
   tooNew: (version: string) => `云端最新的存档是游戏 ${version} 存的，比这里的新，不会自动换过来`,
   tooNewHint: "旧版本的游戏读不了新版本的存档。先把这里的游戏更新到同一个版本，再到「存档」里把它设为当前。",
+  incomplete: "最新存档不完整",
+  incompleteHint: "云端最新的一份存档缺少部分文件，这台设备先用自己的存档。有这些文件的设备同步时会补上，补上以后照常取回。",
   conflictTitle: "本机和云端都有新的存档改动",
   conflictText: (device: string, at: string, size: string, files: number, localSize: string) =>
     `云端最新：${device} 于 ${at} 保存（${size}）。本机：${files} 个文件，${localSize}。没选的那份也会留在「存档」里。`,

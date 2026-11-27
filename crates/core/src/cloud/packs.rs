@@ -19,12 +19,17 @@
 //!   The caller then writes the manifest ([`super::line::write_manifest`]):
 //!   that is what makes the snapshot exist.
 //! - [`verify`], once the manifest is written, looks whether the packs it
-//!   refers to are still there and puts back what another device cleaned up
-//!   in between.
+//!   refers to are still there ([`gone_since`]) and puts back what another
+//!   device cleaned up in between. [`super::saves::publish`] does the same
+//!   with what the other snapshots of the line take from such a pack.
 //! - [`read`] fetches the packs a manifest needs (all files, or a chosen
 //!   subset), checks every file against the manifest and only then puts the
 //!   files into the destination. A pack that is gone is [`MissingPack`].
 //! - [`unused`] (pure) names the packs no manifest refers to any more.
+//! - For a pack that is gone ([`super::saves::put_back`]): [`take`] gets
+//!   files out of another pack, [`zip_contents`] and [`unzip`] out of a zip
+//!   kept on this device, and [`rebuild`] uploads the pack again under its
+//!   own name.
 //!
 //! | operation | requests |
 //! |---|---|
@@ -304,12 +309,20 @@ fn pack_of<'a>(manifest: &'a Manifest, file: &'a FileRef) -> &'a str {
 /// readers check against the manifest, and a pack that doesn't match it
 /// would make the snapshot unreadable for good.
 pub fn build(manifest: &Manifest, pack: &str, local: &[LocalFile], staging: &Path) -> Result<PathBuf> {
+    let files: Vec<&FileRef> = manifest.files.iter().filter(|f| pack_of(manifest, f) == pack).collect();
+    build_of(manifest, pack, &files, local, staging)
+}
+
+/// [`build`] with the files the pack holds given: `files`, and `about` as
+/// its `snapshot.json`.
+fn build_of(about: &Manifest, pack: &str, files: &[&FileRef], local: &[LocalFile], staging: &Path) -> Result<PathBuf> {
+    let manifest = about;
     if !is_file_name(pack) {
         bail!(crate::tr!("内容包的名字无效：{pack}", "Invalid content pack name: {pack}"));
     }
     let on_disk: BTreeMap<&str, &LocalFile> = local.iter().map(|l| (l.path.as_str(), l)).collect();
     let mut members: Vec<(&FileRef, &LocalFile)> = Vec::new();
-    for f in manifest.files.iter().filter(|f| pack_of(manifest, f) == pack) {
+    for f in files.iter().copied() {
         check_path(&f.path)?;
         let l = on_disk.get(f.path.as_str()).filter(|l| l.size == f.size && l.hash == f.hash).ok_or_else(|| {
             anyhow!(crate::tr!("本机没有内容包 {pack} 需要的文件 {}", "This device doesn't have the file {} that the content pack {pack} needs", f.path))
@@ -390,27 +403,14 @@ fn put(store: &dyn Store, folder: &str, manifest: &Manifest, pack: &str, local: 
 /// uploaded. One of its own packs that `local` can't rebuild is an ordinary
 /// error: the caller still has it as a zip and can upload it again.
 pub fn verify(store: &dyn Store, folders: &[String], manifest: &Manifest, local: &[LocalFile], staging: &Path) -> Result<Vec<String>> {
-    // A snapshot that waited in the queue has an old id: its own packs look
-    // old to a clean-up from the moment they are uploaded, and are checked
-    // like the ones it borrows.
-    let fresh = pack_time(&manifest.id).is_some_and(|made| Utc::now().signed_duration_since(made) < chrono::Duration::hours(FRESH_HOURS));
-    let mut missing: BTreeSet<String> = manifest.packs().into_iter().filter(|p| !(fresh && is_own(p, &manifest.id))).collect();
+    let (missing, _) = gone_since(store, folders, manifest)?;
     if missing.is_empty() {
         return Ok(Vec::new());
     }
     let Some(home) = folders.first() else {
         bail!(crate::tr!("这个游戏在云端没有文件夹", "This game has no folder in the cloud"));
     };
-    for folder in folders {
-        let present = present(store, folder)?;
-        missing.retain(|p| !present.contains(p));
-        if missing.is_empty() {
-            return Ok(Vec::new());
-        }
-    }
-    let at_hand = |pack: &str| {
-        manifest.files.iter().filter(|f| pack_of(manifest, f) == pack).all(|f| local.iter().any(|l| l.path == f.path && l.size == f.size && l.hash == f.hash))
-    };
+    let at_hand = |pack: &str| files_in(manifest, pack).iter().all(|f| has(local, f));
     if let Some(gone) = missing.iter().find(|p| !is_own(p.as_str(), &manifest.id) && !at_hand(p.as_str())) {
         return Err(MissingPack { pack: gone.clone() }.into());
     }
@@ -418,6 +418,133 @@ pub fn verify(store: &dyn Store, folders: &[String], manifest: &Manifest, local:
         put(store, home, manifest, pack, local, staging)?;
     }
     Ok(missing.into_iter().collect())
+}
+
+/// The part of [`verify`] that looks: the packs of `manifest`, written a
+/// moment ago, that are in none of `folders`, and the packs the listings it
+/// made show (all of the game's when one is missing). One listing normally;
+/// none for a snapshot made within the last day whose files are all in its
+/// own packs.
+pub fn gone_since(store: &dyn Store, folders: &[String], manifest: &Manifest) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+    // A snapshot that waited in the queue has an old id: its own packs look
+    // old to a clean-up from the moment they are uploaded, and are checked
+    // like the ones it borrows.
+    let fresh = pack_time(&manifest.id).is_some_and(|made| Utc::now().signed_duration_since(made) < chrono::Duration::hours(FRESH_HOURS));
+    let wanted: BTreeSet<String> = manifest.packs().into_iter().filter(|p| !(fresh && is_own(p, &manifest.id))).collect();
+    if wanted.is_empty() {
+        return Ok(Default::default());
+    }
+    if folders.is_empty() {
+        bail!(crate::tr!("这个游戏在云端没有文件夹", "This game has no folder in the cloud"));
+    }
+    listed_absent(store, folders, wanted)
+}
+
+/// Whether `local` has a file with the path, size and hash of `f`.
+fn has(local: &[LocalFile], f: &FileRef) -> bool {
+    local.iter().any(|l| l.path == f.path && l.size == f.size && l.hash == f.hash)
+}
+
+/// The files `manifest` takes from `pack`.
+pub fn files_in(manifest: &Manifest, pack: &str) -> Vec<FileRef> {
+    manifest.files.iter().filter(|f| pack_of(manifest, f) == pack).cloned().collect()
+}
+
+/// Upload `pack` again under its own name, holding `files` (with the paths,
+/// sizes and hashes the snapshots that use it give them), taken from
+/// `local`. `about` is the snapshot it is put back for: its manifest is the
+/// pack's `snapshot.json`. Every file must be in `local`.
+pub fn rebuild(store: &dyn Store, folder: &str, about: &Manifest, pack: &str, files: &[FileRef], local: &[LocalFile], staging: &Path) -> Result<()> {
+    let files: Vec<&FileRef> = files.iter().collect();
+    let zip = build_of(about, pack, &files, local, staging)?;
+    let sent = store.upload(&v2::pack_path(folder, pack), &zip);
+    let _ = std::fs::remove_file(&zip);
+    sent
+}
+
+/// The packs among `wanted` that are in none of `folders` (the game's), and
+/// what the listings showed: one listing per folder, until all are found.
+fn listed_absent(store: &dyn Store, folders: &[String], mut wanted: BTreeSet<String>) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
+    let mut seen = BTreeSet::new();
+    for folder in folders {
+        if wanted.is_empty() {
+            break;
+        }
+        let present = present(store, folder)?;
+        wanted.retain(|p| !present.contains(p));
+        seen.extend(present);
+    }
+    Ok((wanted, seen))
+}
+
+/// The packs of `manifest` (of layout 2) that are in none of `folders`.
+pub fn absent(store: &dyn Store, folders: &[String], manifest: &Manifest) -> Result<BTreeSet<String>> {
+    Ok(listed_absent(store, folders, manifest.packs())?.0)
+}
+
+/// The packs in all of `folders`, one listing each.
+pub fn present_in(store: &dyn Store, folders: &[String]) -> Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    for folder in folders {
+        out.extend(present(store, folder)?);
+    }
+    Ok(out)
+}
+
+/// Download `pack` of `manifest` (whose manifest is in `line_dir`) and
+/// unpack `files` of it into `into` (`<into>/<path>`), each checked against
+/// the size and hash `manifest` gives it. A pack that is gone is a
+/// [`MissingPack`].
+pub fn take(
+    store: &dyn Store,
+    folders: &[String],
+    line_dir: &str,
+    manifest: &Manifest,
+    pack: &str,
+    files: &[&FileRef],
+    into: &Path,
+    staging: &Path,
+) -> Result<()> {
+    for f in files {
+        check_path(&f.path)?;
+    }
+    let scratch = Scratch::new(staging)?;
+    let zip = scratch.0.join("pack.zip");
+    fetch(store, &places(folders, line_dir, manifest, pack)?, pack, &zip)?;
+    extract(&zip, pack, files, into)
+}
+
+/// What a zip on this device holds (a pack waiting to be uploaded, a copy
+/// kept in local-backups): each `files/<path>` entry, with the size and
+/// hash the zip's `snapshot.json` gives that path. Entries it doesn't
+/// describe are left out; a zip that can't be read holds nothing.
+pub fn zip_contents(zip: &Path) -> Vec<FileRef> {
+    let read = || -> Result<Vec<FileRef>> {
+        let mut archive = zip::ZipArchive::new(File::open(zip)?)?;
+        let mut json = Vec::new();
+        archive.by_name("snapshot.json")?.read_to_end(&mut json)?;
+        let manifest: Manifest = serde_json::from_slice(&json)?;
+        let by_path: BTreeMap<&str, &FileRef> = manifest.files.iter().map(|f| (f.path.as_str(), f)).collect();
+        let names: Vec<String> = archive.file_names().map(str::to_string).collect();
+        Ok(names
+            .iter()
+            .filter_map(|n| n.strip_prefix("files/"))
+            .filter_map(|p| by_path.get(p))
+            .filter(|f| check_path(&f.path).is_ok() && !f.hash.is_empty())
+            .map(|f| FileRef { pack: None, ..(*f).clone() })
+            .collect())
+    };
+    read().unwrap_or_default()
+}
+
+/// Unpack `files` (as [`zip_contents`] gave them) from a zip on this device
+/// into `into`, each checked.
+pub fn unzip(zip: &Path, files: &[&FileRef], into: &Path) -> Result<()> {
+    for f in files {
+        check_path(&f.path)?;
+    }
+    let name = zip.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    extract(zip, &name, files, into)
 }
 
 /// Whether `manifest` takes files from packs other than its own (`<id>`,
@@ -438,8 +565,10 @@ fn present(store: &dyn Store, folder: &str) -> Result<BTreeSet<String>> {
 // --------------------------------------------------------------------- read
 
 /// A pack a snapshot needs is not in the cloud. The snapshot is incomplete
-/// until the device that wrote it puts the pack back ([`verify`]); until
-/// then the local saves are left as they are.
+/// until a device that has the content puts the pack back
+/// ([`super::saves::put_back`]); it is marked so that no device tries to
+/// take it meanwhile ([`super::saves::mark`]), and the local saves are left
+/// as they are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingPack {
     pub pack: String,
@@ -679,7 +808,7 @@ fn is_part_number(n: &str) -> bool {
 }
 
 /// Whether `pack` is one of the packs the snapshot `id` brought itself.
-fn is_own(pack: &str, id: &str) -> bool {
+pub fn is_own(pack: &str, id: &str) -> bool {
     pack == id || pack.strip_prefix(id).and_then(|rest| rest.strip_prefix('-')).is_some_and(is_part_number)
 }
 

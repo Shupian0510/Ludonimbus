@@ -190,7 +190,7 @@ impl<S: Store> CloudProvider for Repo<S> {
             }
             if let Some(bytes) = self.read_tagged(&path, &e.tag)? {
                 if let Ok(r) = serde_json::from_slice::<TrashRecord>(&bytes) {
-                    out.push(TrashedSnapshot { snapshot: SnapshotSummary::from(&r.meta), deleted_at: r.deleted_at, deleted_by: r.deleted_by });
+                    out.push(TrashedSnapshot { snapshot: SnapshotSummary::from(&r.meta), deleted_at: r.deleted_at, deleted_by: r.deleted_by, reason: None });
                 }
             }
         }

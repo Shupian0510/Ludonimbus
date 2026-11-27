@@ -499,6 +499,17 @@ export const saves: typeof Zh.saves = {
   purgeText: (device, at) => `The save ${device} made at ${at} will be deleted from the cloud for good. This can't be undone.`,
   purged: "Deleted for good",
   exported: (path) => `Exported to ${path}`,
+  incomplete: "Incomplete",
+  incompleteHint:
+    "Part of this save's files is missing from the cloud, so it isn't fetched and can't be made current. A device that has those files puts them back when it syncs; if none can, it moves to Recently deleted after 14 days.",
+  incompleteNoUse: "This save is incomplete and can't be made current",
+  retired: "Incomplete",
+  retiredHint: (n) =>
+    `No device could put back the files it was missing, so it was moved here. ${n > 0 ? `It stays ${n} more ${plural(n, "day", "days")}.` : "It is about to be removed."}`,
+  unsent: "Upload incomplete",
+  unsentHint:
+    "Couldn't be uploaded complete: the older version this save builds on is gone from the cloud, and the files it needed aren't on this device either. Its own files stay on this device; you can export them.",
+  dismiss: "Dismiss",
 };
 
 export const collection: typeof Zh.collection = {
@@ -868,6 +879,9 @@ export const game: typeof Zh.game = {
   playtimePlatform: (name, time) => `${name}: ${time}`,
   tooNew: (version) => `The newest save in the cloud was made by version ${version} of the game, newer than here, so it isn't brought over by itself`,
   tooNewHint: "An older version of the game can't read a newer save. Update the game here to the same version, then make it current on the Saves tab.",
+  incomplete: "Newest save incomplete",
+  incompleteHint:
+    "Part of the files of the newest save in the cloud is missing, so this device keeps its own saves for now. A device that has those files puts them back when it syncs; then the save is brought over as usual.",
   conflictTitle: "Both this PC and the cloud have new save changes",
   conflictText: (device, at, size, files, localSize) =>
     `Latest in the cloud: saved by ${device} at ${at} (${size}). This PC: ${files} ${plural(files, "file", "files")}, ${localSize}. The one you don't pick stays under Saves.`,

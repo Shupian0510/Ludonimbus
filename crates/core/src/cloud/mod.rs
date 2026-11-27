@@ -133,6 +133,10 @@ pub struct DeviceInstall {
     /// devices can show who is on a line with what.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub platform: String,
+    /// The snapshots versions waiting on that device take files from: kept
+    /// for it like `synced`, until those versions are uploaded.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub borrows: Vec<String>,
 }
 
 /// Game definition stored in the cloud so other devices can recognise it.
@@ -198,6 +202,11 @@ pub struct TrashedSnapshot {
     /// Name of the device it was deleted on.
     #[serde(default)]
     pub deleted_by: String,
+    /// Why, when the user didn't delete it: `incomplete` for a version that
+    /// missed a content pack nobody could put back
+    /// ([`saves::retire`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -667,6 +676,7 @@ pub fn device_info(cfg: &AppConfig) -> DeviceInfo {
                 synced: st.last_synced_id.clone(),
                 synced_at: st.last_sync_at,
                 platform: crate::sync::platform(g),
+                borrows: crate::sync::queued_bases(&g.key),
             })
         })
         .collect();

@@ -254,6 +254,12 @@ export function GameDetail({
         <Menu title={t.saves.more} items={shelves.items} />
         <div className="actionbar-status">
           <StatusBadge game={game} check={check} checking={checking} />
+          {check?.incomplete && (
+            <span className="status-note">
+              <Badge tone="warn">{g.incomplete}</Badge>
+              <Hint text={g.incompleteHint} />
+            </span>
+          )}
           {shelves.marks}
           <span className="muted">
             {g.lastSync(relTime(game.lastSyncAt))}
