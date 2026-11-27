@@ -132,7 +132,8 @@ fn main() {
         let owner = live_owner();
         let app_runs = owner.is_some_and(|p| p != me);
         if owner.is_none() {
-            match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| util::atomic_write(&agent_file(), &b)) {
+            // It holds the token: only this user may read it.
+            match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| util::write_private(&agent_file(), &b)) {
                 Ok(()) => log("published the local API in agent.json"),
                 Err(e) => log(format!("could not write agent.json: {e:#}")),
             }

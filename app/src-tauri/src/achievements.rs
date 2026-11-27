@@ -39,7 +39,7 @@ const RA_EVERY: Duration = Duration::from_secs(30);
 /// How long the Steam plugin has to show a popup before the fallback window does.
 const ACK_WAIT: Duration = Duration::from_millis(3500);
 const KEEP_EVENTS: usize = 50;
-const TOAST_LABEL: &str = "achievement-toast";
+pub(crate) const TOAST_LABEL: &str = "achievement-toast";
 
 // ---------------------------------------------------------------------------
 // Event queue for the Steam plugin
@@ -211,10 +211,18 @@ pub fn api_ack(seq: &str, shown: Option<&str>, reason: Option<&str>) -> Result<V
 // Fallback popup: a small transparent topmost window (visible over windowed
 // and borderless games, not over exclusive fullscreen).
 
-static TOASTS: Mutex<VecDeque<Value>> = Mutex::new(VecDeque::new());
+struct Toasts {
+    queue: VecDeque<Value>,
+    /// The window is open and asks for the next popup when one ends.
+    open: bool,
+}
+
+static TOASTS: Mutex<Toasts> = Mutex::new(Toasts { queue: VecDeque::new(), open: false });
 
 fn show_fallback(app: &AppHandle, ev: &Event) {
-    TOASTS.lock().unwrap().push_back(json!({
+    // Held until the window exists: its first question waits for it.
+    let mut toasts = TOASTS.lock().unwrap();
+    toasts.queue.push_back(json!({
         "name": ev.name,
         "description": ev.description,
         "icon": ev.icon,
@@ -225,8 +233,13 @@ fn show_fallback(app: &AppHandle, ev: &Event) {
         "test": ev.test,
         "lang": ludonimbus_core::i18n::current().code(),
     }));
-    if app.get_webview_window(TOAST_LABEL).is_some() {
+    if toasts.open && app.get_webview_window(TOAST_LABEL).is_some() {
         return; // the open window picks it up when the current toast ends
+    }
+    // The last window, told it was done, may not be gone yet.
+    let closing = Instant::now();
+    while app.get_webview_window(TOAST_LABEL).is_some() && closing.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(50));
     }
     let (w, h, margin) = (380.0, 104.0, 24.0);
     let (mut x, mut y) = (margin, margin);
@@ -247,6 +260,7 @@ fn show_fallback(app: &AppHandle, ev: &Event) {
         .resizable(false)
         .shadow(false)
         .build();
+    toasts.open = built.is_ok();
     match built {
         Ok(win) => {
             let _ = win.set_ignore_cursor_events(true);
@@ -255,16 +269,22 @@ fn show_fallback(app: &AppHandle, ev: &Event) {
     }
 }
 
-/// The toast window asks for the next popup; `None` closes it.
+/// The toast window asks for the next popup; `None` closes it. Not on the
+/// main thread, which [`show_fallback`] needs while it holds the queue.
 #[tauri::command]
-pub fn achievement_toast_next(app: AppHandle) -> Option<Value> {
-    let next = TOASTS.lock().unwrap().pop_front();
-    if next.is_none() {
-        if let Some(w) = app.get_webview_window(TOAST_LABEL) {
-            let _ = w.close();
+pub async fn achievement_toast_next(app: AppHandle) -> CmdResult<Option<Value>> {
+    blocking(move || {
+        let mut toasts = TOASTS.lock().unwrap();
+        let next = toasts.queue.pop_front();
+        if next.is_none() {
+            toasts.open = false;
+            if let Some(w) = app.get_webview_window(TOAST_LABEL) {
+                let _ = w.close();
+            }
         }
-    }
-    next
+        Ok(next)
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------

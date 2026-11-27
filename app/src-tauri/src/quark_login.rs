@@ -3,6 +3,10 @@
 //! offers), the cookies of that window are handed to OpenList and the window
 //! closes. The private window keeps nothing after it closes, and Ludonimbus
 //! doesn't store the cookie itself (OpenList keeps it in its data folder).
+//!
+//! The window shows a web page, so it gets nothing of the app: it is in no
+//! capability (`capabilities/`), Tauri refuses the app's commands to remote
+//! pages, and `ludoart://` answers only the app's windows (`art.rs`).
 
 use anyhow::{anyhow, bail, Result};
 use ludonimbus_core::tr;

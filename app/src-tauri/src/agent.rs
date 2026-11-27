@@ -90,7 +90,8 @@ pub fn spawn(app: AppHandle) {
             version: ludonimbus_core::APP_VERSION.to_string(),
             api_version: API_VERSION,
         };
-        match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| util::atomic_write(&agent_file(), &b)) {
+        // It holds the token: only this user may read it (Linux, macOS).
+        match serde_json::to_vec_pretty(&info).map_err(anyhow::Error::from).and_then(|b| util::write_private(&agent_file(), &b)) {
             Ok(()) => log(format!("local API listening on 127.0.0.1:{port}")),
             Err(e) => {
                 log(format!("could not write {}: {e:#}", agent_file().display()));

@@ -51,7 +51,7 @@ fn main() {
     }
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .register_uri_scheme_protocol("ludoart", art::handle)
+        .register_asynchronous_uri_scheme_protocol("ludoart", art::handle)
         .setup(move |app| {
             // Reading the configuration applies the interface language.
             let _ = config::load();
@@ -128,9 +128,11 @@ fn main() {
         })
         .on_window_event(move |window, event| {
             // Keep running in the tray so the background watcher can back up
-            // games started outside Steam. The handheld screen just closes.
+            // games started outside Steam. The handheld screen just closes,
+            // and so do the other windows (the achievement popup, the Quark
+            // sign-in): their code waits for them to be gone.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if desktop {
+                if desktop && window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
                 }

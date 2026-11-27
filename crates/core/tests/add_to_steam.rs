@@ -58,6 +58,8 @@ fn add_found_game_to_steam() {
     games::set_art("celeste", "cover", &img).unwrap();
     games::set_art("celeste", "icon", &img).unwrap();
     assert!(localart::file("celeste", "cover").unwrap().ends_with("cover.jpg"));
+    // Only the known kinds: a name from a URL can't lead to another file.
+    assert!(localart::file("celeste", "../celeste/cover").is_none());
 
     // Add to Steam: a shortcut that launches through the wrapper.
     let appid = games::add_to_steam("celeste", "42").unwrap();
