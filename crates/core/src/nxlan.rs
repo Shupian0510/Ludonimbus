@@ -18,6 +18,7 @@
 
 use crate::cloud::{Cloud, CloudGame, DeviceInfo};
 use crate::config::AppConfig;
+use crate::lockfile::FileLock;
 use crate::snapshot::{self, SnapshotMeta, SnapshotSummary, Trigger};
 use crate::{config, paths, savelib, switch, sync, util};
 use anyhow::{anyhow, bail, Context, Result};
@@ -27,7 +28,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::{IpAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -38,6 +40,18 @@ pub const PROTOCOL: u32 = 2;
 const DISCOVER: &[u8] = b"LUDONIMBUS_DISCOVER";
 /// Largest upload accepted (a zip of one game's saves).
 const MAX_UPLOAD: usize = 512 * 1024 * 1024;
+/// Largest body of the Switch's other requests (a status report of a few
+/// hundred games is tens of kilobytes).
+const MAX_BODY: usize = 1024 * 1024;
+/// Largest body sent without a token: anyone on the network can send one.
+const MAX_OPEN_BODY: usize = 16 * 1024;
+/// Largest request line and headers.
+const MAX_HEAD: usize = 16 * 1024;
+/// Connections served at once. The Switch makes one request at a time, so
+/// this only stops other hosts from tying up threads and memory.
+const MAX_CONNECTIONS: usize = 16;
+/// Connections served at once from one address.
+const MAX_PER_HOST: usize = 4;
 
 fn dir() -> std::path::PathBuf {
     paths::data_dir().join("nx")
@@ -67,15 +81,24 @@ pub fn devices() -> Vec<Paired> {
     std::fs::read(devices_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-fn save_devices(list: &[Paired]) -> Result<()> {
-    util::atomic_write(&devices_file(), &serde_json::to_vec_pretty(list)?)
+/// Requests are served several at a time, and the app forgets a Switch
+/// while the background service may be the one serving it: the list is
+/// read and written again under both locks, so no change is lost and no
+/// two writes meet.
+static DEVICES: Mutex<()> = Mutex::new(());
+
+fn update_devices<T>(f: impl FnOnce(&mut Vec<Paired>) -> T) -> Result<T> {
+    let _here = DEVICES.lock().unwrap_or_else(|e| e.into_inner());
+    let _everywhere = FileLock::acquire(&dir().join("devices.lock"), Duration::from_secs(10))?;
+    let mut list = devices();
+    let out = f(&mut list);
+    util::atomic_write(&devices_file(), &serde_json::to_vec_pretty(&list)?)?;
+    Ok(out)
 }
 
 /// Forget a paired Switch: its token stops working.
 pub fn remove_device(id: &str) -> Result<()> {
-    let mut list = devices();
-    list.retain(|d| d.id != id);
-    save_devices(&list)
+    update_devices(|list| list.retain(|d| d.id != id))
 }
 
 fn hash_token(token: &str) -> String {
@@ -132,21 +155,32 @@ fn pair(code: &str, id: &str, name: &str) -> Result<String, (u16, String)> {
     let mut raw = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw);
     let token = hex(&raw);
-    let mut list = devices();
-    list.retain(|d| d.id != id);
-    list.push(Paired { id: id.into(), name: name.trim().chars().take(40).collect(), token_hash: hash_token(&token), paired_at: Utc::now(), last_seen: None });
-    save_devices(&list).map_err(|e| (500, format!("{e:#}")))?;
+    let paired = Paired { id: id.into(), name: name.trim().chars().take(40).collect(), token_hash: hash_token(&token), paired_at: Utc::now(), last_seen: None };
+    update_devices(|list| {
+        list.retain(|d| d.id != id);
+        list.push(paired);
+    })
+    .map_err(|e| (500, format!("{e:#}")))?;
     Ok(token)
 }
+
+/// When a Switch was last seen is written down at most this often (seconds):
+/// the settings show it, and the Switch asks every second or two.
+const SEEN_EVERY: i64 = 60;
 
 fn authorize(header: Option<&str>) -> Result<Paired, (u16, String)> {
     let token = header.and_then(|h| h.strip_prefix("Bearer ")).ok_or((401, "missing token".to_string()))?;
     let hash = hash_token(token.trim());
-    let mut list = devices();
-    let d = list.iter_mut().find(|d| d.token_hash == hash).ok_or((401, "unknown device".to_string()))?;
-    d.last_seen = Some(Utc::now());
-    let found = d.clone();
-    let _ = save_devices(&list);
+    let mut found = devices().into_iter().find(|d| d.token_hash == hash).ok_or((401, "unknown device".to_string()))?;
+    let now = Utc::now();
+    if found.last_seen.is_none_or(|t| (now - t).num_seconds() >= SEEN_EVERY) {
+        found.last_seen = Some(now);
+        let _ = update_devices(|list| {
+            if let Some(d) = list.iter_mut().find(|d| d.token_hash == hash) {
+                d.last_seen = Some(now);
+            }
+        });
+    }
     Ok(found)
 }
 
@@ -161,16 +195,31 @@ pub fn identity() -> Result<(Vec<u8>, Vec<u8>, String)> {
         let ck = rcgen::generate_simple_self_signed(vec!["ludonimbus.local".to_string()])?;
         std::fs::create_dir_all(dir())?;
         util::atomic_write(&cert_path, ck.cert.pem().as_bytes())?;
-        util::atomic_write(&key_path, ck.key_pair.serialize_pem().as_bytes())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))?;
-        }
+        write_private(&key_path, ck.key_pair.serialize_pem().as_bytes())?;
     }
     let cert = std::fs::read(&cert_path)?;
     let key = std::fs::read(&key_path)?;
     Ok((cert.clone(), key, fingerprint(&cert)?))
+}
+
+/// The private key: on Unix the file is made readable by this user only
+/// from the start, never readable by others for a moment before a chmod.
+#[cfg(unix)]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let tmp = path.with_extension("pem.new");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    f.write_all(bytes)?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    util::atomic_write(path, bytes)
 }
 
 /// SHA-256 of the certificate (DER), as the Switch shows and pins it.
@@ -216,11 +265,36 @@ fn query_param<'a>(query: &'a str, name: &str) -> Option<String> {
         .map(|(_, v)| percent_encoding::percent_decode_str(&v.replace('+', " ")).decode_utf8_lossy().into_owned())
 }
 
-pub fn handle(req: &Req) -> Resp {
-    let parts: Vec<&str> = req.path.trim_matches('/').split('/').collect();
+/// Who may send a request, and how large its body may be, decided from its
+/// first line and headers alone, before any of the body is read: `hello`
+/// and `pair` are open to anyone on the network and small; everything else
+/// needs a paired Switch's token, and only its upload is large.
+fn gate(method: &str, path: &str, auth: Option<&str>) -> Result<(Option<Paired>, usize), Resp> {
+    let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
     if parts.first() != Some(&"nx") || parts.get(1) != Some(&"v1") {
-        return err(404, "not found");
+        return Err(err(404, "not found"));
     }
+    match (method, &parts[2..]) {
+        ("GET", ["hello"]) | ("POST", ["pair"]) => Ok((None, MAX_OPEN_BODY)),
+        (_, rest) => {
+            let device = authorize(auth).map_err(|(s, m)| err(s, m))?;
+            let upload = method == "POST" && matches!(rest, ["games", _, "snapshots"]);
+            Ok((Some(device), if upload { MAX_UPLOAD } else { MAX_BODY }))
+        }
+    }
+}
+
+pub fn handle(req: &Req) -> Resp {
+    match gate(req.method, req.path, req.auth) {
+        Err(r) => r,
+        Ok((_, limit)) if req.body.len() > limit => err(413, "too large"),
+        Ok((device, _)) => answer(req, device.as_ref()),
+    }
+}
+
+/// A request [`gate`] let through, with its body.
+fn answer(req: &Req, device: Option<&Paired>) -> Resp {
+    let parts: Vec<&str> = req.path.trim_matches('/').split('/').collect();
     match (req.method, &parts[2..]) {
         ("GET", ["hello"]) => {
             let cfg = config::load().unwrap_or_default();
@@ -242,16 +316,13 @@ pub fn handle(req: &Req) -> Resp {
                 Err((s, m)) => err(s, m),
             }
         }
-        _ => {
-            let device = match authorize(req.auth) {
-                Ok(d) => d,
-                Err((s, m)) => return err(s, m),
-            };
-            match route(req, &parts[2..], &device) {
+        (_, rest) => match device {
+            Some(device) => match route(req, rest, device) {
                 Ok(r) => r,
                 Err(e) => err(500, format!("{e:#}")),
-            }
-        }
+            },
+            None => err(401, "missing token"),
+        },
     }
 }
 
@@ -831,9 +902,6 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
         // background.
         ("POST", ["games", title, "snapshots"]) => {
             let title = title_of(title)?;
-            if req.body.len() > MAX_UPLOAD {
-                return Ok(err(413, "too large"));
-            }
             let files = unpack_from_switch(req.body, title)?;
             if files.is_empty() {
                 return Ok(err(400, "no save files"));
@@ -962,10 +1030,27 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
     }
 }
 
-/// Which files of a snapshot belong to the Switch game `title`.
+/// Which files of a snapshot belong to the Switch game `title`: below one of
+/// its two roots, by a path that stays there (no `..`, no drive, no empty
+/// part), whichever side made the zip.
 fn is_switch_path(path: &str, title: u64) -> bool {
-    let root = path.split('/').next().unwrap_or("");
+    let mut parts = path.split('/');
+    let root = parts.next().unwrap_or("");
+    let rest: Vec<&str> = parts.collect();
     switch::parse_root(root).is_some_and(|(_, t)| t == title)
+        && !rest.is_empty()
+        && rest.iter().all(|c| !c.is_empty() && *c != "." && *c != ".." && !c.contains([':', '\\']))
+}
+
+/// One zip entry, but no more than `room` bytes of it: what an entry says of
+/// its own size is not trusted, and a few bytes may inflate to gigabytes.
+fn read_entry(e: &mut impl Read, room: usize) -> Result<Vec<u8>> {
+    let mut data = Vec::new();
+    e.take(room as u64 + 1).read_to_end(&mut data)?;
+    if data.len() > room {
+        bail!("too large");
+    }
+    Ok(data)
 }
 
 /// The Switch game's files out of the zips of a version (each file as
@@ -975,6 +1060,7 @@ fn is_switch_path(path: &str, title: u64) -> bool {
 fn repack_for_switch(zips: &[std::path::PathBuf], title: u64, binds: &[crate::bind::Bind]) -> Result<Vec<u8>> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let mut total = 0usize;
     for zip in zips {
         let mut src = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
         for i in 0..src.len() {
@@ -990,8 +1076,9 @@ fn repack_for_switch(zips: &[std::path::PathBuf], title: u64, binds: &[crate::bi
             if e.is_dir() || !is_switch_path(&path, title) {
                 continue;
             }
-            let mut data = Vec::with_capacity(e.size() as usize);
-            e.read_to_end(&mut data)?;
+            // As much as the Switch may upload.
+            let data = read_entry(&mut e, MAX_UPLOAD - total)?;
+            total += data.len();
             out.start_file(path, opts)?;
             out.write_all(&data)?;
         }
@@ -1012,12 +1099,8 @@ fn unpack_from_switch(body: &[u8], title: u64) -> Result<Vec<(String, Vec<u8>)>>
         if !is_switch_path(&name, title) {
             bail!("unexpected file in the upload: {name}");
         }
-        let mut data = Vec::new();
-        e.read_to_end(&mut data)?;
+        let data = read_entry(&mut e, MAX_UPLOAD - total)?;
         total += data.len();
-        if total > MAX_UPLOAD {
-            bail!("too large");
-        }
         files.push((name, data));
     }
     Ok(files)
@@ -1025,9 +1108,30 @@ fn unpack_from_switch(body: &[u8], title: u64) -> Result<Vec<(String, Vec<u8>)>>
 
 // ---------------------------------------------------------------------------
 // Server
+//
+// Anyone on the local network can reach the port, paired or not, so the
+// server is small and strict: the Switch sends one request per connection
+// (`Connection: close`, a body with `Content-Length`) and reads the answer
+// to the end. Only so many connections are served at once, and from one
+// address; one that stalls is closed; the token is checked from the headers
+// before any of the body is read; and a body is read only up to what its
+// request may send.
+
+/// A connection that sends or takes nothing for this long is closed (the
+/// Switch waits 60 s for an answer).
+static IO_TIMEOUT_MS: AtomicU64 = AtomicU64::new(30_000);
+
+fn io_timeout() -> Duration {
+    Duration::from_millis(IO_TIMEOUT_MS.load(Ordering::SeqCst))
+}
+
+/// Tests: close idle connections sooner.
+#[doc(hidden)]
+pub fn set_io_timeout(t: Duration) {
+    IO_TIMEOUT_MS.store(t.as_millis() as u64, Ordering::SeqCst);
+}
 
 pub struct Server {
-    http: Arc<tiny_http::Server>,
     stop: Arc<AtomicBool>,
     pub port: u16,
     pub fingerprint: String,
@@ -1035,8 +1139,10 @@ pub struct Server {
 
 impl Server {
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::SeqCst);
-        self.http.unblock();
+        if !self.stop.swap(true, Ordering::SeqCst) {
+            // Wake the accept loop, so it lets go of the port.
+            let _ = TcpStream::connect_timeout(&(std::net::Ipv4Addr::LOCALHOST, self.port).into(), Duration::from_secs(1));
+        }
     }
 }
 
@@ -1049,46 +1155,9 @@ impl Drop for Server {
 /// Start listening on the local network (HTTPS on [`PORT`], discovery on
 /// [`DISCOVERY_PORT`]).
 pub fn start(log: impl Fn(String) + Send + Sync + 'static) -> Result<Server> {
-    let (cert, key, fp) = identity()?;
-    let http = tiny_http::Server::https(("0.0.0.0", PORT), tiny_http::SslConfig { certificate: cert, private_key: key })
-        .map_err(|e| anyhow!("could not listen on port {PORT}: {e}"))?;
-    let http = Arc::new(http);
-    let stop = Arc::new(AtomicBool::new(false));
-    let log: Log = Arc::new(log);
-    *LOG.lock().unwrap_or_else(|e| e.into_inner()) = Some(log.clone());
-    // Versions a Switch left here before the PC was closed.
-    upload_in_background();
+    let server = listen("0.0.0.0", PORT, log)?;
     {
-        let (http, log) = (http.clone(), log.clone());
-        std::thread::spawn(move || {
-            for mut r in http.incoming_requests() {
-                let log = log.clone();
-                std::thread::spawn(move || {
-                    let url = r.url().to_string();
-                    let (path, query) = url.split_once('?').unwrap_or((&url, ""));
-                    let auth = r.headers().iter().find(|h| h.field.equiv("Authorization")).map(|h| h.value.as_str().to_string());
-                    let mut body = Vec::new();
-                    let _ = r.as_reader().take(MAX_UPLOAD as u64 + 1).read_to_end(&mut body);
-                    let method = r.method().as_str().to_string();
-                    let resp = handle(&Req { method: &method, path, query, auth: auth.as_deref(), body: &body });
-                    let why = if resp.status >= 400 && resp.status != 409 {
-                        let text = serde_json::from_slice::<Value>(&resp.body).ok().and_then(|v| v["error"].as_str().map(str::to_string));
-                        text.map(|t| format!(": {}", t.chars().take(300).collect::<String>())).unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    log(format!("{method} {path} → {}{why}", resp.status));
-                    let mut out = tiny_http::Response::from_data(resp.body).with_status_code(resp.status);
-                    if let Ok(h) = tiny_http::Header::from_bytes("Content-Type", resp.content_type) {
-                        out.add_header(h);
-                    }
-                    let _ = r.respond(out);
-                });
-            }
-        });
-    }
-    {
-        let (stop, fp2) = (stop.clone(), fp.clone());
+        let (stop, fp2) = (server.stop.clone(), server.fingerprint.clone());
         std::thread::spawn(move || {
             let Ok(sock) = std::net::UdpSocket::bind(("0.0.0.0", DISCOVERY_PORT)) else { return };
             let _ = sock.set_read_timeout(Some(Duration::from_secs(1)));
@@ -1104,7 +1173,280 @@ pub fn start(log: impl Fn(String) + Send + Sync + 'static) -> Result<Server> {
             }
         });
     }
-    Ok(Server { http, stop, port: PORT, fingerprint: fp })
+    Ok(server)
+}
+
+/// The HTTPS side of [`start`], on any address (tests: a free port on
+/// 127.0.0.1).
+#[doc(hidden)]
+pub fn listen(host: &str, port: u16, log: impl Fn(String) + Send + Sync + 'static) -> Result<Server> {
+    let (cert, key, fp) = identity()?;
+    let tls = tls_config(&cert, &key)?;
+    let listener = TcpListener::bind((host, port)).map_err(|e| anyhow!("could not listen on port {port}: {e}"))?;
+    let port = listener.local_addr()?.port();
+    let stop = Arc::new(AtomicBool::new(false));
+    let log: Log = Arc::new(log);
+    *LOG.lock().unwrap_or_else(|e| e.into_inner()) = Some(log.clone());
+    // Versions a Switch left here before the PC was closed.
+    upload_in_background();
+    let stopping = stop.clone();
+    std::thread::spawn(move || {
+        let slots = Arc::new(Mutex::new(Slots::default()));
+        for conn in listener.incoming() {
+            if stopping.load(Ordering::SeqCst) {
+                break;
+            }
+            let Ok(tcp) = conn else {
+                // Out of sockets or the like: don't spin.
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            };
+            // Over the limit: closed at once, nothing read.
+            let Some(slot) = tcp.peer_addr().ok().and_then(|a| Slot::take(&slots, a.ip())) else { continue };
+            let (tls, log) = (tls.clone(), log.clone());
+            let _ = std::thread::Builder::new().name("nx-connection".into()).spawn(move || {
+                let _slot = slot;
+                serve(tcp, tls, &log);
+            });
+        }
+    });
+    Ok(Server { stop, port, fingerprint: fp })
+}
+
+fn tls_config(cert_pem: &[u8], key_pem: &[u8]) -> Result<Arc<rustls::ServerConfig>> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let cert = CertificateDer::from_pem_slice(cert_pem).map_err(|e| anyhow!("the certificate can't be read: {e:?}"))?;
+    let key = PrivateKeyDer::from_pem_slice(key_pem).map_err(|e| anyhow!("the private key can't be read: {e:?}"))?;
+    let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)?;
+    // The Switch opens a new connection for every request and never resumes one.
+    config.send_tls13_tickets = 0;
+    Ok(Arc::new(config))
+}
+
+/// Connections being served: in all, and from each address.
+#[derive(Default)]
+struct Slots {
+    all: usize,
+    by_host: HashMap<IpAddr, usize>,
+}
+
+/// One connection's place among the [`Slots`], given back when it ends.
+struct Slot {
+    slots: Arc<Mutex<Slots>>,
+    host: IpAddr,
+}
+
+impl Slot {
+    fn take(slots: &Arc<Mutex<Slots>>, host: IpAddr) -> Option<Slot> {
+        let mut s = slots.lock().unwrap_or_else(|e| e.into_inner());
+        let from_host = s.by_host.get(&host).copied().unwrap_or(0);
+        if s.all >= MAX_CONNECTIONS || from_host >= MAX_PER_HOST {
+            return None;
+        }
+        s.all += 1;
+        s.by_host.insert(host, from_host + 1);
+        Some(Slot { slots: slots.clone(), host })
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut s = self.slots.lock().unwrap_or_else(|e| e.into_inner());
+        s.all -= 1;
+        match s.by_host.get(&self.host).copied() {
+            Some(n) if n > 1 => {
+                s.by_host.insert(self.host, n - 1);
+            }
+            _ => {
+                s.by_host.remove(&self.host);
+            }
+        }
+    }
+}
+
+/// One connection: the TLS handshake, one request, its answer.
+fn serve(tcp: TcpStream, tls: Arc<rustls::ServerConfig>, log: &Log) {
+    let _ = tcp.set_read_timeout(Some(io_timeout()));
+    let _ = tcp.set_write_timeout(Some(io_timeout()));
+    let _ = tcp.set_nodelay(true);
+    let Ok(conn) = rustls::ServerConnection::new(tls) else { return };
+    let mut s = rustls::StreamOwned::new(conn, tcp);
+    let Ok(unread) = exchange(&mut s, log) else { return };
+    s.conn.send_close_notify();
+    let _ = s.flush();
+    if unread {
+        linger(&mut s.sock);
+    }
+}
+
+/// After an answer sent before the body was read (a refusal): take what the
+/// client still sends for a moment, so that closing doesn't reset the
+/// connection before it has read the answer.
+fn linger(tcp: &mut TcpStream) {
+    let _ = tcp.shutdown(std::net::Shutdown::Write);
+    let _ = tcp.set_read_timeout(Some(Duration::from_secs(1)));
+    let until = Instant::now() + Duration::from_secs(2);
+    let mut left = 4 * 1024 * 1024usize;
+    let mut buf = [0u8; 16 * 1024];
+    while left > 0 && Instant::now() < until {
+        match tcp.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => left = left.saturating_sub(n),
+        }
+    }
+}
+
+/// The parts of a request's head that matter here.
+struct Head {
+    method: String,
+    target: String,
+    auth: Option<String>,
+    length: usize,
+    /// `Expect: 100-continue`: the client waits for a go-ahead before the body.
+    wants_continue: bool,
+}
+
+/// Read one request and answer it. `Ok(true)` when the answer went out
+/// before the body was read.
+fn exchange<S: Read + Write>(s: &mut S, log: &Log) -> std::io::Result<bool> {
+    // The handshake and the headers come within the time one idle read may take.
+    let deadline = Instant::now() + io_timeout();
+    let (raw, mut body) = read_head(s, deadline)?;
+    let head = match parse_head(&raw) {
+        Ok(h) => h,
+        Err(resp) => {
+            write_resp(s, &resp)?;
+            return Ok(true);
+        }
+    };
+    let (path, query) = head.target.split_once('?').unwrap_or((&head.target, ""));
+    let (resp, unread) = match gate(&head.method, path, head.auth.as_deref()) {
+        Err(r) => (r, head.length > body.len()),
+        Ok((_, limit)) if head.length > limit => (err(413, "too large"), true),
+        Ok((device, _)) => {
+            if head.wants_continue && body.len() < head.length {
+                s.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+                s.flush()?;
+            }
+            // Without a token, the small body comes as quickly as the headers.
+            read_body(s, &mut body, head.length, device.is_none().then_some(deadline))?;
+            let req = Req { method: &head.method, path, query, auth: head.auth.as_deref(), body: &body };
+            (answer(&req, device.as_ref()), false)
+        }
+    };
+    let why = if resp.status >= 400 && resp.status != 409 {
+        let text = serde_json::from_slice::<Value>(&resp.body).ok().and_then(|v| v["error"].as_str().map(str::to_string));
+        text.map(|t| format!(": {}", t.chars().take(300).collect::<String>())).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    log(format!("{} {path} → {}{why}", head.method, resp.status));
+    write_resp(s, &resp)?;
+    Ok(unread)
+}
+
+/// Read up to the blank line that ends the headers. What came after it is
+/// the start of the body.
+fn read_head<S: Read>(s: &mut S, deadline: Instant) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = s.read(&mut chunk)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        let from = buf.len().saturating_sub(3);
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(i) = buf[from..].windows(4).position(|w| w == b"\r\n\r\n") {
+            let end = from + i;
+            if end > MAX_HEAD {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
+            let rest = buf.split_off(end + 4);
+            buf.truncate(end);
+            return Ok((buf, rest));
+        }
+        if buf.len() > MAX_HEAD {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        if Instant::now() > deadline {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+    }
+}
+
+fn parse_head(raw: &[u8]) -> Result<Head, Resp> {
+    let bad = || err(400, "bad request");
+    let text = std::str::from_utf8(raw).map_err(|_| bad())?;
+    let mut lines = text.split("\r\n");
+    let first: Vec<&str> = lines.next().unwrap_or("").split(' ').collect();
+    let &[method, target, version] = first.as_slice() else { return Err(bad()) };
+    if method.is_empty() || !target.starts_with('/') || !version.starts_with("HTTP/1.") {
+        return Err(bad());
+    }
+    let mut head = Head { method: method.to_string(), target: target.to_string(), auth: None, length: 0, wants_continue: false };
+    let mut length = None;
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(bad)?;
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            let n = value.parse::<usize>().map_err(|_| bad())?;
+            if length.is_some_and(|l| l != n) {
+                return Err(bad());
+            }
+            length = Some(n);
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err(err(411, "send the body with a Content-Length"));
+        } else if name.eq_ignore_ascii_case("authorization") {
+            head.auth = Some(value.to_string());
+        } else if name.eq_ignore_ascii_case("expect") {
+            head.wants_continue = value.eq_ignore_ascii_case("100-continue");
+        }
+    }
+    head.length = length.unwrap_or(0);
+    Ok(head)
+}
+
+/// The rest of a body of `length` bytes, the start of which may have come
+/// with the headers. `deadline`: when all of it must be there.
+fn read_body<S: Read>(s: &mut S, body: &mut Vec<u8>, length: usize, deadline: Option<Instant>) -> std::io::Result<()> {
+    body.truncate(length);
+    body.reserve_exact(length - body.len());
+    let mut chunk = vec![0u8; 64 * 1024];
+    while body.len() < length {
+        if deadline.is_some_and(|d| Instant::now() > d) {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        let want = (length - body.len()).min(chunk.len());
+        let n = s.read(&mut chunk[..want])?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    Ok(())
+}
+
+fn write_resp<S: Write>(s: &mut S, r: &Resp) -> std::io::Result<()> {
+    let reason = match r.status {
+        200 => "OK",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        409 => "Conflict",
+        411 => "Length Required",
+        413 => "Payload Too Large",
+        _ => "Internal Server Error",
+    };
+    let head = format!("HTTP/1.1 {} {reason}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", r.status, r.content_type, r.body.len());
+    s.write_all(head.as_bytes())?;
+    s.write_all(&r.body)?;
+    s.flush()
 }
 
 /// This PC's address on the local network (for typing it on the Switch).
@@ -1130,5 +1472,78 @@ mod tests {
         assert!(!is_switch_path("nxsave-0100000000010000/x", t));
         assert!(!is_switch_path("appdata/x", t));
         assert!(title_of("0100770008dd8000").is_ok() && title_of("nope").is_err());
+        // Paths that would leave the game's folder, or name none.
+        for bad in [
+            "nxsave-0100770008dd8000/../../evil.dll",
+            "nxsave-0100770008dd8000/a/../../x",
+            "nxsave-0100770008dd8000/./x",
+            "nxsave-0100770008dd8000//x",
+            "nxsave-0100770008dd8000/C:/x",
+            "nxsave-0100770008dd8000/a\\..\\x",
+            "nxsave-0100770008dd8000",
+            "nxsave-0100770008dd8000/",
+        ] {
+            assert!(!is_switch_path(bad, t), "{bad}");
+        }
+    }
+
+    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in files {
+            z.start_file(*name, opts).unwrap();
+            z.write_all(data).unwrap();
+        }
+        z.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn uploads_are_bounded_by_what_they_inflate_to() {
+        let t = 0x0100_7700_08DD_8000;
+        let ok = zip_of(&[("nxsave-0100770008dd8000/save.bin", b"rank 50")]);
+        assert_eq!(unpack_from_switch(&ok, t).unwrap()[0].1, b"rank 50");
+        // Eight megabytes of zeros are a few kilobytes in the zip: reading
+        // stops at the room left, whatever the entry says.
+        let bomb = zip_of(&[("nxsave-0100770008dd8000/a", &vec![0u8; 8 << 20])]);
+        assert!(bomb.len() < 64 * 1024);
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bomb)).unwrap();
+        let e = read_entry(&mut z.by_index(0).unwrap(), 1 << 20).unwrap_err();
+        assert!(format!("{e:#}").contains("too large"), "{e:#}");
+        assert_eq!(read_entry(&mut z.by_index(0).unwrap(), 8 << 20).unwrap().len(), 8 << 20);
+        let sneaky = zip_of(&[("nxsave-0100770008dd8000/../../evil.dll", b"x")]);
+        assert!(unpack_from_switch(&sneaky, t).is_err());
+    }
+
+    fn head_of(text: &str) -> Result<Head, u16> {
+        parse_head(text.as_bytes()).map_err(|r| r.status)
+    }
+
+    #[test]
+    fn request_heads() {
+        let h = head_of("POST /nx/v1/games/0100770008dd8000/snapshots?parent=01J HTTP/1.1\r\nHost: pc:47716\r\nConnection: close\r\nContent-Type: application/zip\r\nContent-Length: 1234\r\nAuthorization: Bearer abc").ok().unwrap();
+        assert_eq!((h.method.as_str(), h.target.as_str(), h.length, h.auth.as_deref()), ("POST", "/nx/v1/games/0100770008dd8000/snapshots?parent=01J", 1234, Some("Bearer abc")));
+        assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1").ok().unwrap().length, 0);
+        assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1\r\nTransfer-Encoding: chunked").err(), Some(411));
+        assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2").err(), Some(400));
+        assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1\r\nContent-Length: -1").err(), Some(400));
+        assert_eq!(head_of("GET nx/v1/hello HTTP/1.1").err(), Some(400));
+        assert_eq!(head_of("GET /nx/v1/hello").err(), Some(400));
+        assert_eq!(head_of("GET /nx/v1/hello HTTP/1.1\r\nno colon").err(), Some(400));
+    }
+
+    #[test]
+    fn heads_and_bodies_are_read_within_bounds() {
+        let far = Instant::now() + Duration::from_secs(60);
+        let (head, rest) = read_head(&mut &b"GET / HTTP/1.1\r\nA: b\r\n\r\nbody"[..], far).unwrap();
+        assert_eq!((head.as_slice(), rest.as_slice()), (&b"GET / HTTP/1.1\r\nA: b"[..], &b"body"[..]));
+        // Endless headers are cut off, not collected.
+        let endless = vec![b'a'; MAX_HEAD * 4];
+        assert!(read_head(&mut endless.as_slice(), far).is_err());
+        assert!(read_head(&mut &b"GET / HTTP/1.1\r\n"[..], far).is_err(), "closed early");
+        let mut body = b"bo".to_vec();
+        read_body(&mut &b"dy and more"[..], &mut body, 4, None).unwrap();
+        assert_eq!(body, b"body");
+        let mut body = Vec::new();
+        assert!(read_body(&mut &b"sho"[..], &mut body, 4, None).is_err(), "shorter than it said");
     }
 }

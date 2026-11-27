@@ -12,10 +12,10 @@ fn entry(service: &str, user: &str) -> Result<keyring::Entry> {
 
 #[cfg(target_os = "linux")]
 mod file {
-    use crate::{paths, util};
+    use crate::{lockfile::FileLock, paths, util};
     use anyhow::Result;
     use std::collections::BTreeMap;
-    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
 
     fn path() -> std::path::PathBuf {
         paths::data_dir().join("credentials.json")
@@ -25,11 +25,10 @@ mod file {
         std::fs::read(path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
+    /// Mode 0600 from the start: the file is never readable by others, not
+    /// even for a moment.
     fn write(m: &BTreeMap<String, String>) -> Result<()> {
-        let p = path();
-        util::atomic_write(&p, &serde_json::to_vec(m)?)?;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
-        Ok(())
+        util::write_private(&path(), &serde_json::to_vec(m)?)
     }
 
     pub fn get(id: &str) -> Option<String> {
@@ -37,6 +36,10 @@ mod file {
     }
 
     pub fn set(id: &str, secret: Option<&str>) -> Result<()> {
+        // The app, the background service and the launch wrapper may each
+        // save a sign-in at the same time; without the lock one of the two
+        // would be lost.
+        let _lock = FileLock::acquire(&paths::data_dir().join("credentials.lock"), Duration::from_secs(10))?;
         let mut m = read();
         let changed = match secret {
             Some(s) => m.insert(id.to_string(), s.to_string()).as_deref() != Some(s),

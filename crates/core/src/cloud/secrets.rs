@@ -1,7 +1,8 @@
 //! Passwords and secret keys of WebDAV / S3 clouds, the Baidu Netdisk sign-in
 //! and the SecretKey of an own Baidu app, kept in the system's credential
 //! store (never in `config.json`, see [`crate::credstore`]). Google Drive
-//! keeps its refresh token separately, see [`super::oauth`].
+//! keeps its refresh token separately, see [`super::oauth`]; [`release`]
+//! lets go of it as well.
 
 use crate::config::CloudConfig;
 use anyhow::Result;
@@ -43,8 +44,22 @@ pub fn load_for(cloud: &CloudConfig) -> Result<Option<String>> {
     }
 }
 
+/// Whether letting go of `dropped` lets go of the Google sign-in: there is
+/// one for every Google Drive cloud ([`super::oauth`]), and none of `keep`
+/// is one.
+fn drops_google_sign_in(dropped: &CloudConfig, keep: &[&CloudConfig]) -> bool {
+    let google = |c: &CloudConfig| matches!(c, CloudConfig::GoogleDrive { .. });
+    google(dropped) && !keep.iter().any(|k| google(k))
+}
+
 /// Forget the secret of `dropped` unless one of `keep` uses the same one.
+/// For Google Drive that is the refresh token, which would otherwise stay
+/// in the credential store after the user moved to another cloud.
 pub fn release(dropped: &CloudConfig, keep: &[&CloudConfig]) {
+    if drops_google_sign_in(dropped, keep) {
+        let _ = super::oauth::clear_refresh_token();
+        return;
+    }
     if let CloudConfig::BaiduPan { app_key, .. } = dropped {
         let same_app = |k: &&CloudConfig| matches!(k, CloudConfig::BaiduPan { app_key: a, .. } if a.trim() == app_key.trim());
         if !app_key.trim().is_empty() && !keep.iter().any(same_app) {
@@ -61,4 +76,26 @@ pub fn release(dropped: &CloudConfig, keep: &[&CloudConfig]) {
         return;
     }
     let _ = clear(&user);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drive(account: &str) -> CloudConfig {
+        CloudConfig::GoogleDrive { client_id: String::new(), client_secret: String::new(), folder: "Ludonimbus".into(), account: Some(account.into()) }
+    }
+
+    #[test]
+    fn the_google_sign_in_goes_with_the_last_google_drive() {
+        let folder = CloudConfig::LocalFolder { path: "D:/Sync".into() };
+        // Moved on from Drive: the copy it was kept for is done or declined.
+        assert!(drops_google_sign_in(&drive("a"), &[&folder]));
+        assert!(drops_google_sign_in(&drive("a"), &[]));
+        // Still in use, as the current cloud or the one to copy from.
+        assert!(!drops_google_sign_in(&drive("a"), &[&drive("b")]));
+        assert!(!drops_google_sign_in(&drive("a"), &[&folder, &drive("a")]));
+        // Other clouds have nothing to do with it.
+        assert!(!drops_google_sign_in(&folder, &[]));
+    }
 }

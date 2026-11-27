@@ -192,6 +192,43 @@ fn files_that_are_not_records_are_skipped_and_reported() {
 }
 
 #[test]
+fn a_record_whose_places_lead_elsewhere_is_left_out() {
+    let store = Memory::new();
+    let hades = create(&store, "Hades", &["steam:1145360"], "pc", "d-a", 0);
+    let mut cache = LibraryCache::default();
+    // A record as `create_as` makes it, changed, put in the cloud as it is.
+    let changed = |id: &str, change: &dyn Fn(&mut GameRecord)| {
+        let mut r = library::new_record(id, &[], "pc", "d-a", at(1));
+        r.id = id.into();
+        r.folders = vec![id.into()];
+        r.lines[0].path = v2::line_dir(id, library::MAIN_LINE);
+        change(&mut r);
+        store.put(&v2::game_record_path(id), &serde_json::to_vec(&r).unwrap());
+    };
+    // Each place a record names, pointing out of the game's own folders,
+    // out of the cloud, or at a drive.
+    changed("up", &|r| r.folders = vec!["..".into()]);
+    changed("two", &|r| r.folders = vec!["a/b".into()]);
+    changed("drive", &|r| r.lines[0].path = "C:/Users/me/AppData".into());
+    changed("back", &|r| r.lines[0].path = r"games\..\..\x".into());
+    changed("out", &|r| r.lines[0].path = "games/out/../../../x".into());
+    changed("abs", &|r| r.lines[0].path = "/etc/x".into());
+    changed("also", &|r| r.lines[0].also = vec!["games/also/saves/main/".into()]);
+
+    let (library, _) = refresh(&store, &mut cache);
+    assert_eq!(ids_of(&library), [hades.id.as_str()]);
+    assert_eq!(library.skipped, ["abs.json", "also.json", "back.json", "drive.json", "out.json", "two.json", "up.json"]);
+    // Read on its own, it is an error for that game.
+    assert!(library::read(&store, "out").is_err());
+    assert!(library::read(&store, &hades.id).unwrap().is_some());
+
+    // Put right, it is a card again.
+    changed("out", &|_| {});
+    let (library, _) = refresh(&store, &mut cache);
+    assert!(ids_of(&library).contains(&"out"));
+}
+
+#[test]
 fn saving_is_one_read_and_one_write() {
     let store = Memory::new();
     let record = library::new_record("Stardew Valley", &strings(&["steam:413150"]), "pc", "d-a", at(0));
