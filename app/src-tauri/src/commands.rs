@@ -315,7 +315,7 @@ pub async fn get_overview() -> CmdResult<Overview> {
             device_name: cfg.device.name.clone(),
             cloud: cloud_view(&cfg),
             steam_found: steam::root(&cfg).is_some(),
-            steam_running: procs.iter().any(|p| p == "steam.exe"),
+            steam_running: procs.iter().any(|p| p == steam::PROCESS),
             games: cfg.games.iter().map(|g| game_view(&cfg, g, &procs, &families, &cached.tags)).collect(),
             cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags),
             cloud_fetched_at: cached.fetched_at,
@@ -331,6 +331,45 @@ fn with_game<T>(key: &str, f: impl FnOnce(&Ctx, &GameEntry) -> Result<T>) -> Res
     let ctx = Ctx::load()?;
     let game = ctx.game(key)?;
     f(&ctx, &game)
+}
+
+fn syncing() -> anyhow::Error {
+    anyhow!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"))
+}
+
+/// [`with_game`] for what reads or changes a game's saves on this PC, or the
+/// save line it follows: never while the game is played, through the launch
+/// wrapper or started any other way (directly, by an emulator, by the Xbox
+/// app: [`watcher::game_running`]), nor while this app syncs it already.
+/// `running` says why when it is played.
+fn with_free_game<T>(key: &str, running: String, f: impl FnOnce(&Ctx, &GameEntry) -> Result<T>) -> Result<T> {
+    if watcher::runner_active(key) {
+        bail!(running);
+    }
+    let _busy = busy::begin(key).ok_or_else(syncing)?;
+    with_game(key, |ctx, g| {
+        if watcher::game_running(g) {
+            bail!(running);
+        }
+        f(ctx, g)
+    })
+}
+
+/// [`with_game`] for what changes a game's history in the cloud and nothing
+/// on this PC (keep, name or delete a version, put one back from 「最近删除」):
+/// one at a time with the syncs of the game, in this app and in any other
+/// program ([`sync::lock_game`]). Asks to wait rather than waits.
+fn with_free_line<T>(key: &str, f: impl FnOnce(&Ctx, &GameEntry) -> Result<T>) -> Result<T> {
+    let _busy = busy::begin(key).ok_or_else(syncing)?;
+    if sync::sync_running(key) {
+        return Err(syncing());
+    }
+    let _lock = sync::lock_game(key, &sync::Gate::default())?;
+    with_game(key, f)
+}
+
+fn restoring_while_running() -> String {
+    ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves")
 }
 
 pub(crate) fn cache_check(key: &str, report: &StatusReport) {
@@ -353,25 +392,24 @@ pub async fn check_game(key: String) -> CmdResult<StatusReport> {
 #[tauri::command]
 pub async fn sync_game(key: String, resolution: String) -> CmdResult<Outcome> {
     blocking(move || {
-        if watcher::runner_active(&key) {
-            bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后会自动同步", "The game is running; saves sync after you quit"));
-        }
-        let Some(_busy) = busy::begin(&key) else {
-            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
-        };
         let res = match resolution.as_str() {
             "local" => Resolution::UseLocal,
             "cloud" => Resolution::UseCloud,
             _ => Resolution::Auto,
         };
-        with_game(&key, |ctx, g| sync::sync(ctx, g, res, Trigger::SyncNow))
+        let running = ludonimbus_core::tr!("游戏正在运行，退出游戏后会自动同步", "The game is running; saves sync after you quit");
+        with_free_game(&key, running, |ctx, g| sync::sync(ctx, g, res, Trigger::SyncNow))
     })
     .await
 }
 
 #[tauri::command]
 pub async fn backup_game(key: String, comment: String) -> CmdResult<Outcome> {
-    blocking(move || with_game(&key, |ctx, g| sync::backup_now(ctx, g, comment.trim()))).await
+    blocking(move || {
+        let running = ludonimbus_core::tr!("游戏正在运行，请先退出游戏", "The game is running. Quit it first");
+        with_free_game(&key, running, |ctx, g| sync::backup_now(ctx, g, comment.trim()))
+    })
+    .await
 }
 
 /// The save lines the game can follow on this device.
@@ -386,18 +424,13 @@ pub async fn game_lines(key: String) -> CmdResult<Vec<sync::LineInfo>> {
 #[tauri::command]
 pub async fn use_game_line(key: String, kind: String, line: Option<String>, name: Option<String>) -> CmdResult<Outcome> {
     blocking(move || {
-        if watcher::runner_active(&key) {
-            bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit"));
-        }
-        let Some(_busy) = busy::begin(&key) else {
-            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
-        };
         let choice = match (kind.as_str(), line) {
             ("independent", _) => sync::LineChoice::Independent { name },
             ("follow", Some(line)) => sync::LineChoice::Follow { line },
             _ => sync::LineChoice::Shared,
         };
-        with_game(&key, |ctx, g| sync::use_line(ctx, g, choice))
+        let running = ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit");
+        with_free_game(&key, running, |ctx, g| sync::use_line(ctx, g, choice))
     })
     .await
 }
@@ -420,13 +453,8 @@ pub async fn join_answer(key: String, answer: String, suggestion: Option<join::S
             join::decline(&key, &s.def)?;
             return Ok(None);
         }
-        if watcher::runner_active(&key) {
-            bail!(ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit"));
-        }
-        let Some(_busy) = busy::begin(&key) else {
-            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
-        };
-        with_game(&key, |ctx, g| match (answer.as_str(), &suggestion) {
+        let running = ludonimbus_core::tr!("游戏正在运行，退出游戏后再改", "The game is running; change this after you quit");
+        with_free_game(&key, running, |ctx, g| match (answer.as_str(), &suggestion) {
             ("accept", Some(s)) => join::accept(ctx, g, s),
             ("leave", _) => join::leave(ctx, g),
             _ => bail!("unknown answer"),
@@ -567,41 +595,13 @@ pub async fn other_saves(key: String) -> CmdResult<OtherSaves> {
 /// Take back the last time saves of the cloud replaced the ones here.
 #[tauri::command]
 pub async fn undo_replace(key: String) -> CmdResult<Outcome> {
-    blocking(move || {
-        if watcher::runner_active(&key) {
-            bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
-        }
-        let Some(_busy) = busy::begin(&key) else {
-            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
-        };
-        with_game(&key, |ctx, g| {
-            if process::is_running(&watcher::watch_names(g)) {
-                bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
-            }
-            sync::undo(ctx, g)
-        })
-    })
-    .await
+    blocking(move || with_free_game(&key, restoring_while_running(), sync::undo)).await
 }
 
 /// Make a version of another save line of the game the progress here.
 #[tauri::command]
 pub async fn take_save(key: String, line: String, id: String) -> CmdResult<Outcome> {
-    blocking(move || {
-        if watcher::runner_active(&key) {
-            bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
-        }
-        let Some(_busy) = busy::begin(&key) else {
-            bail!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait"));
-        };
-        with_game(&key, |ctx, g| {
-            if process::is_running(&watcher::watch_names(g)) {
-                bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
-            }
-            sync::take_from(ctx, g, &line, &id)
-        })
-    })
-    .await
+    blocking(move || with_free_game(&key, restoring_while_running(), |ctx, g| sync::take_from(ctx, g, &line, &id))).await
 }
 
 /// Put the versions `keys` of one game on the collection's shelf `tag`
@@ -671,29 +671,18 @@ pub async fn get_snapshot(key: String, id: String) -> CmdResult<SnapshotMeta> {
 
 #[tauri::command]
 pub async fn restore_snapshot(key: String, id: String) -> CmdResult<Outcome> {
-    blocking(move || {
-        if watcher::runner_active(&key) {
-            bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
-        }
-        with_game(&key, |ctx, g| {
-            if process::is_running(&watcher::watch_names(g)) {
-                bail!(ludonimbus_core::tr!("游戏正在运行，请先退出游戏再恢复存档", "The game is running. Quit it before restoring saves"));
-            }
-            sync::restore(ctx, g, &id)
-        })
-    })
-    .await
+    blocking(move || with_free_game(&key, restoring_while_running(), |ctx, g| sync::restore(ctx, g, &id))).await
 }
 
 #[tauri::command]
 pub async fn set_snapshot(key: String, id: String, locked: Option<bool>, comment: Option<String>) -> CmdResult<()> {
-    blocking(move || with_game(&key, |ctx, g| sync::set_snapshot_flags(ctx, g, &id, locked, comment))).await
+    blocking(move || with_free_line(&key, |ctx, g| sync::set_snapshot_flags(ctx, g, &id, locked, comment))).await
 }
 
 /// Move a version to 「最近删除」 (restorable for 30 days).
 #[tauri::command]
 pub async fn delete_snapshot(key: String, id: String) -> CmdResult<()> {
-    blocking(move || with_game(&key, |ctx, g| sync::delete_snapshot(ctx, g, &id))).await
+    blocking(move || with_free_line(&key, |ctx, g| sync::delete_snapshot(ctx, g, &id))).await
 }
 
 #[tauri::command]
@@ -704,12 +693,12 @@ pub async fn deleted_snapshots(key: String) -> CmdResult<Vec<cloud::TrashedSnaps
 /// Returns whether the version was locked so retention keeps it.
 #[tauri::command]
 pub async fn restore_deleted_snapshot(key: String, id: String) -> CmdResult<bool> {
-    blocking(move || with_game(&key, |ctx, g| sync::restore_deleted(ctx, g, &id))).await
+    blocking(move || with_free_line(&key, |ctx, g| sync::restore_deleted(ctx, g, &id))).await
 }
 
 #[tauri::command]
 pub async fn purge_deleted_snapshot(key: String, id: String) -> CmdResult<()> {
-    blocking(move || with_game(&key, |ctx, g| sync::purge_deleted(ctx, g, &id))).await
+    blocking(move || with_free_line(&key, |ctx, g| sync::purge_deleted(ctx, g, &id))).await
 }
 
 /// Save one version as a file to keep or to give to someone
@@ -1770,9 +1759,7 @@ pub async fn screenshot_gallery(key: String) -> CmdResult<GalleryView> {
             shots: shots
                 .into_iter()
                 .map(|s| ShotView {
-                    thumb_url: screenshots::local_file(&ctx.cfg, &g, &s.device, &s.name, true)
-                        .or_else(|| screenshots::local_file(&ctx.cfg, &g, &s.device, &s.name, false))
-                        .map(|f| art::shot_url(&key, &s.device, &s.name, true, &f)),
+                    thumb_url: shot_link(&ctx.cfg, &g, &s.device, &s.name, true),
                     shot: s,
                 })
                 .collect(),
@@ -1792,16 +1779,23 @@ pub async fn screenshot_fetch(key: String, device: String, name: String, thumb: 
     blocking(move || {
         let ctx = Ctx::load()?;
         let g = ctx.game(&key)?;
-        let file = match screenshots::local_file(&ctx.cfg, &g, &device, &name, thumb) {
-            Some(f) => f,
-            None => {
-                let cloud = ctx.cloud()?;
-                screenshots::fetch(cloud.files(), &ctx.cfg, &Folders::of(cloud, &key)?, &g, &device, &name, thumb)?
-            }
-        };
-        Ok(art::shot_url(&key, &device, &name, thumb, &file))
+        if screenshots::local_file(&ctx.cfg, &g, &device, &name, thumb).is_none() {
+            let cloud = ctx.cloud()?;
+            // A device that uploaded no thumbnail: the full image comes instead.
+            screenshots::fetch(cloud.files(), &ctx.cfg, &Folders::of(cloud, &key)?, &g, &device, &name, thumb)?;
+        }
+        shot_link(&ctx.cfg, &g, &device, &name, thumb).ok_or_else(|| anyhow!(ludonimbus_core::tr!("这张截图不在本机", "This screenshot isn't on this PC")))
     })
     .await
+}
+
+/// The `ludoart://` URL of a screenshot on this PC: of its thumbnail when
+/// `thumb` and there is one, else of the full image. It names what the
+/// protocol serves for it, so it never answers "not found" for a thumbnail
+/// that isn't there. `None` when neither is on this PC.
+fn shot_link(cfg: &AppConfig, g: &GameEntry, device: &str, name: &str, thumb: bool) -> Option<String> {
+    let sizes: &[bool] = if thumb { &[true, false] } else { &[false] };
+    sizes.iter().find_map(|&t| screenshots::local_file(cfg, g, device, name, t).map(|f| art::shot_url(&g.key, device, name, t, &f)))
 }
 
 #[tauri::command]
@@ -1823,4 +1817,40 @@ pub async fn screenshot_reveal(key: String, device: String, name: String) -> Cmd
         Ok(())
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn without_version(url: &str) -> &str {
+        url.split('?').next().unwrap()
+    }
+
+    #[test]
+    fn a_screenshot_link_names_what_is_served() {
+        // A scratch data folder (the one the other tests of the app use),
+        // never the real one.
+        std::env::set_var("LUDONIMBUS_HOME", std::env::temp_dir().join(format!("ludonimbus-app-test-{}", std::process::id())));
+        let cfg = AppConfig::default();
+        let g = GameEntry { key: "shot-link-test".into(), name: "Game".into(), ..Default::default() };
+        let (device, name) = ("d-other", "20261127100000_1.jpg");
+        let full = screenshots::cache_file(&g.key, device, name, false);
+        let _ = std::fs::remove_dir_all(full.parent().unwrap());
+        assert_eq!(shot_link(&cfg, &g, device, name, true), None);
+        // Only the full image (its device uploaded no thumbnail): the
+        // thumbnail's link is the full image's, which is served.
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(&full, b"jpg").unwrap();
+        let link = shot_link(&cfg, &g, device, name, true).unwrap();
+        assert!(link.contains("/f/"), "{link}");
+        assert_eq!(without_version(&link), without_version(&shot_link(&cfg, &g, device, name, false).unwrap()));
+        // With the thumbnail there, the thumbnail.
+        let thumb = screenshots::cache_file(&g.key, device, name, true);
+        std::fs::create_dir_all(thumb.parent().unwrap()).unwrap();
+        std::fs::write(&thumb, b"jpg").unwrap();
+        assert!(shot_link(&cfg, &g, device, name, true).unwrap().contains("/t/"));
+        assert!(shot_link(&cfg, &g, device, name, false).unwrap().contains("/f/"));
+        let _ = std::fs::remove_dir_all(full.parent().unwrap());
+    }
 }
