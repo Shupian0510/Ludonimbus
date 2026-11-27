@@ -13,9 +13,11 @@ use crate::paths;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase", default)]
+#[ts(rename = "PromptRequest")]
 pub struct Request {
     pub title: String,
     pub text: String,
@@ -24,13 +26,15 @@ pub struct Request {
     pub buttons: Vec<Button>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase", default)]
+#[ts(rename = "PromptButton")]
 pub struct Button {
     pub id: String,
     pub label: String,
     /// The controller button: "a", "b", "x" or "y". "b" also answers when
     /// the window is closed.
+    #[ts(type = r#""a" | "b" | "x" | "y""#)]
     pub key: String,
 }
 

@@ -7,6 +7,7 @@ use crate::util;
 use anyhow::{anyhow, Context, Result};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 pub struct LocalFolder {
     root: PathBuf,
@@ -32,7 +33,7 @@ impl LocalFolder {
 
 /// A folder a sync client (OneDrive, Dropbox, Google Drive for desktop…)
 /// keeps in the cloud, offered as a place for the "local folder" cloud.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncFolder {
     /// The sync client, e.g. "OneDrive".

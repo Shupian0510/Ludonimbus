@@ -1,12 +1,12 @@
 // Browser preview data for game backups and the speed test.
-import type { BackupInfo, PartKind, PartSummary, SpeedReport, VersionSummary } from "./gameBackupApi";
+import type { BackupInfo, PartKind, PartSummary, PreviewPart, SpeedPhase, SpeedReport, VersionSummary } from "./gameBackupApi";
 import { currentLang } from "./i18n";
 
 const MB = 1024 * 1024;
 const L = (zh: string, en: string) => (currentLang() === "en" ? en : zh);
 const delay = <T>(v: T, ms = 300) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 
-function phase(threads: number, mbps: number, objects: number, capped = false) {
+function phase(threads: number, mbps: number, objects: number, capped = false): SpeedPhase {
   const bytes = objects * 8 * MB;
   return { threads, bytes, objects, secs: bytes / (mbps * MB), bytesPerSec: mbps * MB, capped, error: null };
 }
@@ -44,6 +44,7 @@ function part(kind: PartKind, name: string, version: string | null, totalSize: n
 function version(id: string, hoursAgo: number, device: string, components: PartSummary[]): VersionSummary {
   const total = components.reduce((n, c) => n + c.totalSize, 0);
   return {
+    format: 2,
     id,
     game: "",
     name: "",
@@ -56,6 +57,8 @@ function version(id: string, hoursAgo: number, device: string, components: PartS
     storedSize: total * 0.8,
     newBytes: total * 0.05,
     fileCount: 1832,
+    manifestHash: id,
+    manifestSize: 40_000,
     comment: "",
   };
 }
@@ -124,7 +127,7 @@ export async function gameBackupMock(cmd: string, args: Record<string, unknown>)
     case "game_backup_info":
       return delay(info(key));
     case "game_backup_preview":
-      return delay(
+      return delay<PreviewPart[]>(
         (key === "bloodborne-lantern" ? lantern : fefw).map((p) => ({
           kind: p.kind,
           name: p.name,

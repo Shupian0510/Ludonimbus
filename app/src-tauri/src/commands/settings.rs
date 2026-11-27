@@ -3,13 +3,15 @@
 
 use super::{blocking, CmdResult};
 use ludonimbus_core::cloud::{self, oauth};
-use ludonimbus_core::config::{self, CloudConfig, Retention};
+use ludonimbus_core::config::{self, CloudConfig, CloudKind, Retention};
 use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{ludusavi, paths, steam};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "Settings")]
 pub struct SettingsView {
     device_id: String,
     device_name: String,
@@ -43,10 +45,10 @@ pub struct SettingsView {
     wait_for_upload: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviousCloud {
-    kind: String,
+    kind: CloudKind,
     name: String,
 }
 
@@ -77,7 +79,7 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             steam_account: root.as_deref().and_then(|r| steam::default_account(&cfg, r)),
             steam_root_custom: cfg.steam.root.as_deref().is_some_and(|r| root.as_deref() == Some(r)),
             steam_root: root.map(|r| r.display().to_string()),
-            previous_cloud: cfg.previous_cloud.as_ref().map(|p| PreviousCloud { kind: cloud::kind_id(p).to_string(), name: previous_name(p) }),
+            previous_cloud: cfg.previous_cloud.as_ref().map(|p| PreviousCloud { kind: p.kind(), name: previous_name(p) }),
             cloud,
             google_builtin: oauth::GoogleClient::has_builtin(),
             baidu_builtin: cloud::baidu::BaiduClient::has_builtin(),
@@ -97,8 +99,10 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
     .await
 }
 
-#[derive(Deserialize)]
+/// What to change in the settings. A missing field stays as it is.
+#[derive(Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
 pub struct SettingsPatch {
     device_name: Option<String>,
     keep_recent: Option<usize>,

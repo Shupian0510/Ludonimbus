@@ -20,6 +20,7 @@ use aes::cipher::{generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyIn
 use aes::Aes128;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -91,8 +92,9 @@ fn toml_strings(text: &str, key: &str) -> Vec<String> {
 }
 
 /// Where the trophy key came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "Ps4KeySource")]
 pub enum KeySource {
     Shadps4,
     Settings,

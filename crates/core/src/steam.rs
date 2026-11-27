@@ -8,6 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use ts_rs::TS;
 
 const STEAMID64_BASE: u64 = 76561197960265728;
 
@@ -109,8 +110,9 @@ pub fn find_roots() -> Vec<PathBuf> {
     cands.into_iter().filter(|p| is_root(p) && seen.insert(util::norm_path(&p.to_string_lossy()))).collect()
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamAccount")]
 pub struct Account {
     pub id: String,
     pub persona: Option<String>,
@@ -757,7 +759,7 @@ pub fn game_of_app<'a>(cfg: &'a AppConfig, appid: u32, account: Option<&str>) ->
     any
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, PartialEq, TS)]
 #[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Health {
     /// Not linked to a Steam shortcut.
@@ -976,8 +978,9 @@ pub fn set_launch_options(root: &Path, account: &str, appid: u32, options: Optio
 
 /// Whether a game's launch options still go through this installation's
 /// wrapper.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamWrapperHealth")]
 pub enum WrapperHealth {
     Ok,
     /// The game has no launch options any more.

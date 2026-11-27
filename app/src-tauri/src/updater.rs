@@ -9,8 +9,9 @@ use ludonimbus_core::{config, logger};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     current: String,
@@ -20,9 +21,10 @@ pub struct UpdateInfo {
     date: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct Progress {
+#[ts(rename = "UpdateProgress")]
+pub(crate) struct Progress {
     downloaded: u64,
     total: Option<u64>,
 }

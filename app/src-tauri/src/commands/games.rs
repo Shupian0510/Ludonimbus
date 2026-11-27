@@ -11,6 +11,7 @@ use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{games, join, ludusavi, relocate, spec};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 #[tauri::command]
 pub async fn add_from_shortcut(
@@ -81,8 +82,10 @@ pub async fn add_from_cloud(key: String, account: Option<String>, appid: Option<
     .await
 }
 
-#[derive(Deserialize)]
+/// What to change in a game. A missing field stays as it is.
+#[derive(Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
 pub struct GamePatch {
     name: Option<String>,
     saves: Option<Vec<String>>,

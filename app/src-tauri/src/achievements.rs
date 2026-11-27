@@ -17,13 +17,13 @@ use ludonimbus_core::localapi::events::{self, Event};
 use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{logger, process};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use ts_rs::TS;
 
 fn log(msg: impl AsRef<str>) {
     logger::log("achievements", msg);
@@ -76,8 +76,28 @@ fn needs_fallback(seq: u64) -> bool {
 // Fallback popup: a small transparent topmost window (visible over windowed
 // and borderless games, not over exclusive fullscreen).
 
+/// What the fallback popup window shows.
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "ToastPayload")]
+pub struct Toast {
+    name: String,
+    description: String,
+    /// `https://…` or a `data:` URL.
+    icon: Option<String>,
+    /// The game's name.
+    game: String,
+    hardcore: bool,
+    points: Option<u32>,
+    grade: Option<ach::Grade>,
+    /// A made-up unlock ("Test popup").
+    test: bool,
+    /// The interface language ("zh-CN" or "en").
+    lang: &'static str,
+}
+
 struct Toasts {
-    queue: VecDeque<Value>,
+    queue: VecDeque<Toast>,
     /// The window is open and asks for the next popup when one ends.
     open: bool,
 }
@@ -87,17 +107,17 @@ static TOASTS: Mutex<Toasts> = Mutex::new(Toasts { queue: VecDeque::new(), open:
 fn show_fallback(app: &AppHandle, ev: &Event) {
     // Held until the window exists: its first question waits for it.
     let mut toasts = TOASTS.lock().unwrap();
-    toasts.queue.push_back(json!({
-        "name": ev.name,
-        "description": ev.description,
-        "icon": ev.icon,
-        "game": ev.game_name,
-        "hardcore": ev.hardcore,
-        "points": ev.points,
-        "grade": ev.grade,
-        "test": ev.test,
-        "lang": ludonimbus_core::i18n::current().code(),
-    }));
+    toasts.queue.push_back(Toast {
+        name: ev.name.clone(),
+        description: ev.description.clone(),
+        icon: ev.icon.clone(),
+        game: ev.game_name.clone(),
+        hardcore: ev.hardcore,
+        points: ev.points,
+        grade: ev.grade,
+        test: ev.test,
+        lang: ludonimbus_core::i18n::current().code(),
+    });
     if toasts.open && app.get_webview_window(TOAST_LABEL).is_some() {
         return; // the open window picks it up when the current toast ends
     }
@@ -137,7 +157,7 @@ fn show_fallback(app: &AppHandle, ev: &Event) {
 /// The toast window asks for the next popup; `None` closes it. Not on the
 /// main thread, which [`show_fallback`] needs while it holds the queue.
 #[tauri::command]
-pub async fn achievement_toast_next(app: AppHandle) -> CmdResult<Option<Value>> {
+pub async fn achievement_toast_next(app: AppHandle) -> CmdResult<Option<Toast>> {
     blocking(move || {
         let mut toasts = TOASTS.lock().unwrap();
         let next = toasts.queue.pop_front();
@@ -381,7 +401,7 @@ pub async fn achievements_set_popup(key: String, popup: Option<bool>) -> CmdResu
     .await
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AchievementSettings {
     ra_user: Option<String>,

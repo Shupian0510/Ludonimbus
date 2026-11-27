@@ -9,9 +9,11 @@ use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{games, steam, steamcloud, util};
 use serde::Serialize;
 use std::path::Path;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamAccounts")]
 pub struct AccountsView {
     accounts: Vec<steam::Account>,
     selected: Option<String>,
@@ -30,7 +32,7 @@ pub async fn steam_accounts() -> CmdResult<AccountsView> {
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutView {
     #[serde(flatten)]

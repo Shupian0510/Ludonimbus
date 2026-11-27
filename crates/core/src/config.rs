@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
+use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -51,7 +52,7 @@ pub struct AppConfig {
     pub wait_for_upload: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum HandheldMode {
     /// When Steam starts the game from Big Picture / Game Mode.
@@ -61,7 +62,7 @@ pub enum HandheldMode {
     Off,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ScreenshotMode {
     /// Screenshots stay on this PC (they can take a lot of cloud space).
@@ -73,7 +74,7 @@ pub enum ScreenshotMode {
     Sync,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Onboarding {
     /// When the guide was finished or closed; `None` = not seen yet.
@@ -132,7 +133,7 @@ impl DeviceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, TS)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum CloudConfig {
     #[default]
@@ -193,6 +194,34 @@ pub enum CloudConfig {
     },
 }
 
+/// Which kind of cloud a [`CloudConfig`] is: the `kind` it has in JSON
+/// (and [`crate::cloud::kind_id`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum CloudKind {
+    None,
+    LocalFolder,
+    GoogleDrive,
+    WebDav,
+    S3,
+    BaiduPan,
+    Quark,
+}
+
+impl CloudConfig {
+    pub fn kind(&self) -> CloudKind {
+        match self {
+            CloudConfig::None => CloudKind::None,
+            CloudConfig::LocalFolder { .. } => CloudKind::LocalFolder,
+            CloudConfig::GoogleDrive { .. } => CloudKind::GoogleDrive,
+            CloudConfig::WebDav { .. } => CloudKind::WebDav,
+            CloudConfig::S3 { .. } => CloudKind::S3,
+            CloudConfig::BaiduPan { .. } => CloudKind::BaiduPan,
+            CloudConfig::Quark { .. } => CloudKind::Quark,
+        }
+    }
+}
+
 fn default_drive_folder() -> String {
     "Ludonimbus".to_string()
 }
@@ -206,7 +235,7 @@ pub struct SteamConfig {
     pub account: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Retention {
     /// Always keep this many newest automatic snapshots.
@@ -459,4 +488,28 @@ pub fn update<T>(f: impl FnOnce(&mut AppConfig) -> Result<T>) -> Result<T> {
     let out = f(&mut cfg)?;
     write_file(&cfg)?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cloud_kind_is_the_kind_its_config_has_in_json() {
+        let s = String::new;
+        let all = [
+            CloudConfig::None,
+            CloudConfig::LocalFolder { path: PathBuf::from("cloud") },
+            CloudConfig::GoogleDrive { client_id: s(), client_secret: s(), folder: s(), account: None },
+            CloudConfig::WebDav { url: s(), username: s(), folder: s() },
+            CloudConfig::S3 { endpoint: s(), region: s(), bucket: s(), prefix: s(), access_key_id: s(), path_style: false },
+            CloudConfig::BaiduPan { app_key: s(), secret_key: s(), app_name: s(), account: None },
+            CloudConfig::Quark { folder: s() },
+        ];
+        for c in &all {
+            let kind = serde_json::to_value(c.kind()).unwrap();
+            assert_eq!(kind, serde_json::to_value(c).unwrap()["kind"]);
+            assert_eq!(kind, crate::cloud::kind_id(c));
+        }
+    }
 }

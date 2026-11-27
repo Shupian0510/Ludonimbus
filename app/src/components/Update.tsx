@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, errorText, UpdateInfo } from "../api";
+import { api, errorText, UpdateInfo, UpdateProgress } from "../api";
 import { bytes } from "../format";
 import { currentLang, useT } from "../i18n";
 import { useTauriEvent } from "../useTauriEvent";
@@ -21,9 +21,9 @@ export function UpdateDialog({ info, onClose }: { info: UpdateInfo; onClose: () 
   const ui = useUi();
   const t = useT();
   const [installing, setInstalling] = useState(false);
-  const [progress, setProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
 
-  useTauriEvent<{ downloaded: number; total: number | null }>("update-progress", setProgress);
+  useTauriEvent<UpdateProgress>("update-progress", setProgress);
 
   const install = async () => {
     setInstalling(true);

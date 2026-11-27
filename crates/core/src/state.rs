@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Duration;
+use ts_rs::TS;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -139,8 +140,9 @@ pub struct GameState {
 /// it took files from was gone from the cloud, and their content was nowhere
 /// any more. What it brought itself is kept in local-backups; the game's
 /// saves tab shows it once, until the user dismisses it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "UnsentSave")]
 pub struct Unsent {
     pub id: String,
     pub created_at: DateTime<Utc>,
@@ -164,7 +166,7 @@ impl GameState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictInfo {
     /// The newest of the versions to choose from.

@@ -10,9 +10,11 @@ use ludonimbus_core::screenshots;
 use ludonimbus_core::sync::Ctx;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use ts_rs::TS;
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "Shot")]
 pub struct ShotView {
     #[serde(flatten)]
     shot: screenshots::Shot,
@@ -20,8 +22,9 @@ pub struct ShotView {
     thumb_url: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "Gallery")]
 pub struct GalleryView {
     shots: Vec<ShotView>,
     mode: config::ScreenshotMode,

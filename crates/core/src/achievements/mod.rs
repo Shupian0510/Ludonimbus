@@ -35,9 +35,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename = "AchievementSource")]
 pub enum SourceKind {
     Retroachievements,
     Shadps4,
@@ -72,7 +74,7 @@ pub fn binding_label(b: &Binding) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Grade {
     Platinum,
@@ -95,7 +97,7 @@ impl Grade {
 }
 
 /// Where a game's achievements come from.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Binding {
     pub source: SourceKind,
@@ -475,8 +477,9 @@ pub fn placeholder(id: &str) -> Achievement {
 // ---------------------------------------------------------------------------
 // View
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AchievementItem")]
 pub struct ItemView {
     pub id: String,
     pub name: String,
@@ -493,8 +496,9 @@ pub struct ItemView {
     pub device_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AchievementsView")]
 pub struct GameView {
     pub key: String,
     pub source: Option<SourceKind>,

@@ -20,6 +20,7 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+use ts_rs::TS;
 
 /// Files this big or bigger are chunked on their own.
 pub const BIG_FILE: u64 = 8 * 1024 * 1024;
@@ -520,8 +521,9 @@ fn upload_and_commit(
 }
 
 /// What a backup would contain, by component (the app shows it before starting).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "PreviewPart")]
 pub struct PreviewComponent {
     pub kind: super::format::Kind,
     pub name: String,

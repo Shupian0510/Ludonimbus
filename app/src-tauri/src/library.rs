@@ -11,6 +11,7 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use ts_rs::TS;
 
 // ---------------------------------------------------------------------------
 // Scanning
@@ -72,7 +73,7 @@ pub async fn add_found(found: Found, name: String, saves: Vec<String>, ludusavi_
     .await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AdapterInfo {
     key: String,
@@ -158,7 +159,7 @@ pub async fn savefind_watch_stop() -> CmdResult<Vec<Candidate>> {
 // ---------------------------------------------------------------------------
 // SteamGridDB and artwork
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SgdbStatus {
     has_key: bool,
@@ -285,8 +286,9 @@ pub async fn steam_add_game(key: String, account: String, close_steam: bool) -> 
     blocking(move || with_steam_closed(close_steam, || games::add_to_steam(&key, &account))).await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamAddResult")]
 pub struct BatchResult {
     key: String,
     error: Option<String>,

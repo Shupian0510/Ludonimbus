@@ -123,6 +123,18 @@ jobs:
       # the workspace tests.
       - name: Desktop app tests
         run: cargo test -p ludonimbus-app
+      # The web UI's types for what it and Rust send each other are generated
+      # from the Rust types into app/src/bindings (docs/development.md).
+      # Generating them again must change nothing, and add no file.
+      - name: Generated TypeScript types are up to date
+        shell: bash
+        run: |
+          cargo test -p ludonimbus-app export_bindings
+          git add --intent-to-add app/src/bindings
+          if ! git diff --exit-code app/src/bindings; then
+            echo "::error::app/src/bindings is out of date: run 'cargo test -p ludonimbus-app export_bindings' and commit the result."
+            exit 1
+          fi
       # Windows-only code is linted here, the rest on Linux too.
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

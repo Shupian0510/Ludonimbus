@@ -34,6 +34,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use ts_rs::TS;
 
 pub const KEYRING_USER: &str = "baidu-pan-token";
 const SCOPE: &str = "basic,netdisk";
@@ -228,8 +229,9 @@ fn errno_error(code: i64, v: &Value, app_name: &str) -> anyhow::Error {
 // ---------------------------------------------------------------------------
 // Device-code sign-in
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "BaiduDeviceCode")]
 pub struct DeviceCode {
     #[serde(skip)]
     pub device_code: String,

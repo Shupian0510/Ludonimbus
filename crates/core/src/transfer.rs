@@ -39,9 +39,11 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "TransferItem")]
 pub struct Item {
     /// The source file (relative path).
     pub from: String,
@@ -52,8 +54,9 @@ pub struct Item {
     pub replaces: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "TransferPlan")]
 pub struct Plan {
     /// Same save layout: applied like a restore.
     pub same: bool,

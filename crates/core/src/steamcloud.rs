@@ -33,14 +33,16 @@ use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use ts_rs::TS;
 
 fn log(msg: impl AsRef<str>) {
     logger::log("steamcloud", msg);
 }
 
 /// Which of the three states a game installed through Steam is in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamCloudState")]
 pub enum State {
     /// Steam Cloud keeps the saves and Ludonimbus does nothing.
     Steam,
@@ -92,8 +94,9 @@ fn busy(game: &GameEntry) -> Option<String> {
 // ------------------------------------------------------------- what's here
 
 /// A game Steam installed on this device.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamCloudApp")]
 pub struct StoreApp {
     pub appid: u32,
     pub name: String,
@@ -132,8 +135,9 @@ pub fn apps(cfg: &AppConfig) -> Vec<StoreApp> {
 }
 
 /// How a game Steam installed stands with Steam and Ludonimbus.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamCloudStatus")]
 pub struct StoreStatus {
     pub mode: State,
     pub sync_state: Option<String>,
@@ -187,8 +191,9 @@ pub fn wrapper_word(cfg: &AppConfig, game: &GameEntry) -> &'static str {
 // ------------------------------------------------------------------ adding
 
 /// What a batch did for one game.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SteamCloudDone")]
 pub struct Done {
     pub appid: u32,
     /// Its library entry, when there is one.

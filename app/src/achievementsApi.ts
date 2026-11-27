@@ -1,7 +1,23 @@
 // Achievements commands (app/src-tauri/src/achievements.rs). In the browser
-// preview they are answered by achievementsMock.ts.
+// preview they are answered by achievementsMock.ts. The types are generated
+// from the Rust types (src/bindings, docs/development.md), some under the
+// names this feature has always used.
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { inTauri } from "./api";
+import type { AchievementCandidate, AchievementSettings, AchievementsView, Binding, RaGame, RaProfile, ToastPayload } from "./bindings";
+
+export type {
+  AchievementCandidate as Candidate,
+  AchievementItem,
+  AchievementSettings,
+  AchievementSource as SourceKind,
+  AchievementsView,
+  Binding,
+  Grade,
+  RaGame,
+  RaProfile,
+  ToastPayload,
+} from "./bindings";
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (inTauri) return tauriInvoke<T>(cmd, args);
@@ -9,97 +25,9 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return (await mockAchievements(cmd, args ?? {})) as T;
 }
 
-export type SourceKind = "retroachievements" | "shadps4" | "lantern" | "rpcs3" | "ps4port" | "rules";
-export type Grade = "platinum" | "gold" | "silver" | "bronze";
-
-export interface Binding {
-  source: SourceKind;
-  sourceId: string;
-  path: string | null;
-  popup: boolean | null;
-}
-
-export interface AchievementItem {
-  id: string;
-  name: string;
-  description: string;
-  iconUrl: string | null;
-  hasIcon: boolean;
-  hidden: boolean;
-  points: number | null;
-  grade: Grade | null;
-  unlockedAt: string | null;
-  hardcore: boolean;
-  deviceName: string | null;
-}
-
-export interface AchievementsView {
-  key: string;
-  source: SourceKind | null;
-  sourceLabel: string | null;
-  sourceId: string | null;
-  title: string | null;
-  total: number;
-  unlocked: number;
-  points: number;
-  pointsTotal: number;
-  items: AchievementItem[];
-  popup: boolean;
-  checkedAt: string | null;
-  lastError: string | null;
-  /** Some achievements have no icon of their own: show the game's (gameIcon()). */
-  gameIcon: boolean;
-}
-
-export interface Candidate {
-  binding: Binding;
-  title: string | null;
-  location: string;
-  sure: boolean;
-}
-
-export interface AchievementSettings {
-  raUser: string | null;
-  raConnected: boolean;
-  steamPopup: boolean;
-  fallbackPopup: boolean;
-  /** Where the PS4 trophy key comes from, or null when none is set up. */
-  ps4KeySource: "shadps4" | "settings" | null;
-}
-
-export interface RaGame {
-  id: string;
-  title: string;
-  console: string;
-  icon: string | null;
-  lastPlayed: string | null;
-  achieved: number;
-  total: number;
-}
-
-export interface RaProfile {
-  user: string;
-  ulid: string | null;
-  avatar: string | null;
-  points: number;
-}
-
-/** What the fallback popup window shows. */
-export interface ToastPayload {
-  name: string;
-  description: string;
-  icon: string | null;
-  game: string;
-  hardcore: boolean;
-  points: number | null;
-  grade: Grade | null;
-  test: boolean;
-  lang: string;
-}
-
 export const achievementsApi = {
   view: (key: string) => invoke<AchievementsView>("achievements_view", { key }),
-  candidates: (key: string) => invoke<Candidate[]>("achievements_candidates", { key }),
+  candidates: (key: string) => invoke<AchievementCandidate[]>("achievements_candidates", { key }),
   link: (key: string, binding: Binding) => invoke<AchievementsView>("achievements_link", { key, binding }),
   linkFile: (key: string, path: string) => invoke<AchievementsView>("achievements_link_file", { key, path }),
   pickFile: () => invoke<string | null>("achievements_pick_file"),

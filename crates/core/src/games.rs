@@ -10,6 +10,7 @@ use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 pub fn slugify(name: &str) -> String {
     let mut s = String::new();
@@ -185,7 +186,7 @@ pub fn adopt_cloud_key(key: &str, cloud: &[CloudGame]) -> Result<Option<String>>
     })
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ShortcutCandidate {
     pub account: String,
@@ -431,7 +432,7 @@ pub fn add_from_cloud(cg: &CloudGame, account: Option<&str>, appid: Option<u32>,
 
 /// What kind of program a game runs on, for the library's source badges
 /// and groups.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     /// An emulator rule: many games share it.
@@ -448,8 +449,9 @@ pub enum SourceKind {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "GameSource")]
 pub struct Source {
     pub kind: SourceKind,
     /// The emulator (`Dolphin`); `None` for the other kinds, whose group
