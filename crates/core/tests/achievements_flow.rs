@@ -99,12 +99,22 @@ fn two_devices() {
     let schema = String::from_utf8(repo.read("games/demo/achievements/schema.json").unwrap().unwrap()).unwrap();
     assert!(!schema.contains("TROP002.PNG"), "local icon paths stay local");
 
+    // Someone with access to the cloud puts a path to a file on this PC into
+    // the definitions: it is never read as an icon (a local path only ever
+    // comes from this PC's own scan).
+    let mut tampered: serde_json::Value = serde_json::from_str(&schema).unwrap();
+    for a in tampered["achievements"].as_array_mut().unwrap() {
+        a["icon"] = serde_json::json!(set_a.join("TROP002.PNG").display().to_string());
+    }
+    repo.write("games/demo/achievements/schema.json", &serde_json::to_vec(&tampered).unwrap()).unwrap();
+
     // --- Device B: no source of its own yet; sees A's records.
     let cfg_b = device(&tmp.path().join("home-b"), "dev-b", "Laptop");
     assert_eq!(cloud::pull(&repo, &Folders::of_key("demo"), "dev-b").unwrap(), 2);
     let v = achievements::view("demo");
     assert_eq!((v.total, v.unlocked), (3, 2));
     assert_eq!(v.items[0].device_name.as_deref(), Some("Desktop"));
+    assert!(achievements::icon_path("demo", "2").is_none() && !v.items[0].has_icon, "no icon path from the cloud");
 
     // B earns trophy 0 (and trophy 1 earlier than A did).
     let set_b = tmp.path().join("b/dev_hdd0/home/00000001/trophy/NPWR00001_00");
