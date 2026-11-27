@@ -142,9 +142,15 @@ fn read_files(zip: &Path, meta: &SnapshotMeta) -> Result<BTreeMap<String, Vec<u8
     let mut archive = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
     let mut out = BTreeMap::new();
     for f in &meta.files {
-        let mut e = archive.by_name(&format!("files/{}", f.path)).with_context(|| f.path.clone())?;
-        let mut data = Vec::with_capacity(f.size as usize);
-        e.read_to_end(&mut data)?;
+        let e = archive.by_name(&format!("files/{}", f.path)).with_context(|| f.path.clone())?;
+        // The size comes from the cloud: it bounds the read rather than
+        // sizing the buffer, and a file larger than it says is refused
+        // instead of read to the end.
+        let mut data = Vec::with_capacity(f.size.min(1 << 20) as usize);
+        e.take(f.size.saturating_add(1)).read_to_end(&mut data)?;
+        if data.len() as u64 != f.size {
+            bail!(crate::tr!("存档文件 {} 的大小和版本记录的不一致", "The save file {} doesn't have the size the version records", f.path));
+        }
         out.insert(f.path.clone(), data);
     }
     Ok(out)

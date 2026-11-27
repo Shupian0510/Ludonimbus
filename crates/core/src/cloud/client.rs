@@ -554,7 +554,10 @@ impl Cloud {
     /// Every game record: one listing, and a read for each record that
     /// changed since this device read it. Not asked again for a minute.
     pub fn library(&self) -> Result<Arc<Library>> {
-        let mut kept = self.library.lock().unwrap();
+        // Held through the load, so threads asking at once load it once. A
+        // load that panicked leaves at worst the old copy, which is still
+        // valid: the lock is taken over rather than failing every later call.
+        let mut kept = self.library.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, library)) = kept.as_ref() {
             if at.elapsed() < LIBRARY_FRESH {
                 return Ok(library.clone());
@@ -567,7 +570,7 @@ impl Cloud {
 
     /// After a record was written: the next look reads them again.
     fn forget_library(&self) {
-        *self.library.lock().unwrap() = None;
+        *self.library.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// [`Cloud::forget_library`], for a record written elsewhere

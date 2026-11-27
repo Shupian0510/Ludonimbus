@@ -41,6 +41,20 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。
 - 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）。
 
+安全和可靠性
+
+- 改进：恢复存档和游戏本体时，只写到游戏的存档位置和你选的文件夹；云端被改过的版本或别人分享的存档，不能再把文件放到别处。
+- 改进：Switch 局域网连接、Google Drive 登录页和应用界面更难被局域网或本机的其他程序利用；「打开」只会打开网页和文件夹，不会运行程序。
+- 改进：备份大游戏、往 Google Drive 和百度网盘上传大文件时占用的内存更少。
+- 修复：断电或强制关机可能让配置文件变成空的；电脑睡眠唤醒后，两个程序可能同时修改配置，丢失改动或登录。
+- 修复：本地文件夹或 NAS 云盘读不到时被当成空的云盘。
+- 修复：百度网盘刚被替换的文件被当成不存在；Google Drive 在电脑睡眠后用了过期的登录；夸克网盘长时间运行后变成离线。
+- 修复：另一台设备清理云端数据时开始备份游戏本体，新上传的数据可能被删掉。
+- 修复：直接启动、通过模拟器或 Xbox 应用运行的游戏，在运行时也能被同步或备份。
+- 修复：以管理员身份运行的游戏在 Windows 上被当成没在运行。
+- 修复：备用的成就弹窗每次启动只出现一次；关闭夸克网盘登录窗口后要等 10 分钟才取消登录。
+- 修复：没有缩略图的截图在图库里是空白的；手动添加游戏时，Windows 上的安装文件夹被填成了程序本身。
+
 说明
 
 - 从 0.6 升级不需要做什么：云端原来的文件一个都不动，游戏、存档和游戏时间都会带过来。请把所有设备都更新到 1.0：还在 0.6 的设备看不到 1.0 存的存档。
@@ -81,6 +95,20 @@ Other platforms
 
 - New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin.
 - New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview).
+
+Security and reliability
+
+- Improved: restoring saves or game files writes only to the game's save locations and the folders you pick; a tampered version in the cloud or a shared save can no longer put files anywhere else.
+- Improved: the Switch LAN connection, the Google Drive sign-in page and the app's pages are harder for other programs on the network or this PC to abuse; "open" only opens web pages and folders and never runs a program.
+- Improved: backing up big games and uploading big files to Google Drive and Baidu Netdisk use less memory.
+- Fixed: a power cut could leave the settings file empty; after the PC woke from sleep, two programs could change the settings at once and lose a change or a sign-in.
+- Fixed: a local folder or NAS cloud that couldn't be read was taken for an empty cloud.
+- Fixed: Baidu Netdisk took a file that had just been replaced for missing; Google Drive used an expired sign-in after the PC slept; Quark went offline after running for a long time.
+- Fixed: a game backup that started while another device cleaned up the cloud could have its new data deleted.
+- Fixed: games started directly, through an emulator or the Xbox app could be synced or backed up while they ran.
+- Fixed: on Windows, games running as administrator were taken for not running.
+- Fixed: the fallback achievement popup appeared only once per run; closing the Quark sign-in window cancelled the sign-in only after 10 minutes.
+- Fixed: screenshots without a thumbnail were blank in the gallery; adding a game by hand on Windows filled in the program itself as its install folder.
 
 Notes
 

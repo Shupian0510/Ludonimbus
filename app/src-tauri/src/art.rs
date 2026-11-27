@@ -33,24 +33,32 @@ fn version(file: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// How the webview reaches the protocol: WebView2 on Windows only through
+/// `http://<scheme>.localhost`, WebKit on Linux and macOS only through the
+/// scheme itself.
+#[cfg(windows)]
+const BASE: &str = "http://ludoart.localhost";
+#[cfg(not(windows))]
+const BASE: &str = "ludoart://localhost";
+
 pub fn url(account: &str, appid: u32, kind: &str, file: &Path) -> String {
-    format!("http://ludoart.localhost/{account}/{appid}/{kind}?v={}", version(file))
+    format!("{BASE}/{account}/{appid}/{kind}?v={}", version(file))
 }
 
 pub fn local_url(key: &str, kind: &str, file: &Path) -> String {
-    format!("http://ludoart.localhost/local/{key}/{kind}?v={}", version(file))
+    format!("{BASE}/local/{key}/{kind}?v={}", version(file))
 }
 
 /// Logo files are named by their content, so they never change.
 pub fn logo_url(file: &Path) -> Option<String> {
     let name = file.file_name()?.to_str()?;
-    Some(format!("http://ludoart.localhost/logo/{name}"))
+    Some(format!("{BASE}/logo/{name}"))
 }
 
 pub fn shot_url(key: &str, device: &str, name: &str, thumb: bool, file: &Path) -> String {
     let enc = |s: &str| percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string();
     format!(
-        "http://ludoart.localhost/shot/{}/{}/{}/{}?v={}",
+        "{BASE}/shot/{}/{}/{}/{}?v={}",
         enc(key),
         enc(device),
         if thumb { "t" } else { "f" },

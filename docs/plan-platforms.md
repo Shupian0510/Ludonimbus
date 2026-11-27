@@ -49,7 +49,7 @@ Ludusavi 和 OpenList 都有 Linux / macOS 版本，按平台打包对应的附�
 
 Steam 会把 `%command%` 换成完整的启动命令（用 Proton 时是 Proton 加游戏 exe），包装器先下载存档，再执行这条命令，结束后上传。和 `gamemoderun %command%` 一个套路，原生程序和 Proton 都适用。
 
-- 用户原来的启动选项里已经有 `%command%`（例如 `gamemoderun %command%`）时，包装器放在最外层，原样保留其余部分；关闭时还原。
+- 用户原来的启动选项里已经有 `%command%`（例如 `MANGOHUD=1 gamemoderun %command%`）时，包装器紧挨着放在 `%command%` 前面，环境变量和前缀工具留在它前面，原样保留其余部分；关闭时还原。旧版本写的“包装器在最外层”的形式照样认得、还原得了。
 - 判断一个快捷方式有没有被包装，从查 `Exe` 改成查启动选项。
 - 包装器要放在固定位置的独立文件里（例如 `~/.local/share/Ludonimbus/bin/ludonimbus-run`），不能放在 AppImage 里面：AppImage 每次启动都要挂载，而且用户可能会挪动它，启动选项里的路径就失效了。
 
