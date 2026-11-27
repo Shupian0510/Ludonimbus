@@ -143,7 +143,8 @@ fn no_place(share: &Share, game: &GameEntry) -> Result<Vec<String>> {
         .collect();
     let outside = match snapshot::outside_saves(game, own.iter().map(|(_, l)| l.as_str()))? {
         Some(outside) => outside,
-        // Ludusavi finds the saves: only the roots can be checked.
+        // Ludusavi finds the saves, and its database has no save locations
+        // of the game here: only the roots can be checked.
         None => {
             let roots = snapshot::scan(game).map(|(_, roots)| roots).unwrap_or_default();
             if roots.is_empty() {
