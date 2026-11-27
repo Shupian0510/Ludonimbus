@@ -1,0 +1,6 @@
+# Commits that only reformat or mechanically rewrite code. GitHub's blame
+# skips them; for local `git blame`, run once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# The code is formatted with rustfmt, every clippy warning is fixed, and CI checks both (#66)
+c88f1dfbe5314f592c761797beba684a76effdec
