@@ -143,8 +143,16 @@ pub fn load(store: &dyn Store, cache: &mut LibraryCache) -> Result<Library> {
     }
 
     skipped.extend(cache.unreadable.keys().cloned());
+    // A record whose places in the cloud aren't plain ones is left out like
+    // one that can't be read: that game is unavailable, nothing else.
+    let mut records: Vec<GameRecord> = Vec::with_capacity(cache.records.len());
+    for (file, c) in &cache.records {
+        match c.record.check() {
+            Ok(()) => records.push(c.record.clone()),
+            Err(_) => skipped.push(file.clone()),
+        }
+    }
     skipped.sort();
-    let mut records: Vec<GameRecord> = cache.records.values().map(|c| c.record.clone()).collect();
     records.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(Library { records, skipped })
 }
@@ -155,7 +163,7 @@ pub fn load(store: &dyn Store, cache: &mut LibraryCache) -> Result<Library> {
 pub fn read(store: &dyn Store, id: &str) -> Result<Option<GameRecord>> {
     let Some(bytes) = store.read(&v2::game_record_path(id))? else { return Ok(None) };
     match serde_json::from_slice::<GameRecord>(&bytes) {
-        Ok(record) if record.id == id => Ok(Some(record)),
+        Ok(record) if record.id == id => record.check().map(|_| Some(record)),
         _ => Err(anyhow!(crate::tr!("云端的游戏记录 {id} 读不懂", "Can't understand the game record {id} in the cloud"))),
     }
 }
