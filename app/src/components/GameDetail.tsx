@@ -11,12 +11,13 @@ import { PlatformFolders } from "./PlatformFolders";
 import { StatusBadge } from "./Library";
 import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
-import { Badge, Button, Hint, Icon, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, Menu, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Saves } from "./Saves";
 import { ApplyDialog, familyOf, JoinRow, UndoRow, VersionBar } from "./SaveLibrary";
 import { handBack, StorePanel, TakeOverDialog } from "./SteamCloud";
 import { GameAchievements } from "./Achievements";
+import { useShelves } from "./Collection";
 
 type Tab = "versions" | "files" | "config" | "screenshots" | "achievements";
 
@@ -51,6 +52,7 @@ export function GameDetail({
   const [newer, setNewer] = useState<NewerVersion | null>(null);
   const [applyNewer, setApplyNewer] = useState(false);
   const versionCount = familyOf(overview, game.key).length;
+  const shelves = useShelves(overview, game.key, onChanged);
   useEffect(() => {
     if (versionCount < 2 || overview.cloud.kind === "none") return;
     api.newerVersion(game.key).then(setNewer, () => setNewer(null));
@@ -249,8 +251,10 @@ export function GameDetail({
         <Button icon="folder" onClick={() => run(() => api.openSaveFolder(game.key))}>
           {g.openSaves}
         </Button>
+        <Menu title={t.saves.more} items={shelves.items} />
         <div className="actionbar-status">
           <StatusBadge game={game} check={check} checking={checking} />
+          {shelves.marks}
           <span className="muted">
             {g.lastSync(relTime(game.lastSyncAt))}
             {game.lastSyncedDevice ? ` · ${game.lastSyncedDevice}` : ""}

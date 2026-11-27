@@ -77,7 +77,7 @@ export const cloudNames: typeof Zh.cloudNames = {
 };
 
 export const app: typeof Zh.app = {
-  nav: { library: "Library", devices: "Devices", settings: "Settings" },
+  nav: { library: "Library", collection: "Collection", devices: "Devices", settings: "Settings" },
   backgroundSyncFailed: (name, error) => `Background sync of ${name} failed: ${error}`,
   updateAvailable: (version) => `Version ${version ?? ""} available`,
   cloud: {
@@ -492,6 +492,29 @@ export const saves: typeof Zh.saves = {
   purgeText: (device, at) => `The save ${device} made at ${at} will be deleted from the cloud for good. This can't be undone.`,
   purged: "Deleted for good",
   exported: (path) => `Exported to ${path}`,
+};
+
+export const collection: typeof Zh.collection = {
+  title: "Collection",
+  playtime: "Play time",
+  games: "Games",
+  achievements: "Achievements",
+  achievementsHint: (unlocked, total) => `${unlocked} of ${total} unlocked (games whose achievements this PC knows)`,
+  finished: "Finished",
+  finishedHint: "Mark a game finished from More on its page. Every device shows it.",
+  finishedEmpty: "No game is marked finished yet.",
+  archived: "Archived",
+  archivedHint: "Archived games aren't shown in the library. Their saves, play time and achievements stay in the cloud, and the game can be uninstalled here; to play again, unarchive it on its page.",
+  archivedEmpty: "No game is archived yet.",
+  markFinished: "Mark finished",
+  unmarkFinished: "Not finished",
+  archive: "Archive",
+  unarchive: "Unarchive",
+  markedFinished: "Marked finished",
+  unmarkedFinished: "No longer finished",
+  archivedDone: "Archived; it's in the collection",
+  unarchivedDone: "Back in the library",
+  inLibrary: (n) => `${n} archived`,
 };
 
 export const join: typeof Zh.join = {

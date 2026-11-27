@@ -4,6 +4,7 @@ import { api, errorText, GameView, inTauri, Outcome, Overview, StatusReport, Upd
 import { AddGame } from "./components/AddGame";
 import { Onboarding } from "./components/Onboarding";
 import { scene, SCENE_ADD, SCENE_GAME, SCENE_SETTINGS } from "./scene";
+import { Collection } from "./components/Collection";
 import { Devices } from "./components/Devices";
 import { CloudGameDetail } from "./components/CloudGameDetail";
 import { GameDetail } from "./components/GameDetail";
@@ -14,7 +15,7 @@ import { UpdateDialog } from "./components/Update";
 import { outcomeText } from "./format";
 import { msg, useT } from "./i18n";
 
-export type Page = { name: "library" } | { name: "game"; key: string } | { name: "devices" } | { name: "settings" };
+export type Page = { name: "library" } | { name: "collection" } | { name: "game"; key: string; from?: "collection" } | { name: "devices" } | { name: "settings" };
 
 /** `onHandheld`: switch this window to the handheld view. */
 export default function App({ onHandheld }: { onHandheld?: () => void }) {
@@ -158,6 +159,7 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
     if (!s) return;
     if (SCENE_GAME[s]) setPage({ name: "game", key: SCENE_GAME[s] });
     else if (s in SCENE_SETTINGS) setPage({ name: "settings" });
+    else if (s === "collection") setPage({ name: "collection" });
     else if (SCENE_ADD[s]) setAdding(true);
   }, [overview]);
 
@@ -199,7 +201,8 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
           <span>Ludonimbus</span>
         </div>
         <nav>
-          <NavItem icon="library" label={t.app.nav.library} active={page.name === "library" || page.name === "game"} onClick={() => setPage({ name: "library" })} />
+          <NavItem icon="library" label={t.app.nav.library} active={page.name === "library" || (page.name === "game" && !page.from)} onClick={() => setPage({ name: "library" })} />
+          <NavItem icon="star" label={t.app.nav.collection} active={page.name === "collection" || (page.name === "game" && page.from === "collection")} onClick={() => setPage({ name: "collection" })} />
           <NavItem icon="devices" label={t.app.nav.devices} active={page.name === "devices"} onClick={() => setPage({ name: "devices" })} />
           <NavItem icon="settings" label={t.app.nav.settings} active={page.name === "settings"} onClick={() => setPage({ name: "settings" })} />
         </nav>
@@ -260,8 +263,10 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
               for (const k of keys) check(k);
             }}
             onSettings={() => setPage({ name: "settings" })}
+            onCollection={() => setPage({ name: "collection" })}
           />
         )}
+        {overview && page.name === "collection" && <Collection overview={overview} onOpen={(key) => setPage({ name: "game", key, from: "collection" })} />}
         {overview && page.name === "game" && game && (
           <GameDetail
             key={game.key}

@@ -8,7 +8,8 @@ import { msg, useT } from "../i18n";
 import { AccountPicker, useAccounts } from "./AddGame";
 import { VersionBar } from "./SaveLibrary";
 import { Saves } from "./Saves";
-import { Button, Hint, Icon, Modal, useUi } from "./ui";
+import { Button, Hint, Icon, Menu, Modal, useUi } from "./ui";
+import { useShelves } from "./Collection";
 
 export function CloudGameDetail({
   game,
@@ -50,6 +51,7 @@ export function CloudGameDetail({
   };
 
   const playtime = info?.playtime ?? game.playtime;
+  const shelves = useShelves(overview, game.key, onChanged);
   const played = playtime.devices.filter((d) => d.secs > 0);
   return (
     <div className="detail">
@@ -73,7 +75,9 @@ export function CloudGameDetail({
             {s.installFromCloud}
           </Button>
         )}
+        <Menu title={t.saves.more} items={shelves.items} />
         <div className="actionbar-status">
+          {shelves.marks}
           {playtime.totalSecs > 0 && (
             <span className="muted playtime">
               <Icon name="clock" size={13} /> {t.game.playtime(duration(playtime.totalSecs))}

@@ -196,6 +196,8 @@ export interface GameView {
   replaced: { device: string; at: string } | null;
   /** For a game Steam installed: who keeps its saves, and whether its launch options go through the wrapper. */
   store: { appid: number; mode: SteamCloudState; wrapper: boolean } | null;
+  /** The collection's shelves its card is on: "finished", "archived". */
+  shelves?: string[];
 }
 
 /** A game the cloud has but this PC doesn't: grey in the library. */
@@ -212,6 +214,14 @@ export interface CloudOnlyView {
   playtime: PlaytimeSummary;
   family: string;
   link: string | null;
+  /** As GameView.shelves. */
+  shelves?: string[];
+}
+
+/** What the collection page adds up that the views don't carry (this PC's files). */
+export interface CollectionStats {
+  achievementsUnlocked: number;
+  achievementsTotal: number;
 }
 
 export interface CloudLibrary {
@@ -804,6 +814,9 @@ export const api = {
     invoke<string>("add_custom", { name, exe, saves, ludusaviTitle }),
   cloudGames: () => invoke<CloudGame[]>("cloud_games"),
   refreshCloudLibrary: () => invoke<CloudLibrary>("refresh_cloud_library"),
+  /** Put the versions of one game on the collection's shelf ("finished", "archived"), or take them off it. */
+  setShelf: (keys: string[], tag: "finished" | "archived", on: boolean) => invoke<void>("set_shelf", { keys, tag, on }),
+  collectionStats: () => invoke<CollectionStats>("collection_stats"),
   cloudGameInfo: (key: string) => invoke<CloudGameInfo>("cloud_game_info", { key }),
   linkGames: (keys: string[]) => invoke<void>("link_games", { keys }),
   unlinkGame: (key: string) => invoke<void>("unlink_game", { key }),

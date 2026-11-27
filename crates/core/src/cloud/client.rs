@@ -44,7 +44,7 @@ use crate::{logger, paths, util};
 use anyhow::{anyhow, bail, Result};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -568,6 +568,30 @@ impl Cloud {
     /// After a record was written: the next look reads them again.
     fn forget_library(&self) {
         *self.library.lock().unwrap() = None;
+    }
+
+    /// [`Cloud::forget_library`], for a record written elsewhere
+    /// ([`crate::shelf::set`]).
+    pub fn forget_records(&self) {
+        self.forget_library();
+    }
+
+    /// The tags of every card ([`v2::GameRecord::tags`]: the collection's
+    /// shelves, [`crate::shelf`]), by record id. A record another took over
+    /// has the survivor's. Nothing on a cloud of the older layout.
+    pub fn record_tags(&self) -> Result<BTreeMap<String, Vec<String>>> {
+        if self.access()? == Access::Legacy {
+            return Ok(BTreeMap::new());
+        }
+        let library = self.library()?;
+        Ok(library
+            .records
+            .iter()
+            .filter_map(|r| {
+                let card = library::resolve(&library.records, &r.id)?;
+                (!card.tags.is_empty()).then(|| (r.id.clone(), card.tags.clone()))
+            })
+            .collect())
     }
 
     /// Where the save line of the game `key` is, for reading. No request

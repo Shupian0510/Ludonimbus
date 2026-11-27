@@ -52,7 +52,7 @@ pub async fn refresh_cloud_library() -> CmdResult<CloudLibrary> {
         let cached = savelib::cached(&cfg);
         let families = savelib::index(&cfg, &cached.games);
         Ok(CloudLibrary {
-            cloud_only: cloud_only_views(&cfg, &cached.games, &families),
+            cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags),
             families,
             fetched_at: cached.fetched_at,
             error,

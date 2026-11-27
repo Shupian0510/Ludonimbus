@@ -81,7 +81,7 @@ export const cloudNames = {
 };
 
 export const app = {
-  nav: { library: "游戏库", devices: "设备", settings: "设置" },
+  nav: { library: "游戏库", collection: "收藏", devices: "设备", settings: "设置" },
   backgroundSyncFailed: (name: string, error: string) => `「${name}」后台同步失败：${error}`,
   updateAvailable: (version: string | null) => `新版本 ${version ?? ""} 可用`,
   cloud: {
@@ -498,6 +498,30 @@ export const saves = {
   purgeText: (device: string, at: string) => `${device} 在 ${at} 的存档会从云端彻底删除，之后无法恢复。`,
   purged: "已彻底删除",
   exported: (path: string) => `已导出到 ${path}`,
+};
+
+/** 收藏页：总时长、游戏数、成就，「已通关」和「已归档」两个书架（docs/plan-v2.md 10.5）。 */
+export const collection = {
+  title: "收藏",
+  playtime: "总时长",
+  games: "游戏",
+  achievements: "成就",
+  achievementsHint: (unlocked: number, total: number) => `解锁了 ${unlocked} 个，一共 ${total} 个（本机认得出成就的游戏）`,
+  finished: "已通关",
+  finishedHint: "在游戏页的「更多」里标为已通关。所有设备上都看得到。",
+  finishedEmpty: "还没有标为已通关的游戏。",
+  archived: "已归档",
+  archivedHint: "归档的游戏不在游戏库里显示。存档、游戏时间和成就留在云端，本机的游戏可以卸载；要再玩时在游戏页取消归档。",
+  archivedEmpty: "还没有归档的游戏。",
+  markFinished: "标为已通关",
+  unmarkFinished: "取消已通关",
+  archive: "归档",
+  unarchive: "取消归档",
+  markedFinished: "已标为已通关",
+  unmarkedFinished: "已取消已通关",
+  archivedDone: "已归档，在「收藏」里",
+  unarchivedDone: "已放回游戏库",
+  inLibrary: (n: number) => `已归档 ${n} 个`,
 };
 
 /** 游戏页上「和另一个版本共用存档」的那一行（docs/plan-v2.md 第 6 节「问一次」）。 */

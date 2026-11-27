@@ -24,6 +24,7 @@ These are made by `scripts/docs-screenshots.ps1` in the main repository: it open
 | `settings-cloud`、`add-game-scan`、`game-detail` | guide/quick-start |
 | `guide-welcome`、`guide-usage`、`guide-cloud`、`guide-art`、`guide-steam`、`guide-done` | guide/first-run |
 | `library-sources` | games/sources |
+| `collection` | features/collection |
 | `game-screenshots` | features/screenshots |
 | `game-achievements`、`settings-achievements` | features/achievements |
 | `game-files`、`settings-speed` | features/game-backup |

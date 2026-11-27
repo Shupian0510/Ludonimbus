@@ -278,7 +278,8 @@ const overview: Overview = {
   // Hollow Knight was added on the laptop only; so was Celeste's GOG version
   // (one game with this PC's Celeste in the save library).
   cloudOnly: [
-    cloudGame("hollow-knight", "Hollow Knight", "hollow-knight", { kind: "pc", name: null, detail: null, label: null, logo: null }),
+    // Played to the end on the laptop and put away: on the collection's shelves, not in the library.
+    cloudGame("hollow-knight", "Hollow Knight", "hollow-knight", { kind: "pc", name: null, detail: null, label: null, logo: null }, { shelves: ["finished", "archived"] }),
     cloudGame("celeste-gog", "Celeste", "celeste", { kind: "pc", name: null, detail: null, label: "GOG", logo: null }),
   ],
   games: [
@@ -286,6 +287,7 @@ const overview: Overview = {
     game("fe-fortunes-weave", L("火焰纹章：万缕千丝", "Fire Emblem: Fortune's Weave"), 2661209017, "fefw recomp", "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", ["{install}/save/**"], {
       art: { cover: art(2661209017, "p.jpg"), wide: null, hero: art(2661209017, "_hero.png"), logo: art(2661209017, "_logo.png"), icon: art(2661209017, "_icon.png") },
       health: { state: "changed", exe: "C:\\Users\\me\\Desktop\\Switch\\fefw-recomp-0.2.7\\fefw.exe", launchOptions: "" },
+      shelves: ["finished"],
     }),
     game("bloodborne-lantern", "Bloodborne", 4000695018, L("Lantern Engine（shadPS4）", "Lantern Engine (shadPS4)"), "C:\\Users\\me\\Desktop\\Switch\\Bloodborne\\BloodbornePC\\Bloodborne.exe", ["{install}/user/savedata/1/CUSA00207/**"], {
       art: { cover: art(4000695018, "p.png"), wide: null, hero: art(4000695018, "_hero.jpg"), logo: art(4000695018, "_logo.png"), icon: art(4000695018, "_icon.png") },
@@ -867,6 +869,17 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           : null,
         300,
       );
+    case "set_shelf": {
+      // Every version of the game, as the card in the cloud.
+      for (const v of [...overview.games, ...overview.cloudOnly] as Array<{ key: string; shelves?: string[] }>) {
+        if (!(args.keys as string[]).includes(v.key)) continue;
+        const rest = (v.shelves ?? []).filter((s) => s !== args.tag);
+        v.shelves = args.on ? [...rest, String(args.tag)] : rest;
+      }
+      return delay(undefined, 300);
+    }
+    case "collection_stats":
+      return delay({ achievementsUnlocked: 87, achievementsTotal: 142 }, 100);
     case "refresh_cloud_library": {
       const families: Record<string, string> = {};
       for (const g of overview.games) families[g.key] = g.family;

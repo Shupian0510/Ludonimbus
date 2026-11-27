@@ -150,6 +150,8 @@ fn main() {
             commands::join_answer,
             commands::backup_game,
             commands::list_snapshots,
+            commands::set_shelf,
+            commands::collection_stats,
             commands::screenshot_gallery,
             commands::screenshot_fetch,
             commands::screenshot_sync,
