@@ -7,7 +7,7 @@
 //! temporary name and are moved into place, so a half-uploaded file is never
 //! visible under its real name. Servers that refuse `MOVE` get a direct `PUT`.
 
-use super::store::{temp_name, Entry, Store};
+use super::store::{check_path, is_safe_name, temp_name, Entry, Store};
 use super::Unavailable;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
@@ -208,6 +208,10 @@ impl WebDav {
     }
 
     /// URL of a path below the data folder (`dir` adds a trailing slash).
+    /// Each segment is escaped (`/`, `\`, `%` too) and `.` or `..` is
+    /// dropped, so no URL leads out of the folder; the [`Store`] methods
+    /// refuse such paths before they get here ([`check_path`]), rather than
+    /// act on another file than the one asked for.
     fn url(&self, path: &str, dir: bool) -> Url {
         let mut u = self.server.clone();
         {
@@ -421,6 +425,7 @@ impl Store for WebDav {
     }
 
     fn list(&self, dir: &str) -> Result<Vec<Entry>> {
+        check_path(dir)?;
         let url = self.url(dir, true);
         let Some(items) = self.propfind(&url, "1", PROPFIND_LIST)? else {
             return Ok(Vec::new());
@@ -432,7 +437,9 @@ impl Store for WebDav {
             .filter(|i| i.path.trim_end_matches('/') != me)
             .filter_map(|i| {
                 let name = i.path.trim_end_matches('/').rsplit('/').next()?.to_string();
-                (!name.is_empty()).then(|| Entry {
+                // The server says what the names are: one no path may have
+                // (`..`, a `\`) is no file of ours.
+                is_safe_name(&name).then(|| Entry {
                     tag: if i.etag.is_empty() { format!("{}|{}", i.modified, i.size) } else { i.etag.clone() },
                     name,
                     is_dir: i.is_dir,
@@ -443,6 +450,7 @@ impl Store for WebDav {
     }
 
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        check_path(path)?;
         let Some(r) = self.get(&self.agent, path)? else { return Ok(None) };
         let mut buf = Vec::new();
         r.into_reader()
@@ -452,6 +460,7 @@ impl Store for WebDav {
     }
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
+        check_path(path)?;
         let r = self
             .get(&self.bulk, path)?
             .ok_or_else(|| anyhow!(crate::tr!("云端找不到文件 {path}", "File not found in the cloud: {path}")))?;
@@ -464,14 +473,17 @@ impl Store for WebDav {
     }
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+        check_path(path)?;
         self.put_atomic(path, Body::Bytes(data))
     }
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
+        check_path(path)?;
         self.put_atomic(path, Body::File(src))
     }
 
     fn remove(&self, path: &str) -> Result<()> {
+        check_path(path)?;
         let t = Instant::now();
         let url = self.url(path, false);
         let res = self.req(&self.agent, "DELETE", &url).call();
@@ -527,5 +539,13 @@ mod tests {
             "https://dav.example.com/dav/Ludo%20nimbus/sub/games/x/snapshots/1.zip"
         );
         assert_eq!(d.label(), "https://dav.example.com/dav/Ludo nimbus/sub");
+        // No segment leads out of the folder, however it is written.
+        for (path, url) in [
+            ("games/../../x", "games/x"),
+            (r"games\..\x", "games%5C..%5Cx"),
+            ("games/%2e%2e/x", "games/%252e%252e/x"),
+        ] {
+            assert_eq!(d.url(path, false).as_str(), format!("https://dav.example.com/dav/Ludo%20nimbus/sub/{url}"), "{path}");
+        }
     }
 }

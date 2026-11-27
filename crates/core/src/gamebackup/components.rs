@@ -27,6 +27,45 @@ const ROMS: &str = "**/*.{iso,chd,cso,rvz,gcz,wia,wbfs,wad,nsp,nsz,xci,xcz,wua,w
 
 const USER_BASES: [&str; 4] = ["appdata", "localappdata", "documents", "home"];
 
+/// `{appdata}`, `{localappdata}`, `{documents}` or `{home}`: this PC's.
+pub fn is_user_base(name: &str) -> bool {
+    USER_BASES.contains(&name)
+}
+
+/// `{extra0}`, `{extra1}`…: folders outside every other base.
+pub fn is_extra(name: &str) -> bool {
+    name.strip_prefix("extra").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Folders in the user folders that a rule names: the first folder below a
+/// user folder in each of its roots and patterns (`{appdata}/Ryujinx`,
+/// `{documents}/Dolphin Emulator`, the folder of a launcher's settings
+/// file). A restore writes into the user folders only inside these.
+pub fn rule_user_dirs(a: &Adapter, bases: &Bases) -> Vec<PathBuf> {
+    let mut templates: Vec<&str> = a.roots.values().flat_map(|t| t.split('|')).collect();
+    templates.extend(a.game_files.values().chain(a.game_config.values()).flatten().map(String::as_str));
+    templates.extend(a.firmware.iter().chain(&a.user_files).map(String::as_str));
+    templates.extend(a.user_files_from.iter().chain(&a.config_from).map(|pf| pf.file.as_str()));
+    templates.extend(a.game_packs.iter().map(|p| p.dir.as_str()));
+    let mut out = Vec::new();
+    for t in templates {
+        let Ok((root, rest)) = spec::split_pattern(t) else { continue };
+        // Linux rules name the same folders by their XDG names.
+        let root = match root.as_str() {
+            "xdgconfig" => "appdata",
+            "xdgdata" => "localappdata",
+            r => r,
+        };
+        let first = rest.split('/').next().unwrap_or_default();
+        if let Some(dir) = bases.get(root).filter(|_| is_user_base(root)) {
+            if !first.is_empty() && !first.contains(['*', '?', '[', '{', '<']) {
+                out.push(dir.join(first));
+            }
+        }
+    }
+    out
+}
+
 /// Folders the bases stand for.
 #[derive(Debug, Clone, Default)]
 pub struct Bases {
@@ -57,6 +96,11 @@ impl Bases {
 
     pub fn get(&self, name: &str) -> Option<&PathBuf> {
         self.map.get(name)
+    }
+
+    /// This PC's user folders.
+    pub fn user_folders(&self) -> Vec<PathBuf> {
+        self.map.iter().filter(|(k, _)| is_user_base(k)).map(|(_, v)| v.clone()).collect()
     }
 
     /// `{base}/rel` for an absolute path: the deepest base that holds it; a

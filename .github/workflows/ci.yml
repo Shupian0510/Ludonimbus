@@ -70,6 +70,18 @@ jobs:
       - name: Changelog has a bilingual entry for this version
         shell: pwsh
         run: ./scripts/changelog-section.ps1 -Version (./scripts/check-versions.ps1) | Out-Null
+      # The documentation site is deployed from main (docs.yml); building it
+      # here catches dead links and a broken changelog page before that.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Documentation site builds
+        working-directory: website
+        run: |
+          npm ci
+          npm run build
 
   test:
     needs: changes
@@ -99,14 +111,19 @@ jobs:
       - name: Frontend build
         working-directory: app
         run: npm run build
+      # Also builds and type-checks the Steam plugin (scripts/build-plugin.ps1).
       - name: Desktop app compiles
         shell: pwsh
         run: |
           ./scripts/prepare-sidecars.ps1
           cargo build -p ludonimbus-app
+      # Needs the frontend build and the sidecars above, so it is not part of
+      # the workspace tests.
+      - name: Desktop app tests
+        run: cargo test -p ludonimbus-app
 
-  # Linux (Steam Deck / SteamOS): the same tests, and the desktop app must
-  # compile.
+  # Linux (Steam Deck / SteamOS): the same tests, the desktop app must
+  # compile, and the Decky plugin must type-check and build.
   linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -122,7 +139,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: |
+            app/package-lock.json
+            plugin-decky/package-lock.json
       - name: System libraries for the desktop app
         run: |
           sudo apt-get update
@@ -139,6 +158,14 @@ jobs:
         run: |
           bash scripts/prepare-sidecars.sh --stand-ins
           cargo build --locked -p ludonimbus-app
+      - name: Desktop app tests
+        run: cargo test --locked -p ludonimbus-app
+      - name: Decky plugin
+        working-directory: plugin-decky
+        run: |
+          npm ci
+          npm run check
+          npm run build
 
   ok:
     if: always()

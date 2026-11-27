@@ -75,7 +75,9 @@
 //!   "nothing new" one request).
 //! - A snapshot made while the cloud can't be reached is made without a
 //!   base ([`draft`] with `base: None`), so it borrows from no pack that may
-//!   be gone by the time it is uploaded.
+//!   be gone by the time it is uploaded. One made with a base whose upload
+//!   then had to wait may find a borrowed pack gone: pass [`publish`] the
+//!   save files as they are then, so it can put the pack back.
 
 use super::line::{self, LineCache, LineView};
 use super::packs::{self, LocalFile};
@@ -386,16 +388,32 @@ pub fn unstage(dir: &Path, manifest: &Manifest) -> Result<()> {
 ///    exists;
 /// 3. [`packs::verify`] with `files`: a pack this manifest borrows that
 ///    another device cleaned up meanwhile is put back. `files` are the save
-///    files as they are now, for that case only; pass none when the saves
-///    may have changed since (an upload that waited): a snapshot staged
-///    without a base borrows nothing;
+///    files as they are now, for that case only: [`packs::build`] takes only
+///    those whose size and hash are still what the manifest says, so the
+///    files of an upload that waited may be passed too (pass none when
+///    [`packs::borrows`] says the snapshot borrows nothing);
 /// 4. add the manifest to `cache` and write the index.
+///
+/// The snapshot is published only when every step went through: its
+/// manifest is in the cloud and so is every pack it names. When step 3
+/// fails, the manifest is removed again (as far as the connection lets it):
+/// a version whose pack is gone would stay in the history, usually as the
+/// newest version, and nobody could fetch it. A borrowed pack that can't be
+/// put back because `files` no longer have its content is a
+/// [`packs::MissingPack`]; calling again then fails the same way, which is
+/// for the caller to settle.
 ///
 /// An error leaves nothing to undo: packs without a manifest are not a
 /// snapshot and are cleaned up later ([`clean`]); a manifest without its
 /// index entry is found by the next listing. Calling it again for the same
 /// snapshot is safe and ends in the same state (the manifest is written
-/// with the same bytes). It doesn't remove anything from `dir`.
+/// with the same bytes, and its packs are checked once more). It doesn't
+/// remove anything from `dir`.
+///
+/// Writing the manifest before looking at the packs is what keeps a
+/// clean-up on another device from taking a borrowed pack in between: one
+/// that lists the line after the manifest appeared keeps the pack, one that
+/// listed it before is caught by the look of step 3.
 ///
 /// Nothing is ever written into a folder of 0.6.
 pub fn publish(
@@ -449,7 +467,10 @@ pub fn publish(
     let scratch = dir.join(format!("verify-{}", ulid::Ulid::new()));
     let verified = packs::verify(store, &place.folders, manifest, files, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
-    verified?;
+    if let Err(e) = verified {
+        let _ = store.remove(&v2::manifest_path(home, &manifest.id));
+        return Err(e);
+    }
     cache.insert(manifest);
     line::write_index(store, home, cache, device_id)
 }
@@ -816,15 +837,17 @@ pub struct Cleaned {
 /// game, so whether one is still used takes every line to tell).
 ///
 /// 1. Each line is read again ([`open`]) and [`retention::plan`] is asked.
-///    The snapshots it names are deleted (their manifests; pins of deleted
-///    snapshots too), except those in a folder of 0.6, which are never
-///    touched. Nothing is deleted from a line with manifests this build
+///    The snapshots it names are deleted (their manifests), except those in
+///    a folder of 0.6, which are never touched. Nothing is deleted from a line with manifests this build
 ///    can't read ([`LineView::unreadable`]): what it can't read might be the
-///    newest version. A snapshot retention names has no pin in the view
-///    (retention keeps every kept save), so its pin is removed blindly,
-///    before the manifest, in the line's first folder (and in the
-///    manifest's folder when that is another one): a pin another device
-///    wrote after the listing doesn't stay behind on its own.
+///    newest version. A snapshot retention names had no pin in the view
+///    (retention keeps every kept save), but another device may have kept it
+///    since the listing: right before its manifest is removed, its pin is
+///    looked for in the line's first folder (and in the manifest's folder
+///    when that is another one), and a snapshot that has one stays. A kept
+///    save is kept while its pin is there (section 3.7). A pin written in
+///    the moment between that look and the removal stays behind alone; a
+///    listing ignores a pin without its manifest.
 /// 2. Versions deleted by the user [`super::TRASH_DAYS`] days or more
 ///    before `now` (whole days, the rule 0.6 has) are purged, in folders of
 ///    0.6 as well, except one whose manifest the listing of step 1 shows in
@@ -846,13 +869,13 @@ pub struct Cleaned {
 ///
 /// Requests: per line its listings and one listing per trash folder (plus a
 /// read per record in it); per game folder one listing of `packs/`; one
-/// remove per file deleted, and one per snapshot deleted for its pin (two
-/// when its manifest is not in the line's first folder); one read more per
-/// version purged from a folder of 0.6; and, when a pack is about to be
-/// deleted, the lines' listings and their trash folders' once more (plus a
-/// read per record that wasn't there the first time). Meant to run at most
-/// about once a day per game, after an upload or in the background, never
-/// before playing.
+/// remove per file deleted, and one read per snapshot retention names, for
+/// its pin (two when its manifest is not in the line's first folder); one
+/// read more per version purged from a folder of 0.6; and, when a pack is
+/// about to be deleted, the lines' listings and their trash folders' once
+/// more (plus a read per record that wasn't there the first time). Meant to
+/// run at most about once a day per game, after an upload or in the
+/// background, never before playing.
 ///
 /// An error part way leaves the cloud consistent: every step only removes
 /// what the steps before made unused. Run again, it carries on.
@@ -884,9 +907,13 @@ pub fn clean(
                 if v2::legacy_key(dir).is_some() {
                     continue;
                 }
-                line::remove_pin(store, place.dir(), &id)?;
-                if dir != place.dir() {
-                    line::remove_pin(store, dir, &id)?;
+                // Kept on another device since the listing.
+                let mut pinned = store.read(&v2::pin_path(place.dir(), &id))?.is_some();
+                if !pinned && dir != place.dir() {
+                    pinned = store.read(&v2::pin_path(dir, &id))?.is_some();
+                }
+                if pinned {
+                    continue;
                 }
                 store.remove(&v2::manifest_path(dir, &id))?;
                 l.cache.snapshots.remove(&id);

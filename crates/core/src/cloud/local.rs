@@ -1,7 +1,7 @@
 //! "Cloud" in a plain folder: a NAS share, a USB drive, or a folder kept in
 //! sync by Google Drive for desktop / OneDrive. Also used by the tests.
 
-use super::store::{temp_name, Entry, Store};
+use super::store::{check_path, is_safe_name, temp_name, Entry, Store};
 use super::Unavailable;
 use crate::util;
 use anyhow::{anyhow, Context, Result};
@@ -17,12 +17,16 @@ impl LocalFolder {
         LocalFolder { root }
     }
 
-    fn abs(&self, path: &str) -> PathBuf {
+    /// Where `path` is on this device: always inside the root folder. A
+    /// `..`, or a segment Windows reads as a drive or another separator,
+    /// would lead out of it ([`check_path`]).
+    fn abs(&self, path: &str) -> Result<PathBuf> {
+        check_path(path)?;
         let mut p = self.root.clone();
         for seg in path.split('/').filter(|s| !s.is_empty()) {
             p.push(seg);
         }
-        p
+        Ok(p)
     }
 }
 
@@ -113,12 +117,35 @@ impl Store for LocalFolder {
 
     fn list(&self, dir: &str) -> Result<Vec<Entry>> {
         self.check()?;
-        let Ok(rd) = std::fs::read_dir(self.abs(dir)) else {
-            return Ok(Vec::new());
+        // A folder that isn't there is empty. Anything else that goes wrong
+        // (a share that dropped, no permission) is an error: an empty
+        // listing would look like a cloud that has nothing.
+        let failed = |e: std::io::Error| -> anyhow::Error {
+            // The root went away with the share it is on: the cloud can't be reached.
+            if let Err(gone) = self.check() {
+                return gone;
+            }
+            anyhow!(e).context(crate::tr!("无法列出 {dir}", "Can't list {dir}"))
+        };
+        let rd = match std::fs::read_dir(self.abs(dir)?) {
+            Ok(rd) => rd,
+            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => return Ok(Vec::new()),
+            Err(e) => return Err(failed(e)),
         };
         let mut out = Vec::new();
-        for e in rd.flatten() {
-            let Ok(md) = e.metadata() else { continue };
+        for e in rd {
+            let e = e.map_err(failed)?;
+            let name = e.file_name().to_string_lossy().into_owned();
+            // A name no path may have is no file of ours.
+            if !is_safe_name(&name) {
+                continue;
+            }
+            let md = match e.metadata() {
+                Ok(md) => md,
+                // Removed since the listing was made.
+                Err(err) if err.kind() == ErrorKind::NotFound => continue,
+                Err(err) => return Err(failed(err)),
+            };
             let mtime = md
                 .modified()
                 .ok()
@@ -126,7 +153,7 @@ impl Store for LocalFolder {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
             out.push(Entry {
-                name: e.file_name().to_string_lossy().into_owned(),
+                name,
                 is_dir: md.is_dir(),
                 size: md.len(),
                 tag: format!("{mtime}-{}", md.len()),
@@ -137,7 +164,7 @@ impl Store for LocalFolder {
 
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
         self.check()?;
-        match std::fs::read(self.abs(path)) {
+        match std::fs::read(self.abs(path)?) {
             Ok(b) => Ok(Some(b)),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(anyhow!(e).context(crate::tr!("无法读取 {path}", "Can't read {path}"))),
@@ -146,23 +173,23 @@ impl Store for LocalFolder {
 
     fn download(&self, path: &str, dest: &Path) -> Result<()> {
         self.check()?;
-        let src = self.abs(path);
+        let src = self.abs(path)?;
         std::fs::copy(&src, dest).with_context(|| crate::tr!("找不到快照文件 {}", "Snapshot file not found: {}", src.display()))?;
         Ok(())
     }
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         self.check()?;
-        util::atomic_write(&self.abs(path), data)
+        util::atomic_write(&self.abs(path)?, data)
     }
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
         self.check()?;
-        let dest = self.abs(path);
+        let dest = self.abs(path)?;
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let tmp = self.abs(&temp_name(path));
+        let tmp = self.abs(&temp_name(path))?;
         std::fs::copy(src, &tmp).context(crate::tr!("复制快照到云端文件夹失败", "Couldn't copy the snapshot to the cloud folder"))?;
         std::fs::rename(&tmp, &dest)?;
         Ok(())
@@ -170,7 +197,7 @@ impl Store for LocalFolder {
 
     fn remove(&self, path: &str) -> Result<()> {
         self.check()?;
-        match std::fs::remove_file(self.abs(path)) {
+        match std::fs::remove_file(self.abs(path)?) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             Err(e) => Err(anyhow!(e).context(crate::tr!("无法删除 {path}", "Can't delete {path}"))),

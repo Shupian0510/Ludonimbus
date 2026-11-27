@@ -193,16 +193,15 @@ impl Shortcut {
     }
 
     /// The wrapper this shortcut launches through and the game's key: the
-    /// program itself (Windows), or a launch-options prefix
-    /// `"<wrapper>" --game <key> -- %command%` (Linux, so Proton keeps working).
+    /// program itself (Windows), or `"<wrapper>" --game <key> --` before
+    /// `%command%` in the launch options (Linux, so Proton keeps working;
+    /// see [`wrapper_options`]).
     pub fn wrapper(&self) -> Option<(String, String)> {
-        let args = util::split_args(&self.launch_options);
-        let key = |args: &[String]| args.iter().position(|a| a == "--game").and_then(|i| args.get(i + 1).cloned());
         if is_runner(&self.exe) {
-            return key(&args).map(|k| (self.exe.clone(), k));
+            let args = util::split_args(&self.launch_options);
+            return args.iter().position(|a| a == "--game").and_then(|i| args.get(i + 1).cloned()).map(|k| (self.exe.clone(), k));
         }
-        let first = args.first().filter(|a| is_runner(a))?;
-        key(&args).map(|k| (first.clone(), k))
+        parse_wrapped(&self.launch_options).map(|w| (w.runner, w.key))
     }
 }
 
@@ -632,18 +631,64 @@ pub fn wrap(root: &Path, account: &str, appid: u32, key: &str, runner: &Path) ->
 /// Launch options that run a game through the wrapper (a non-Steam
 /// shortcut on Linux, a game Steam installed anywhere): Steam replaces
 /// `%command%` with the whole command (Proton and the game's exe included).
-/// Whatever the user had stays: `gamemoderun %command%` keeps its place
-/// inside, other options go after the command.
+///
+/// The wrapper goes right before `%command%` and everything the user had
+/// stays where it was: environment variables (`MANGOHUD=1 %command%`) and
+/// programs that start the game (`gamemoderun %command%`) stay in front,
+/// so Steam still reads them as such and they reach the game through the
+/// wrapper. Put in front of them, the wrapper would get `MANGOHUD=1` as the
+/// program to start. Options without `%command%` go after the command, as
+/// Steam puts them. Where `%command%` isn't a word of its own (inside
+/// quotes, say) the wrapper goes in front of everything, as older versions
+/// put it; so it does on Windows, as it always has there, starting what the
+/// user put before `%command%` inside the job it waits for. Options that go
+/// through a wrapper already are taken apart first: never one wrapper
+/// inside another.
 pub fn wrapper_options(runner: &Path, key: &str, original: &str) -> String {
-    let prefix = format!("{} --game {key} --", util::quote(&runner.to_string_lossy()));
-    let original = original.trim();
-    if original.contains("%command%") {
-        format!("{prefix} {original}")
+    let wrapper = format!("{} --game {key} --", util::quote(&runner.to_string_lossy()));
+    let unwrapped = parse_wrapped(original).map(|w| w.original);
+    let original = unwrapped.as_deref().unwrap_or(original).trim();
+    let before_command = if cfg!(windows) { None } else { command_word(original) };
+    if let Some(at) = before_command {
+        format!("{}{wrapper} {}", &original[..at], &original[at..])
+    } else if original.contains("%command%") {
+        format!("{wrapper} {original}")
     } else if original.is_empty() {
-        format!("{prefix} %command%")
+        format!("{wrapper} %command%")
     } else {
-        format!("{prefix} %command% {original}")
+        format!("{wrapper} %command% {original}")
     }
+}
+
+/// Where each word of launch options starts. A quoted part belongs to the
+/// word it is in, spaces and all.
+fn word_starts(s: &str) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut quote = None;
+    let mut after_space = true;
+    for (i, c) in s.char_indices() {
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            after_space = false;
+            continue;
+        }
+        if after_space && !c.is_whitespace() {
+            starts.push(i);
+        }
+        if c == '"' || c == '\'' {
+            quote = Some(c);
+        }
+        after_space = c.is_whitespace();
+    }
+    starts
+}
+
+/// Where `%command%` starts a word of launch options, outside quotes: the
+/// place of the wrapper.
+fn command_word(s: &str) -> Option<usize> {
+    word_starts(s).into_iter().find(|&i| s[i..].starts_with("%command%"))
 }
 
 /// Launch options that start a game through a Ludonimbus wrapper
@@ -661,8 +706,35 @@ pub struct Wrapped {
 
 /// Take launch options made by [`wrapper_options`] apart: which wrapper,
 /// which game, and what the user had before. `None` for any other options.
+///
+/// The wrapper is the first word (what older versions wrote, and what
+/// options with nothing before `%command%` look like), or the words right
+/// before `%command%`. Either way the user's options are what is left
+/// once the wrapper is taken out, byte for byte; with nothing before
+/// `%command%` that is the shorter form ([`Wrapped::original`]).
 pub fn parse_wrapped(options: &str) -> Option<Wrapped> {
     let s = options.trim();
+    let (at, runner, key, rest) = word_starts(s)
+        .into_iter()
+        .take_while(|&i| !s[i..].starts_with("%command%"))
+        .find_map(|i| wrapper_at(&s[i..]).map(|(runner, key, rest)| (i, runner, key, rest)))?;
+    let original = if at > 0 {
+        // The user's words before `%command%`, then `%command%` and on.
+        format!("{}{}", &s[..at], rest.trim_start())
+    } else {
+        let command = rest.trim();
+        match command.strip_prefix("%command%") {
+            Some("") => String::new(),
+            Some(more) if more.starts_with(char::is_whitespace) && !more.contains("%command%") => more.trim_start().to_string(),
+            _ => command.to_string(),
+        }
+    };
+    Some(Wrapped { runner, key, original })
+}
+
+/// `"<wrapper>" --game <key> --` at the start of `s`: the wrapper as
+/// written, the key, and what follows.
+fn wrapper_at(s: &str) -> Option<(String, String, &str)> {
     let (runner, rest) = match s.strip_prefix('"') {
         Some(r) => {
             let end = r.find('"')?;
@@ -674,24 +746,17 @@ pub fn parse_wrapped(options: &str) -> Option<Wrapped> {
         return None;
     }
     // `--game <key> --`, each apart from the next.
-    let word = |s: &str| {
+    fn word(s: &str) -> (&str, &str) {
         let s = s.trim_start();
-        let end = s.find(char::is_whitespace).unwrap_or(s.len());
-        (s[..end].to_string(), s[end..].to_string())
-    };
+        s.split_at(s.find(char::is_whitespace).unwrap_or(s.len()))
+    }
     let (flag, rest) = word(rest);
-    let (key, rest) = word(&rest);
-    let (dashes, command) = word(&rest);
+    let (key, rest) = word(rest);
+    let (dashes, rest) = word(rest);
     if flag != "--game" || key.is_empty() || dashes != "--" {
         return None;
     }
-    let command = command.trim();
-    let original = match command.strip_prefix("%command%") {
-        Some("") => "",
-        Some(more) if more.starts_with(char::is_whitespace) && !more.contains("%command%") => more.trim_start(),
-        _ => command,
-    };
-    Some(Wrapped { runner: runner.to_string(), key, original: original.to_string() })
+    Some((runner.to_string(), key.to_string(), rest))
 }
 
 /// Restore the shortcut fields saved by [`wrap`], pointing at the current exe.
@@ -1048,20 +1113,75 @@ mod tests {
     #[test]
     fn wrapper_options_keep_the_users() {
         let r = Path::new("/home/deck/.config/Ludonimbus/bin/ludonimbus-run");
-        let q = "\"/home/deck/.config/Ludonimbus/bin/ludonimbus-run\"";
-        assert_eq!(wrapper_options(r, "fe", ""), format!("{q} --game fe -- %command%"));
-        assert_eq!(wrapper_options(r, "fe", "gamemoderun %command% -x"), format!("{q} --game fe -- gamemoderun %command% -x"));
-        let sc = Shortcut {
-            index: "0".into(),
-            appid: 1,
-            name: "x".into(),
-            exe: "/games/fe.exe".into(),
-            start_dir: String::new(),
-            icon: String::new(),
-            launch_options: wrapper_options(r, "fe", "--fullscreen"),
-            last_play_time: 0,
-        };
-        assert_eq!(sc.wrapper(), Some((r.to_string_lossy().into_owned(), "fe".to_string())));
+        let w = "\"/home/deck/.config/Ludonimbus/bin/ludonimbus-run\" --game fe --";
+        // What the user had, the launch options through the wrapper, and
+        // what taking the wrapper out gives back.
+        let table: &[(&str, String, &str)] = &[
+            ("", format!("{w} %command%"), ""),
+            ("-novid -windowed", format!("{w} %command% -novid -windowed"), "-novid -windowed"),
+            ("%command% -novid", format!("{w} %command% -novid"), "-novid"),
+            // Environment variables and programs that start the game stay in
+            // front of the wrapper: Steam reads them, and they reach the game.
+            ("MANGOHUD=1 %command%", format!("MANGOHUD=1 {w} %command%"), "MANGOHUD=1 %command%"),
+            ("gamemoderun %command%", format!("gamemoderun {w} %command%"), "gamemoderun %command%"),
+            ("gamemoderun %command% -x", format!("gamemoderun {w} %command% -x"), "gamemoderun %command% -x"),
+            (
+                "PROTON_LOG=1 DXVK_HUD=fps gamemoderun mangohud %command% -fullscreen",
+                format!("PROTON_LOG=1 DXVK_HUD=fps gamemoderun mangohud {w} %command% -fullscreen"),
+                "PROTON_LOG=1 DXVK_HUD=fps gamemoderun mangohud %command% -fullscreen",
+            ),
+            (r#"WINEDLLOVERRIDES="dxgi=n,b" %command%"#, format!(r#"WINEDLLOVERRIDES="dxgi=n,b" {w} %command%"#), r#"WINEDLLOVERRIDES="dxgi=n,b" %command%"#),
+            // Spacing stays as it was; only the ends are trimmed.
+            ("  MANGOHUD=1\t %command%  ", format!("MANGOHUD=1\t {w} %command%"), "MANGOHUD=1\t %command%"),
+            // `%command%` inside quotes isn't a word of its own: the wrapper
+            // goes in front of everything.
+            (r#"bash -c "exec %command%""#, format!(r#"{w} bash -c "exec %command%""#), r#"bash -c "exec %command%""#),
+        ];
+        for (original, wrapped, back) in table {
+            // Windows keeps the wrapper in front of everything.
+            let made = if cfg!(windows) && original.contains("%command%") { format!("{w} {}", original.trim()) } else { wrapped.clone() };
+            assert_eq!(wrapper_options(r, "fe", original), made, "{original}");
+            // Either way it comes apart again, on every system.
+            for options in [wrapped, &made] {
+                let parsed = parse_wrapped(options).unwrap_or_else(|| panic!("{options}"));
+                assert_eq!((parsed.runner.as_str(), parsed.key.as_str(), parsed.original.as_str()), (r.to_str().unwrap(), "fe", *back), "{options}");
+                let sc = Shortcut {
+                    index: "0".into(),
+                    appid: 1,
+                    name: "x".into(),
+                    exe: "/games/fe.exe".into(),
+                    start_dir: String::new(),
+                    icon: String::new(),
+                    launch_options: options.clone(),
+                    last_play_time: 0,
+                };
+                assert_eq!(sc.wrapper(), Some((r.to_string_lossy().into_owned(), "fe".to_string())), "{options}");
+            }
+            // Wrapping what came back gives the same options again.
+            assert_eq!(wrapper_options(r, "fe", back), made);
+        }
+    }
+
+    #[test]
+    fn launch_options_of_older_versions_are_recognised() {
+        // Older versions put the wrapper in front of everything.
+        let old = "\"/opt/ludonimbus/ludonimbus-run\" --game fe --";
+        for (options, original) in [
+            (format!("{old} %command%"), ""),
+            (format!("{old} %command% -x"), "-x"),
+            (format!("{old} gamemoderun %command% -x"), "gamemoderun %command% -x"),
+            (format!("{old} MANGOHUD=1 %command%"), "MANGOHUD=1 %command%"),
+            (format!("{old} PROTON_LOG=1 gamemoderun %command%"), "PROTON_LOG=1 gamemoderun %command%"),
+        ] {
+            let w = parse_wrapped(&options).unwrap_or_else(|| panic!("{options}"));
+            assert_eq!((w.runner.as_str(), w.key.as_str(), w.original.as_str()), ("/opt/ludonimbus/ludonimbus-run", "fe", original), "{options}");
+            // Wrapped again (a moved wrapper, taken over again): the wrapper
+            // where it goes now, and never one inside another.
+            let new = Path::new("/home/deck/.config/Ludonimbus/bin/ludonimbus-run");
+            let again = wrapper_options(new, "fe", &options);
+            assert_eq!(again, wrapper_options(new, "fe", original), "{options}");
+            assert_eq!(again.matches("ludonimbus-run").count(), 1, "{again}");
+        }
     }
 
     #[test]
@@ -1148,14 +1268,15 @@ mod tests {
     #[test]
     fn wrap_health_unwrap() {
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("LUDONIMBUS_HOME", tmp.path().join("home"));
+        let mut env = paths::TestEnv::new();
+        env.set("LUDONIMBUS_HOME", tmp.path().join("home"));
         let root = tmp.path().join("Steam");
         let cfgdir = root.join("userdata").join("123").join("config");
         std::fs::create_dir_all(&cfgdir).unwrap();
         std::fs::write(cfgdir.join("shortcuts.vdf"), vdf::write(&shortcut_doc())).unwrap();
         let runner = tmp.path().join("ludonimbus-run.exe");
         std::fs::write(&runner, b"x").unwrap();
-        std::env::set_var("LUDONIMBUS_RUNNER", &runner);
+        env.set("LUDONIMBUS_RUNNER", &runner);
         let appid = APPID as u32;
 
         let original = wrap(&root, "123", appid, "fe", &runner).unwrap();
