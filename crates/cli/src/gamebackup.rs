@@ -328,6 +328,14 @@ pub fn run(cmd: Cmd) -> Result<()> {
                 println!("已删除 {version}；有设备正在备份，不再使用的数据块下次再清理");
             } else {
                 println!("已删除 {version}，清理了 {} 个数据块（{}）", gc.deleted_chunks, human(gc.freed_bytes));
+                if gc.recent_chunks > 0 {
+                    println!(
+                        "{} 个不再使用的数据块（{}）是最近 {} 小时内上传的，下次清理时再删",
+                        gc.recent_chunks,
+                        human(gc.recent_bytes),
+                        remote::CHUNK_GRACE_HOURS
+                    );
+                }
             }
         }
         Cmd::Check { key, version } => {

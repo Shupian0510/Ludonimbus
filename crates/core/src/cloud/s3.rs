@@ -4,12 +4,19 @@
 //! Requests are signed with AWS Signature Version 4. Objects are written with
 //! a single `PUT`, which S3 makes atomic, so no temporary names are needed.
 //! "Folders" are key prefixes listed with `delimiter=/`.
+//!
+//! Every request this store makes does the same when it arrives twice
+//! (listing, `GET`, `PUT` of a whole object, `DELETE`), so each is sent
+//! again after a short wait when the service answers busy or failing
+//! ([`retry::send`]). Each try is signed anew.
 
+use super::retry;
 use super::store::{Entry, Store};
 use super::Unavailable;
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 use std::time::Duration;
 use url::Url;
@@ -248,8 +255,15 @@ impl S3 {
         agent.request(method, &url).set("x-amz-date", &amz_date).set("x-amz-content-sha256", payload_hash).set("Authorization", &auth)
     }
 
+    /// Send a request, again while the service answers busy. `request`
+    /// builds (and so signs) and sends the whole request each time.
+    fn send(&self, method: &str, key: &str, request: impl FnMut() -> Result<ureq::Response, ureq::Error>) -> Result<ureq::Response, ureq::Error> {
+        retry::send(&format!("S3 {method} {key}"), request)
+    }
+
     fn get(&self, agent: &ureq::Agent, path: &str) -> Result<Option<ureq::Response>> {
-        match self.request(agent, "GET", &self.key(path), &[], EMPTY_SHA256).call() {
+        let key = self.key(path);
+        match self.send("GET", &key, || self.request(agent, "GET", &key, &[], EMPTY_SHA256).call()) {
             Ok(r) => Ok(Some(r)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(fail(e)),
@@ -264,7 +278,10 @@ impl S3 {
         if let Some(m) = max {
             q.push(("max-keys", m));
         }
-        self.request(&self.agent, "GET", "", &q, EMPTY_SHA256).call().map_err(fail)?.into_string().map_err(|e| anyhow!(Unavailable(e.to_string())))
+        self.send("LIST", prefix, || self.request(&self.agent, "GET", "", &q, EMPTY_SHA256).call())
+            .map_err(fail)?
+            .into_string()
+            .map_err(|e| anyhow!(Unavailable(e.to_string())))
     }
 }
 
@@ -283,18 +300,21 @@ pub fn parse_list(xml: &str, prefix: &str) -> Result<(Vec<Entry>, Option<String>
                 }
                 let size = text(n, "Size").parse().unwrap_or(0);
                 let etag = text(n, "ETag");
+                let last_modified = text(n, "LastModified");
                 out.push(Entry {
                     name: name.to_string(),
                     is_dir: false,
                     size,
-                    tag: if etag.is_empty() { format!("{}|{size}", text(n, "LastModified")) } else { etag },
+                    modified: DateTime::parse_from_rfc3339(last_modified.trim()).ok().map(|t| t.with_timezone(&Utc)),
+                    tag: if etag.is_empty() { format!("{last_modified}|{size}") } else { etag },
                 });
             }
             "CommonPrefixes" => {
                 let p = text(n, "Prefix");
                 if let Some(name) = p.strip_prefix(prefix).map(|s| s.trim_end_matches('/')) {
                     if !name.is_empty() {
-                        out.push(Entry { name: name.to_string(), is_dir: true, size: 0, tag: String::new() });
+                        // A prefix has no time of its own.
+                        out.push(Entry { name: name.to_string(), is_dir: true, ..Default::default() });
                     }
                 }
             }
@@ -360,7 +380,9 @@ impl Store for S3 {
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
         let hash = hex(&Sha256::digest(data));
-        self.request(&self.bulk, "PUT", &self.key(path), &[], &hash).set("Content-Type", "application/octet-stream").send_bytes(data).map_err(fail)?;
+        let key = self.key(path);
+        self.send("PUT", &key, || self.request(&self.bulk, "PUT", &key, &[], &hash).set("Content-Type", "application/octet-stream").send_bytes(data))
+            .map_err(fail)?;
         Ok(())
     }
 
@@ -368,16 +390,22 @@ impl Store for S3 {
         let hash = file_sha256(src)?;
         let f = std::fs::File::open(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
         let len = f.metadata()?.len();
-        self.request(&self.bulk, "PUT", &self.key(path), &[], &hash)
-            .set("Content-Type", "application/octet-stream")
-            .set("Content-Length", &len.to_string())
-            .send(f)
-            .map_err(fail)?;
+        let key = self.key(path);
+        self.send("PUT", &key, || {
+            // Each try sends the file from its start. One that can't be
+            // wound back would arrive short: S3 turns down a body shorter
+            // than its length, and one that doesn't match its hash.
+            let mut f = &f;
+            let _ = f.rewind();
+            self.request(&self.bulk, "PUT", &key, &[], &hash).set("Content-Type", "application/octet-stream").set("Content-Length", &len.to_string()).send(f)
+        })
+        .map_err(fail)?;
         Ok(())
     }
 
     fn remove(&self, path: &str) -> Result<()> {
-        match self.request(&self.agent, "DELETE", &self.key(path), &[], EMPTY_SHA256).call() {
+        let key = self.key(path);
+        match self.send("DELETE", &key, || self.request(&self.agent, "DELETE", &key, &[], EMPTY_SHA256).call()) {
             Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
             Err(e) => Err(fail(e)),
         }
@@ -447,16 +475,21 @@ mod tests {
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Name>b</Name><Prefix>Ludonimbus/games/</Prefix><IsTruncated>true</IsTruncated>
   <NextContinuationToken>tok</NextContinuationToken>
-  <Contents><Key>Ludonimbus/games/x.json</Key><Size>12</Size><ETag>"e1"</ETag></Contents>
+  <Contents><Key>Ludonimbus/games/x.json</Key><LastModified>2026-11-27T10:00:05.000Z</LastModified><Size>12</Size><ETag>"e1"</ETag></Contents>
+  <Contents><Key>Ludonimbus/games/y.json</Key><Size>3</Size></Contents>
   <CommonPrefixes><Prefix>Ludonimbus/games/fe/</Prefix></CommonPrefixes>
 </ListBucketResult>"#;
         let (entries, next) = parse_list(xml, "Ludonimbus/games/").unwrap();
         assert_eq!(next.as_deref(), Some("tok"));
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].name, "x.json");
         assert_eq!(entries[0].tag, "\"e1\"");
-        assert!(entries[1].is_dir);
-        assert_eq!(entries[1].name, "fe");
+        assert_eq!(entries[0].modified, Some(DateTime::parse_from_rfc3339("2026-11-27T10:00:05Z").unwrap().with_timezone(&Utc)));
+        // Without a time or an ETag (not something S3 itself does).
+        assert_eq!((entries[1].modified, entries[1].tag.as_str()), (None, "|3"));
+        assert!(entries[2].is_dir);
+        assert_eq!(entries[2].name, "fe");
+        assert_eq!(entries[2].modified, None);
     }
 
     #[test]

@@ -28,7 +28,7 @@ use std::collections::HashSet;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 fn start_dav() -> u16 {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -104,9 +104,9 @@ fn same_file(a: &Path, b: &Path) {
     assert_eq!(std::fs::read(a).unwrap(), std::fs::read(b).unwrap(), "{} vs {}", a.display(), b.display());
 }
 
-/// Every chunk in the cloud belongs to a committed version of some game,
-/// and every version's chunks are there.
-fn chunks_match_versions(store: &dyn Store) {
+/// The chunks the committed versions of all games use, and the chunks in
+/// the cloud.
+fn used_and_present(store: &dyn Store) -> (HashSet<String>, HashSet<String>) {
     let mut used = HashSet::new();
     for g in remote::list_games(store).unwrap() {
         for s in remote::list_versions(store, &g).unwrap() {
@@ -115,8 +115,23 @@ fn chunks_match_versions(store: &dyn Store) {
             }
         }
     }
-    let present: HashSet<String> = remote::list_chunks(store).unwrap().into_keys().collect();
+    (used, remote::list_chunks(store).unwrap().into_keys().collect())
+}
+
+/// Every chunk in the cloud belongs to a committed version of some game,
+/// and every version's chunks are there.
+fn chunks_match_versions(store: &dyn Store) {
+    let (used, present) = used_and_present(store);
     assert_eq!(present, used);
+}
+
+/// Make every chunk in a local cloud folder look written two days ago:
+/// cleaning up leaves the chunks of the last day alone.
+fn age_chunks(cloud: &Path) {
+    for e in std::fs::read_dir(cloud.join(remote::chunks_dir())).unwrap().flatten() {
+        let f = std::fs::File::options().write(true).open(e.path()).unwrap();
+        f.set_modified(SystemTime::now() - Duration::from_secs(48 * 3600)).unwrap();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,12 +283,20 @@ fn pc_game_part(tmp: &Path, store: &dyn Store) {
     write(&big_path, &random(9 * 1024 * 1024, 11));
     std::fs::OpenOptions::new().write(true).open(&big_path).unwrap().set_modified(t).unwrap();
 
-    // Keep 2: older versions and the chunks only they used go away.
+    // Keep 2: older versions go away. The chunks only they used were all
+    // written in the last day, so they stay for now...
     write(&root.join("data/patch.txt"), b"version 1.3");
-    let Outcome::Created { version: v6, pruned, .. } = run(store, &g, &opts(Some(2))) else { panic!() };
+    let Outcome::Created { version: v6, pruned, freed, .. } = run(store, &g, &opts(Some(2))) else { panic!() };
     assert_eq!(pruned, vec![v1.id.clone(), v2.id.clone(), v3.id.clone(), v4.id.clone()]);
     let ids: Vec<String> = remote::list_versions(store, "zelda").unwrap().into_iter().map(|s| s.id).collect();
     assert_eq!(ids, vec![v5.id.clone(), v6.id.clone()]);
+    let (used, present) = used_and_present(store);
+    assert!(freed == 0 && present.is_superset(&used) && present.len() > used.len(), "{freed} bytes freed");
+    // ...and go in a cleanup a day later.
+    let cloud = tmp.join("cloud");
+    age_chunks(&cloud);
+    let gc = remote::collect_garbage(store, ("d-a", "PC-a"), None, &|_, _| {}).unwrap();
+    assert_eq!((gc.deleted_chunks, gc.recent_chunks), (present.len() - used.len(), 0), "{gc:?}");
     chunks_match_versions(store);
 
     // Deleting a version, then cleaning up.
@@ -295,7 +318,6 @@ fn pc_game_part(tmp: &Path, store: &dyn Store) {
     // A damaged chunk is caught when restoring.
     let m7 = remote::read_manifest(store, "zelda", &v7).unwrap();
     let victim_id = m7.components[0].chunks[0].h.clone();
-    let cloud = tmp.join("cloud");
     let victim = cloud.join(remote::chunk_path(&victim_id));
     let good = std::fs::read(&victim).unwrap();
     let mut bad = good.clone();
@@ -544,10 +566,12 @@ fn emulator_part(tmp: &Path, store: &dyn Store) {
     assert!(unify(g.args.clone()).contains(&unify(new_roms.join("Zelda").join("code").display().to_string())), "{}", g.args);
     assert_eq!(ludonimbus_core::gamebackup::content_dir_for("cemu"), Some(new_roms.clone()));
 
-    // Deleting every version of one game keeps the chunks the other uses.
+    // Deleting every version of one game keeps the chunks the other uses
+    // (a day later, when the cleanup no longer leaves new chunks alone).
     for s in remote::list_versions(store, "botw").unwrap() {
         remote::delete_version(store, "botw", &s.id).unwrap();
     }
+    age_chunks(&tmp.join("cloud"));
     remote::collect_garbage(store, ("d-a", "PC-a"), None, &|_, _| {}).unwrap();
     chunks_match_versions(store);
     restore_to(store, "mk8", &k1, &to(&tmp.join("third/Cemu"), Some(&tmp.join("third/ROMs"))));

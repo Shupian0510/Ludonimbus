@@ -246,6 +246,17 @@ mod tests {
     }
 
     #[test]
+    fn listings_keep_when_files_were_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Cached::at(Memory::new(), tmp.path());
+        let at = chrono::Utc::now() - chrono::Duration::days(3);
+        store.inner().put_at("d/x.json", b"x", at);
+        store.inner().put("d/sub/y.json", b"y");
+        let listed = store.list("d").unwrap();
+        assert_eq!(listed.iter().map(|e| (e.name.as_str(), e.modified)).collect::<Vec<_>>(), [("sub", None), ("x.json", Some(at))]);
+    }
+
+    #[test]
     fn a_store_that_asks_for_no_cache_is_passed_through() {
         // `Memory` has no cache scope, like a local folder.
         let store = Cached::new(Memory::new());

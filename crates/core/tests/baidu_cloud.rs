@@ -410,6 +410,8 @@ fn baidu_cloud() {
     let after = s.list("games/fe").unwrap();
     assert_eq!(after.len(), 1, "overwritten, not renamed");
     assert_ne!(before[0].tag, after[0].tag);
+    // The listing says when the file was written (Baidu's server_mtime).
+    assert!(after[0].modified.is_some() && after[0].modified > before[0].modified, "{after:?}");
     assert_eq!(s.read("games/fe/game.json").unwrap().as_deref(), Some(&b"{\"v\":22}"[..]));
 
     // A 9 MB file goes up in three slices and comes back through the

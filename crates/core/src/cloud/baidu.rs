@@ -491,7 +491,7 @@ impl BaiduPan {
 
     /// [`Self::call`]. With `again`, a call the server turns away with an
     /// HTTP error for the moment (429, 5xx) is also sent again, as long as it
-    /// asks for a short wait ([`super::gdrive::retry_wait`]): only for calls
+    /// asks for a short wait ([`super::retry::retry_wait`]): only for calls
     /// that do the same when they arrive twice. A rate-limit error number
     /// means the call was not carried out, so that is retried for any call.
     fn call_with(&self, again: bool, expected: &[i64], f: impl Fn(&str) -> Result<ureq::Response, ureq::Error>) -> Result<Value> {
@@ -502,8 +502,8 @@ impl BaiduPan {
             let token = self.access_token(false)?;
             let res = f(&token);
             if let Err(ureq::Error::Status(code, r)) = &res {
-                if again && super::gdrive::busy_status(*code) {
-                    if let Some(wait) = super::gdrive::retry_wait(busy, r.header("Retry-After"), chrono::Utc::now()) {
+                if again && super::retry::busy_status(*code) {
+                    if let Some(wait) = super::retry::retry_wait(busy, r.header("Retry-After"), chrono::Utc::now()) {
                         busy += 1;
                         logger::log("baidu", format!("HTTP {code}; trying again in {} ms", wait.as_millis()));
                         std::thread::sleep(wait);
@@ -871,11 +871,14 @@ impl Store for BaiduPan {
                     ids.insert(p.to_string(), fs_id);
                 }
                 let size = it["size"].as_u64().unwrap_or(0);
+                let mtime = it["server_mtime"].as_i64().unwrap_or(0);
                 Some(Entry {
                     is_dir: it["isdir"].as_i64() == Some(1),
-                    tag: format!("{fs_id}|{}|{size}|{}", it["server_mtime"].as_i64().unwrap_or(0), it["md5"].as_str().unwrap_or("")),
+                    tag: format!("{fs_id}|{mtime}|{size}|{}", it["md5"].as_str().unwrap_or("")),
                     name,
                     size,
+                    // Seconds since 1970, by Baidu's clock.
+                    modified: (mtime > 0).then(|| chrono::DateTime::from_timestamp(mtime, 0)).flatten(),
                 })
             })
             .collect())

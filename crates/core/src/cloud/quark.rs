@@ -55,8 +55,12 @@ impl Quark {
         let run = openlist::ensure_running()?;
         let password = openlist::webdav_password()?;
         let admin = openlist::admin_password()?;
-        // The WebDAV user's base path is the Ludonimbus folder itself.
-        let dav = WebDav::new(&format!("http://127.0.0.1:{}/dav/", run.port), openlist::webdav_user(), &password, "", timeout)?.direct_uploads();
+        // The WebDAV user's base path is the Ludonimbus folder itself. When
+        // to try again is decided here ([`Quark::retry`]): OpenList answers
+        // 5xx at once when Quark can't be reached, and waiting on that would
+        // hold up a game.
+        let dav =
+            WebDav::new(&format!("http://127.0.0.1:{}/dav/", run.port), openlist::webdav_user(), &password, "", timeout)?.direct_uploads().without_retries();
         Ok(Quark { dav, port: run.port, admin, folder: folder.trim_matches('/').to_string(), api: Mutex::new(None), refreshed: Mutex::new(HashMap::new()) })
     }
 
@@ -332,7 +336,7 @@ mod tests {
 
     fn quark_at(port: u16) -> Quark {
         Quark {
-            dav: WebDav::new(&format!("http://127.0.0.1:{port}/dav/"), "ludonimbus", "webdav-password", "", Duration::from_secs(5)).unwrap(),
+            dav: WebDav::new(&format!("http://127.0.0.1:{port}/dav/"), "ludonimbus", "webdav-password", "", Duration::from_secs(5)).unwrap().without_retries(),
             port,
             admin: "admin-password".into(),
             folder: "Ludonimbus".into(),

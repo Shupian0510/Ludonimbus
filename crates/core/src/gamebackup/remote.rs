@@ -16,9 +16,12 @@
 //! A backup and a cleanup each write their lock first and look for the
 //! other's after: whichever starts second sees the first and backs off, so a
 //! cleanup never deletes the chunks of a backup that hasn't committed yet.
+//! In case a lock is missed all the same (a listing that lags, two devices'
+//! requests crossing), a cleanup also leaves chunks the cloud's listing
+//! shows written in the last [`CHUNK_GRACE_HOURS`] alone.
 
 use super::format::{Manifest, Summary, FORMAT};
-use crate::cloud::store::{join, Store};
+use crate::cloud::store::{join, Entry, Store};
 use crate::paths;
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, Utc};
@@ -38,6 +41,12 @@ const REFRESH_EVERY: std::time::Duration = std::time::Duration::from_secs(300);
 /// their expiry: the clocks of two devices differ, and one that slept may
 /// not have noticed yet that its lock lapsed.
 const OTHER_GRACE_MINUTES: i64 = 30;
+/// A chunk written less than this long ago, by the time its cloud's listing
+/// gives, is not deleted even when no version uses it: it may belong to a
+/// backup whose lock this cleanup didn't see. A chunk whose listing has no
+/// time goes by the versions alone. Unused young chunks go in a later
+/// cleanup.
+pub const CHUNK_GRACE_HOURS: i64 = 24;
 
 pub fn chunks_dir() -> String {
     join(&[PREFIX, "chunks"])
@@ -129,7 +138,12 @@ pub fn delete_version(store: &dyn Store, key: &str, id: &str) -> Result<()> {
 
 /// Chunks in the cloud: name → stored size.
 pub fn list_chunks(store: &dyn Store) -> Result<HashMap<String, u64>> {
-    Ok(store.list(&chunks_dir())?.into_iter().filter(|e| !e.is_dir && e.name.len() == 64 && !e.name.contains('.')).map(|e| (e.name, e.size)).collect())
+    Ok(chunk_entries(store)?.into_iter().map(|e| (e.name, e.size)).collect())
+}
+
+/// The listing entries of the chunks (not the temporary files of uploads).
+fn chunk_entries(store: &dyn Store) -> Result<Vec<Entry>> {
+    Ok(store.list(&chunks_dir())?.into_iter().filter(|e| !e.is_dir && e.name.len() == 64 && !e.name.contains('.')).collect())
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -137,7 +151,13 @@ pub fn list_chunks(store: &dyn Store) -> Result<HashMap<String, u64>> {
 pub struct GcReport {
     pub deleted_chunks: usize,
     pub freed_bytes: u64,
+    /// Every chunk left in the cloud, `recent_chunks` included.
     pub kept_chunks: usize,
+    /// Chunks no version uses, kept because they were written less than
+    /// [`CHUNK_GRACE_HOURS`] ago; a later cleanup deletes them.
+    pub recent_chunks: usize,
+    /// Their stored size.
+    pub recent_bytes: u64,
     /// Not cleaned up because a device is backing up, or a version can't be
     /// read (it is done later).
     pub postponed: bool,
@@ -156,10 +176,11 @@ fn backing_up(store: &dyn Store, own_game: Option<&str>) -> Result<bool> {
     Ok(false)
 }
 
-/// Delete chunks no version of any game uses. Skipped (and reported as
-/// postponed) while another device backs up a game, since its chunks are not
-/// committed yet, and while a version can't be read, since nobody knows
-/// which chunks it needs. `own_game` is the game whose lock the caller holds.
+/// Delete chunks no version of any game uses, except those written in the
+/// last [`CHUNK_GRACE_HOURS`]. Skipped (and reported as postponed) while
+/// another device backs up a game, since its chunks are not committed yet,
+/// and while a version can't be read, since nobody knows which chunks it
+/// needs. `own_game` is the game whose lock the caller holds.
 pub fn collect_garbage(store: &dyn Store, device: (&str, &str), own_game: Option<&str>, progress: &dyn Fn(usize, usize)) -> Result<GcReport> {
     let postponed = |reason: Option<String>| GcReport { postponed: true, reason, ..Default::default() };
     let lock = match Lock::acquire_path(store, &cleanup_lock_path(), device.0, device.1, "cleanup") {
@@ -180,7 +201,7 @@ pub fn collect_garbage(store: &dyn Store, device: (&str, &str), own_game: Option
             return Ok(postponed(Some(reason)));
         }
     };
-    let chunks = list_chunks(store)?;
+    let chunks = chunk_entries(store)?;
     // Once more right before deleting: a backup whose lock showed up late
     // (listings of some clouds lag) keeps its chunks.
     lock.confirm()?;
@@ -188,14 +209,20 @@ pub fn collect_garbage(store: &dyn Store, device: (&str, &str), own_game: Option
         lock.release()?;
         return Ok(postponed(None));
     }
-    let unused: Vec<(&String, &u64)> = chunks.iter().filter(|(id, _)| !used.contains(*id)).collect();
-    let mut report = GcReport { kept_chunks: chunks.len() - unused.len(), ..Default::default() };
-    for (i, (id, size)) in unused.iter().enumerate() {
+    let (now, grace) = (Utc::now(), Duration::hours(CHUNK_GRACE_HOURS));
+    let (recent, unused): (Vec<&Entry>, Vec<&Entry>) = chunks.iter().filter(|e| !used.contains(&e.name)).partition(|e| e.written_within(grace, now));
+    let mut report = GcReport {
+        kept_chunks: chunks.len() - unused.len(),
+        recent_chunks: recent.len(),
+        recent_bytes: recent.iter().map(|e| e.size).sum(),
+        ..Default::default()
+    };
+    for (i, e) in unused.iter().enumerate() {
         // Stops here if the lock lapsed: a backup may have started since.
         lock.refresh_if_due()?;
-        store.remove(&chunk_path(id))?;
+        store.remove(&chunk_path(&e.name))?;
         report.deleted_chunks += 1;
-        report.freed_bytes += **size;
+        report.freed_bytes += e.size;
         progress(i + 1, unused.len());
     }
     lock.release()?;
@@ -519,7 +546,7 @@ impl Drop for Lock<'_> {
 mod tests {
     use super::*;
     use crate::cloud::local::LocalFolder;
-    use crate::cloud::store::Entry;
+    use crate::cloud::memory::Memory;
 
     type Hook = Box<dyn FnOnce(&LocalFolder) + Send>;
 
@@ -620,11 +647,78 @@ mod tests {
         // A lock that expired a moment ago may be a device whose clock is behind.
         store.write(&game_lock_path("h"), &lock_json("backup", Utc::now() - Duration::minutes(5))).unwrap();
         assert!(collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap().postponed);
-        // Long expired: the device stopped, the chunk goes.
+        // Long expired: the device stopped. The chunk was just written, though.
         store.write(&game_lock_path("h"), &lock_json("backup", Utc::now() - Duration::hours(2))).unwrap();
         let gc = collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap();
-        assert_eq!((gc.postponed, gc.deleted_chunks), (false, 1));
+        assert_eq!((gc.postponed, gc.deleted_chunks, gc.recent_chunks), (false, 0, 1));
+        // A day later it goes.
+        let file = std::fs::File::options().write(true).open(tmp.path().join(chunk_path(&id))).unwrap();
+        file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(25 * 3600)).unwrap();
+        drop(file);
+        let gc = collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap();
+        assert_eq!((gc.postponed, gc.deleted_chunks, gc.recent_chunks), (false, 1, 0));
         assert!(store.read(&chunk_path(&id)).unwrap().is_none());
+    }
+
+    /// A store whose listings don't say when files were written.
+    struct Undated(Memory);
+
+    impl Store for Undated {
+        fn kind(&self) -> &'static str {
+            "test"
+        }
+        fn label(&self) -> String {
+            String::new()
+        }
+        fn check(&self) -> Result<()> {
+            Ok(())
+        }
+        fn list(&self, dir: &str) -> Result<Vec<Entry>> {
+            Ok(self.0.list(dir)?.into_iter().map(|e| Entry { modified: None, ..e }).collect())
+        }
+        fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
+            self.0.read(path)
+        }
+        fn download(&self, path: &str, dest: &std::path::Path) -> Result<()> {
+            self.0.download(path, dest)
+        }
+        fn write(&self, path: &str, data: &[u8]) -> Result<()> {
+            self.0.write(path, data)
+        }
+        fn upload(&self, path: &str, src: &std::path::Path) -> Result<()> {
+            self.0.upload(path, src)
+        }
+        fn remove(&self, path: &str) -> Result<()> {
+            self.0.remove(path)
+        }
+    }
+
+    #[test]
+    fn a_cleanup_leaves_chunks_written_lately_alone() {
+        let now = Utc::now();
+        let chunk = |c: char| c.to_string().repeat(64);
+        let store = Memory::new();
+        // A manifest (not committed yet) that uses one old chunk.
+        let manifest = serde_json::json!({ "format": FORMAT, "components": [{ "chunks": [{ "h": chunk('a') }] }] });
+        store.put(&manifest_path("g", "01A"), &zstd::bulk::compress(manifest.to_string().as_bytes(), 3).unwrap());
+        for (c, hours, size) in [('a', 72, 1), ('b', 48, 10), ('c', 25, 100), ('d', 23, 1000), ('e', 1, 10_000), ('f', -2, 100_000)] {
+            store.put_at(&chunk_path(&chunk(c)), &vec![0; size], now - Duration::hours(hours));
+        }
+
+        let gc = collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap();
+        // Old and unused: deleted. Used: kept. Written less than a day ago
+        // (also by a cloud whose clock is ahead): kept for now.
+        assert_eq!((gc.postponed, gc.deleted_chunks, gc.freed_bytes), (false, 2, 110));
+        assert_eq!((gc.kept_chunks, gc.recent_chunks, gc.recent_bytes), (4, 3, 111_000));
+        let mut left: Vec<String> = list_chunks(&store).unwrap().into_keys().map(|h| h[..1].to_string()).collect();
+        left.sort();
+        assert_eq!(left, ["a", "d", "e", "f"]);
+
+        // A cloud whose listing has no times: by the versions alone, as before.
+        let store = Undated(store);
+        let gc = collect_garbage(&store, ("d-a", "PC-A"), None, &|_, _| {}).unwrap();
+        assert_eq!((gc.deleted_chunks, gc.recent_chunks, gc.kept_chunks), (3, 0, 1));
+        assert_eq!(list_chunks(&store).unwrap().into_keys().collect::<Vec<_>>(), [chunk('a')]);
     }
 
     #[test]

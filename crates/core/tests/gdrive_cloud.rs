@@ -306,9 +306,11 @@ fn google_drive() {
     // out (revoked, or the PC slept through its end): one 401, a new token,
     // and the call goes through.
     drive.lock().unwrap().tokens.clear();
-    let listed: Vec<String> = store.list("games/fe").unwrap().into_iter().map(|e| e.name).collect();
-    assert_eq!(listed, ["game.json"]);
+    let listed = store.list("games/fe").unwrap();
+    assert_eq!(listed.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["game.json"]);
     assert_eq!(renewed(), 2);
+    // The listing says when the file was written (Drive's modifiedTime).
+    assert!(listed[0].modified.is_some_and(|t| t.timestamp() > 1_790_000_000), "{listed:?}");
     drive.lock().unwrap().tokens.clear();
     store.write("games/fe/game.json", b"{\"v\":2}").unwrap();
     assert_eq!(renewed(), 3);
