@@ -11,6 +11,7 @@ The most useful contributions are new emulator and game save rules. Rules are YA
 | [`adapters/builtin.yaml`](https://github.com/Shupian0510/Ludonimbus/blob/main/adapters/builtin.yaml) | Recomps and ports |
 | [`adapters/emulators.yaml`](https://github.com/Shupian0510/Ludonimbus/blob/main/adapters/emulators.yaml) | Emulators |
 | `adapters/recomplauncher.yaml` | Generated from RecompLauncher's catalog; **don't edit it by hand**. To fix a game, write a rule with the same key in `builtin.yaml` |
+| [`rules/games/<id>.yaml`](https://github.com/Shupian0510/Ludonimbus/tree/main/rules) | One file per game that keeps the same save files on several platforms (such as the Switch and PC), so those versions can share progress |
 
 A game rule looks roughly like this:
 

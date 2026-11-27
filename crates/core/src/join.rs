@@ -33,7 +33,7 @@
 //! asks for it (`sync`'s rule for syncs nobody chose).
 //!
 //! **Bindings a rule gives.** A game with a cross-platform rule
-//! (`adapters/cross-saves.yaml`, [`crosssaves`]) keeps the same save files on
+//! (`rules/games/`, [`crosssaves`]) keeps the same save files on
 //! the rule's platforms, in the rule's folder on each. Its version on one
 //! platform is offered the line of another ([`library::lines_to_ask`]), and
 //! the bindings come from the rule, not from comparing file names: the
@@ -293,7 +293,7 @@ fn by_the_rule(
     let mut p = bind::measure(&binds, canon, &here);
     // Not this version's files: the other platform's.
     let others = std::mem::take(&mut p.uncovered).len();
-    Suggestion { rule: Some(rule.name.clone()), from: platform_name(&there), others, ..suggest(p, record, def, head, is_confirmed, fit) }
+    Suggestion { rule: Some(rule.display_name().to_string()), from: platform_name(&there), others, ..suggest(p, record, def, head, is_confirmed, fit) }
 }
 
 /// Bindings of a rule pair confirmed on another device, with this device's

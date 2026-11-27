@@ -6,7 +6,7 @@
 //!
 //! - **Same layout** (the same save rule, or one Switch game in two
 //!   emulators): the version's files as they are, like a restore.
-//! - **Same files on another platform** (a rule in `cross-saves.yaml`, e.g.
+//! - **Same files on another platform** (a rule in `rules/games/`, e.g.
 //!   Stardew Valley on Switch and PC): the saves go into the rule's folder
 //!   on the target, file for file ([`crosssaves`]); the game versions that
 //!   wrote both sides' saves are compared.
@@ -75,7 +75,7 @@ pub struct Plan {
     /// the files are rarely usable as they are. Only versions the user linked
     /// by hand get here.
     pub cross_platform: bool,
-    /// The rule both versions follow (`adapters/cross-saves.yaml`): the saves
+    /// The rule both versions follow (`rules/games/`): the saves
     /// go into the rule's folder file for file, whatever the platforms.
     pub format_rule: Option<String>,
     /// Source files that aren't saves under that rule (settings…): left out.
@@ -279,7 +279,7 @@ fn same_layout(src: &CloudGame, tgt: &GameEntry) -> bool {
 /// The source's saves under a cross-platform rule (relative to the rule's
 /// folder), with the plan's rule, left-out files and source version filled.
 fn rule_saves<'a>(rule: &crosssaves::Rule, src: &GameEntry, meta: &SnapshotMeta, files: &'a BTreeMap<String, Vec<u8>>, plan: &mut Plan) -> Vec<(String, &'a Vec<u8>)> {
-    plan.format_rule = Some(rule.name.clone());
+    plan.format_rule = Some(rule.display_name().to_string());
     let saves = crosssaves::saves_of(rule, &savelib::save_scope(src), files.iter().map(|(p, d)| (p.as_str(), (p, d))), &meta.roots);
     let kept: HashSet<&String> = saves.iter().map(|(_, (p, _))| *p).collect();
     plan.skipped = files.keys().filter(|p| !kept.contains(p)).cloned().collect();

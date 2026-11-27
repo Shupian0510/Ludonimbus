@@ -28,7 +28,7 @@
 //! A binding can be narrower than its folder ([`Bind::files`]): only the
 //! files a wildcard names (relative to the folder) belong to it, the way a
 //! cross-platform rule names which files in its folder are saves
-//! (`adapters/cross-saves.yaml`). The other files in the folder are outside
+//! (`rules/games/`). The other files in the folder are outside
 //! every binding, like files in another folder.
 
 use serde::{Deserialize, Serialize};

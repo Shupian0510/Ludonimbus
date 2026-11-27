@@ -114,7 +114,7 @@ pub struct SnapshotMeta {
     #[serde(default)]
     pub locked: bool,
     /// The game version that wrote these saves, read from the saves where a
-    /// rule says how (`adapters/cross-saves.yaml`), e.g. `1.6.15`.
+    /// rule says how (`rules/games/`), e.g. `1.6.15`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game_version: Option<String>,
     /// The version of the game installed on the device that made the

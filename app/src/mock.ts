@@ -653,7 +653,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         onlyHere: 0,
         uncovered: [],
         outside: [],
-        rule: "Stardew Valley",
+        rule: L("星露谷物语", "Stardew Valley"),
         from: "PC",
         others: 2,
       };

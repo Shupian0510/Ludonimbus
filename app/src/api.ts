@@ -239,7 +239,7 @@ export interface TransferPlan {
   needsFolder: boolean;
   /** Different save formats: only versions the user linked by hand. */
   crossPlatform: boolean;
-  /** Both versions follow this cross-platform rule (`adapters/cross-saves.yaml`). */
+  /** Both versions follow this cross-platform rule (`rules/games/`), by the game's name. */
   formatRule: string | null;
   /** Source files that aren't saves under that rule (settings…): not written. */
   skipped: string[];

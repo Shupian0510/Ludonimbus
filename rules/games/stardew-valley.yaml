@@ -1,0 +1,25 @@
+# Stardew Valley keeps the same save files on PC and on the Switch.
+# How a game's rule is written: rules/README.md.
+id: stardew-valley
+name: Stardew Valley
+names:
+  zh-CN: 星露谷物语
+ids:
+  - nx:0100E65002BB8000
+  - ludusavi:stardew valley
+  - name:stardewvalley
+lines:
+  - id: main
+    # One folder per farm (`Farm_123456789/`): the save, SaveGameInfo and
+    # their `_old` copies. Other files (settings) stay on each platform.
+    files: "*/*"
+    platforms:
+      pc: { saves: StardewValley/Saves }
+      switch: { saves: "{nxsave}" }
+    version: { file: "*/SaveGameInfo", xml: gameVersion, newerOnly: true }
+    checked:
+      pc-switch: >-
+        untested. Format and transfer steps per stardewvalleywiki.com/Saves
+        (Switch to and from PC/Android with JKSV). Not yet tried with
+        Ludonimbus on a real Switch or in an emulator; the Switch sample
+        assumes the farm folders are laid out as on PC.

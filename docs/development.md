@@ -151,6 +151,8 @@ cargo test -p ludonimbus-core adapters                     # 检查规则能解�
 
 `roots` 可以用 `|` 列几个候选位置（第一个存在的；都不存在时用最后一个），用来同时支持便携版和安装版。模拟器自己的设置和数据决定的位置在 `emulators::config_roots` 里每台电脑单独读取：Cemu 的 `<mlc_path>`，以及 Ryujinx 每个游戏的存档。
 
+**跨平台的游戏规则**（`rules/games/<id>.yaml`，一个游戏一个文件，[`crosssaves.rs`](../crates/core/src/crosssaves.rs)）：游戏在几个平台上存的是同样的文件时写在这里，`crates/core/build.rs` 在构建时把文件夹里的 `*.yaml` 编译进去。每个文件旁边放各平台的样例存档（`rules/games/<id>/<平台>/`），`ludonimbus rules check <文件>` 检查字段和样例，CI 里由 `crates/core/tests/game_rules.rs` 对每个文件跑同样的检查。写法见 [rules/README.md](../rules/README.md)。
+
 **Ryujinx 按游戏**（[`switch.rs`](../crates/core/src/switch.rs)）：存档在 `bis/user/save/<编号>`，编号按创建顺序在每台电脑上分配，记在存档索引 `bis/system/save/8000000000000000/0/imkvdb.arc`（`IMKV` 头 + `IMEN` 条目，键是 0x40 字节的存档属性：程序 ID、用户 ID 高位 / 低位、类型，值的前 8 字节是编号）。规则里用两个动态根目录：`{nxsave-<标题 ID>}` 是当前用户档案（`system/Profiles.json` 的 `last_opened`）的这个游戏的存档，`{nxdevice-<标题 ID>}` 是设备存档，都指向编号文件夹里的 `0`（已提交的那份）。这台电脑没有时先指向一个不存在的 `ludonimbus-new-…` 文件夹（扫描什么也找不到）；恢复前 `emulators::prepare_restore` 按 Ryujinx 的方式新建：索引加一条、`lastPublishedId` 加一、写 `ExtraData0/1`（属性、所有者、大小照这台电脑上同一游戏的其他存档，没有就 1 GB），索引的 `0` 和 `1` 两份都改，旧索引先复制到 `local-backups/ryujinx-save-index`。Ryujinx 运行时会把索引留在内存里，所以要新建存档时如果它开着就报错。恢复后 `finish_restore` 把 `0` 复制到 `1`（工作副本），不管 Ryujinx 打开存档时从哪份同步都能看到恢复的文件。
 
 标题 ID：文件名里的 16 位十六进制；NSP 里的 `.cnmt.xml` 或票据（`.tik`）文件名；最后用 `prod.keys` 里的 `header_key` 解密 NSP / XCI 里 NCA 头（AES-128-XTS，扇区号大端作 tweak）读程序 ID。更新和 DLC 的 ID 归到本体（低 13 位清零）。
@@ -174,6 +176,7 @@ app/                 桌面应用（Tauri 2 + React + TypeScript），含给 Ste
 plugin-millennium/   Steam 插件（Millennium：Lua 后端 + TypeScript 前端）
 plugin-decky/        游戏模式插件（Decky Loader：Python 后端 + TypeScript 前端）
 adapters/            内置存档规则（游戏、模拟器、从 RecompLauncher 目录生成的规则）
+rules/               跨平台的游戏规则，一个游戏一个文件，带样例存档
 website/             文档站（VitePress），发布到 GitHub Pages
 docs/                设计文档、测试清单（不发布到文档站）
 scripts/             构建与发布脚本
