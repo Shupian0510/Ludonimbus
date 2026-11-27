@@ -338,10 +338,9 @@ pub fn murmur3(name: &str) -> u32 {
     let data = name.as_bytes();
     let (c1, c2) = (0xcc9e_2d51u32, 0x1b87_3593u32);
     let mut h = 0u32;
-    let chunks = data.chunks_exact(4);
-    let tail = chunks.remainder();
+    let (chunks, tail) = data.as_chunks::<4>();
     for c in chunks {
-        let mut k = u32::from_le_bytes(c.try_into().unwrap());
+        let mut k = u32::from_le_bytes(*c);
         k = k.wrapping_mul(c1).rotate_left(15).wrapping_mul(c2);
         h ^= k;
         h = h.rotate_left(13).wrapping_mul(5).wrapping_add(0xe654_6b64);

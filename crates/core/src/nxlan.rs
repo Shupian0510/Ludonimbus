@@ -257,7 +257,7 @@ fn err(status: u16, message: impl Into<String>) -> Resp {
     Resp { status, content_type: "application/json", body: json!({ "error": message.into() }).to_string().into_bytes() }
 }
 
-fn query_param<'a>(query: &'a str, name: &str) -> Option<String> {
+fn query_param(query: &str, name: &str) -> Option<String> {
     query
         .split('&')
         .filter_map(|kv| kv.split_once('='))
@@ -492,7 +492,7 @@ fn fetch_list_in_background() {
     }
     std::thread::spawn(|| {
         if let Ok(cfg) = config::load() {
-            if let Err(e) = cloud(&cfg).and_then(|c| savelib::refresh(&cfg, &*c)) {
+            if let Err(e) = cloud(&cfg).and_then(|c| savelib::refresh(&cfg, &c)) {
                 failed(&cfg, &e);
             }
         }

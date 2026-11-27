@@ -25,8 +25,7 @@ fn device(root: &Path, cloud: &CloudConfig) {
     let game = root.join("game");
     fs::create_dir_all(game.join("save")).unwrap();
     fs::write(game.join("game.exe"), b"exe").unwrap();
-    let mut cfg = AppConfig::default();
-    cfg.cloud = cloud.clone();
+    let mut cfg = AppConfig { cloud: cloud.clone(), ..AppConfig::default() };
     cfg.games.push(GameEntry {
         key: KEY.into(),
         name: "Test Game".into(),
@@ -131,7 +130,7 @@ fn moving_to_another_cloud() {
     fs::write(save.join("slot1.sav"), b"two").unwrap();
     let second = upload();
     let manifest: v2::Manifest = serde_json::from_slice(&fs::read(&find(&b, &format!("{second}.json"))[0]).unwrap()).unwrap();
-    assert_eq!(manifest.packs().into_iter().collect::<Vec<_>>(), [second.clone()]);
+    assert_eq!(manifest.packs().into_iter().collect::<Vec<_>>(), std::slice::from_ref(&second));
     assert!(find(&b, &format!("{first}.zip")).is_empty());
 
     cloud::migrate_previous(|_| {}).unwrap();

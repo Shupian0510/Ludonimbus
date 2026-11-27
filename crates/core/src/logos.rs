@@ -211,7 +211,7 @@ impl Resources {
         }
         let mut table = vec![0u8; sections * 40];
         f.read_exact(&mut table).ok()?;
-        for s in table.chunks_exact(40) {
+        for s in table.as_chunks::<40>().0 {
             let (vsize, vaddr) = (u32_at(s, 8)?, u32_at(s, 12)?);
             let (raw_size, raw_ptr) = (u32_at(s, 16)?, u32_at(s, 20)?);
             if rva < vaddr || rva >= vaddr + vsize.max(raw_size) {

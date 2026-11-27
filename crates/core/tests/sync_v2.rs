@@ -957,14 +957,14 @@ fn taking_back(root: &Path) {
     let v3 = uploaded(undo().unwrap());
     assert_eq!(desk.read(), "one");
     assert_eq!(status(), Status::Synced);
-    assert_eq!(heads(), [v3.clone()]);
+    assert_eq!(heads(), std::slice::from_ref(&v3));
     // Nothing was lost: the other device's progress is a version like any other,
     // and taking it back can be taken back.
     let r = sync::undoable(KEY).unwrap();
     assert_eq!((r.back.as_str(), r.now.as_str()), (v2.as_str(), v3.as_str()));
     let v4 = uploaded(undo().unwrap());
     assert_eq!(desk.read(), "two");
-    assert_eq!(heads(), [v4.clone()]);
+    assert_eq!(heads(), std::slice::from_ref(&v4));
 
     // Saves that were not in the cloud yet are kept first, and are what it goes back to.
     desk.write("unsaved");

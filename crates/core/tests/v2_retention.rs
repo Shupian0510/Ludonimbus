@@ -196,7 +196,7 @@ fn kept_by_0_6(view: &LineView, last_synced: Option<&str>, settings: &Retention)
     keep.extend(mainline_head.map(|s| s.id.clone()));
     keep.extend(last_synced.map(str::to_string));
     let mut sorted: Vec<&IndexEntry> = view.snapshots.iter().collect();
-    sorted.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    sorted.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     keep.extend(sorted.iter().filter(|s| exempt(s)).map(|s| s.id.clone()));
     let autos: Vec<&IndexEntry> = sorted.into_iter().filter(|s| !exempt(s)).collect();
     keep.extend(autos.iter().take(settings.keep_recent).map(|s| s.id.clone()));

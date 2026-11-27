@@ -281,7 +281,7 @@ fn nothing_of_0_6_changes_and_everything_else_is_an_addition() {
     // format.json last, saying who did it and when.
     let format: Value = serde_json::from_slice(&store.peek(v2::FORMAT_FILE).unwrap()).unwrap();
     assert_eq!(format, json!({ "layout": 2, "minApp": "1.0.0", "requires": [], "migratedAt": now(), "migratedBy": DEVICE }));
-    assert_eq!(flaky.touched().iter().filter(|p| !p.as_str().eq(upgrade::LOCK_FILE)).last().unwrap(), v2::FORMAT_FILE);
+    assert_eq!(flaky.touched().iter().rfind(|p| !p.as_str().eq(upgrade::LOCK_FILE)).unwrap(), v2::FORMAT_FILE);
     assert_eq!(v2::access(v2::read_format(&store).unwrap().as_ref()), v2::Access::ReadWrite);
 }
 

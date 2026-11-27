@@ -1017,8 +1017,10 @@ mod tests {
             store: Some(StoreLink { account: account.into(), appid, ..Default::default() }),
             ..Default::default()
         };
-        let mut cfg = AppConfig::default();
-        cfg.games = vec![shortcut("a", "111", 0x8000_0001), shortcut("b", "222", 0x8000_0001), installed("c", "111", 646570), installed("d", "222", 646570)];
+        let cfg = AppConfig {
+            games: vec![shortcut("a", "111", 0x8000_0001), shortcut("b", "222", 0x8000_0001), installed("c", "111", 646570), installed("d", "222", 646570)],
+            ..AppConfig::default()
+        };
         let key = |appid, account| game_of_app(&cfg, appid, account).map(|g| g.key.as_str());
         // A shortcut's id, and the id of a game Steam installed.
         assert_eq!(key(0x8000_0001, Some("222")), Some("b"));

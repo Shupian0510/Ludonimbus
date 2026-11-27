@@ -624,7 +624,7 @@ pub async fn list_snapshots(key: String) -> CmdResult<SnapshotList> {
         let ctx = Ctx::load()?;
         let mut list = ctx.cloud()?.list_snapshots(&key)?;
         let head = sync::mainline_head(&list).map(|h| h.id);
-        list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
         let platforms = platform_marks(&ctx.cfg, list.iter().map(|s| s.platform.as_str()));
         let too_new = too_new_ids(&ctx.cfg, &key, &list);
         Ok(SnapshotList { snapshots: list, head_id: head, last_synced_id: state::game(&key).last_synced_id, platforms, too_new })
@@ -1644,7 +1644,7 @@ pub async fn list_devices() -> CmdResult<Vec<DeviceInfo>> {
         let c = ctx.cloud()?;
         let _ = c.put_device(&cloud::device_info(&ctx.cfg));
         let mut list = c.list_devices()?;
-        list.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        list.sort_by_key(|a| std::cmp::Reverse(a.last_seen));
         Ok(list)
     })
     .await

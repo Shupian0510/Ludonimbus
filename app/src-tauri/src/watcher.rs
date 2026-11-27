@@ -493,7 +493,7 @@ pub fn spawn(app: AppHandle) {
             backlog.tick(&app, &cfg, &procs);
             unwrapped.tick(&app, &cfg, &procs);
 
-            if tick % 5 == 0 {
+            if tick.is_multiple_of(5) {
                 let stamp = vdf_stamp(&cfg);
                 if stamp != last_vdf {
                     if last_vdf.is_some() {

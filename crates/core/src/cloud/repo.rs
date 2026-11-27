@@ -194,7 +194,7 @@ impl<S: Store> CloudProvider for Repo<S> {
                 }
             }
         }
-        out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        out.sort_by_key(|a| std::cmp::Reverse(a.deleted_at));
         Ok(out)
     }
 

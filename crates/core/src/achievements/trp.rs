@@ -128,13 +128,13 @@ fn file_key(key: &[u8; 16], npwr: &str) -> [u8; 16] {
 
 /// Decrypt one `.ESFM` entry (16-byte IV, then AES-128-CBC data) to XML text.
 pub fn decrypt_esfm(entry: &[u8], npwr: &str, key: &[u8; 16]) -> Result<String> {
-    if entry.len() <= 16 || (entry.len() - 16) % 16 != 0 {
+    if entry.len() <= 16 || !(entry.len() - 16).is_multiple_of(16) {
         bail!("bad encrypted trophy entry");
     }
     let cipher = Aes128::new(GenericArray::from_slice(&file_key(key, npwr)));
     let mut prev: [u8; 16] = entry[..16].try_into().unwrap();
     let mut out = Vec::with_capacity(entry.len() - 16);
-    for chunk in entry[16..].chunks_exact(16) {
+    for chunk in entry[16..].as_chunks::<16>().0 {
         let mut b = GenericArray::clone_from_slice(chunk);
         cipher.decrypt_block(&mut b);
         for i in 0..16 {
@@ -255,7 +255,7 @@ mod tests {
     fn encrypt_esfm(xml: &str, npwr: &str, key: &[u8; 16], iv: [u8; 16]) -> Vec<u8> {
         let cipher = Aes128::new(GenericArray::from_slice(&file_key(key, npwr)));
         let mut data = xml.as_bytes().to_vec();
-        while data.len() % 16 != 0 {
+        while !data.len().is_multiple_of(16) {
             data.push(0);
         }
         let mut out = iv.to_vec();

@@ -138,7 +138,7 @@ impl Folders {
     /// The folder this install writes to: the one named like its key, else
     /// the record's first.
     pub fn own(&self) -> &str {
-        match self.folders.iter().any(|f| *f == self.key) {
+        match self.folders.contains(&self.key) {
             true => &self.key,
             false => &self.folders[0],
         }

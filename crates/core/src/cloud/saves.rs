@@ -598,7 +598,7 @@ pub fn trashed(store: &dyn Store, place: &Place) -> Result<Vec<Trashed>> {
             out.push(Trashed { snapshot, deleted_at: record.deleted_at, deleted_by: record.deleted_by, dir: dir.clone() });
         }
     }
-    out.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+    out.sort_by_key(|a| std::cmp::Reverse(a.deleted_at));
     Ok(out)
 }
 

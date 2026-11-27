@@ -189,7 +189,7 @@ mod tests {
                 Unlock { id: "2".into(), unlocked_at: t("2026-11-23T00:00:00Z"), hardcore: false },
             ],
         };
-        assert_eq!(merge_files(&mut db, &[other.clone()], None), 2);
+        assert_eq!(merge_files(&mut db, std::slice::from_ref(&other), None), 2);
         assert_eq!(db.unlocks["1"].device_name, "Laptop");
         assert_eq!(db.unlocks.len(), 2);
         // Merging again changes nothing; other devices' unlocks never count as this device's.

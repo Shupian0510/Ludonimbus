@@ -303,7 +303,7 @@ mod tests {
         // A leftover lock file nobody holds open does not block.
         assert!(!file_in_use(&lock));
         let start = Instant::now();
-        wait_quiesce(&[pattern.clone()], Duration::from_secs(5));
+        wait_quiesce(std::slice::from_ref(&pattern), Duration::from_secs(5));
         assert!(start.elapsed() < Duration::from_secs(1));
         // While a process holds it open, it counts as busy.
         let held = std::fs::File::open(&lock).unwrap();

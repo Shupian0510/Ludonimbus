@@ -134,7 +134,7 @@ pub fn images(key: &str, game_id: u64, kind: &str) -> Result<Vec<SgdbImage>> {
                 .collect()
         })
         .unwrap_or_default();
-    out.sort_by(|a, b| b.score.cmp(&a.score));
+    out.sort_by_key(|a| std::cmp::Reverse(a.score));
     Ok(out)
 }
 

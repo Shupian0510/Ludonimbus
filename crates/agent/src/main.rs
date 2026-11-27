@@ -432,7 +432,7 @@ fn snapshots(key: &str) -> ApiResult {
     let ctx = Ctx::from_config(cfg);
     let mut list = ctx.cloud()?.list_snapshots(key)?;
     let head = sync::mainline_head(&list).map(|h| h.id);
-    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     let st = state::game(key);
     Ok(json!({
         "key": key,

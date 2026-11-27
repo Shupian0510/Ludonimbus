@@ -385,7 +385,7 @@ mod tests {
         let newer: Bind = serde_json::from_str(r#"{"canon":"a","local":"b","codec":"nx"}"#).unwrap();
         assert_eq!(newer.codec, Codec::Other("nx".into()));
         assert!(serde_json::to_string(&newer).unwrap().contains(r#""codec":"nx""#));
-        assert!(!known(&[newer.clone()]) && known(&[x.clone(), old.clone()]));
+        assert!(!known(std::slice::from_ref(&newer)) && known(&[x.clone(), old.clone()]));
         assert!(has_wgs(&[old.clone(), x]) && !has_wgs(&[old, newer]));
     }
 

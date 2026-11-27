@@ -255,6 +255,45 @@ pub fn parse_steam_titles(text: &str, ids: &std::collections::HashSet<u32>) -> s
     out
 }
 
+/// Absolute save files Ludusavi finds for a title on this PC.
+pub fn resolve_files(title: &str) -> Result<Vec<PathBuf>> {
+    resolve_files_in(title, None)
+}
+
+/// Like [`resolve_files`], looking inside a Proton / Wine prefix too (a
+/// Windows game on Linux).
+pub fn resolve_files_in(title: &str, wine_prefix: Option<&std::path::Path>) -> Result<Vec<PathBuf>> {
+    let exe = exe_path().ok_or_else(|| anyhow!("没有找到 ludusavi.exe，无法查找「{title}」的存档"))?;
+    let mut cmd = command(&exe);
+    cmd.args(["backup", "--preview", "--api"]);
+    if let Some(p) = wine_prefix.filter(|p| p.is_dir()) {
+        cmd.arg("--wine-prefix").arg(p);
+    }
+    cmd.arg(title);
+    let v = run_json(cmd)?;
+    if let Some(errs) = v.get("errors").and_then(Value::as_object) {
+        if let Some(unknown) = errs.get("unknownGames") {
+            if unknown.as_array().is_some_and(|a| !a.is_empty()) {
+                bail!("Ludusavi 数据库里没有「{title}」");
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(games) = v.get("games").and_then(Value::as_object) {
+        for game in games.values() {
+            if let Some(files) = game.get("files").and_then(Value::as_object) {
+                for (path, info) in files {
+                    if info.get("ignored").and_then(Value::as_bool) == Some(true) {
+                        continue;
+                    }
+                    out.push(PathBuf::from(crate::util::native_sep(path)));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,43 +378,4 @@ Other Game:
         assert_eq!(g[0].files, vec![(crate::util::native_sep("C:/x/a.sav"), 5)]);
         assert!(g[1].has_registry && g[1].files.is_empty());
     }
-}
-
-/// Absolute save files Ludusavi finds for a title on this PC.
-pub fn resolve_files(title: &str) -> Result<Vec<PathBuf>> {
-    resolve_files_in(title, None)
-}
-
-/// Like [`resolve_files`], looking inside a Proton / Wine prefix too (a
-/// Windows game on Linux).
-pub fn resolve_files_in(title: &str, wine_prefix: Option<&std::path::Path>) -> Result<Vec<PathBuf>> {
-    let exe = exe_path().ok_or_else(|| anyhow!("没有找到 ludusavi.exe，无法查找「{title}」的存档"))?;
-    let mut cmd = command(&exe);
-    cmd.args(["backup", "--preview", "--api"]);
-    if let Some(p) = wine_prefix.filter(|p| p.is_dir()) {
-        cmd.arg("--wine-prefix").arg(p);
-    }
-    cmd.arg(title);
-    let v = run_json(cmd)?;
-    if let Some(errs) = v.get("errors").and_then(Value::as_object) {
-        if let Some(unknown) = errs.get("unknownGames") {
-            if unknown.as_array().is_some_and(|a| !a.is_empty()) {
-                bail!("Ludusavi 数据库里没有「{title}」");
-            }
-        }
-    }
-    let mut out = Vec::new();
-    if let Some(games) = v.get("games").and_then(Value::as_object) {
-        for game in games.values() {
-            if let Some(files) = game.get("files").and_then(Value::as_object) {
-                for (path, info) in files {
-                    if info.get("ignored").and_then(Value::as_bool) == Some(true) {
-                        continue;
-                    }
-                    out.push(PathBuf::from(crate::util::native_sep(path)));
-                }
-            }
-        }
-    }
-    Ok(out)
 }

@@ -149,7 +149,7 @@ pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Ca
             }
         }
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|a| std::cmp::Reverse(a.0));
     let mut out: Vec<Candidate> = Vec::new();
     for (_, path, reason) in scored {
         let p = path.to_string_lossy().into_owned();
@@ -165,7 +165,7 @@ pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Ca
             break;
         }
     }
-    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out.sort_by_key(|a| std::cmp::Reverse(a.modified));
     out
 }
 
@@ -303,7 +303,7 @@ pub fn folders_from_changes(files: &[PathBuf]) -> Vec<Candidate> {
             }
         })
         .collect();
-    out.sort_by(|a, b| b.modified.cmp(&a.modified));
+    out.sort_by_key(|a| std::cmp::Reverse(a.modified));
     out
 }
 

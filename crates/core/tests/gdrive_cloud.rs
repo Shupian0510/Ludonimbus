@@ -154,8 +154,7 @@ impl Drive {
             return (401, vec![], error(401, "authError").into_bytes());
         }
         let line = format!("{method} {path}");
-        if self.trouble.front().is_some_and(|t| line.starts_with(t.matches)) {
-            let t = self.trouble.pop_front().unwrap();
+        if let Some(t) = self.trouble.pop_front_if(|t| line.starts_with(t.matches)) {
             let headers = t.retry_after.map(|r| vec![("Retry-After", r.to_string())]).unwrap_or_default();
             return (t.status, headers, t.body.into_bytes());
         }

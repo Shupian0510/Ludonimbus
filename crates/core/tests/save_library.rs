@@ -98,7 +98,7 @@ fn xbox_file(dir: &Path, name: &str) -> Vec<u8> {
 
 fn latest(ctx: &Ctx, key: &str) -> String {
     let mut list = ctx.cloud().unwrap().list_snapshots(key).unwrap();
-    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    list.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     list.into_iter().find(|s| s.trigger.is_mainline()).unwrap().id
 }
 
