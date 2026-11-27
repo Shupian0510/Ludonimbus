@@ -72,6 +72,35 @@ enum Marker {
     Read { pid: u32, started: Option<DateTime<Utc>>, phase: Option<String> },
 }
 
+/// Whether a launch wrapper handles a game, as its marker tells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wrapper {
+    /// There is no marker: none does.
+    None,
+    /// Its process runs, or its marker is being written right now.
+    Running,
+    /// Its marker is left behind but its process is gone: it was terminated
+    /// before it finished (and before it uploaded). `started` is when the
+    /// game started, when the wrapper wrote it (0.6.0 and later).
+    Gone { started: Option<DateTime<Utc>> },
+}
+
+/// Whether a launch wrapper handles the game `key`. A marker that can't be
+/// read is a wrapper that is there unless it hasn't changed for a minute
+/// ([`read_marker`]).
+pub fn wrapper(key: &str) -> Wrapper {
+    wrapper_at(&paths::running_dir().join(format!("{key}.json")))
+}
+
+fn wrapper_at(path: &Path) -> Wrapper {
+    match read_marker(path) {
+        Marker::None => Wrapper::None,
+        Marker::Unknown => Wrapper::Running,
+        Marker::Read { pid, .. } if pid != 0 && process::pid_alive(pid) => Wrapper::Running,
+        Marker::Read { started, .. } => Wrapper::Gone { started },
+    }
+}
+
 /// A marker that couldn't be read for this long is no longer being written.
 const MARKER_WRITTEN_WITHIN: Duration = Duration::from_secs(60);
 
@@ -127,13 +156,8 @@ pub fn stale_runners(cfg: &AppConfig, except: Option<&str>, log: &dyn Fn(String)
         if Some(key.as_str()) == except {
             continue;
         }
-        let started = match read_marker(&path) {
-            Marker::None => continue,
-            // Being written: its wrapper is there. Looked at again next time.
-            Marker::Unknown => continue,
-            Marker::Read { pid, .. } if pid != 0 && process::pid_alive(pid) => continue,
-            Marker::Read { started, .. } => started,
-        };
+        // Being written counts as running: looked at again next time.
+        let Wrapper::Gone { started } = wrapper_at(&path) else { continue };
         let claimed = path.with_extension("claimed");
         if std::fs::rename(&path, &claimed).is_err() {
             continue;
@@ -220,5 +244,27 @@ mod tests {
         let old = std::time::SystemTime::now() - Duration::from_secs(120);
         std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
         assert!(matches!(read_marker(&path), Marker::Read { pid: 0, .. }));
+    }
+
+    #[test]
+    fn a_wrapper_is_running_while_its_marker_is_written_and_gone_once_its_process_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("celeste.json");
+        assert_eq!(wrapper_at(&path), Wrapper::None);
+        // Its process runs (this one stands in for it).
+        std::fs::write(&path, format!(r#"{{"pid":{},"phase":"playing"}}"#, std::process::id())).unwrap();
+        assert_eq!(wrapper_at(&path), Wrapper::Running);
+        // Caught while it is written: still there, never terminated.
+        std::fs::write(&path, r#"{"pid":12"#).unwrap();
+        assert_eq!(wrapper_at(&path), Wrapper::Running);
+        // Its process is gone: terminated, with when the game started.
+        std::fs::write(&path, r#"{"pid":4000000000,"phase":"playing","startedAt":"2026-11-27T10:00:00Z"}"#).unwrap();
+        let started = "2026-11-27T10:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        assert_eq!(wrapper_at(&path), Wrapper::Gone { started: Some(started) });
+        // Unreadable for over a minute: its writer died while writing it.
+        std::fs::write(&path, "").unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(120);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        assert_eq!(wrapper_at(&path), Wrapper::Gone { started: None });
     }
 }

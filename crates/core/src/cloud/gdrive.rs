@@ -27,11 +27,12 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const API: &str = "https://www.googleapis.com/drive/v3";
 const UPLOAD: &str = "https://www.googleapis.com/upload/drive/v3";
@@ -43,6 +44,81 @@ const FILE_FIELDS: &str = "id,name,size,mimeType,md5Checksum,createdTime,modifie
 const SIMPLE_UPLOAD_MAX: usize = 5 * 1024 * 1024;
 /// What a create or an update asks Drive to answer with.
 const WRITTEN_FIELDS: &str = "id,trashed";
+
+/// How many more times a request turned away for the moment is sent.
+const RETRIES: u32 = 2;
+/// The longest wait before sending a request again. A server that asks for
+/// longer is not kept waiting on: the error goes up, and the sync that made
+/// the request tries again later.
+const LONGEST_WAIT: Duration = Duration::from_secs(10);
+
+/// How long to wait before sending a request again after try number
+/// `attempt` (from 0) was turned away for the moment: what the server's
+/// `Retry-After` asks for (seconds or a date), else 1 s and then 2 s. `None`
+/// when it is not sent again: the tries are used up, or the server asks for
+/// longer than [`LONGEST_WAIT`]. Shared with Baidu Netdisk.
+pub(super) fn retry_wait(attempt: u32, retry_after: Option<&str>, now: DateTime<Utc>) -> Option<Duration> {
+    if attempt >= RETRIES {
+        return None;
+    }
+    let asked = retry_after.map(str::trim).and_then(|v| match v.parse::<u64>() {
+        Ok(secs) => Some(Duration::from_secs(secs)),
+        Err(_) => DateTime::parse_from_rfc2822(v).ok().map(|at| (at.with_timezone(&Utc) - now).to_std().unwrap_or_default()),
+    });
+    let wait = asked.unwrap_or(Duration::from_secs(1 << attempt));
+    (wait <= LONGEST_WAIT).then_some(wait)
+}
+
+/// HTTP statuses that turn a request away for the moment: too many requests,
+/// or a server failing. Shared with Baidu Netdisk.
+pub(super) fn busy_status(code: u16) -> bool {
+    matches!(code, 429 | 500 | 502 | 503 | 504)
+}
+
+/// Whether Drive turned a request away for the moment. Drive also says
+/// "too many requests" with a 403 and a rate-limit reason; the daily limit
+/// and the others in [`ORDINARY_403`] don't pass by waiting a few seconds.
+fn busy(code: u16, body: &str) -> bool {
+    if code != 403 {
+        return busy_status(code);
+    }
+    let v: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    ["errors", "details"]
+        .iter()
+        .flat_map(|k| v["error"][*k].as_array().into_iter().flatten())
+        .filter_map(|e| e["reason"].as_str())
+        .any(|r| r.eq_ignore_ascii_case("rateLimitExceeded") || r.eq_ignore_ascii_case("userRateLimitExceeded"))
+}
+
+/// Gets a new access token and the seconds it lasts: from Google, or from
+/// a stand-in in tests.
+type Renew = Box<dyn Fn(&ureq::Agent) -> Result<(String, u64)> + Send + Sync>;
+
+/// What a write sends: bytes already in memory, or a file that a big upload
+/// reads as it goes, so a large content pack never sits in memory whole.
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    Bytes(&'a [u8]),
+    /// The file and its length when the upload started.
+    File(&'a Path, u64),
+}
+
+impl Body<'_> {
+    fn len(&self) -> u64 {
+        match self {
+            Body::Bytes(b) => b.len() as u64,
+            Body::File(_, len) => *len,
+        }
+    }
+
+    /// The whole content, read from the file if need be (a small one).
+    fn bytes(&self) -> Result<Cow<'_, [u8]>> {
+        match self {
+            Body::Bytes(b) => Ok(Cow::Borrowed(b)),
+            Body::File(path, _) => Ok(Cow::Owned(std::fs::read(path).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display()))?)),
+        }
+    }
+}
 
 /// How long the files Drive named in a folder are believed.
 ///
@@ -180,14 +256,19 @@ impl Memo {
 }
 
 pub struct GoogleDrive {
-    client: GoogleClient,
-    refresh_token: String,
     folder: String,
     /// Which sign-in and folder name this is, see [`sign_in_key`].
     owner: String,
+    /// Where requests go: [`API`] and [`UPLOAD`], a local server in tests.
+    api: String,
+    upload: String,
+    renew: Renew,
     agent: ureq::Agent,
     bulk: ureq::Agent,
-    token: Mutex<Option<(String, Instant)>>,
+    /// The access token and when it runs out, by the wall clock: a
+    /// monotonic clock stops while the PC sleeps (on Linux and macOS), and a
+    /// store kept through a game session would go on using a dead token.
+    token: Mutex<Option<(String, SystemTime)>>,
     /// Id of the app folder in My Drive, looked up once per process.
     root: Mutex<Option<String>>,
     /// Sub-folder path (e.g. `games/x/snapshots`) → id, below `root`.
@@ -552,9 +633,10 @@ impl GoogleDrive {
         let folder = if folder.trim().is_empty() { "Ludonimbus".to_string() } else { folder };
         GoogleDrive {
             owner: sign_in_key(&client.id, &refresh_token, &folder),
-            client,
-            refresh_token,
             folder,
+            api: API.to_string(),
+            upload: UPLOAD.to_string(),
+            renew: Box::new(move |agent| oauth::refresh(agent, &client, &refresh_token)),
             agent: ureq::AgentBuilder::new()
                 .timeout_connect(timeout)
                 .timeout_read(timeout.max(Duration::from_secs(20)))
@@ -572,12 +654,21 @@ impl GoogleDrive {
         }
     }
 
+    /// Send the requests to `api` and `upload` instead of Google's servers,
+    /// and take access tokens from `renew` (tests).
+    pub fn with_servers(mut self, api: &str, upload: &str, renew: impl Fn(&ureq::Agent) -> Result<(String, u64)> + Send + Sync + 'static) -> Self {
+        self.api = api.trim_end_matches('/').to_string();
+        self.upload = upload.trim_end_matches('/').to_string();
+        self.renew = Box::new(renew);
+        self
+    }
+
     fn save_cache(&self) {
-        let Some(root) = self.root.lock().unwrap().clone() else { return };
+        let Some(root) = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone() else { return };
         let cache = FolderCache {
             owner: self.owner.clone(),
             root,
-            folders: self.folders.lock().unwrap().clone(),
+            folders: self.folders.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         };
         if let Ok(bytes) = serde_json::to_vec_pretty(&cache) {
             let _ = util::atomic_write(&cache_file(), &bytes);
@@ -586,24 +677,20 @@ impl GoogleDrive {
 
     /// Drop cached sub-folder ids (e.g. after the user deleted a folder).
     fn forget_folders(&self) {
-        self.folders.lock().unwrap().clear();
+        self.folders.lock().unwrap_or_else(|e| e.into_inner()).clear();
         self.save_cache();
     }
 
     /// Whether a folder still exists and is not in the trash.
     fn folder_alive(&self, id: &str) -> Result<bool> {
         let asked = Instant::now();
-        let alive = match self
-            .agent
-            .get(&format!("{API}/files/{id}?fields=trashed"))
-            .set("Authorization", &self.bearer()?)
-            .call()
-        {
+        let url = format!("{}/files/{id}?fields=trashed", self.api);
+        let alive = match self.send(true, |auth| self.agent.get(&url).set("Authorization", auth).call())? {
             Ok(r) => !body_json(r)?["trashed"].as_bool().unwrap_or(false),
             Err(ureq::Error::Status(404, _)) => false,
             Err(e) => return Err(drive_error(e)),
         };
-        let mut memo = self.memo.lock().unwrap();
+        let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
         if alive {
             memo.saw_alive(id, asked);
         } else {
@@ -618,7 +705,7 @@ impl GoogleDrive {
     /// that went away since.
     fn writable_folder(&self, parts: &[&str]) -> Result<String> {
         let id = self.folder_id(parts, true)?.expect("created");
-        let known_alive = self.memo.lock().unwrap().is_alive(&id, Instant::now());
+        let known_alive = self.memo.lock().unwrap_or_else(|e| e.into_inner()).is_alive(&id, Instant::now());
         if known_alive || self.folder_alive(&id)? {
             return Ok(id);
         }
@@ -626,16 +713,72 @@ impl GoogleDrive {
         Ok(self.folder_id(parts, true)?.expect("created"))
     }
 
+    /// The `Authorization` value, with a new access token when the one held
+    /// runs out within a minute.
     fn bearer(&self) -> Result<String> {
-        let mut guard = self.token.lock().unwrap();
-        if let Some((tok, exp)) = guard.as_ref() {
-            if Instant::now() + Duration::from_secs(60) < *exp {
+        let held = self.token.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if let Some((tok, until)) = held {
+            if SystemTime::now() + Duration::from_secs(60) < until {
                 return Ok(format!("Bearer {tok}"));
             }
         }
-        let (tok, secs) = oauth::refresh(&self.agent, &self.client, &self.refresh_token)?;
-        *guard = Some((tok.clone(), Instant::now() + Duration::from_secs(secs)));
+        // Not under the lock, so a slow answer from Google doesn't hold up
+        // the requests of other threads that still have a token. Two threads
+        // may renew at the same time; Google allows that.
+        let (tok, secs) = (self.renew)(&self.agent)?;
+        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some((tok.clone(), SystemTime::now() + Duration::from_secs(secs)));
         Ok(format!("Bearer {tok}"))
+    }
+
+    /// Forget the access token behind `auth`, unless another thread has put
+    /// a new one in its place already.
+    fn drop_token(&self, auth: &str) {
+        let mut held = self.token.lock().unwrap_or_else(|e| e.into_inner());
+        if held.as_ref().is_some_and(|(tok, _)| auth.strip_prefix("Bearer ") == Some(tok.as_str())) {
+            *held = None;
+        }
+    }
+
+    /// Send a request with the access token. `f` builds and sends it with
+    /// the `Authorization` value it is given; the outer error is not getting
+    /// a token at all.
+    ///
+    /// A 401 is a token that ran out or was revoked before this process
+    /// noticed: a new one is taken and the request sent once more. Drive
+    /// turns such a request away before doing anything, so that is safe for
+    /// any request.
+    ///
+    /// With `again`, a request Drive turns away for the moment ([`busy`]) is
+    /// also sent again, after the wait Drive asks for ([`retry_wait`]). Only
+    /// for requests that do the same when they arrive twice: reads, deletes,
+    /// replacing the content of a file, opening an upload session.
+    fn send(&self, again: bool, f: impl Fn(&str) -> Result<ureq::Response, ureq::Error>) -> Result<Result<ureq::Response, ureq::Error>> {
+        let mut renewed = false;
+        let mut attempt = 0;
+        loop {
+            let auth = self.bearer()?;
+            match f(&auth) {
+                Err(ureq::Error::Status(401, _)) if !renewed => {
+                    renewed = true;
+                    self.drop_token(&auth);
+                }
+                Err(ureq::Error::Status(code, resp)) if again && (code == 403 || busy_status(code)) => {
+                    let status = resp.status_text().to_string();
+                    let retry_after = resp.header("Retry-After").map(str::to_string);
+                    let text = resp.into_string().unwrap_or_default();
+                    let wait = busy(code, &text).then(|| retry_wait(attempt, retry_after.as_deref(), Utc::now())).flatten();
+                    match wait {
+                        Some(wait) => {
+                            attempt += 1;
+                            std::thread::sleep(wait);
+                        }
+                        // The answer as it came, for the caller to read.
+                        None => return Ok(ureq::Response::new(code, &status, &text).and_then(|r| Err(ureq::Error::Status(code, r)))),
+                    }
+                }
+                done => return Ok(done),
+            }
+        }
     }
 
     /// Everything a Drive search query matches.
@@ -652,14 +795,8 @@ impl GoogleDrive {
             if let Some(p) = &page {
                 params.push(("pageToken", p.clone()));
             }
-            let url = url::Url::parse_with_params(&format!("{API}/files"), &params)?;
-            let v = body_json(
-                self.agent
-                    .get(url.as_str())
-                    .set("Authorization", &self.bearer()?)
-                    .call()
-                    .map_err(drive_error)?,
-            )?;
+            let url = url::Url::parse_with_params(&format!("{}/files", self.api), &params)?;
+            let v = body_json(self.send(true, |auth| self.agent.get(url.as_str()).set("Authorization", auth).call())?.map_err(drive_error)?)?;
             out.extend(v["files"].as_array().into_iter().flatten().map(DriveFile::parse));
             match v["nextPageToken"].as_str() {
                 Some(t) => page = Some(t.to_string()),
@@ -670,13 +807,12 @@ impl GoogleDrive {
     }
 
     fn create_folder(&self, name: &str, parent: &str) -> Result<String> {
-        let v = body_json(
-            self.agent
-                .post(&format!("{API}/files?fields=id"))
-                .set("Authorization", &self.bearer()?)
-                .send_json(json!({ "name": name, "mimeType": FOLDER_MIME, "parents": [parent] }))
-                .map_err(drive_error)?,
-        )?;
+        // Not sent again when Drive is busy: a folder made by a request whose
+        // answer was lost, and then made again, would be two folders, and
+        // files written into the second one hide behind the first.
+        let url = format!("{}/files?fields=id", self.api);
+        let meta = json!({ "name": name, "mimeType": FOLDER_MIME, "parents": [parent] });
+        let v = body_json(self.send(false, |auth| self.agent.post(&url).set("Authorization", auth).send_json(meta.clone()))?.map_err(drive_error)?)?;
         v["id"]
             .as_str()
             .map(str::to_string)
@@ -684,7 +820,7 @@ impl GoogleDrive {
     }
 
     fn root_id(&self, create: bool) -> Result<Option<String>> {
-        if let Some(r) = self.root.lock().unwrap().clone() {
+        if let Some(r) = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Ok(Some(r));
         }
         let q = format!(
@@ -699,13 +835,13 @@ impl GoogleDrive {
         let disk = read_cache();
         let same_root = disk.root == id;
         {
-            let mut folders = self.folders.lock().unwrap();
+            let mut folders = self.folders.lock().unwrap_or_else(|e| e.into_inner());
             folders.clear();
             if same_root {
                 folders.extend(disk.folders);
             }
         }
-        *self.root.lock().unwrap() = Some(id.clone());
+        *self.root.lock().unwrap_or_else(|e| e.into_inner()) = Some(id.clone());
         // Also before any sub-folder is known: the next process takes the
         // app folder's id from this file for `cache_scope`.
         if !same_root || disk.owner != self.owner {
@@ -725,7 +861,7 @@ impl GoogleDrive {
                 path.push('/');
             }
             path.push_str(name);
-            if let Some(id) = self.folders.lock().unwrap().get(&path).cloned() {
+            if let Some(id) = self.folders.lock().unwrap_or_else(|e| e.into_inner()).get(&path).cloned() {
                 parent = id;
                 continue;
             }
@@ -739,7 +875,7 @@ impl GoogleDrive {
                 None if create => self.create_folder(name, &parent)?,
                 None => return Ok(None),
             };
-            self.folders.lock().unwrap().insert(path.clone(), id.clone());
+            self.folders.lock().unwrap_or_else(|e| e.into_inner()).insert(path.clone(), id.clone());
             self.save_cache();
             parent = id;
         }
@@ -753,7 +889,7 @@ impl GoogleDrive {
         let q = format!("name='{}' and '{}' in parents and trashed=false", esc(name), esc(parent));
         let files: Vec<DriveFile> = self.query(&q)?.into_iter().filter(|f| !f.is_folder).collect();
         let ids = current_first(files.iter().collect());
-        let mut memo = self.memo.lock().unwrap();
+        let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
         // Only an answer with a file in it shows the folder alive: Drive
         // finds nothing in a folder that is in its trash.
         if !ids.is_empty() {
@@ -770,14 +906,14 @@ impl GoogleDrive {
         let Some(folder) = self.folder_id(&parts, false)? else {
             return Ok(None);
         };
-        let known = self.memo.lock().unwrap().ids(&folder, name, Instant::now());
+        let known = self.memo.lock().unwrap_or_else(|e| e.into_inner()).ids(&folder, name, Instant::now());
         if let Some(id) = known.and_then(|ids| ids.into_iter().next()) {
             if let Some(resp) = self.media(&id)? {
                 return Ok(Some(resp));
             }
             // Deleted since Drive named it. That says nothing about the
             // name, which may have a new file by now: ask.
-            self.memo.lock().unwrap().forget(&folder);
+            self.memo.lock().unwrap_or_else(|e| e.into_inner()).forget(&folder);
         }
         let Some((current, _)) = pick(self.named(&folder, name)?) else {
             return Ok(None);
@@ -788,31 +924,42 @@ impl GoogleDrive {
     /// Send `body` through an upload session: `start` opens it and one more
     /// request carries the bytes. The file appears (or changes) only once the
     /// last byte has arrived, at any size.
-    fn upload_session(&self, start: ureq::Request, meta: Value, mime: &str, body: &[u8]) -> Result<Value> {
-        let resp = start
-            .set("Authorization", &self.bearer()?)
-            .set("X-Upload-Content-Type", mime)
-            .set("X-Upload-Content-Length", &body.len().to_string())
-            .send_json(meta)
+    ///
+    /// A file is sent as it is read, with its length given up front. The
+    /// request with the bytes is not sent again when it fails: the session
+    /// may have taken part of them, and the whole write is repeated later.
+    fn upload_session(&self, start: ureq::Request, meta: Value, mime: &str, body: Body) -> Result<Value> {
+        let len = body.len().to_string();
+        let resp = self
+            .send(true, |auth| {
+                start
+                    .clone()
+                    .set("Authorization", auth)
+                    .set("X-Upload-Content-Type", mime)
+                    .set("X-Upload-Content-Length", &len)
+                    .send_json(meta.clone())
+            })?
             .map_err(write_error)?;
         let location = resp
             .header("Location")
             .ok_or_else(|| anyhow!(crate::tr!("Google Drive 没有返回上传地址", "Google Drive returned no upload address")))?
             .to_string();
-        body_json(
-            self.bulk
-                .put(&location)
-                .set("Content-Type", mime)
-                .send_bytes(body)
-                .map_err(write_error)?,
-        )
+        let put = self.bulk.put(&location).set("Content-Type", mime);
+        let sent = match body {
+            Body::Bytes(b) => put.send_bytes(b),
+            Body::File(path, size) => {
+                let file = std::fs::File::open(path).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", path.display()))?;
+                put.set("Content-Length", &len).send(file.take(size))
+            }
+        };
+        body_json(sent.map_err(write_error)?)
     }
 
     /// Create a file and give its id.
-    fn create_file(&self, parent: &str, name: &str, mime: &str, body: &[u8]) -> Result<String> {
+    fn create_file(&self, parent: &str, name: &str, mime: &str, body: Body) -> Result<String> {
         let start = self
             .agent
-            .post(&format!("{UPLOAD}/files?uploadType=resumable&fields={WRITTEN_FIELDS}"));
+            .post(&format!("{}/files?uploadType=resumable&fields={WRITTEN_FIELDS}", self.upload));
         let v = self.upload_session(start, json!({ "name": name, "parents": [parent] }), mime, body)?;
         not_in_trash(&v)?;
         v["id"]
@@ -821,23 +968,20 @@ impl GoogleDrive {
             .ok_or_else(|| anyhow!(crate::tr!("上传失败：没有返回文件 id", "Upload failed: no file id returned")))
     }
 
-    fn update_content(&self, file_id: &str, mime: &str, body: &[u8]) -> Result<()> {
-        let written = if body.len() > SIMPLE_UPLOAD_MAX {
+    fn update_content(&self, file_id: &str, mime: &str, body: Body) -> Result<()> {
+        let written = if body.len() > SIMPLE_UPLOAD_MAX as u64 {
             let start = self.agent.request(
                 "PATCH",
-                &format!("{UPLOAD}/files/{file_id}?uploadType=resumable&fields={WRITTEN_FIELDS}"),
+                &format!("{}/files/{file_id}?uploadType=resumable&fields={WRITTEN_FIELDS}", self.upload),
             );
             self.upload_session(start, json!({}), mime, body)?
         } else {
+            // The same content sent twice is the same file: this one may be
+            // sent again when Drive is busy.
+            let bytes = body.bytes()?;
+            let url = format!("{}/files/{file_id}?uploadType=media&fields={WRITTEN_FIELDS}", self.upload);
             body_json(
-                self.bulk
-                    .request(
-                        "PATCH",
-                        &format!("{UPLOAD}/files/{file_id}?uploadType=media&fields={WRITTEN_FIELDS}"),
-                    )
-                    .set("Authorization", &self.bearer()?)
-                    .set("Content-Type", mime)
-                    .send_bytes(body)
+                self.send(true, |auth| self.bulk.request("PATCH", &url).set("Authorization", auth).set("Content-Type", mime).send_bytes(&bytes))?
                     .map_err(write_error)?,
             )?
         };
@@ -846,12 +990,8 @@ impl GoogleDrive {
 
     /// Start downloading a file's content. `None` when the file is gone.
     fn media(&self, file_id: &str) -> Result<Option<ureq::Response>> {
-        match self
-            .bulk
-            .get(&format!("{API}/files/{file_id}?alt=media"))
-            .set("Authorization", &self.bearer()?)
-            .call()
-        {
+        let url = format!("{}/files/{file_id}?alt=media", self.api);
+        match self.send(true, |auth| self.bulk.get(&url).set("Authorization", auth).call())? {
             Ok(r) => Ok(Some(r)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(drive_error(e)),
@@ -860,12 +1000,8 @@ impl GoogleDrive {
 
     /// Delete a file. `false` when Drive no longer had it.
     fn delete_file(&self, file_id: &str) -> Result<bool> {
-        match self
-            .agent
-            .delete(&format!("{API}/files/{file_id}"))
-            .set("Authorization", &self.bearer()?)
-            .call()
-        {
+        let url = format!("{}/files/{file_id}", self.api);
+        match self.send(true, |auth| self.agent.delete(&url).set("Authorization", auth).call())? {
             Ok(_) => Ok(true),
             // Already gone (another device deleted it): that is what was asked for.
             Err(ureq::Error::Status(404, _)) => Ok(false),
@@ -874,23 +1010,23 @@ impl GoogleDrive {
     }
 
     /// Create the file a path stands for, or replace its content.
-    fn put(&self, path: &str, data: &[u8]) -> Result<()> {
-        match self.put_once(path, data) {
+    fn put(&self, path: &str, body: Body) -> Result<()> {
+        match self.put_once(path, body) {
             // Drive no longer has the folder or the file this write went to.
             // What was remembered about the folder is forgotten by now, so
             // this time Drive is asked about both, and the folder is made
             // again if need be.
-            Err(e) if is_gone(&e) => self.put_once(path, data),
+            Err(e) if is_gone(&e) => self.put_once(path, body),
             done => done,
         }
     }
 
-    fn put_once(&self, path: &str, data: &[u8]) -> Result<()> {
+    fn put_once(&self, path: &str, body: Body) -> Result<()> {
         let (parts, name) = split_path(path);
         let folder = self.writable_folder(&parts)?;
         let mime = mime_for(name);
         let started = Instant::now();
-        let target = self.memo.lock().unwrap().target(&folder, name, started);
+        let target = self.memo.lock().unwrap_or_else(|e| e.into_inner()).target(&folder, name, started);
         let (current, others) = match target {
             Target::Update { current, others } => (Some(current), others),
             Target::Create => (None, Vec::new()),
@@ -900,14 +1036,14 @@ impl GoogleDrive {
             },
         };
         let written = match current {
-            Some(id) => self.update_content(&id, mime, data).map(|()| id),
-            None => self.create_file(&folder, name, mime, data),
+            Some(id) => self.update_content(&id, mime, body).map(|()| id),
+            None => self.create_file(&folder, name, mime, body),
         };
         let id = match written {
             Ok(id) => id,
             Err(e) => {
                 if is_gone(&e) {
-                    self.memo.lock().unwrap().forget(&folder);
+                    self.memo.lock().unwrap_or_else(|e| e.into_inner()).forget(&folder);
                 }
                 return Err(e);
             }
@@ -921,7 +1057,7 @@ impl GoogleDrive {
                 ids.push(other);
             }
         }
-        let mut memo = self.memo.lock().unwrap();
+        let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
         memo.saw_alive(&folder, started);
         memo.named(&folder, name, ids, started);
         Ok(())
@@ -972,21 +1108,16 @@ impl Store for GoogleDrive {
     fn label(&self) -> String {
         // The account once Drive has named it, so Settings shows who is
         // signed in: `Repo::account` asks for `quota` before the label.
-        let account = self.account.lock().unwrap().clone();
+        let account = self.account.lock().unwrap_or_else(|e| e.into_inner()).clone();
         account.unwrap_or_else(|| format!("Google Drive · {}", self.folder))
     }
 
     fn quota(&self) -> Result<(Option<u64>, Option<u64>)> {
-        let v = body_json(
-            self.agent
-                .get(&format!("{API}/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)"))
-                .set("Authorization", &self.bearer()?)
-                .call()
-                .map_err(drive_error)?,
-        )?;
+        let url = format!("{}/about?fields=user(emailAddress,displayName),storageQuota(limit,usage)", self.api);
+        let v = body_json(self.send(true, |auth| self.agent.get(&url).set("Authorization", auth).call())?.map_err(drive_error)?)?;
         let (account, used, total) = parse_about(&v);
         if account.is_some() {
-            *self.account.lock().unwrap() = account;
+            *self.account.lock().unwrap_or_else(|e| e.into_inner()) = account;
         }
         Ok((used, total))
     }
@@ -994,14 +1125,14 @@ impl Store for GoogleDrive {
     fn check(&self) -> Result<()> {
         // Ask Drive even when the folder is already known to this process:
         // this is the test of whether the cloud can be reached.
-        let known = self.root.lock().unwrap().clone();
+        let known = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(id) = known {
             if self.folder_alive(&id)? {
                 return Ok(());
             }
             // Deleted in Drive meanwhile: look it up, or create it, again.
-            *self.root.lock().unwrap() = None;
-            self.folders.lock().unwrap().clear();
+            *self.root.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            self.folders.lock().unwrap_or_else(|e| e.into_inner()).clear();
         }
         self.root_id(true).map(|_| ())
     }
@@ -1015,7 +1146,7 @@ impl Store for GoogleDrive {
         let q = format!("'{}' in parents and trashed=false", esc(&folder));
         let files = self.query(&q)?;
         {
-            let mut memo = self.memo.lock().unwrap();
+            let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
             // An empty listing does not show the folder alive: that is also
             // what Drive answers for a folder in its trash.
             if !files.is_empty() {
@@ -1056,15 +1187,21 @@ impl Store for GoogleDrive {
     }
 
     fn write(&self, path: &str, data: &[u8]) -> Result<()> {
-        self.put(path, data)
+        self.put(path, Body::Bytes(data))
     }
 
     fn upload(&self, path: &str, src: &Path) -> Result<()> {
-        // The whole file is held in memory while it is sent. That is fine
-        // for saves of tens of megabytes and too much for very large files;
-        // sending in pieces that can be resumed is planned separately.
-        let data = std::fs::read(src).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", src.display()))?;
-        self.put(path, &data)
+        // A file that goes up through an upload session is read as it is
+        // sent: a content pack can be as big as the biggest save file in it.
+        // A small one is read whole, as a simple upload needs. An upload that
+        // breaks off starts again from the beginning next time.
+        let unreadable = || crate::tr!("无法读取 {}", "Can't read {}", src.display());
+        let len = std::fs::metadata(src).with_context(unreadable)?.len();
+        if len <= SIMPLE_UPLOAD_MAX as u64 {
+            let data = std::fs::read(src).with_context(unreadable)?;
+            return self.put(path, Body::Bytes(&data));
+        }
+        self.put(path, Body::File(src, len))
     }
 
     fn remove(&self, path: &str) -> Result<()> {
@@ -1072,36 +1209,35 @@ impl Store for GoogleDrive {
         let Some(folder) = self.folder_id(&parts, false)? else {
             return Ok(());
         };
-        let known = self.memo.lock().unwrap().ids(&folder, name, Instant::now());
+        let known = self.memo.lock().unwrap_or_else(|e| e.into_inner()).ids(&folder, name, Instant::now());
         if let Some(ids) = known {
             let mut all_there = true;
             for id in &ids {
                 all_there &= self.delete_file(id)?;
             }
             if all_there {
-                self.memo.lock().unwrap().forget_name(&folder, name);
+                self.memo.lock().unwrap_or_else(|e| e.into_inner()).forget_name(&folder, name);
                 return Ok(());
             }
             // One of them was gone already, so something else has changed
             // this name since Drive named its files: ask what is there now.
-            self.memo.lock().unwrap().forget(&folder);
+            self.memo.lock().unwrap_or_else(|e| e.into_inner()).forget(&folder);
         }
         // Every file of that name: a duplicate left behind would turn up as
         // the file again.
         for f in self.named(&folder, name)? {
             self.delete_file(&f.id)?;
         }
-        self.memo.lock().unwrap().forget_name(&folder, name);
+        self.memo.lock().unwrap_or_else(|e| e.into_inner()).forget_name(&folder, name);
         Ok(())
     }
 
     fn cache_scope(&self) -> Option<String> {
-        // `Repo` asks once, when it is built and before any request, so the
-        // app folder's id has to be known on this PC already: from an
-        // earlier request of this process, or from the folder cache a
-        // previous one left. Right after signing in there is none yet, and
-        // that `Repo` reads without its cache.
-        let resolved = self.root.lock().unwrap().clone();
+        // The app folder's id, once this process has looked it up, or from
+        // the folder cache a previous one left. Right after signing in there
+        // is none until the first request; `Cached` asks again after each
+        // listing until there is.
+        let resolved = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let root = match resolved {
             Some(id) => id,
             None => read_cache().root_for(&self.owner)?,
@@ -1332,6 +1468,68 @@ mod tests {
             secret: String::new(),
         };
         GoogleDrive::new(client, refresh_token.into(), folder.into(), Duration::from_secs(5))
+    }
+
+    #[test]
+    fn a_token_runs_out_by_the_wall_clock() {
+        let renewed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = renewed.clone();
+        // No request is made: only the token is looked at.
+        let d = drive("token", "Ludonimbus").with_servers("http://127.0.0.1:9", "http://127.0.0.1:9", move |_| {
+            let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok((format!("new-{n}"), 3600))
+        });
+        let renewals = || renewed.load(std::sync::atomic::Ordering::SeqCst);
+        let hold = |tok: &str, until: SystemTime| *d.token.lock().unwrap() = Some((tok.to_string(), until));
+
+        hold("old", SystemTime::now() + secs(600));
+        assert_eq!(d.bearer().unwrap(), "Bearer old");
+        assert_eq!(renewals(), 0);
+        // It ran out while the PC slept: the wall clock says so, where a
+        // monotonic clock would not have moved.
+        hold("old", SystemTime::now() - secs(1));
+        assert_eq!(d.bearer().unwrap(), "Bearer new-1");
+        assert_eq!(d.bearer().unwrap(), "Bearer new-1");
+        assert_eq!(renewals(), 1);
+        // Within a minute of running out counts as run out.
+        hold("old", SystemTime::now() + secs(30));
+        assert_eq!(d.bearer().unwrap(), "Bearer new-2");
+
+        // A 401 forgets the token it was sent with, not one renewed since.
+        d.drop_token("Bearer old");
+        assert_eq!(d.bearer().unwrap(), "Bearer new-2");
+        d.drop_token("Bearer new-2");
+        assert_eq!(d.bearer().unwrap(), "Bearer new-3");
+        assert_eq!(renewals(), 3);
+    }
+
+    #[test]
+    fn a_request_turned_away_for_the_moment_waits_as_asked() {
+        let now = time(&json!("2026-11-27T10:00:00.000Z")).unwrap();
+        assert_eq!(retry_wait(0, None, now), Some(secs(1)));
+        assert_eq!(retry_wait(1, None, now), Some(secs(2)));
+        assert_eq!(retry_wait(2, None, now), None);
+        assert_eq!(retry_wait(0, Some("3"), now), Some(secs(3)));
+        assert_eq!(retry_wait(1, Some(" 0 "), now), Some(secs(0)));
+        assert_eq!(retry_wait(2, Some("0"), now), None);
+        // Longer than is worth waiting for here: the sync tries later.
+        assert_eq!(retry_wait(0, Some("120"), now), None);
+        // A date, also one already past; something unreadable is the usual wait.
+        assert_eq!(retry_wait(0, Some("Fri, 27 Nov 2026 10:00:05 GMT"), now), Some(secs(5)));
+        assert_eq!(retry_wait(0, Some("Fri, 27 Nov 2026 09:59:00 GMT"), now), Some(secs(0)));
+        assert_eq!(retry_wait(0, Some("Fri, 27 Nov 2026 11:00:00 GMT"), now), None);
+        assert_eq!(retry_wait(0, Some("soon"), now), Some(secs(1)));
+
+        assert!(busy(429, ""));
+        assert!(busy(503, "<html>"));
+        assert!(busy(500, ""));
+        assert!(!busy(404, ""));
+        assert!(!busy(401, ""));
+        assert!(busy(403, &body("userRateLimitExceeded", "User Rate Limit Exceeded")));
+        assert!(busy(403, &body("rateLimitExceeded", "Rate Limit Exceeded")));
+        assert!(!busy(403, &body("dailyLimitExceeded", "Daily Limit Exceeded")));
+        assert!(!busy(403, &body("storageQuotaExceeded", "The user's Drive storage quota has been exceeded.")));
+        assert!(!busy(403, "nope"));
     }
 
     #[test]

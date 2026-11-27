@@ -42,6 +42,13 @@ struct Mock {
     next: u64,
     device_polls: usize,
     refreshes: usize,
+    /// Uploads the server finished at precreate because it had the content.
+    rapid: usize,
+    /// Ids asked for that no file has (any more).
+    unknown_ids: usize,
+    /// Requests to fail with a bare HTTP status, by method (`commit` for the
+    /// create that ends an upload).
+    busy: Vec<(&'static str, u16)>,
 }
 
 fn md5hex(b: &[u8]) -> String {
@@ -126,6 +133,11 @@ impl Mock {
             return ok(json!({"errno": -6, "errmsg": "access token invalid"}));
         }
         let m = get("method");
+        let key = if m == "create" && get("isdir") != "1" { "commit" } else { m.as_str() };
+        if let Some(i) = self.busy.iter().position(|(k, _)| *k == key) {
+            let (_, status) = self.busy.remove(i);
+            return (status, vec![], b"<html>busy</html>".to_vec());
+        }
         match (path, m.as_str()) {
             ("/api/quota", _) => ok(json!({"errno": 0, "total": 2_199_023_255_552u64, "used": 1_073_741_824u64})),
             ("/rest/2.0/xpan/nas", "uinfo") => ok(json!({"errno": 0, "baidu_name": "player", "netdisk_name": "玩家", "vip_type": 0, "uk": 1})),
@@ -170,6 +182,17 @@ impl Mock {
                 assert_eq!(get("autoinit"), "1");
                 assert_eq!(get("rtype"), "3");
                 let blocks: Vec<String> = serde_json::from_str(&get("block_list")).unwrap();
+                // Content the server already has is put in place at once.
+                let same = self.files.values().find(|f| {
+                    let theirs: Vec<String> = f.0.chunks(SLICE).map(md5hex).collect();
+                    theirs == blocks && f.0.len().to_string() == get("size")
+                });
+                if let Some(data) = same.map(|f| f.0.clone()) {
+                    let id = self.id();
+                    self.files.insert(p.clone(), (data, id, id as i64));
+                    self.rapid += 1;
+                    return ok(json!({"errno": 0, "return_type": 2, "info": {"path": p, "fs_id": id}}));
+                }
                 let id = format!("up-{}", self.id());
                 let n = blocks.len();
                 self.uploads.insert(id.clone(), Upload { path: p, size: get("size").parse().unwrap(), blocks, parts: BTreeMap::new() });
@@ -222,6 +245,7 @@ impl Mock {
                     .filter(|id| self.files.values().any(|f| f.1 == **id))
                     .map(|id| json!({"fs_id": id, "dlink": format!("{}/file/{id}?fid=x", self.base)}))
                     .collect();
+                self.unknown_ids += ids.len() - list.len();
                 ok(json!({"errno": 0, "list": list}))
             }
             ("/rest/2.0/xpan/file", "filemanager") => {
@@ -407,6 +431,53 @@ fn baidu_cloud() {
     mock.lock().unwrap().access.clear();
     let err = stale.list("games").unwrap_err();
     assert!(format!("{err:#}").contains("重新连接") || format!("{err:#}").contains("Reconnect"), "{err:#}");
+
+    // Content the server already has is a "rapid upload": done at precreate.
+    // The id the listing gave for the replaced file is not used afterwards.
+    let unknown = |m: &Arc<Mutex<Mock>>| m.lock().unwrap().unknown_ids;
+    s.write("games/fe/a.json", b"first").unwrap();
+    s.write("games/fe/b.json", b"second").unwrap();
+    s.list("games/fe").unwrap();
+    let asked = unknown(&mock);
+    s.write("games/fe/a.json", b"second").unwrap();
+    assert_eq!(mock.lock().unwrap().rapid, 1);
+    assert_eq!(s.read("games/fe/a.json").unwrap().as_deref(), Some(&b"second"[..]));
+    assert_eq!(unknown(&mock), asked);
+
+    // Another device replaces a file after this one listed it: the old id
+    // is gone, the folder is listed again and the new file read. Never
+    // "missing" while the file is there.
+    s.list("games/fe").unwrap();
+    {
+        let mut m = mock.lock().unwrap();
+        let id = m.id();
+        m.files.insert(format!("{APP}/games/fe/a.json"), (b"from PC-B".to_vec(), id, id as i64));
+    }
+    assert_eq!(s.read("games/fe/a.json").unwrap().as_deref(), Some(&b"from PC-B"[..]));
+    assert_eq!(unknown(&mock), asked + 1);
+    let back = tmp.path().join("a-back.json");
+    mock.lock().unwrap().files.get_mut(&format!("{APP}/games/fe/a.json")).unwrap().1 = 999_999;
+    s.download("games/fe/a.json", &back).unwrap();
+    assert_eq!(std::fs::read(&back).unwrap(), b"from PC-B");
+    // Deleted by another device: then it is missing.
+    mock.lock().unwrap().files.remove(&format!("{APP}/games/fe/a.json"));
+    assert_eq!(s.read("games/fe/a.json").unwrap(), None);
+
+    // The server fails for a moment: a slice is sent again; the create that
+    // ends an upload is not, since it may have gone through.
+    mock.lock().unwrap().busy.push(("upload", 503));
+    s.write("games/fe/c.json", b"third").unwrap();
+    assert_eq!(s.read("games/fe/c.json").unwrap().as_deref(), Some(&b"third"[..]));
+    mock.lock().unwrap().busy.push(("commit", 503));
+    mock.lock().unwrap().busy.push(("commit", 503));
+    let err = s.write("games/fe/d.json", b"fourth").unwrap_err();
+    assert!(cloud::is_unavailable(&err), "{err:#}");
+    assert_eq!(mock.lock().unwrap().busy.len(), 1);
+    mock.lock().unwrap().busy.clear();
+    assert_eq!(s.read("games/fe/d.json").unwrap(), None);
+    for name in ["b.json", "c.json"] {
+        s.remove(&format!("games/fe/{name}")).unwrap();
+    }
 
     // The whole layout on top of it, filled by copying a folder cloud.
     let local = Repo::new(ludonimbus_core::cloud::local::LocalFolder::new(tmp.path().join("local-cloud")));

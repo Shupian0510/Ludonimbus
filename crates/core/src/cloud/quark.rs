@@ -17,7 +17,7 @@ use crate::tr;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// A folder refreshed this recently is not refreshed again (reading many
@@ -43,7 +43,9 @@ pub struct Quark {
     /// OpenList's admin password, read once when opening.
     admin: String,
     folder: String,
-    api: Mutex<Option<Api>>,
+    /// Signed in to OpenList's API on first use. Taken out of the lock for
+    /// each call, so one slow listing doesn't hold up the other threads.
+    api: Mutex<Option<Arc<Api>>>,
     refreshed: Mutex<HashMap<String, Instant>>,
 }
 
@@ -70,12 +72,22 @@ impl Quark {
     /// so OpenList's cache has what other devices wrote.
     fn refresh(&self, dir: &str) -> Result<()> {
         let dir = dir.trim_matches('/');
-        if self.refreshed.lock().unwrap().get(dir).is_some_and(|t| t.elapsed() < FRESH_FOR) {
+        if self.refreshed.lock().unwrap_or_else(|e| e.into_inner()).get(dir).is_some_and(|t| t.elapsed() < FRESH_FOR) {
             return Ok(());
         }
         refresh_walk(dir, &mut |d| self.refresh_one(d))?;
-        self.refreshed.lock().unwrap().insert(dir.to_string(), Instant::now());
+        self.refreshed.lock().unwrap_or_else(|e| e.into_inner()).insert(dir.to_string(), Instant::now());
         Ok(())
+    }
+
+    /// OpenList's API, signing in when this store hasn't yet.
+    fn api(&self) -> Result<Arc<Api>> {
+        if let Some(api) = self.api.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            return Ok(api);
+        }
+        let api = Arc::new(Api::login_as(self.port, &self.admin)?);
+        *self.api.lock().unwrap_or_else(|e| e.into_inner()) = Some(api.clone());
+        Ok(api)
     }
 
     /// One forced listing; `Ok(false)` when OpenList doesn't find the folder.
@@ -84,11 +96,15 @@ impl Quark {
         if !dir.is_empty() {
             path = format!("{path}/{dir}");
         }
-        let mut api = self.api.lock().unwrap();
-        if api.is_none() {
-            *api = Some(Api::login_as(self.port, &self.admin)?);
+        let mut done = self.api()?.refresh(&path);
+        if done.as_ref().is_err_and(openlist::is_session_expired) {
+            // OpenList's own sign-in ran out while this store was open (it
+            // lasts 48 hours); the Quark sign-in behind it may be fine. Sign
+            // in to OpenList again, once.
+            *self.api.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            done = self.api()?.refresh(&path);
         }
-        match api.as_ref().unwrap().refresh(&path) {
+        match done {
             Ok(()) => Ok(true),
             Err(e) => {
                 let text = format!("{e:#}");
@@ -124,7 +140,7 @@ impl Quark {
                     std::thread::sleep(wait);
                     wait *= 2;
                     let dir = Self::parent(path);
-                    self.refreshed.lock().unwrap().remove(dir);
+                    self.refreshed.lock().unwrap_or_else(|e| e.into_inner()).remove(dir);
                     let _ = self.refresh(dir);
                 }
                 Err(e) => return Err(e),
@@ -260,5 +276,103 @@ mod tests {
     fn parent_folder() {
         assert_eq!(Quark::parent("games/fe/snapshots/01A.json"), "games/fe/snapshots");
         assert_eq!(Quark::parent("devices.json"), "");
+    }
+
+    /// OpenList's API as far as a forced listing needs it. Signing in hands
+    /// out a new token; a listing with any other token is turned down the
+    /// way OpenList does when its token ran out (HTTP 200, code 401).
+    /// `quark_signed_out` answers listings the way it does when the Quark
+    /// cookie stopped working.
+    #[derive(Default)]
+    struct FakeApi {
+        logins: u32,
+        token: String,
+        quark_signed_out: bool,
+    }
+
+    impl FakeApi {
+        fn answer(&mut self, path: &str, auth: &str, body: &str) -> serde_json::Value {
+            match path {
+                "/api/auth/login" => {
+                    assert!(body.contains("\"admin-password\""), "{body}");
+                    self.logins += 1;
+                    self.token = format!("jwt-{}", self.logins);
+                    serde_json::json!({ "code": 200, "message": "success", "data": { "token": self.token } })
+                }
+                "/api/fs/list" if auth != self.token => serde_json::json!({ "code": 401, "message": "token is expired", "data": null }),
+                "/api/fs/list" if self.quark_signed_out => serde_json::json!({ "code": 500, "message": "failed get objs: failed to list objs: require login [guest]", "data": null }),
+                "/api/fs/list" => serde_json::json!({ "code": 200, "message": "success", "data": { "content": [], "total": 0 } }),
+                other => panic!("unexpected request {other}"),
+            }
+        }
+    }
+
+    fn start_fake_api() -> (u16, Arc<Mutex<FakeApi>>) {
+        use http_body_util::{BodyExt, Full};
+        let state = Arc::new(Mutex::new(FakeApi::default()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let st = state.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                tx.send(listener.local_addr().unwrap().port()).unwrap();
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let st = st.clone();
+                    tokio::spawn(async move {
+                        let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                            let st = st.clone();
+                            async move {
+                                let path = req.uri().path().to_string();
+                                let auth = req.headers().get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                                let body = req.into_body().collect().await.unwrap().to_bytes();
+                                let reply = st.lock().unwrap().answer(&path, &auth, &String::from_utf8_lossy(&body));
+                                Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(hyper::body::Bytes::from(reply.to_string()))))
+                            }
+                        });
+                        let _ = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                            .await;
+                    });
+                }
+            });
+        });
+        (rx.recv().unwrap(), state)
+    }
+
+    fn quark_at(port: u16) -> Quark {
+        Quark {
+            dav: WebDav::new(&format!("http://127.0.0.1:{port}/dav/"), "ludonimbus", "webdav-password", "", Duration::from_secs(5)).unwrap(),
+            port,
+            admin: "admin-password".into(),
+            folder: "Ludonimbus".into(),
+            api: Mutex::new(None),
+            refreshed: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn an_openlist_session_that_ran_out_is_signed_in_again() {
+        let (port, api) = start_fake_api();
+        let quark = quark_at(port);
+        assert!(quark.refresh_one("games").unwrap());
+        assert!(quark.refresh_one("games/fe").unwrap());
+        assert_eq!(api.lock().unwrap().logins, 1);
+
+        // Two days later OpenList no longer takes the token: this store signs
+        // in again and carries on, without calling it a Quark problem.
+        api.lock().unwrap().token = "a token issued since".into();
+        assert!(quark.refresh_one("games").unwrap());
+        assert_eq!(api.lock().unwrap().logins, 2);
+        assert!(quark.refresh_one("games/fe").unwrap());
+        assert_eq!(api.lock().unwrap().logins, 2);
+
+        // The Quark sign-in behind OpenList stopped working: that is what
+        // the error says, and signing in to OpenList again doesn't help.
+        api.lock().unwrap().quark_signed_out = true;
+        let err = format!("{:#}", quark.refresh_one("games").unwrap_err());
+        assert!(err.contains("夸克网盘登录已失效") || err.contains("The Quark sign-in has expired"), "{err}");
+        assert_eq!(api.lock().unwrap().logins, 2);
     }
 }

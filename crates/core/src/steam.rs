@@ -504,8 +504,11 @@ pub fn set_shortcut_icon(root: &Path, account: &str, appid: u32, icon: &Path) ->
     edit_shortcut(root, account, appid, |e| e.set_str("icon", &util::quote(&icon)))
 }
 
+/// Steam's process, as [`process::process_names`] lists it.
+pub const PROCESS: &str = if cfg!(windows) { "steam.exe" } else { "steam" };
+
 pub fn is_running() -> bool {
-    process::is_running(&[if cfg!(windows) { "steam.exe" } else { "steam" }.to_string()])
+    process::is_running(&[PROCESS.to_string()])
 }
 
 /// The command that starts Steam: `steam.exe` in its folder, or on Linux

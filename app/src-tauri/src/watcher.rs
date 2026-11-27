@@ -15,9 +15,10 @@
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Resolution};
 use chrono::{DateTime, Utc};
+use ludonimbus_core::catchup::{self, Wrapper};
 use ludonimbus_core::playtime::{self, Via};
 use ludonimbus_core::steamcloud::{self, Polled};
-use ludonimbus_core::{config, logger, paths, process, spec, steam, util};
+use ludonimbus_core::{config, logger, paths, process, spec, steam};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,53 +35,23 @@ pub struct SyncEvent {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Runner {
-    None,
-    Active,
-    /// The marker exists but its process is gone: the wrapper was terminated
-    /// before it finished (and before it uploaded).
-    Stale,
-}
-
-fn marker(key: &str) -> std::path::PathBuf {
-    paths::running_dir().join(format!("{key}.json"))
-}
-
-pub fn runner_state(key: &str) -> Runner {
-    let Ok(text) = std::fs::read_to_string(marker(key)) else {
-        return Runner::None;
-    };
-    let pid = serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .and_then(|v| v["pid"].as_u64())
-        .unwrap_or(0) as u32;
-    if pid != 0 && process::pid_alive(pid) {
-        Runner::Active
-    } else {
-        Runner::Stale
-    }
-}
-
-/// Whether `ludonimbus-run` is currently handling this game.
+/// Whether `ludonimbus-run` is currently handling this game (or its marker
+/// is being written: see [`catchup::wrapper`]).
 pub fn runner_active(key: &str) -> bool {
-    runner_state(key) == Runner::Active
+    catchup::wrapper(key) == Wrapper::Running
 }
 
-/// What the wrapper is doing: "preLaunch", "playing" or "uploading"
-/// (absent for wrappers older than 0.2.0).
+/// What the wrapper is doing: "preLaunch", "playing" or "uploading";
+/// `None` when none is running.
 pub fn runner_phase(key: &str) -> Option<String> {
-    let text = std::fs::read_to_string(marker(key)).ok()?;
-    serde_json::from_str::<serde_json::Value>(&text).ok()?["phase"]
-        .as_str()
-        .map(str::to_string)
+    catchup::runner_phase(key)
 }
 
-/// When the game started, as written by the wrapper (0.6.0 and later). Gone
-/// once the wrapper recorded the session itself.
-fn runner_started_at(key: &str) -> Option<DateTime<Utc>> {
-    let text = std::fs::read_to_string(marker(key)).ok()?;
-    serde_json::from_value(serde_json::from_str::<serde_json::Value>(&text).ok()?["startedAt"].clone()).ok()
+/// Whether the game is being played: through the launch wrapper, or started
+/// any other way (directly, by an emulator, by the Xbox app), by the
+/// process names core goes by ([`watch_names`]).
+pub fn game_running(g: &config::GameEntry) -> bool {
+    runner_active(&g.key) || process::is_running(&watch_names(g))
 }
 
 fn record_playtime(cfg: &config::AppConfig, g: &config::GameEntry, start: DateTime<Utc>, via: Via) {
@@ -157,14 +128,9 @@ fn sync_screenshots_later(app: &AppHandle, key: &str) {
     });
 }
 
-/// Process names that mean "this game is running".
+/// Process names that mean "this game is running" (as core has them).
 pub fn watch_names(g: &config::GameEntry) -> Vec<String> {
-    let mut names: Vec<String> = spec::effective(g).wait_for.iter().map(|s| s.to_lowercase()).collect();
-    // Every Xbox app game has the same launch helper: only its own processes count.
-    if let Some(exe) = g.exe.as_deref().filter(|e| !ludonimbus_core::xbox::is_launch_helper(e)) {
-        names.push(util::file_name_lower(exe));
-    }
-    names
+    catchup::watch_names(g)
 }
 
 fn vdf_stamp(cfg: &config::AppConfig) -> Option<SystemTime> {
@@ -176,29 +142,40 @@ fn vdf_stamp(cfg: &config::AppConfig) -> Option<SystemTime> {
         .max()
 }
 
+/// Sync a game after it ran, on a thread of its own: a slow cloud never
+/// holds up noticing other games start and stop, nor their playtime. One
+/// sync of a game at a time: when this app syncs it already, this one is
+/// noted as owed ([`sync::owe`]) and done after that one ([`Backlog`]).
 fn background_sync(app: &AppHandle, cfg: &config::AppConfig, g: &config::GameEntry, why: &str) {
-    let Some(_busy) = crate::busy::begin(&g.key) else {
-        logger::log("watcher", format!("{}: {why}, but a sync is already running", g.key));
+    let Some(busy) = crate::busy::begin(&g.key) else {
+        logger::log("watcher", format!("{}: {why}, but a sync is already running; syncing after it", g.key));
+        if let Err(e) = sync::owe(&g.key) {
+            logger::log("watcher", format!("{}: can't note the sync for later ({e:#})", g.key));
+        }
         return;
     };
     logger::log("watcher", format!("{}: {why}, syncing", g.key));
-    // Give the game a moment to flush its saves.
-    std::thread::sleep(Duration::from_secs(2));
-    let ctx = Ctx::from_config(cfg.clone());
-    let result = sync::sync(&ctx, g, Resolution::Auto, Trigger::Passive);
-    logger::log(
-        "watcher",
-        format!("{}: background sync {:?}", g.key, result.as_ref().map_err(|e| e.to_string())),
-    );
-    let _ = app.emit(
-        "sync-finished",
-        SyncEvent {
-            key: g.key.clone(),
-            name: g.name.clone(),
-            outcome: result.as_ref().ok().cloned(),
-            error: result.err().map(|e| format!("{e:#}")),
-        },
-    );
+    let (app, cfg, g) = (app.clone(), cfg.clone(), g.clone());
+    std::thread::spawn(move || {
+        let _busy = busy;
+        // Give the game a moment to flush its saves.
+        std::thread::sleep(Duration::from_secs(2));
+        let ctx = Ctx::from_config(cfg);
+        let result = sync::sync(&ctx, &g, Resolution::Auto, Trigger::Passive);
+        logger::log(
+            "watcher",
+            format!("{}: background sync {:?}", g.key, result.as_ref().map_err(|e| e.to_string())),
+        );
+        let _ = app.emit(
+            "sync-finished",
+            SyncEvent {
+                key: g.key.clone(),
+                name: g.name.clone(),
+                outcome: result.as_ref().ok().cloned(),
+                error: result.err().map(|e| format!("{e:#}")),
+            },
+        );
+    });
 }
 
 /// The first look at the backlog after the app starts.
@@ -247,7 +224,7 @@ impl Backlog {
         // Not while it is played or synced: the wrapper's own syncs come first.
         let free = |key: &str| {
             let up = cfg.game(key).is_some_and(|g| watch_names(g).iter().any(|n| procs.contains(n)));
-            runner_state(key) != Runner::Active && !up && !crate::busy::is_busy(key) && !sync::sync_running(key)
+            !runner_active(key) && !up && !crate::busy::is_busy(key) && !sync::sync_running(key)
         };
         let owed: Vec<String> = sync::owed_keys().into_iter().filter(|k| free(k)).collect();
         let regular = Instant::now() >= self.next;
@@ -385,7 +362,7 @@ impl Unwrapped {
             .filter(|g| g.auto_sync && g.store.as_ref().is_some_and(|s| s.mode == config::StoreMode::Managed && !s.wrapper))
             .filter(|g| {
                 let up = watch_names(g).iter().any(|n| procs.contains(n));
-                runner_state(&g.key) != Runner::Active && !up && !crate::busy::is_busy(&g.key) && !sync::sync_running(&g.key)
+                !runner_active(&g.key) && !up && !crate::busy::is_busy(&g.key) && !sync::sync_running(&g.key)
             })
             .cloned()
             .collect();
@@ -458,7 +435,7 @@ pub fn spawn(app: AppHandle) {
             let mut changed = false;
 
             for g in &cfg.games {
-                let runner = runner_state(&g.key);
+                let runner = catchup::wrapper(&g.key);
                 let game_up = watch_names(g).iter().any(|n| procs.contains(n));
                 let eff = spec::effective(g);
                 let game_proc_up = eff.wait_for.iter().any(|n| procs.contains(&n.to_lowercase()));
@@ -468,12 +445,12 @@ pub fn spawn(app: AppHandle) {
                 } else {
                     game_procs.remove(&g.key)
                 };
-                if runner == Runner::Active || game_up {
+                if runner == Wrapper::Running || game_up {
                     // Started outside Steam, launcher still open, game closed.
                     if game_proc_ended
                         && eff.upload_on_game_exit
                         && g.auto_sync
-                        && runner != Runner::Active
+                        && runner != Wrapper::Running
                         && running.get(&g.key) == Some(&false)
                     {
                         background_sync(&app, &cfg, g, "game process exited while the launcher is still open");
@@ -484,7 +461,7 @@ pub fn spawn(app: AppHandle) {
                         seen_at.insert(g.key.clone(), Utc::now());
                     }
                     let wrapped = running.entry(g.key.clone()).or_insert(false);
-                    if runner == Runner::Active {
+                    if runner == Wrapper::Running {
                         *wrapped = true;
                     }
                     if started {
@@ -498,12 +475,21 @@ pub fn spawn(app: AppHandle) {
                 // Not running any more.
                 let was = running.remove(&g.key);
                 let first_seen = seen_at.remove(&g.key);
-                if runner == Runner::Stale {
-                    if let Some(start) = runner_started_at(&g.key) {
+                if let Wrapper::Gone { started } = runner {
+                    changed = true;
+                    // Claimed by renaming it first, as `catchup::stale_runners`
+                    // does: a launch wrapper finishing the same session (it
+                    // does when it finds no tray app) leaves it alone then.
+                    // When another program has it, that one finishes it.
+                    let marker = paths::running_dir().join(format!("{}.json", g.key));
+                    let claimed = marker.with_extension("claimed");
+                    if std::fs::rename(&marker, &claimed).is_err() {
+                        continue;
+                    }
+                    if let Some(start) = started {
                         record_playtime(&cfg, g, start, Via::Steam);
                     }
-                    let _ = std::fs::remove_file(marker(&g.key));
-                    changed = true;
+                    let _ = std::fs::remove_file(&claimed);
                     sync_screenshots_later(&app, &g.key);
                     if g.auto_sync {
                         background_sync(&app, &cfg, g, "the Steam wrapper was terminated before it finished");
