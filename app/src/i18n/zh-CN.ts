@@ -163,6 +163,11 @@ export const savelib = {
   linkSearch: "搜索游戏",
   linked: "已关联",
   unlinked: "已拆成单独的游戏",
+  notAdded: "未加入",
+  addInstallTitle: (store: string): string =>
+    store === "steam" ? "加入游戏库，之后可以把存档发过去。Steam 云照旧同步它，Ludonimbus 只备份，不会自己改它的存档。" : "加入游戏库，之后可以把存档发过去",
+  installAdded: (store: string) => `已加入 ${store} 版`,
+  notAddedSection: "本机装着、还没加入的",
   cloudBannerTitle: "只在云端：这台电脑上还没有这个游戏",
   cloudBannerText: "存档和游戏时间都在云盘里。添加到本机后就能同步；备份过游戏本体的话可以直接从云端安装。",
   addHere: "添加到本机…",

@@ -128,7 +128,8 @@ export function Saves({
     [data, others, cloudOnly],
   );
   const marks = useMemo(() => ({ ...others.platforms, ...(data?.platforms ?? {}) }), [data, others]);
-  const canSend = membersOf(overview).length > 1;
+  // Also with one game in the library: the dialog offers the game's versions installed here that aren't added yet.
+  const canSend = membersOf(overview).length > 1 || !cloudOnly;
 
   const toggle = async (id: string) => {
     if (open === id) return setOpen(null);
@@ -409,6 +410,7 @@ export function Saves({
           sourceName={game.name}
           snapshot={sending}
           onClose={() => setSending(null)}
+          onAdded={onChanged}
           onApplied={async (target) => {
             setSending(null);
             await onApplied?.(target);

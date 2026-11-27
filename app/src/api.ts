@@ -259,6 +259,20 @@ export interface TransferPlan {
   tooNew: boolean;
   /** The target is a Switch version only in the cloud: uploaded as its newest version. */
   cloudTarget: boolean;
+  /** The target is a game Steam installed whose saves Steam Cloud keeps too (not taken over). */
+  steamCloud: boolean;
+}
+
+/** A version of a game installed on this PC that isn't in the library (`other_installs`). */
+export interface OtherInstall {
+  /** `steam:<app id>` or `xbox:<folder>`. */
+  id: string;
+  name: string;
+  store: "steam" | "xbox";
+  /** Its store's logo. */
+  logo: string | null;
+  /** A version of the game asked about. */
+  same: boolean;
 }
 
 /** A question of the launch wrapper, shown full screen (`ludonimbus-app --prompt`). */
@@ -818,6 +832,8 @@ export const api = {
   setShelf: (keys: string[], tag: "finished" | "archived", on: boolean) => invoke<void>("set_shelf", { keys, tag, on }),
   collectionStats: () => invoke<CollectionStats>("collection_stats"),
   cloudGameInfo: (key: string) => invoke<CloudGameInfo>("cloud_game_info", { key }),
+  otherInstalls: (key: string | null) => invoke<OtherInstall[]>("other_installs", { key }),
+  addInstall: (id: string) => invoke<string>("add_install", { id }),
   linkGames: (keys: string[]) => invoke<void>("link_games", { keys }),
   unlinkGame: (key: string) => invoke<void>("unlink_game", { key }),
   transferPlan: (source: string, id: string, target: string, base: string | null) =>

@@ -118,6 +118,12 @@
 3. 共用后在 Xbox 版玩、退出：Steam 版自动接上。
 4. 反过来（Steam 版玩完）：Xbox 版**不会**自动取，显示「云端较新」。在「存档」页签「设为当前」，确认框里有一句「写入 Xbox 版是实验性的」。写完进 Xbox 版看是不是新进度；Xbox 应用有没有把旧的从它的云里换回来。
 5. 同一个 Xbox 账号在 A、B 上，容器文件夹的名字是不是一样。
+6. **从 Xbox 版发到 Steam 版**（电车炫客 Denshattack! 就是这种：Ludusavi 数据库里只有 Steam 版的路径；自动测试 `storefiles.rs`、`installs.rs`、`transfer.rs` 的单元测试）。Steam 版装着，但没加进 Ludonimbus（「Steam 管」）：
+   - Xbox 版游戏页的「本机文件」里**没有** `Denshattack_Proto\Saved\SaveGames\7656…` 下的文件（那是 Steam 版的），在 Xbox 应用里玩过、存过以后是 `…\Packages\SoldOutSalesMarketing.Denshattack_…\SystemAppData\wgs\…`。
+   - 版本条上有虚线的「Steam 未加入 +」；悬停有说明。点一下：变成「Steam · 本机」，提示里有「撤销」；Steam 版的游戏页显示「只备份」。
+   - 撤销后再试另一条路：Xbox 版「存档」页签 → 一行的「…」→「发到…」，「同一个游戏的其他版本」里有「Steam · 未加入」。选它：对话框不关，直接出现写入计划，有一句「Steam 云也在同步这个游戏…选本机的」。看文件名有没有对上（容器名后面应该补上了 `.sav`，「其中 N 个和目标里已有的文件同名」不是 0）。发过去以后打开的是 Steam 版的页面。
+   - 从 Steam 启动游戏：是不是 Xbox 里的进度；Steam 有没有问保留哪一份（问的话选本机的），之后 Steam 云里是不是新的。
+   - 「关联其他版本…」最下面有「本机装着、还没加入的」，列的是 Steam 和 Xbox 应用装的、还没加入的游戏，没有 Proton、运行库这类工具。
 
 ## T10：云盘
 

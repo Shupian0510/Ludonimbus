@@ -81,6 +81,31 @@ fn read_game_processes(content: &Path) -> Vec<String> {
     names
 }
 
+/// The package name of the Xbox app game `path` belongs to
+/// (`BethesdaSoftworks.ProjectGold`), from the `appxmanifest.xml` in its
+/// package folder.
+pub fn package_name(path: &Path) -> Option<String> {
+    let dir = content_dir(path)?;
+    let text = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("appxmanifest.xml"))
+        .and_then(|e| std::fs::read_to_string(e.path()).ok())?;
+    xml_attr(&text, "Identity", "Name").filter(|n| !n.is_empty())
+}
+
+/// Where the Xbox app keeps the data of the package `name` (its save
+/// containers among it): `<local app data>\Packages\<name>_<publisher id>`.
+/// There once the game has run.
+pub fn package_data_dir(local_app_data: &Path, name: &str) -> Option<PathBuf> {
+    let prefix = format!("{}_", name.to_lowercase());
+    std::fs::read_dir(local_app_data.join("Packages"))
+        .ok()?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().to_lowercase().starts_with(&prefix) && e.path().is_dir())
+        .map(|e| e.path())
+}
+
 /// The value of `attr` in the first `<tag …>` element.
 pub fn xml_attr(text: &str, tag: &str, attr: &str) -> Option<String> {
     xml_attrs(text, tag, attr).into_iter().next()

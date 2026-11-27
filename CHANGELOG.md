@@ -14,6 +14,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 新增：Steam 商店装的游戏也能加进来。「只备份」给 Steam 云存档再留一份带历史的备份；「接管」以后由 Ludonimbus 同步，可以和其他平台、其他设备共用进度。
 - 新增：独立存档。一台设备可以存自己的进度，不和其他设备共用；别的设备可以跟随它。
 - 新增：Xbox 应用（Game Pass）的版本可以和 Steam 版共用进度。写入 Xbox 版是实验性的，只在你自己选择时才写。
+- 新增：本机装着、还没加入的同一个游戏的版本（比如交给 Steam 云管的 Steam 版）出现在游戏页的版本条上，点一下就加入；「发到…」和「关联其他版本…」里也能直接选它。在 Xbox 应用里玩完，可以把存档发到 Steam 版接着玩。
 - 新增：Switch 游戏的存档可以在 Ryujinx 和 Eden 之间通用。规则列表里的游戏（比如星露谷物语），Switch 版和 PC 版也能共用进度：第一次问一次；另一个平台用更新版本的游戏存的档不会自动换过来。
 - 改进：同步更快，在慢的云盘上尤其明显：启动前检查通常只要一次请求。启动前最多等云端 10 秒；退出后上传超过 10 秒就转到后台继续，不用等着。
 - 改进：判断哪一份更新不再看电脑的时钟。两台设备各有进度时一定会问你，不会悄悄覆盖。
@@ -52,6 +53,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 修复：另一台设备清理云端数据时开始备份游戏本体，新上传的数据可能被删掉。
 - 修复：直接启动、通过模拟器或 Xbox 应用运行的游戏，在运行时也能被同步或备份。
 - 修复：以管理员身份运行的游戏在 Windows 上被当成没在运行。
+- 修复：一个游戏同时装了 Steam 版和 Xbox 应用版时，Xbox 版会把 Steam 版的存档文件夹当成自己的，看不到自己的存档；Steam 版也可能带上 Xbox 版的存档容器。现在各自只认自己的存档，Ludusavi 数据库里还没有 Xbox 版路径的新游戏也能找到它的存档容器。
 - 修复：备用的成就弹窗每次启动只出现一次；关闭夸克网盘登录窗口后要等 10 分钟才取消登录。
 - 修复：没有缩略图的截图在图库里是空白的；手动添加游戏时，Windows 上的安装文件夹被填成了程序本身。
 
@@ -69,6 +71,7 @@ Saves and sync
 - New: games installed from the Steam store can be added too. "Backup only" keeps a second copy of what Steam Cloud syncs, with history; after "Take over", Ludonimbus syncs the game, so it can share progress with other platforms and other devices.
 - New: a device's own saves. A device can keep its own progress instead of sharing with the others, and another device can follow it.
 - New: the Xbox app (Game Pass) version can share progress with the Steam version. Writing into the Xbox version is experimental and happens only when you choose it.
+- New: a version of the same game that is installed here but not added yet (such as a Steam version left to Steam Cloud) shows on the game page's version bar; one click adds it. "Send to…" and "Link another version…" offer it too. Play in the Xbox app, then send the save to the Steam version and carry on there.
 - New: saves of Switch games work in both Ryujinx and Eden. For games in the rule list (such as Stardew Valley), the Switch and PC versions can share progress too: you're asked once, and a save made by a newer version of the game on the other platform isn't brought over by itself.
 - Improved: sync is faster, most of all on slow clouds: the check before launch usually takes one request. A launch waits for the cloud for at most 10 seconds; an upload that takes longer than 10 seconds after exit carries on in the background.
 - Improved: which save is newer is no longer decided by the PC's clock. When two devices both have progress you are always asked; nothing is overwritten silently.
@@ -107,6 +110,7 @@ Security and reliability
 - Fixed: a game backup that started while another device cleaned up the cloud could have its new data deleted.
 - Fixed: games started directly, through an emulator or the Xbox app could be synced or backed up while they ran.
 - Fixed: on Windows, games running as administrator were taken for not running.
+- Fixed: with a game installed both from Steam and from the Xbox app, the Xbox version took the Steam version's save folder for its own and never saw its own saves; the Steam version could pick up the Xbox version's save containers. Each now keeps to its own saves, and the Xbox version finds its containers even for new games Ludusavi's database has no Xbox path for yet.
 - Fixed: the fallback achievement popup appeared only once per run; closing the Quark sign-in window cancelled the sign-in only after 10 minutes.
 - Fixed: screenshots without a thumbnail were blank in the gallery; adding a game by hand on Windows filled in the program itself as its install folder.
 
