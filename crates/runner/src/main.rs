@@ -704,15 +704,15 @@ fn offer_newer_version(ctx: &Ctx, game: &GameEntry) {
     };
     let when = newer.snapshot.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
     let text = tr!(
-        "「{}」的另一个版本（{}）有更新的存档：{} 在 {} 保存。\n\n要先把它应用到这个版本再开始吗？这个版本现在的存档会先保存到云端，可以在 Ludonimbus 里撤回。",
-        "Another version of \"{}\" ({}) has newer saves: saved by {} at {}.\n\nApply them to this version before starting? This version's current saves are kept in the cloud first, so you can undo it in Ludonimbus.",
+        "「{}」的另一个版本（{}）有更新的存档：{} 在 {} 保存。\n\n要先把它发到这个版本再开始吗？这个版本现在的存档会先保留，可以在 Ludonimbus 里撤销。",
+        "Another version of \"{}\" ({}) has newer saves: saved by {} at {}.\n\nSend them to this version before starting? This version's current saves are kept first, so you can undo it in Ludonimbus.",
         game.name,
         newer.label,
         newer.snapshot.device_name,
         when
     );
     let req = Request::new(tr!("Ludonimbus · 另一个版本有更新的存档", "Ludonimbus · Newer saves in another version"), text, "info")
-        .button("apply", tr!("应用后开始", "Apply and start"), "a")
+        .button("apply", tr!("发过来再开始", "Send and start"), "a")
         .button("skip", tr!("不用", "No thanks"), "b");
     if ask(&req).as_deref() != Some("apply") {
         let _ = savelib::dismiss_newer(&game.key, &newer.snapshot.id);
