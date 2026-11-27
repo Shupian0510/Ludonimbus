@@ -18,7 +18,7 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Files this big or bigger are chunked on their own.
@@ -128,9 +128,18 @@ type Sender = mpsc::SyncSender<(String, Vec<u8>)>;
 /// What's in the cloud and this run, shared by the reader and the workers.
 struct Upload<'a> {
     store: &'a dyn Store,
+    lock: &'a remote::Lock<'a>,
     existing: HashMap<String, u64>,
     seen: Mutex<HashSet<String>>,
     tx: Mutex<Option<Sender>>,
+    /// Raw bytes handed to the workers and not compressed yet, and the most
+    /// allowed: chunks are up to 24 MiB, so a queue counted in chunks alone
+    /// could hold hundreds of MiB.
+    queued: Mutex<u64>,
+    freed: Condvar,
+    budget: u64,
+    /// The chunker's buffer (48 MiB by default), kept for the next file.
+    buffer: Mutex<Vec<u8>>,
     read: AtomicU64,
     uploaded: AtomicU64,
     new_chunks: AtomicUsize,
@@ -141,7 +150,7 @@ struct Upload<'a> {
 
 impl Upload<'_> {
     fn stopping(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed) || self.failed.lock().unwrap().is_some()
+        self.cancel.load(Ordering::Relaxed) || self.failed.lock().unwrap().is_some() || self.lock.is_lost()
     }
 
     /// Whether the cloud has this chunk or this run is uploading it.
@@ -149,13 +158,24 @@ impl Upload<'_> {
         self.existing.contains_key(id) || self.seen.lock().unwrap().contains(id)
     }
 
-    /// Queue a chunk for upload unless the cloud has it.
+    /// Queue a chunk for upload unless the cloud has it. Waits while the
+    /// workers have enough raw bytes to go on with (one chunk always fits).
     fn offer(&self, id: String, data: Vec<u8>) -> bool {
         let new = !self.existing.contains_key(&id) && self.seen.lock().unwrap().insert(id.clone());
         if !new {
             self.reused.fetch_add(1, Ordering::SeqCst);
             return true;
         }
+        let len = data.len() as u64;
+        let mut queued = self.queued.lock().unwrap();
+        while *queued > 0 && *queued + len > self.budget {
+            if self.stopping() {
+                return false;
+            }
+            queued = self.freed.wait_timeout(queued, Duration::from_millis(100)).unwrap().0;
+        }
+        *queued += len;
+        drop(queued);
         let tx = self.tx.lock().unwrap().clone();
         match tx {
             Some(tx) => tx.send((id, data)).is_ok(),
@@ -163,11 +183,18 @@ impl Upload<'_> {
         }
     }
 
+    /// A worker is done with a chunk's raw bytes.
+    fn release(&self, len: usize) {
+        *self.queued.lock().unwrap() -= len as u64;
+        self.freed.notify_all();
+    }
+
     /// Cut `files` (consecutive small files, or one big file) into chunks.
     fn chunk_files(&self, files: &[PlannedFile], params: Params, chunks: &mut Vec<ChunkRef>) -> Result<Vec<String>> {
         let mut reader = StreamReader::new(files, &self.read);
         {
-            let mut chunker = Chunker::new(&mut reader, params);
+            let buffer = std::mem::take(&mut *self.buffer.lock().unwrap());
+            let mut chunker = Chunker::with_buffer(&mut reader, params, buffer);
             while let Some(data) = chunker.next_chunk()? {
                 if self.stopping() {
                     return Err(anyhow!(Cancelled));
@@ -178,6 +205,7 @@ impl Upload<'_> {
                     return Err(anyhow!(Cancelled));
                 }
             }
+            *self.buffer.lock().unwrap() = chunker.into_buffer();
         }
         Ok(std::mem::take(&mut reader.hashes))
     }
@@ -230,7 +258,39 @@ pub fn backup(
     }
 
     let lock = remote::Lock::acquire(store, key, &device.id, &device.name, "backup")?;
-    simple("listing", 0, 0);
+    // The lock is kept alive until the version is committed and old ones are
+    // cleaned up, not only while files are read: a cleanup elsewhere must
+    // never find it expired while chunks still wait to be committed.
+    let out = lock.while_held(|| upload_and_commit(store, game, device, opts, cancel, progress, started, &lock, planned, reuse, previous))?;
+    lock.release()?;
+    Ok(out)
+}
+
+/// The part of [`backup`] that holds the lock: upload the new chunks, check
+/// they are all there, commit, clean up old versions.
+#[allow(clippy::too_many_arguments)]
+fn upload_and_commit(
+    store: &dyn Store,
+    game: &GameEntry,
+    device: &DeviceConfig,
+    opts: &BackupOptions,
+    cancel: &AtomicBool,
+    progress: &(dyn Fn(&Progress) + Sync),
+    started: Instant,
+    lock: &remote::Lock,
+    planned: Vec<Planned>,
+    reuse: Vec<Option<Component>>,
+    previous: Option<(Summary, Manifest)>,
+) -> Result<Outcome> {
+    let key = game.key.as_str();
+    let stop = || -> Result<()> {
+        if cancel.load(Ordering::Relaxed) {
+            Err(anyhow!(Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+    progress(&Progress { phase: "listing", done: 0, total: 0, uploaded: 0, new_chunks: 0, reused_chunks: 0, elapsed_secs: started.elapsed().as_secs_f64() });
     let existing = remote::list_chunks(store)?;
     stop()?;
 
@@ -240,9 +300,15 @@ pub fn backup(
     let rx = Mutex::new(rx);
     let up = Upload {
         store,
+        lock,
         existing,
         seen: Mutex::new(HashSet::new()),
         tx: Mutex::new(Some(tx)),
+        queued: Mutex::new(0),
+        freed: Condvar::new(),
+        // Two average chunks per worker keep them busy.
+        budget: (threads * 2 * opts.params.avg) as u64,
+        buffer: Mutex::new(Vec::new()),
         read: AtomicU64::new(0),
         uploaded: AtomicU64::new(0),
         new_chunks: AtomicUsize::new(0),
@@ -261,7 +327,6 @@ pub fn backup(
             elapsed_secs: started.elapsed().as_secs_f64(),
         })
     };
-    let done = AtomicBool::new(false);
     let mut cache = FileCache::load();
     let mut built: Vec<Option<(Vec<ChunkRef>, Vec<String>)>> = Vec::new();
 
@@ -270,11 +335,18 @@ pub fn backup(
             s.spawn(|| loop {
                 let item = rx.lock().unwrap().recv();
                 let Ok((id, raw)) = item else { return };
+                let len = raw.len();
                 // Keep draining after a failure so the reader never blocks.
                 if up.stopping() {
+                    drop(raw);
+                    up.release(len);
                     continue;
                 }
-                let result = chunk::encode(&raw).and_then(|obj| {
+                // The raw bytes go as soon as they are compressed, not after the upload.
+                let encoded = chunk::encode(&raw);
+                drop(raw);
+                up.release(len);
+                let result = encoded.and_then(|obj| {
                     retry(cancel, || up.store.write(&remote::chunk_path(&id), &obj))?;
                     Ok(obj.len() as u64)
                 });
@@ -290,17 +362,6 @@ pub fn backup(
                 }
             });
         }
-        // Keep the lock alive during long uploads.
-        s.spawn(|| {
-            let mut last = Instant::now();
-            while !done.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(200));
-                if last.elapsed() >= Duration::from_secs(300) {
-                    last = Instant::now();
-                    let _ = lock.refresh();
-                }
-            }
-        });
 
         let result = (|| -> Result<()> {
             for (p, r) in planned.iter().zip(&reuse) {
@@ -345,16 +406,15 @@ pub fn backup(
             }
             Ok(())
         })();
-        // Workers end once the channel is empty; the refresher ends now (what
-        // is still queued uploads in seconds).
+        // Workers end once the channel is empty.
         up.tx.lock().unwrap().take();
-        done.store(true, Ordering::Relaxed);
         result
     });
     cache.save();
     if let Some(e) = up.failed.lock().unwrap().take() {
         return Err(e);
     }
+    lock.held()?;
     stop()?;
     read_result?;
 
@@ -371,7 +431,6 @@ pub fn backup(
                     })
             });
         if same {
-            lock.release()?;
             return Ok(Outcome::Unchanged { version: s.clone() });
         }
     }
@@ -451,6 +510,9 @@ pub fn backup(
         new_bytes: up.uploaded.load(Ordering::SeqCst),
         comment: opts.comment.clone(),
     };
+    // A device that slept past the lock's expiry may have missed a cleanup
+    // that deleted chunks this version needs: then it isn't committed.
+    lock.confirm()?;
     let version = remote::commit_version(store, &manifest)?;
 
     let (mut pruned, mut freed) = (Vec::new(), 0);
@@ -460,7 +522,6 @@ pub fn backup(
         pruned = deleted;
         freed = gc.freed_bytes;
     }
-    lock.release()?;
     Ok(Outcome::Created {
         version,
         uploaded: manifest.new_bytes,

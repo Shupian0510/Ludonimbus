@@ -1,6 +1,7 @@
 //! Restore a game backup version: each component goes to its place
 //! (`{program}` and `{content}` to the folders the user picked, the user
-//! folders to this PC's). Files already there with the right content are
+//! folders to this PC's, there only into the folders the game's rule names).
+//! Files already there with the right content are
 //! kept, so an emulator that is already installed isn't written again.
 //! Chunks are downloaded in parallel, checked against their names and
 //! written at their offsets (one chunk can span many small files). Finished
@@ -8,11 +9,12 @@
 //! version to the same places continues. At the end every written file is
 //! checked against its hash.
 
-use super::components::Bases;
+use super::components::{self, Bases};
 use super::format::{Component, Kind, Manifest, Summary};
+use super::scan::path_key;
 use super::{chunk, remote, retry, Cancelled};
 use crate::cloud::store::Store;
-use crate::{paths, util};
+use crate::{adapters, paths, spec, util};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -65,6 +67,10 @@ struct Journal {
     targets: Option<Targets>,
     /// (component, chunk) pairs written.
     done: Vec<(usize, usize)>,
+    /// (component, file) pairs that were already right and are left alone
+    /// (`None` in journals of earlier versions).
+    #[serde(default)]
+    kept: Option<Vec<(usize, usize)>>,
 }
 
 fn journal_file(key: &str) -> PathBuf {
@@ -103,12 +109,13 @@ pub fn resolve_target(chosen: &Path, original: &str) -> PathBuf {
     if empty {
         return chosen.to_path_buf();
     }
-    // The folder's name, whichever system the backup was made on.
+    // The folder's name, whichever system the backup was made on; never
+    // `..` (the parent of the chosen folder) or a drive.
     let name = original
         .trim_end_matches(['\\', '/'])
         .rsplit(['\\', '/'])
         .next()
-        .filter(|n| !n.is_empty() && !n.ends_with(':'))
+        .filter(|n| !n.is_empty() && *n != "." && *n != ".." && !n.contains(':'))
         .map(str::to_string)
         .unwrap_or_else(|| "Game".into());
     // Picking the backed-up folder itself (it still has files): restore into it.
@@ -138,24 +145,90 @@ pub fn free_space(_: &Path) -> Option<u64> {
     None
 }
 
+/// An absolute path made of plain names only (on a drive or a network share
+/// on Windows): no `.`, `..` or stream names (`a:b`).
+fn plain_absolute(p: &Path) -> bool {
+    use std::path::Prefix;
+    p.is_absolute()
+        && p.components().all(|c| match c {
+            PathPart::Prefix(x) => matches!(x.kind(), Prefix::Disk(_) | Prefix::UNC(..)),
+            PathPart::RootDir => true,
+            PathPart::Normal(n) => !n.to_string_lossy().contains(':'),
+            _ => false,
+        })
+}
+
+/// Whether `p` is `dir` or inside it.
+fn inside(p: &Path, dir: &Path) -> bool {
+    let (p, d) = (path_key(p), path_key(dir));
+    let d = d.trim_end_matches(std::path::MAIN_SEPARATOR);
+    p == d || p.starts_with(&format!("{d}{}", std::path::MAIN_SEPARATOR))
+}
+
 /// The bases of a restore: the picked folders, this PC's user folders, and
-/// `{extraN}` folders where they were when their drive exists (else inside
-/// the game files' folder).
+/// `{extraN}` folders. An extra folder goes back where it was when that is a
+/// plain absolute path on a drive this PC has, outside this PC's user
+/// folders (programs that start with Windows or the shell live there, and
+/// a backup never has extra folders there) unless inside a picked folder;
+/// otherwise it goes into a folder of its name inside the game files' folder.
 pub fn bases_for(m: &Manifest, t: &Targets) -> Bases {
     let mut b = Bases::new(Some(&t.program), t.content.as_deref());
     let fallback = t.content.clone().unwrap_or_else(|| t.program.clone());
+    let users = b.user_folders();
+    let picked: Vec<&Path> = std::iter::once(t.program.as_path()).chain(t.content.as_deref()).collect();
     for c in &m.components {
         for (name, orig) in &c.bases {
-            if name.starts_with("extra") && b.get(name).is_none() {
+            // Only `extra0`, `extra1`…: the name is a folder name below.
+            if components::is_extra(name) && b.get(name).is_none() {
                 let p = PathBuf::from(orig);
                 // The drive of the folder (`D:\` of `D:\Games\x`).
                 let drive: PathBuf = p.components().take(2).collect();
-                let drive_ok = p.has_root() && drive.exists();
-                b.set(name, if drive_ok { p } else { fallback.join(name) });
+                let back = plain_absolute(&p)
+                    && drive.exists()
+                    && (picked.iter().any(|d| inside(&p, d)) || !users.iter().any(|u| inside(&p, u)));
+                b.set(name, if back { p } else { fallback.join(name) });
             }
         }
     }
     b
+}
+
+/// Where each file of a restore goes. In the user folders (AppData,
+/// Documents, home) files go only into the folders the game's rule names
+/// there (`{appdata}/Ryujinx`, a launcher's settings folder) and the files
+/// and folders this PC's backup settings add to the game: programs that
+/// start with Windows or the shell live in the user folders too, so a
+/// damaged, foreign or tampered-with backup must not put files anywhere
+/// else there. Such files go into a folder named after the user folder
+/// inside the game files' folder instead.
+struct Placement {
+    bases: Bases,
+    user_dirs: Vec<PathBuf>,
+    fallback: PathBuf,
+}
+
+impl Placement {
+    fn new(m: &Manifest, t: &Targets, extra_content: &[PathBuf]) -> Placement {
+        let bases = bases_for(m, t);
+        let mut user_dirs = m.adapter.as_deref().and_then(adapters::find).map(|a| components::rule_user_dirs(a, &bases)).unwrap_or_default();
+        user_dirs.extend(extra_content.iter().map(|p| spec::normalize(p)));
+        Placement { bases, user_dirs, fallback: t.content.clone().unwrap_or_else(|| t.program.clone()) }
+    }
+
+    fn resolve(&self, logical: &str) -> Result<PathBuf> {
+        let p = self.bases.resolve(logical)?;
+        match components::split(logical) {
+            Some((name, rest)) if components::is_user_base(name) && !self.user_dirs.iter().any(|d| inside(&p, d)) => {
+                let dir = self.fallback.join(name);
+                if rest.is_empty() {
+                    Ok(dir)
+                } else {
+                    safe_join(&dir, rest)
+                }
+            }
+            _ => Ok(p),
+        }
+    }
 }
 
 /// Where each chunk's bytes go: (file index, offset in file, offset in chunk, length).
@@ -216,6 +289,7 @@ struct Run<'a> {
     progress: &'a (dyn Fn(&Progress) + Sync),
     started: Instant,
     done: Mutex<HashSet<(usize, usize)>>,
+    kept: Vec<(usize, usize)>,
     last_flush: Mutex<Instant>,
 }
 
@@ -227,7 +301,7 @@ impl Run<'_> {
     fn flush(&self) -> Result<()> {
         let mut done: Vec<(usize, usize)> = self.done.lock().unwrap().iter().copied().collect();
         done.sort_unstable();
-        let j = Journal { version: self.version.clone(), targets: Some(self.targets.clone()), done };
+        let j = Journal { version: self.version.clone(), targets: Some(self.targets.clone()), done, kept: Some(self.kept.clone()) };
         util::atomic_write(&journal_file(self.key), &serde_json::to_vec(&j)?)
     }
 
@@ -366,7 +440,7 @@ pub fn restore(
     }
     let m = remote::read_manifest(store, key, summary)?;
     let resuming = pending(key).is_some_and(|(v, t)| v == m.id && &t == targets);
-    let bases = bases_for(&m, targets);
+    let place = Placement::new(&m, targets, &super::settings(key).extra_content);
 
     let mut parts = Vec::new();
     for c in &m.components {
@@ -378,19 +452,15 @@ pub fn restore(
         if !wanted {
             continue;
         }
-        let paths = c.files.iter().map(|f| bases.resolve(&f.p)).collect::<Result<Vec<_>>>()?;
+        let paths = c.files.iter().map(|f| place.resolve(&f.p)).collect::<Result<Vec<_>>>()?;
         parts.push(Part { c, spans: spans(c), needed: vec![true; paths.len()], paths });
     }
 
-    let done: HashSet<(usize, usize)> = if resuming {
-        std::fs::read(journal_file(key))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Journal>(&b).ok())
-            .map(|j| j.done.into_iter().filter(|&(pi, ci)| pi < parts.len() && ci < parts[pi].c.chunks.len()).collect())
-            .unwrap_or_default()
-    } else {
-        HashSet::new()
-    };
+    let journal = if resuming { std::fs::read(journal_file(key)).ok().and_then(|b| serde_json::from_slice::<Journal>(&b).ok()) } else { None };
+    let done: HashSet<(usize, usize)> = journal
+        .as_ref()
+        .map(|j| j.done.iter().copied().filter(|&(pi, ci)| pi < parts.len() && ci < parts[pi].c.chunks.len()).collect())
+        .unwrap_or_default();
     let resumed_chunks = done.len();
     let mut run = Run {
         store,
@@ -403,51 +473,59 @@ pub fn restore(
         progress,
         started,
         done: Mutex::new(done),
+        kept: Vec::new(),
         last_flush: Mutex::new(Instant::now()),
     };
+    let full_size = |pi: usize, fi: usize, parts: &[Part]| {
+        std::fs::metadata(&parts[pi].paths[fi]).is_ok_and(|md| md.is_file() && md.len() == parts[pi].c.files[fi].s)
+    };
 
-    // Files already there with the right content stay as they are.
-    let mut kept = 0;
-    if !resuming {
-        let existing: Vec<(usize, usize)> = run
-            .parts
-            .iter()
-            .enumerate()
-            .flat_map(|(pi, p)| {
-                p.paths
-                    .iter()
-                    .enumerate()
-                    .filter(|(fi, path)| std::fs::metadata(path).is_ok_and(|md| md.is_file() && md.len() == p.c.files[*fi].s))
-                    .map(move |(fi, _)| (pi, fi))
-            })
-            .collect();
-        let wrong: HashSet<(usize, usize)> = run.check("checking", &existing)?.into_iter().collect();
-        for (pi, fi) in existing {
-            if !wrong.contains(&(pi, fi)) {
-                run.parts[pi].needed[fi] = false;
-                kept += 1;
-            }
+    // Files already there with the right content stay as they are. Resuming,
+    // those the first try found are still there; the files it was writing
+    // have their full size but not their content yet, so they aren't hashed
+    // again (a journal from before the list was kept: they are).
+    let kept_before = journal.and_then(|j| j.kept).map(|k| {
+        k.into_iter().filter(|&(pi, fi)| pi < run.parts.len() && fi < run.parts[pi].paths.len() && full_size(pi, fi, &run.parts)).collect::<Vec<_>>()
+    });
+    run.kept = match kept_before {
+        Some(k) => k,
+        None => {
+            let existing: Vec<(usize, usize)> = run
+                .parts
+                .iter()
+                .enumerate()
+                .flat_map(|(pi, p)| (0..p.paths.len()).map(move |fi| (pi, fi)))
+                .filter(|&(pi, fi)| full_size(pi, fi, &run.parts))
+                .collect();
+            let wrong: HashSet<(usize, usize)> = run.check("checking", &existing)?.into_iter().collect();
+            existing.into_iter().filter(|x| !wrong.contains(x)).collect()
         }
-        // Enough space for what will be written, per drive.
-        let mut need: HashMap<String, (PathBuf, u64)> = HashMap::new();
-        for p in &run.parts {
-            for (fi, path) in p.paths.iter().enumerate().filter(|(fi, _)| p.needed[*fi]) {
-                let drive = path.components().next().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).unwrap_or_default();
-                let e = need.entry(drive).or_insert((path.clone(), 0));
-                e.1 += p.c.files[fi].s;
-            }
+    };
+    for &(pi, fi) in &run.kept {
+        run.parts[pi].needed[fi] = false;
+    }
+    let kept = run.kept.len();
+
+    // Enough space for what will be written, per drive. A file that already
+    // has its full size (an interrupted restore made it) takes no more.
+    let mut need: HashMap<String, (PathBuf, u64)> = HashMap::new();
+    for (pi, p) in run.parts.iter().enumerate() {
+        for (fi, path) in p.paths.iter().enumerate().filter(|&(fi, _)| p.needed[fi] && !full_size(pi, fi, &run.parts)) {
+            let drive = path.components().next().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).unwrap_or_default();
+            let e = need.entry(drive).or_insert((path.clone(), 0));
+            e.1 += p.c.files[fi].s;
         }
-        for (path, bytes) in need.values() {
-            if let Some(free) = free_space(path) {
-                if free < bytes + 64 * 1024 * 1024 {
-                    bail!(crate::tr!(
-                        "{} 所在的磁盘空间不够：需要 {} MB，只剩 {} MB",
-                        "Not enough space on the disk of {}: {} MB needed, {} MB free",
-                        path.display(),
-                        bytes / 1_048_576 + 64,
-                        free / 1_048_576
-                    ));
-                }
+    }
+    for (path, bytes) in need.values() {
+        if let Some(free) = free_space(path) {
+            if free < bytes + 64 * 1024 * 1024 {
+                bail!(crate::tr!(
+                    "{} 所在的磁盘空间不够：需要 {} MB，只剩 {} MB",
+                    "Not enough space on the disk of {}: {} MB needed, {} MB free",
+                    path.display(),
+                    bytes / 1_048_576 + 64,
+                    free / 1_048_576
+                ));
             }
         }
     }
@@ -455,7 +533,7 @@ pub fn restore(
     // Folders and files to write.
     for c in m.components.iter().filter(|c| run.parts.iter().any(|p| std::ptr::eq(p.c, *c))) {
         for d in &c.dirs {
-            std::fs::create_dir_all(bases.resolve(d)?)?;
+            std::fs::create_dir_all(place.resolve(d)?)?;
         }
     }
     for p in &run.parts {
@@ -508,6 +586,13 @@ pub fn restore(
                 done.remove(x);
             }
         }
+        // The damaged files start over at their right size, so nothing that
+        // made them wrong (bytes past the end, a file gone) is left.
+        for &(pi, fi) in &bad {
+            let path = &run.parts[pi].paths[fi];
+            let file = std::fs::File::create(path).with_context(|| crate::tr!("无法创建 {}", "Can't create {}", path.display()))?;
+            file.set_len(run.parts[pi].c.files[fi].s)?;
+        }
         run.download(&redo)?;
         let still = run.check("verifying", &bad)?;
         if let Some(&(pi, fi)) = still.first() {
@@ -557,5 +642,91 @@ mod tests {
         let named = tmp.path().join("Zelda");
         std::fs::create_dir_all(named.join("x")).unwrap();
         assert_eq!(resolve_target(&named, "D:\\Old\\Zelda"), named);
+        // Never the parent of the chosen folder, nor a drive.
+        for odd in ["D:\\Old\\..", "/old/..", "D:\\Old\\.", "D:", "C:\\"] {
+            assert_eq!(resolve_target(&chosen, odd), chosen.join("Game"), "{odd}");
+        }
+    }
+
+    fn manifest(bases: &[(&str, String)]) -> Manifest {
+        Manifest {
+            format: super::super::format::FORMAT,
+            id: "01J0000000000000000000000A".into(),
+            game: "g".into(),
+            name: "G".into(),
+            created_at: chrono::Utc::now(),
+            device_id: "d-1".into(),
+            device_name: "PC".into(),
+            app_version: "test".into(),
+            adapter: None,
+            args: String::new(),
+            chunking: super::super::chunker::Params::default(),
+            user_exclude: Vec::new(),
+            components: vec![Component {
+                kind: Kind::Content,
+                name: "G".into(),
+                version: None,
+                bases: bases.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                exe: None,
+                source: None,
+                build: None,
+                files: Vec::new(),
+                dirs: Vec::new(),
+                chunks: Vec::new(),
+                total_size: 0,
+            }],
+            total_size: 0,
+            stored_size: 0,
+            new_bytes: 0,
+            comment: String::new(),
+        }
+    }
+
+    #[test]
+    fn extra_folders_go_back_only_to_plain_places_outside_the_user_folders() {
+        // Only paths: nothing is created.
+        let out = PathBuf::from(if cfg!(windows) { "C:\\Ludonimbus-test-not-there" } else { "/tmp/ludonimbus-test-not-there" });
+        let home = dirs::home_dir().unwrap();
+        let prog = home.join("Games").join("Prog");
+        let sep = std::path::MAIN_SEPARATOR;
+        let m = manifest(&[
+            ("extra0", out.display().to_string()),
+            ("extra1", format!("{}{sep}a{sep}..{sep}..{sep}Windows", out.display())),
+            ("extra2", home.join("Startup-ish").display().to_string()),
+            ("extra3", prog.join("sub").display().to_string()),
+            ("extra4", "relative".into()),
+            ("extra/../../x", out.display().to_string()),
+        ]);
+        let content = out.join("ROMs");
+        let b = bases_for(&m, &Targets { program: prog.clone(), restore_program: true, content: Some(content.clone()) });
+        assert_eq!(b.get("extra0"), Some(&out));
+        assert_eq!(b.get("extra1"), Some(&content.join("extra1")), "no `..`");
+        assert_eq!(b.get("extra2"), Some(&content.join("extra2")), "not in the user folders");
+        assert_eq!(b.get("extra3"), Some(&prog.join("sub")), "unless inside a picked folder");
+        assert_eq!(b.get("extra4"), Some(&content.join("extra4")));
+        assert!(b.get("extra/../../x").is_none() && b.resolve("{extra/../../x}/f").is_err());
+    }
+
+    #[test]
+    fn files_in_the_user_folders_go_only_where_the_rule_or_this_pc_says() {
+        // Only paths: nothing is created.
+        let tmp = tempfile::tempdir().unwrap();
+        let (prog, games, home) = (tmp.path().join("Ryujinx"), tmp.path().join("Games"), tmp.path().join("home"));
+        let appdata = tmp.path().join("AppData");
+        let mut bases = Bases::new(Some(&prog), Some(&games));
+        bases.set("appdata", appdata.clone());
+        bases.set("home", home.clone());
+        let mut user_dirs = components::rule_user_dirs(adapters::find("ryujinx").unwrap(), &bases);
+        // "More files that belong to the game" in this PC's backup settings.
+        user_dirs.push(home.join("ROMs"));
+        let place = Placement { bases, user_dirs, fallback: games.clone() };
+        let at = |base: &Path, rel: &str| rel.split('/').fold(base.to_path_buf(), |p, s| p.join(s));
+        assert_eq!(place.resolve("{appdata}/Ryujinx/system/prod.keys").unwrap(), at(&appdata, "Ryujinx/system/prod.keys"));
+        assert_eq!(place.resolve("{home}/ROMs/a.iso").unwrap(), at(&home, "ROMs/a.iso"));
+        assert_eq!(place.resolve("{program}/Ryujinx.exe").unwrap(), at(&prog, "Ryujinx.exe"));
+        let startup = "Microsoft/Windows/Start Menu/Programs/Startup/x.exe";
+        assert_eq!(place.resolve(&format!("{{appdata}}/{startup}")).unwrap(), at(&games, &format!("appdata/{startup}")));
+        assert_eq!(place.resolve("{home}/.bashrc").unwrap(), at(&games, "home/.bashrc"));
+        assert!(place.resolve("{appdata}/../x").is_err());
     }
 }
