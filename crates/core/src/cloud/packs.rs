@@ -403,6 +403,12 @@ fn put(store: &dyn Store, folder: &str, manifest: &Manifest, pack: &str, local: 
 /// One listing normally. None for a snapshot made within the last day whose
 /// files are all in its own packs: those were uploaded a moment ago and no
 /// clean-up touches a pack that young.
+///
+/// A pack it borrows that is gone while `local` doesn't have every file the
+/// manifest takes from it, as the manifest has it, can't be put back: the
+/// content is nowhere any more. That is a [`MissingPack`], and nothing is
+/// uploaded. One of its own packs that `local` can't rebuild is an ordinary
+/// error: the caller still has it as a zip and can upload it again.
 pub fn verify(store: &dyn Store, folders: &[String], manifest: &Manifest, local: &[LocalFile], staging: &Path) -> Result<Vec<String>> {
     // A snapshot that waited in the queue has an old id: its own packs look
     // old to a clean-up from the moment they are uploaded, and are checked
@@ -422,10 +428,29 @@ pub fn verify(store: &dyn Store, folders: &[String], manifest: &Manifest, local:
             return Ok(Vec::new());
         }
     }
+    let at_hand = |pack: &str| {
+        manifest
+            .files
+            .iter()
+            .filter(|f| pack_of(manifest, f) == pack)
+            .all(|f| local.iter().any(|l| l.path == f.path && l.size == f.size && l.hash == f.hash))
+    };
+    if let Some(gone) = missing.iter().find(|p| !is_own(p.as_str(), &manifest.id) && !at_hand(p.as_str())) {
+        return Err(MissingPack { pack: gone.clone() }.into());
+    }
     for pack in &missing {
         put(store, home, manifest, pack, local, staging)?;
     }
     Ok(missing.into_iter().collect())
+}
+
+/// Whether `manifest` takes files from packs other than its own (`<id>`,
+/// `<id>-2`, ...): a large save's snapshot built on an earlier one, or a
+/// version that carries another platform's files. Those packs may be gone
+/// by the time it is uploaded, and [`verify`] needs the save files to put
+/// them back.
+pub fn borrows(manifest: &Manifest) -> bool {
+    manifest.packs().iter().any(|p| !is_own(p, &manifest.id))
 }
 
 /// The ids of the packs in one folder of the game.
