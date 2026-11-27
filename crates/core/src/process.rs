@@ -73,14 +73,31 @@ pub fn started(pid: u32) -> Option<u64> {
 
 /// Linux: let the wrapper finish its work when Steam ends the game (its
 /// "Exit game" sends SIGTERM to the whole process tree): the signal is
-/// noted, the game exits, and the saves are still uploaded.
+/// noted, the game exits, and the saves are still uploaded. Where stopping
+/// is safe, the wrapper asks [`termination_requested`]. The game's own
+/// handling of the signal is its own: a caught signal is back to the
+/// default in a program that is started, and nothing is blocked.
 pub fn defer_termination() {
     #[cfg(unix)]
     unix::defer_sigterm();
 }
 
+/// Whether this process was asked to stop since [`defer_termination`]
+/// (Linux: SIGTERM). Always `false` where there is no such signal.
+pub fn termination_requested() -> bool {
+    #[cfg(unix)]
+    {
+        unix::terminated()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Start the game and block until it (and everything it spawned) has exited.
-/// Returns the exit code of the started process.
+/// Returns the exit code of the started process. `envs` are set for the
+/// game on top of this process's environment.
 ///
 /// With `on_game_exit`, the `wait_for` processes (the real game) are watched
 /// while the launcher is still open, and the callback runs every time the
@@ -88,13 +105,14 @@ pub fn defer_termination() {
 pub fn launch_and_wait(
     exe: &Path,
     args: &[String],
+    envs: &[(String, String)],
     work_dir: &Path,
     wait_for: &[String],
     mut on_game_exit: Option<&mut dyn FnMut()>,
     log: &dyn Fn(&str),
 ) -> Result<i32> {
     let mut cmd = std::process::Command::new(exe);
-    cmd.args(args).current_dir(work_dir);
+    cmd.args(args).envs(envs.iter().map(|(k, v)| (k, v))).current_dir(work_dir);
 
     #[cfg(windows)]
     let job = win::Job::new().ok();
@@ -326,6 +344,7 @@ mod tests {
         let code = launch_and_wait(
             Path::new(r"C:\Windows\System32\cmd.exe"),
             &["/c".to_string(), script],
+            &[],
             tmp.path(),
             &["ln-fake-game.exe".to_string()],
             Some(&mut cb),
@@ -339,12 +358,30 @@ mod tests {
         // The game was seen running, so no extra "wait for it to appear" delay.
         assert!(start.elapsed() < Duration::from_secs(10));
     }
+
+    #[test]
+    fn the_game_gets_the_variables_given_for_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env = [("LUDONIMBUS_TEST_CODE".to_string(), "7".to_string())];
+        let cmd = Path::new(r"C:\Windows\System32\cmd.exe");
+        let code = launch_and_wait(cmd, &["/c".to_string(), "exit %LUDONIMBUS_TEST_CODE%".to_string()], &env, tmp.path(), &[], None, &|_| {}).unwrap();
+        assert_eq!(code, 7);
+    }
+
+    #[test]
+    fn a_process_it_may_not_look_at_is_still_running() {
+        assert!(pid_alive(std::process::id()));
+        // "System" (pid 4) is always there, and a process that isn't an
+        // administrator's may not open it.
+        assert!(pid_alive(4));
+        assert!(!pid_alive(u32::MAX - 3));
+    }
 }
 
 #[cfg(windows)]
 mod win {
     use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
@@ -431,7 +468,10 @@ mod win {
         unsafe {
             let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if h.is_null() {
-                return false;
+                // Denied: the process is there, it just isn't ours to look at
+                // (another user's, or one guarded by an anti-cheat). A process
+                // that is gone gives "invalid parameter".
+                return GetLastError() == ERROR_ACCESS_DENIED;
             }
             let mut code = 0u32;
             let ok = GetExitCodeProcess(h, &mut code);
@@ -567,10 +607,16 @@ mod unix {
         TERM.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// A handler, not "ignore": an ignored signal would stay ignored in the
+    /// game started from here, a handled one is back to the default there.
     pub fn defer_sigterm() {
         unsafe {
             libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t);
         }
+    }
+
+    pub fn terminated() -> bool {
+        TERM.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     #[cfg(test)]
@@ -583,6 +629,15 @@ mod unix {
             assert!(!pid_alive(u32::MAX - 1));
             let names = process_names();
             assert!(!names.is_empty());
+        }
+
+        #[test]
+        fn sigterm_is_noted_and_the_process_goes_on() {
+            defer_sigterm();
+            unsafe {
+                libc::raise(libc::SIGTERM);
+            }
+            assert!(terminated());
         }
     }
 }
