@@ -6,9 +6,10 @@
 //! `games/fe/snapshots/01J….zip`. They never start or end with `/`.
 
 use anyhow::{bail, Result};
+use chrono::{DateTime, Utc};
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {
     /// File or folder name (last path segment).
     pub name: String,
@@ -16,6 +17,19 @@ pub struct Entry {
     pub size: u64,
     /// Changes whenever the content changes (ETag, or mtime + size).
     pub tag: String,
+    /// When the file was last written, by the cloud's clock, as its listing
+    /// says (no request of its own). `None` when the backend's listing
+    /// doesn't say: S3's folders, a WebDAV server that leaves it out.
+    pub modified: Option<DateTime<Utc>>,
+}
+
+impl Entry {
+    /// Whether the listing shows the file written less than `within` ago.
+    /// `false` when its time is not known. A time ahead of this device's
+    /// clock counts as recent.
+    pub fn written_within(&self, within: chrono::Duration, now: DateTime<Utc>) -> bool {
+        self.modified.is_some_and(|t| now - t < within)
+    }
 }
 
 pub trait Store: Send + Sync {
@@ -77,4 +91,22 @@ pub fn check_path(path: &str) -> Result<()> {
 /// Name of the temporary file used while uploading `path`.
 pub fn temp_name(path: &str) -> String {
     format!("{path}.lntmp")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn written_within_goes_by_the_listing_time() {
+        let now = DateTime::parse_from_rfc3339("2026-11-27T12:00:00Z").unwrap().with_timezone(&Utc);
+        let at = |h: i64| Entry { name: "x".into(), modified: Some(now - chrono::Duration::hours(h)), ..Default::default() };
+        let day = chrono::Duration::hours(24);
+        assert!(at(1).written_within(day, now));
+        assert!(!at(25).written_within(day, now));
+        // Ahead of this device's clock: recent.
+        assert!(at(-3).written_within(day, now));
+        // Not known: not recent.
+        assert!(!Entry::default().written_within(day, now));
+    }
 }

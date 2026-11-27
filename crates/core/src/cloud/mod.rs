@@ -41,6 +41,7 @@ pub mod packs;
 pub mod quark;
 pub mod repo;
 pub mod retention;
+pub mod retry;
 pub mod s3;
 pub mod saves;
 pub mod secrets;

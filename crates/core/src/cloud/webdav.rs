@@ -6,13 +6,21 @@
 //! `GET`, `MOVE` and `DELETE`, with Basic authentication. Uploads go to a
 //! temporary name and are moved into place, so a half-uploaded file is never
 //! visible under its real name. Servers that refuse `MOVE` get a direct `PUT`.
+//!
+//! A server that answers busy or failing (429, 5xx) is asked again after a
+//! short wait ([`retry::send`]) for `PROPFIND`, `GET`, `PUT` (a whole file:
+//! a second one stores the same) and `DELETE` (a missing file is no error).
+//! Never for `MKCOL` or `MOVE`: when the answer to one that went through is
+//! lost, the second one fails, or moves away what is there by then.
 
+use super::retry;
 use super::store::{check_path, is_safe_name, temp_name, Entry, Store};
 use super::Unavailable;
 use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
+use chrono::{DateTime, Utc};
 use std::collections::HashSet;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -50,6 +58,8 @@ pub struct WebDav {
     known_dirs: Mutex<HashSet<String>>,
     /// Upload to a temporary name and rename it (see [`WebDav::direct_uploads`]).
     atomic: bool,
+    /// Ask a busy server again (see [`WebDav::without_retries`]).
+    retries: bool,
 }
 
 /// One `<response>` of a multistatus document.
@@ -60,6 +70,7 @@ pub struct DavItem {
     pub is_dir: bool,
     pub size: u64,
     pub etag: String,
+    /// `getlastmodified` as the server wrote it ([`http_time`] reads it).
     pub modified: String,
     pub quota_used: Option<u64>,
     pub quota_available: Option<u64>,
@@ -70,12 +81,26 @@ enum Body<'a> {
     File(&'a Path),
 }
 
+/// What one `PUT` sends: the bytes, or the opened file and its length.
+enum Payload<'a> {
+    Bytes(&'a [u8]),
+    File(std::fs::File, u64),
+}
+
 fn decode(s: &str) -> String {
     percent_encoding::percent_decode_str(s).decode_utf8_lossy().into_owned()
 }
 
 fn segments(path: &str) -> impl Iterator<Item = &str> {
     path.split('/').filter(|s| !s.is_empty())
+}
+
+/// A `getlastmodified` value: an HTTP date (`Fri, 27 Nov 2026 10:00:00
+/// GMT`), or the ISO 8601 a few servers write instead. `None` when it is
+/// missing or neither.
+pub fn http_time(s: &str) -> Option<DateTime<Utc>> {
+    let s = s.trim();
+    DateTime::parse_from_rfc2822(s).or_else(|_| DateTime::parse_from_rfc3339(s)).ok().map(|t| t.with_timezone(&Utc))
 }
 
 /// Parse a `207 Multi-Status` body.
@@ -199,6 +224,7 @@ impl WebDav {
             bulk: ureq::AgentBuilder::new().timeout_connect(timeout).timeout_read(Duration::from_secs(300)).timeout_write(Duration::from_secs(300)).build(),
             known_dirs: Mutex::new(HashSet::new()),
             atomic: true,
+            retries: true,
         })
     }
 
@@ -208,6 +234,14 @@ impl WebDav {
     /// upload has finished), where the extra rename is slow.
     pub fn direct_uploads(mut self) -> Self {
         self.atomic = false;
+        self
+    }
+
+    /// Send every request once, also when the server answers busy. For a
+    /// store that decides itself when to try again: Quark through OpenList,
+    /// which answers 5xx when Quark can't be reached.
+    pub fn without_retries(mut self) -> Self {
+        self.retries = false;
         self
     }
 
@@ -235,10 +269,30 @@ impl WebDav {
         agent.request_url(method, url).set("Authorization", &self.auth)
     }
 
-    fn propfind(&self, url: &Url, depth: &str, body: &str) -> Result<Option<Vec<DavItem>>> {
+    /// Send a request once. `send` builds and sends it.
+    fn once(&self, method: &str, url: &Url, send: impl FnOnce() -> Result<ureq::Response, ureq::Error>) -> Result<ureq::Response, ureq::Error> {
         let t = Instant::now();
-        let res = self.req(&self.agent, "PROPFIND", url).set("Depth", depth).set("Content-Type", "application/xml; charset=utf-8").send_string(body);
-        trace("PROPFIND", url, t, &res);
+        let res = send();
+        trace(method, url, t, &res);
+        res
+    }
+
+    /// Send a request that does the same when it arrives twice, and again
+    /// while the server answers busy ([`retry::send`]). `send` builds and
+    /// sends the whole request each time.
+    fn idempotent(&self, method: &str, url: &Url, mut send: impl FnMut() -> Result<ureq::Response, ureq::Error>) -> Result<ureq::Response, ureq::Error> {
+        let mut try_once = || self.once(method, url, &mut send);
+        if self.retries {
+            retry::send(&format!("WebDAV {method} {}", url.path()), try_once)
+        } else {
+            try_once()
+        }
+    }
+
+    fn propfind(&self, url: &Url, depth: &str, body: &str) -> Result<Option<Vec<DavItem>>> {
+        let res = self.idempotent("PROPFIND", url, || {
+            self.req(&self.agent, "PROPFIND", url).set("Depth", depth).set("Content-Type", "application/xml; charset=utf-8").send_string(body)
+        });
         match res {
             Ok(r) => Ok(Some(parse_multistatus(&r.into_string()?)?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
@@ -247,10 +301,9 @@ impl WebDav {
     }
 
     fn mkcol(&self, url: &Url) -> Result<()> {
-        let t = Instant::now();
-        let res = self.req(&self.agent, "MKCOL", url).call();
-        trace("MKCOL", url, t, &res);
-        match res {
+        // Once: a second MKCOL after a lost answer finds the folder there,
+        // which not every server answers with a status taken as fine here.
+        match self.once("MKCOL", url, || self.req(&self.agent, "MKCOL", url).call()) {
             Ok(_) => Ok(()),
             // 405: already exists. Some servers answer 301 (redirect to the
             // existing folder) or 409 when it exists as well.
@@ -323,18 +376,30 @@ impl WebDav {
         }
         let mut created = false;
         loop {
-            let t = Instant::now();
-            let res = match body {
-                Body::Bytes(b) => self.req(&self.bulk, "PUT", &url).set("Content-Type", "application/octet-stream").send_bytes(b),
+            let payload = match body {
+                Body::Bytes(b) => Payload::Bytes(b),
                 Body::File(p) => {
                     let f = std::fs::File::open(p).with_context(|| crate::tr!("无法读取 {}", "Can't read {}", p.display()))?;
                     let len = f.metadata()?.len();
-                    // An explicit length avoids chunked uploads, which some
-                    // WebDAV servers reject.
-                    self.req(&self.bulk, "PUT", &url).set("Content-Type", "application/octet-stream").set("Content-Length", &len.to_string()).send(f)
+                    Payload::File(f, len)
                 }
             };
-            trace("PUT", &url, t, &res);
+            let res = self.idempotent("PUT", &url, || {
+                let req = self.req(&self.bulk, "PUT", &url).set("Content-Type", "application/octet-stream");
+                match &payload {
+                    Payload::Bytes(b) => req.send_bytes(b),
+                    Payload::File(f, len) => {
+                        // Each try sends the file from its start. One that
+                        // can't be wound back would arrive short, and the
+                        // length makes the server turn it down.
+                        let mut f = f;
+                        let _ = f.rewind();
+                        // An explicit length avoids chunked uploads, which
+                        // some WebDAV servers reject.
+                        req.set("Content-Length", &len.to_string()).send(f)
+                    }
+                }
+            });
             match res {
                 Ok(_) => return Ok(()),
                 Err(ureq::Error::Status(404 | 409, _)) if !created => {
@@ -348,10 +413,10 @@ impl WebDav {
 
     /// `Ok(false)` when the server does not support moving files.
     fn rename(&self, from: &str, to: &str) -> Result<bool> {
-        let t = Instant::now();
         let url = self.url(from, false);
-        let res = self.req(&self.agent, "MOVE", &url).set("Destination", self.url(to, false).as_str()).set("Overwrite", "T").call();
-        trace("MOVE", &url, t, &res);
+        // Once: after a lost answer the file is already moved, and a second
+        // MOVE fails or moves away what is in its place by then.
+        let res = self.once("MOVE", &url, || self.req(&self.agent, "MOVE", &url).set("Destination", self.url(to, false).as_str()).set("Overwrite", "T").call());
         match res {
             Ok(_) => Ok(true),
             Err(ureq::Error::Status(403 | 405 | 501 | 502, _)) => Ok(false),
@@ -379,11 +444,8 @@ impl WebDav {
     }
 
     fn get(&self, agent: &ureq::Agent, path: &str) -> Result<Option<ureq::Response>> {
-        let t = Instant::now();
         let url = self.url(path, false);
-        let res = self.req(agent, "GET", &url).call();
-        trace("GET", &url, t, &res);
-        match res {
+        match self.idempotent("GET", &url, || self.req(agent, "GET", &url).call()) {
             Ok(r) => Ok(Some(r)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
             Err(e) => Err(fail(e)),
@@ -431,6 +493,7 @@ impl Store for WebDav {
                 // (`..`, a `\`) is no file of ours.
                 is_safe_name(&name).then(|| Entry {
                     tag: if i.etag.is_empty() { format!("{}|{}", i.modified, i.size) } else { i.etag.clone() },
+                    modified: http_time(&i.modified),
                     name,
                     is_dir: i.is_dir,
                     size: i.size,
@@ -470,11 +533,8 @@ impl Store for WebDav {
 
     fn remove(&self, path: &str) -> Result<()> {
         check_path(path)?;
-        let t = Instant::now();
         let url = self.url(path, false);
-        let res = self.req(&self.agent, "DELETE", &url).call();
-        trace("DELETE", &url, t, &res);
-        match res {
+        match self.idempotent("DELETE", &url, || self.req(&self.agent, "DELETE", &url).call()) {
             Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
             Err(e) => Err(fail(e)),
         }
@@ -514,6 +574,21 @@ mod tests {
         assert_eq!(items[1].etag, "\"abc\"");
         assert!(!items[1].is_dir);
         assert_eq!(items[1].quota_used, None);
+    }
+
+    #[test]
+    fn reads_the_time_a_listing_gives() {
+        let at = DateTime::parse_from_rfc3339("2026-11-27T10:00:05Z").unwrap().with_timezone(&Utc);
+        assert_eq!(http_time("Fri, 27 Nov 2026 10:00:05 GMT"), Some(at));
+        assert_eq!(http_time(" Fri, 27 Nov 2026 11:00:05 +0100 "), Some(at));
+        assert_eq!(http_time("2026-11-27T10:00:05Z"), Some(at));
+        assert_eq!(http_time(""), None);
+        assert_eq!(http_time("yesterday"), None);
+
+        let xml = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/a.zip</d:href><d:propstat>
+            <d:prop><d:getlastmodified>Fri, 27 Nov 2026 10:00:05 GMT</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status>
+            </d:propstat></d:response></d:multistatus>"#;
+        assert_eq!(http_time(&parse_multistatus(xml).unwrap()[0].modified), Some(at));
     }
 
     #[test]

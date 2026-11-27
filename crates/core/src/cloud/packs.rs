@@ -1008,7 +1008,7 @@ mod tests {
     }
 
     fn zip_entry(name: &str) -> Entry {
-        Entry { name: name.into(), is_dir: false, size: 10, tag: "1".into() }
+        Entry { name: name.into(), is_dir: false, size: 10, tag: "1".into(), modified: None }
     }
 
     #[test]
@@ -1024,7 +1024,7 @@ mod tests {
         listing.push(zip_entry(&format!("{}.zip.lntmp", id(24 * 30, 7))));
         listing.push(zip_entry(&format!("{}-merged.zip", id(24 * 30, 8))));
         listing.push(zip_entry("compacted.zip"));
-        listing.push(Entry { name: format!("{}.zip", id(24 * 30, 9)), is_dir: true, size: 0, tag: String::new() });
+        listing.push(Entry { name: format!("{}.zip", id(24 * 30, 9)), is_dir: true, size: 0, tag: String::new(), modified: None });
 
         let used: BTreeSet<String> = [used_old.clone(), used_part.clone()].into();
         let mut expect = vec![orphan_old.clone(), orphan_part.clone()];

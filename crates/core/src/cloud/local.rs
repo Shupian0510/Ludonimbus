@@ -145,8 +145,15 @@ impl Store for LocalFolder {
                 Err(err) if err.kind() == ErrorKind::NotFound => continue,
                 Err(err) => return Err(failed(err)),
             };
-            let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
-            out.push(Entry { name, is_dir: md.is_dir(), size: md.len(), tag: format!("{mtime}-{}", md.len()) });
+            let modified = md.modified().ok();
+            let mtime = modified.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos()).unwrap_or(0);
+            out.push(Entry {
+                name,
+                is_dir: md.is_dir(),
+                size: md.len(),
+                tag: format!("{mtime}-{}", md.len()),
+                modified: modified.map(chrono::DateTime::<chrono::Utc>::from),
+            });
         }
         Ok(out)
     }
@@ -191,5 +198,22 @@ impl Store for LocalFolder {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             Err(e) => Err(anyhow!(e).context(crate::tr!("无法删除 {path}", "Can't delete {path}"))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_listing_says_when_files_were_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = LocalFolder::new(tmp.path().to_path_buf());
+        store.write("d/x.json", b"x").unwrap();
+        let back = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
+        std::fs::File::options().write(true).open(tmp.path().join("d/x.json")).unwrap().set_modified(back).unwrap();
+        let listed = store.list("d").unwrap();
+        let off = listed[0].modified.unwrap() - chrono::DateTime::<chrono::Utc>::from(back);
+        assert!(off.num_milliseconds().abs() < 1000, "{listed:?}");
     }
 }

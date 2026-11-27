@@ -20,6 +20,7 @@
 //! in it needs neither.
 
 use super::oauth::{self, describe, GoogleClient};
+use super::retry::{busy_status, retry_wait};
 use super::store::{Entry, Store};
 use super::Unavailable;
 use crate::{paths, util};
@@ -44,36 +45,6 @@ const FILE_FIELDS: &str = "id,name,size,mimeType,md5Checksum,createdTime,modifie
 const SIMPLE_UPLOAD_MAX: usize = 5 * 1024 * 1024;
 /// What a create or an update asks Drive to answer with.
 const WRITTEN_FIELDS: &str = "id,trashed";
-
-/// How many more times a request turned away for the moment is sent.
-const RETRIES: u32 = 2;
-/// The longest wait before sending a request again. A server that asks for
-/// longer is not kept waiting on: the error goes up, and the sync that made
-/// the request tries again later.
-const LONGEST_WAIT: Duration = Duration::from_secs(10);
-
-/// How long to wait before sending a request again after try number
-/// `attempt` (from 0) was turned away for the moment: what the server's
-/// `Retry-After` asks for (seconds or a date), else 1 s and then 2 s. `None`
-/// when it is not sent again: the tries are used up, or the server asks for
-/// longer than [`LONGEST_WAIT`]. Shared with Baidu Netdisk.
-pub(super) fn retry_wait(attempt: u32, retry_after: Option<&str>, now: DateTime<Utc>) -> Option<Duration> {
-    if attempt >= RETRIES {
-        return None;
-    }
-    let asked = retry_after.map(str::trim).and_then(|v| match v.parse::<u64>() {
-        Ok(secs) => Some(Duration::from_secs(secs)),
-        Err(_) => DateTime::parse_from_rfc2822(v).ok().map(|at| (at.with_timezone(&Utc) - now).to_std().unwrap_or_default()),
-    });
-    let wait = asked.unwrap_or(Duration::from_secs(1 << attempt));
-    (wait <= LONGEST_WAIT).then_some(wait)
-}
-
-/// HTTP statuses that turn a request away for the moment: too many requests,
-/// or a server failing. Shared with Baidu Netdisk.
-pub(super) fn busy_status(code: u16) -> bool {
-    matches!(code, 429 | 500 | 502 | 503 | 504)
-}
 
 /// Whether Drive turned a request away for the moment. Drive also says
 /// "too many requests" with a 403 and a rate-limit reason; the daily limit
@@ -1093,7 +1064,7 @@ impl Store for GoogleDrive {
             }
             memo.listed(&folder, ids_by_name(&files), asked);
         }
-        Ok(one_per_name(files).into_iter().map(|f| Entry { name: f.name, is_dir: f.is_folder, size: f.size, tag: f.tag }).collect())
+        Ok(one_per_name(files).into_iter().map(|f| Entry { name: f.name, is_dir: f.is_folder, size: f.size, tag: f.tag, modified: f.modified }).collect())
     }
 
     fn read(&self, path: &str) -> Result<Option<Vec<u8>>> {
@@ -1426,23 +1397,9 @@ mod tests {
         assert_eq!(renewals(), 3);
     }
 
+    /// How long to wait is tested in `cloud/retry.rs`.
     #[test]
-    fn a_request_turned_away_for_the_moment_waits_as_asked() {
-        let now = time(&json!("2026-11-27T10:00:00.000Z")).unwrap();
-        assert_eq!(retry_wait(0, None, now), Some(secs(1)));
-        assert_eq!(retry_wait(1, None, now), Some(secs(2)));
-        assert_eq!(retry_wait(2, None, now), None);
-        assert_eq!(retry_wait(0, Some("3"), now), Some(secs(3)));
-        assert_eq!(retry_wait(1, Some(" 0 "), now), Some(secs(0)));
-        assert_eq!(retry_wait(2, Some("0"), now), None);
-        // Longer than is worth waiting for here: the sync tries later.
-        assert_eq!(retry_wait(0, Some("120"), now), None);
-        // A date, also one already past; something unreadable is the usual wait.
-        assert_eq!(retry_wait(0, Some("Fri, 27 Nov 2026 10:00:05 GMT"), now), Some(secs(5)));
-        assert_eq!(retry_wait(0, Some("Fri, 27 Nov 2026 09:59:00 GMT"), now), Some(secs(0)));
-        assert_eq!(retry_wait(0, Some("Fri, 27 Nov 2026 11:00:00 GMT"), now), None);
-        assert_eq!(retry_wait(0, Some("soon"), now), Some(secs(1)));
-
+    fn what_drive_turns_away_for_the_moment() {
         assert!(busy(429, ""));
         assert!(busy(503, "<html>"));
         assert!(busy(500, ""));
