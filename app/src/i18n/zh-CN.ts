@@ -262,7 +262,7 @@ export const handheld = {
   device: (name: string) => `本机：${name}`,
   promptsTitle: "启动游戏时的提示",
   promptsText: "掌机上，存档冲突之类的提示用全屏窗口显示，可以用手柄选择。",
-  modes: { auto: "自动（从 Steam 大屏幕 / 游戏模式启动时）", on: "总是全屏", off: "总是用系统对话框" },
+  modes: { auto: "自动（Steam 大屏幕 / 游戏模式、Xbox 全屏体验里）", on: "总是全屏", off: "总是用系统对话框" },
   steamTitle: "从 Steam 游戏库打开 Ludonimbus",
   steamIn: "已经在 Steam 游戏库里",
   steamNot: "还不在 Steam 游戏库里",
@@ -274,8 +274,10 @@ export const handheld = {
   quit: "关闭 Ludonimbus 掌机界面",
   promptHint: "用手柄按对应的键，或者用方向键选择后按 A",
   panelTitle: "掌机",
-  panelText: "在 ROG Ally、Legion Go、Steam Deck 这类掌机上：游戏启动时的提示用全屏窗口显示，可以从 Steam 游戏库打开 Ludonimbus 的手柄界面。",
-  detected: (name: string) => `这台设备是 ${name}。游戏启动时的提示可以用全屏窗口显示，Ludonimbus 的手柄界面可以从 Steam 游戏库打开。`,
+  panelText:
+    "在 ROG Ally、Legion Go、Steam Deck 这类掌机上：游戏启动时的提示用全屏窗口显示，可以从 Steam 游戏库打开 Ludonimbus 的手柄界面。在 Xbox 全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 时直接进手柄界面（「总是用系统对话框」时不会）。",
+  detected: (name: string) =>
+    `这台设备是 ${name}。游戏启动时的提示可以用全屏窗口显示，Ludonimbus 的手柄界面可以从 Steam 游戏库打开。在 Xbox 全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 时直接进手柄界面；接上显示器在桌面上用时照常是桌面界面。`,
   steamUpdate: "重新添加",
   xboxHow: "Xbox 应用里也可以添加：「我的游戏库」→「添加游戏」→ 选 Ludonimbus 安装文件夹里的 ludonimbus-app.exe，启动参数填 --handheld。从 Xbox 应用启动的游戏不经过 Steam，存档要从 Steam 启动才会自动同步。",
   enter: "进入手柄界面",
@@ -1109,6 +1111,8 @@ export const onboarding = {
     no: "不是，或者以后再说",
     yesText: "已打开全屏提示。再把 Ludonimbus 加到 Steam 游戏库：",
     autostart: "让 Ludonimbus 在 Xbox 模式里也开机启动：Windows「设置 → 应用 → 启动」里打开 Ludonimbus。没有它也照样同步存档（从 Steam 启动游戏时由启动包装器同步）。",
+    fse: "Xbox 全屏体验正开着。",
+    bigPicture: "Ludonimbus 是从 Steam 大屏幕模式打开的。",
   },
   done: {
     title: "设置完成",

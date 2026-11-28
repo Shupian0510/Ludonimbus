@@ -61,6 +61,10 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_Threading",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_Storage_FileSystem",
+  # Whether the Xbox full screen experience is on, and handing the
+  # foreground to the launch wrapper's question window (handheld.rs, prompt.rs).
+  "Win32_System_LibraryLoader",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

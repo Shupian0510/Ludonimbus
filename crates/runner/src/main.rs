@@ -120,7 +120,7 @@ fn parse_args(args: &[String]) -> Result<(String, Option<Vec<String>>)> {
 fn windowed() -> bool {
     match config::load() {
         Ok(cfg) => handheld::wants_prompt_window(&cfg),
-        Err(_) => handheld::steam_gamepad_ui(),
+        Err(_) => handheld::controller_shell(),
     }
 }
 

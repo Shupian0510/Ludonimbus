@@ -4,7 +4,7 @@
 // back, X and Y (and LB / RB) do what the current screen says. Works with
 // the Gamepad API (WebView2) and with keys (Steam Input's desktop layout
 // turns the controller into a keyboard).
-import { createContext, ReactNode, useContext, useEffect, useRef } from "react";
+import { createContext, ReactNode, useContext, useEffect, useRef, useSyncExternalStore } from "react";
 
 export type Button = "a" | "b" | "x" | "y" | "lb" | "rb";
 export type Handlers = Partial<Record<Exclude<Button, "a">, () => void>>;
@@ -149,6 +149,7 @@ export function NavRoot({ children }: { children: ReactNode }) {
       const down = new Set<Button | Dir>();
       for (const p of pads) {
         if (!p) continue;
+        if (p.buttons.some((btn) => btn.pressed)) setLayout(layoutOf(p.id));
         p.buttons.forEach((btn, i) => btn.pressed && PAD[i] && down.add(PAD[i]));
         const [ax = 0, ay = 0] = p.axes;
         if (ax < -0.6) down.add("left");
@@ -181,9 +182,50 @@ export function NavRoot({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={value.current}>{children}</Ctx.Provider>;
 }
 
-/** The controller button glyphs (Xbox layout colours). */
+/**
+ * Whose button names to show, by the controller last used: Xbox (also the
+ * built-in controls of Windows handhelds and Steam Input), PlayStation or
+ * Nintendo. The buttons are the same places either way ("a" is the bottom
+ * one), only their names differ.
+ */
+type Layout = "xbox" | "playstation" | "nintendo";
+let layout: Layout = "xbox";
+const layoutListeners = new Set<() => void>();
+
+/** The Gamepad API's id: "… (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)" on Windows, "054c-0ce6-…" on Linux. */
+function layoutOf(id: string): Layout {
+  const s = id.toLowerCase();
+  if (/vendor: 054c|^054c-|dualsense|dualshock|playstation/.test(s)) return "playstation";
+  if (/vendor: 057e|^057e-|pro controller|joy-con/.test(s)) return "nintendo";
+  return "xbox";
+}
+
+function useLayout(): Layout {
+  return useSyncExternalStore(
+    (f) => {
+      layoutListeners.add(f);
+      return () => layoutListeners.delete(f);
+    },
+    () => layout,
+  );
+}
+
+function setLayout(l: Layout) {
+  if (l === layout) return;
+  layout = l;
+  layoutListeners.forEach((f) => f());
+}
+
+const GLYPHS: Record<Layout, Record<Button, string>> = {
+  xbox: { a: "A", b: "B", x: "X", y: "Y", lb: "LB", rb: "RB" },
+  playstation: { a: "✕", b: "○", x: "□", y: "△", lb: "L1", rb: "R1" },
+  nintendo: { a: "B", b: "A", x: "Y", y: "X", lb: "L", rb: "R" },
+};
+
+/** A controller button's glyph, named as on the controller in use. */
 export function Glyph({ b }: { b: Button }) {
-  return <span className={`hh-glyph hh-glyph-${b}`}>{b === "lb" ? "LB" : b === "rb" ? "RB" : b.toUpperCase()}</span>;
+  const l = useLayout();
+  return <span className={`hh-glyph hh-glyph-${b}${l === "xbox" ? "" : ` hh-glyph-${l}`}`}>{GLYPHS[l][b]}</span>;
 }
 
 /** The bottom bar: what each button does on this screen. */

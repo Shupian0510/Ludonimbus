@@ -120,7 +120,20 @@ pub fn open_window(req: &Request) -> Result<Window> {
             return Err(e);
         }
     };
+    allow_foreground(child.id());
     Ok(Window { child, file, cancel: req.cancel_id().map(str::to_string), done: false })
+}
+
+/// Let the question window come to the front. Windows keeps a program in
+/// the background from taking the foreground (strictly so in the Xbox full
+/// screen experience); the wrapper, started by Steam as the player starts
+/// a game, may, and passes that on. Nothing happens when it may not.
+fn allow_foreground(_pid: u32) {
+    #[cfg(windows)]
+    // SAFETY: takes a process id and touches no memory of ours.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(_pid);
+    }
 }
 
 /// A question showing in its own window ([`open_window`]).

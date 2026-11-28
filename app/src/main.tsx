@@ -1,17 +1,28 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { api, LaunchInfo } from "./api";
+import { api, LaunchInfo, PromptRequest } from "./api";
 import App from "./App";
 import { AchievementToast } from "./components/Achievements";
 import { UiProvider } from "./components/ui";
 import { Handheld } from "./handheld/Handheld";
 import { Prompt } from "./handheld/Prompt";
 import { asPref, I18nProvider, LangPref } from "./i18n";
+import { useTauriEvent } from "./useTauriEvent";
 import "./styles.css";
+
+/** The handheld view and the launch questions are zoomed to the screen (handheld.rs). */
+function useHandheldZoom(on: boolean) {
+  useEffect(() => {
+    api.handheldZoom(on).catch(() => undefined);
+  }, [on]);
+}
 
 /** The desktop view or the handheld view (the window can switch between them). */
 function Shell({ start }: { start: "desktop" | "handheld" }) {
   const [view, setView] = useState(start);
+  useHandheldZoom(view === "handheld");
+  // Opened again from the Xbox full screen experience or Steam Big Picture.
+  useTauriEvent("show-handheld", () => setView("handheld"));
   if (view === "handheld") return <Handheld onDesktop={() => setView("desktop")} />;
   return (
     <App
@@ -23,11 +34,16 @@ function Shell({ start }: { start: "desktop" | "handheld" }) {
   );
 }
 
+function Question({ request }: { request: PromptRequest }) {
+  useHandheldZoom(true);
+  return <Prompt request={request} />;
+}
+
 function render(lang: LangPref, launch: LaunchInfo) {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <I18nProvider initial={lang}>
-        <UiProvider>{launch.mode === "prompt" && launch.prompt ? <Prompt request={launch.prompt} /> : <Shell start={launch.mode === "handheld" ? "handheld" : "desktop"} />}</UiProvider>
+        <UiProvider>{launch.mode === "prompt" && launch.prompt ? <Question request={launch.prompt} /> : <Shell start={launch.mode === "handheld" ? "handheld" : "desktop"} />}</UiProvider>
       </I18nProvider>
     </React.StrictMode>,
   );

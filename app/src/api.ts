@@ -243,6 +243,7 @@ export const api = {
   promptAnswer: (choice: string | null) => invoke<void>("prompt_answer", { choice }),
   setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
   quitHandheld: () => invoke<void>("quit_handheld"),
+  handheldZoom: (on: boolean) => invoke<void>("handheld_zoom", { on }),
   handheldInfo: () => invoke<HandheldInfo>("handheld_info"),
   setHandheldMode: (mode: HandheldMode) => invoke<void>("set_handheld_mode", { mode }),
   steamAddLudonimbus: (account: string, closeSteam: boolean) => invoke<number>("steam_add_ludonimbus", { account, closeSteam }),
