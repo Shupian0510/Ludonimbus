@@ -2,7 +2,9 @@ name: Linux package
 
 # Builds the Linux download (AppImage, launch wrapper, background service,
 # install script) and the Decky plugin. ci.yml calls it for development
-# builds and release.yml for releases, so both are built the same way.
+# builds and release.yml for releases, so both are built the same way. The
+# .deb goes along in the artifact for the Flatpak (ci.yml, linux-flatpak);
+# releases don't publish it.
 on:
   workflow_call:
     inputs:
@@ -62,7 +64,7 @@ jobs:
           cargo build --locked --release -p ludonimbus-agent
           cd app
           npm ci
-          npx tauri build --bundles appimage
+          npx tauri build --bundles appimage,deb
       - name: Pack the Linux download
         run: |
           out=Ludonimbus-linux-x86_64
@@ -88,4 +90,5 @@ jobs:
           path: |
             Ludonimbus-linux-x86_64.tar.gz
             Ludonimbus-decky.zip
+            target/release/bundle/deb/*.deb
           retention-days: ${{ inputs.retention-days }}

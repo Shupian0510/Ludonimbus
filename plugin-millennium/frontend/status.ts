@@ -10,6 +10,7 @@ export type Status =
 	| 'localChanged'
 	| 'cloudNewer'
 	| 'canRestore'
+	| 'savesMissing'
 	| 'conflict'
 	| 'offline'
 	| 'error';
@@ -40,6 +41,8 @@ export interface GameStatus {
 	store?: StoreState | null;
 	/** API 4: what is left to do in the background after playing. */
 	backlog?: Backlog | null;
+	/** API 6: syncing is paused on this device. */
+	paused?: boolean;
 }
 
 /** Steam Cloud keeps the saves / Ludonimbus stores versions of them / Ludonimbus keeps them. */
@@ -247,6 +250,8 @@ const TEXTS = {
 		notUploaded: '存档尚未上传',
 		cloudNewer: (device: string | null) => (device ? `云端有更新的存档（${device}）` : '云端有更新的存档'),
 		canRestore: '本机没有存档，可从云端恢复',
+		savesMissing: '本机存档不见了，云端还有',
+		paused: '同步已暂停',
 		conflict: '存档冲突，点击选择保留哪一份',
 		offline: (pending: number) => (pending > 0 ? `云端无法访问，${pending} 个版本待上传` : '云端暂时无法访问'),
 		noCloud: '还没有连接网盘',
@@ -336,6 +341,8 @@ const TEXTS = {
 		notUploaded: 'Saves not uploaded yet',
 		cloudNewer: (device: string | null) => (device ? `Newer saves in the cloud (${device})` : 'Newer saves in the cloud'),
 		canRestore: 'No saves on this PC; can restore from the cloud',
+		savesMissing: 'Saves missing here; the cloud still has them',
+		paused: 'Syncing is paused',
 		conflict: 'Save conflict; click to choose which to keep',
 		offline: (pending: number) =>
 			pending > 0 ? `Cloud unreachable; ${pending} ${pl(pending, 'version', 'versions')} waiting` : "The cloud can't be reached right now",
@@ -474,6 +481,11 @@ export function describe(reply: Reply | null, appId: string): View | null {
 			return { ...base, text: g.autoSync ? m.playingAuto : m.playing, tone: 'muted' };
 	}
 
+	// Paused on this device (API 6): nothing goes up or comes down.
+	if (g.paused) {
+		return { ...base, text: m.paused, tone: 'muted' };
+	}
+
 	// Played, and the cloud doesn't have it yet: in the background.
 	if (g.backlog?.state === 'uploading') {
 		return { ...base, text: m.backlogUploading(size(g.backlog)), tone: 'info', busy: true };
@@ -504,6 +516,8 @@ export function describe(reply: Reply | null, appId: string): View | null {
 			return { ...base, text: m.cloudNewer(g.cloudHead?.deviceName ?? null), tone: 'info', canSync };
 		case 'canRestore':
 			return { ...base, text: m.canRestore, tone: 'info', canSync };
+		case 'savesMissing':
+			return { ...base, text: m.savesMissing, tone: 'warn', canSync };
 		case 'conflict':
 			return { ...base, text: m.conflict, tone: 'warn' };
 		case 'offline':

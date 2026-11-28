@@ -38,10 +38,19 @@
 //! POST /v1/steam/plugin/done/{id}?ok=&error=&<report>     its answer, with what Steam says now (API 5)
 //! POST /v1/steam/apps/{appid}/report?session=&account=&<report>   what Steam says about a game, on its own (API 5)
 //! POST /v1/games/{key}/steam-cloud/take-over              hand a backed-up Steam game to Ludonimbus through the plugin (API 5)
+//! GET  /v1/games[?refresh=1]                              every game of the library with its status, and the pause (API 6)
+//! GET  /v1/games/{key}/status[?refresh=1]                 a game's status by its key, as for a Steam shortcut (API 6)
+//! POST /v1/games/{key}/keep[?comment=]                    keep the saves as they are now (「保留这一份」, API 6)
+//! POST /v1/sync-all                                       upload what changed in every game, writing nothing into saves (API 6)
+//! GET  /v1/sync/pause                                     whether syncing is paused on this device (API 6)
+//! POST /v1/sync/pause | /v1/sync/resume                   pause syncing, or go on (API 6, see [`crate::pause`])
+//! GET  /v1/changes?after={seq}&wait={secs}                wait until something a panel shows changed (API 6, see [`changes`])
+//! GET  /v1/games/{key}/art/{kind}                         the game's cover, wide capsule, hero, logo or icon as a data URL (API 6)
 //! ```
 //!
 //! The answers are described in docs/steam-plugin.md.
 
+pub mod changes;
 pub mod events;
 mod http;
 pub mod plugin;
@@ -68,7 +77,10 @@ use std::time::{Duration, Instant};
 /// 5 (1.0.0): the plugins as Steam's hands: Steam Cloud switches and launch
 /// options of games Steam installed ([`plugin`]); handing a game to
 /// Ludonimbus from inside Steam.
-pub const API_VERSION: u32 = 5;
+/// 6 (1.0.0): the Steam Deck's panel: every game of the library, keeping a
+/// save, syncing everything, pausing, waiting for changes ([`changes`]),
+/// artwork; the status `savesMissing` and `paused`.
+pub const API_VERSION: u32 = 6;
 
 fn log(msg: impl AsRef<str>) {
     logger::log("agent", msg);
@@ -106,6 +118,17 @@ pub trait Host: Send + Sync + 'static {
     /// started any other way.
     fn game_running(&self, g: &GameEntry) -> bool {
         catchup::wrapper(&g.key) == catchup::Wrapper::Running || process::is_running(&catchup::watch_names(g))
+    }
+
+    /// Which of `games` are being played: [`Host::game_running`] for each,
+    /// with one look at the processes for all of them.
+    fn games_running(&self, games: &[GameEntry]) -> HashSet<String> {
+        let procs = process::process_names();
+        games
+            .iter()
+            .filter(|g| catchup::wrapper(&g.key) == catchup::Wrapper::Running || catchup::watch_names(g).iter().any(|n| procs.contains(&n.to_lowercase())))
+            .map(|g| g.key.clone())
+            .collect()
     }
 
     /// A sync, restore or apply the API started has ended (the game is still
@@ -169,6 +192,10 @@ pub struct AgentInfo {
     /// Written by `ludonimbus-agent`, which has no window.
     #[serde(default)]
     pub headless: bool,
+    /// Written inside the Flatpak sandbox, whose process numbers aren't the
+    /// ones outside it ([`live_owner`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flatpak: bool,
 }
 
 pub fn agent_file() -> PathBuf {
@@ -179,9 +206,29 @@ pub fn read_agent_file() -> Option<AgentInfo> {
     serde_json::from_slice(&std::fs::read(agent_file()).ok()?).ok()
 }
 
-/// The process that wrote `agent.json`, when it still runs.
+/// The process that wrote `agent.json`, when it still runs. Inside and
+/// outside the Flatpak sandbox process numbers differ, so a file written on
+/// the other side counts while its port answers.
 pub fn live_owner() -> Option<u32> {
-    read_agent_file().map(|i| i.pid).filter(|&pid| process::pid_alive(pid))
+    let info = read_agent_file()?;
+    if info.flatpak != paths::in_flatpak() {
+        return answers(info.port).then_some(info.pid);
+    }
+    process::pid_alive(info.pid).then_some(info.pid)
+}
+
+/// Whether a local API answers on this port (any answer: without the token
+/// it is 401).
+fn answers(port: u16) -> bool {
+    use std::io::{Read, Write};
+    let Ok(mut tcp) = TcpStream::connect_timeout(&(std::net::Ipv4Addr::LOCALHOST, port).into(), Duration::from_millis(500)) else { return false };
+    let _ = tcp.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = tcp.set_write_timeout(Some(Duration::from_secs(2)));
+    if tcp.write_all(format!("GET /v1/ping HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\n\r\n").as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 12];
+    tcp.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.")
 }
 
 /// Remove `agent.json` when this process wrote it (on exit).
@@ -276,6 +323,7 @@ impl Server {
             version: crate::APP_VERSION.to_string(),
             api_version: API_VERSION,
             headless: self.shared.host.headless(),
+            flatpak: paths::in_flatpak(),
         }
     }
 

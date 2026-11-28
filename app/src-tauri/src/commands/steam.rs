@@ -63,6 +63,8 @@ pub async fn steam_shortcuts(account: String) -> CmdResult<Vec<ShortcutView>> {
 }
 
 pub(crate) fn with_steam_closed<T>(close_steam: bool, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    // The Flatpak can't see Steam or close it: said before anything is done.
+    steam::outside_sandbox()?;
     let cfg = config::load()?;
     let root = steam::root(&cfg).ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有找到 Steam", "Steam not found")))?;
     let was_running = steam::is_running();

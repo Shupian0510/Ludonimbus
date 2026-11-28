@@ -456,7 +456,12 @@ pub fn after_exit(ctx: &crate::sync::Ctx, game: &GameEntry) {
 }
 
 /// Merge other devices' records and upload this device's. Errors are logged.
+/// Nothing while syncing is paused ([`crate::pause`]): the next one after it
+/// catches up.
 pub fn sync_cloud(ctx: &crate::sync::Ctx, key: &str) {
+    if crate::pause::is_paused() {
+        return;
+    }
     let Ok(cloud) = ctx.cloud() else { return };
     let result = crate::cloud::gamedata::Folders::of(cloud, key).and_then(|at| cloud::sync(cloud.files(), &at, &ctx.cfg.device.id, &ctx.cfg.device.name));
     if let Err(e) = result {
@@ -647,10 +652,16 @@ pub fn game_icon_path(key: &str) -> Option<PathBuf> {
 
 /// `data:` URL of a local icon (PNG / JPEG / WebP / ICO), for pages that can't read files.
 pub fn icon_data_url(path: &Path) -> Result<String> {
+    image_data_url(path, ICON_MAX)
+}
+
+/// `data:` URL of a local image (PNG / JPEG / WebP / ICO) of at most `max`
+/// bytes, for pages that can't read files.
+pub fn image_data_url(path: &Path, max: u64) -> Result<String> {
     use base64::Engine;
     let bytes = std::fs::read(path)?;
-    if bytes.len() as u64 > ICON_MAX {
-        bail!("icon too large");
+    if bytes.len() as u64 > max {
+        bail!("image too large");
     }
     let mime = if bytes.starts_with(&[0xFF, 0xD8]) {
         "image/jpeg"

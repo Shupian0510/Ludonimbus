@@ -120,6 +120,8 @@ fn with_steam_closed<T>(root: &Path, f: impl FnOnce() -> Result<T>) -> Result<(T
 #[tauri::command]
 pub async fn steam_plugin_install(app: AppHandle, close_steam: bool) -> CmdResult<InstallResult> {
     blocking(move || {
+        // Millennium goes into Steam's folder with Steam closed: not from the Flatpak.
+        steam::outside_sandbox()?;
         let cfg = config::load()?;
         let root = steam::root(&cfg).ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有找到 Steam", "Steam not found")))?;
         let src = bundled(&app).ok_or_else(|| anyhow!(ludonimbus_core::tr!("这个版本的 Ludonimbus 没有附带 Steam 插件", "This build of Ludonimbus doesn't include the Steam plugin")))?;

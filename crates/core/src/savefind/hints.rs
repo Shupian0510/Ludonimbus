@@ -711,8 +711,15 @@ pub fn prefix_user_dirs(prefix: &Path) -> Vec<PathBuf> {
 /// Lutris, Bottles, plain Wine), native and Flatpak, with the launcher's
 /// name. Each prefix's folder is usually named after its game.
 pub fn launcher_prefixes(home: &Path) -> Vec<(PathBuf, &'static str)> {
+    launcher_prefixes_on(home, &[])
+}
+
+/// [`launcher_prefixes`], and the ones on other drives (`drives`, see
+/// [`crate::paths::extra_drives`]): Heroic's and Lutris's folders there, as
+/// on a Steam Deck's SD card.
+pub fn launcher_prefixes_on(home: &Path, drives: &[PathBuf]) -> Vec<(PathBuf, &'static str)> {
     let flatpak = |app: &str| home.join(".var").join("app").join(app);
-    let parents: Vec<(PathBuf, &'static str)> = vec![
+    let mut parents: Vec<(PathBuf, &'static str)> = vec![
         (home.join("Games").join("Heroic").join("Prefixes"), "Heroic"),
         (home.join("Games").join("Heroic").join("Prefixes").join("default"), "Heroic"),
         (flatpak("com.heroicgameslauncher.hgl").join("config").join("heroic").join("Prefixes"), "Heroic"),
@@ -724,6 +731,13 @@ pub fn launcher_prefixes(home: &Path) -> Vec<(PathBuf, &'static str)> {
         (home.join(".local").join("share").join("lutris").join("prefixes"), "Lutris"),
         (home.join(".local").join("share").join("wineprefixes"), "Wine"),
     ];
+    for d in drives {
+        for heroic in [d.join("Games").join("Heroic").join("Prefixes"), d.join("Heroic").join("Prefixes")] {
+            parents.push((heroic.join("default"), "Heroic"));
+            parents.push((heroic, "Heroic"));
+        }
+        parents.push((d.join("Games"), "Lutris"));
+    }
     let mut out: Vec<(PathBuf, &'static str)> = Vec::new();
     for (parent, launcher) in parents {
         for p in subdirs(&parent).into_iter().take(60) {
@@ -829,6 +843,15 @@ mod tests {
         assert_eq!(found, vec![(heroic.clone(), "Heroic")]);
         assert_eq!(prefix_user_dirs(&heroic), vec![heroic.join("drive_c").join("users").join("deck")]);
         let exe = heroic.join("drive_c").join("Games").join("Hades").join("Hades.exe");
-        assert_eq!(wine_prefix_of(&exe), Some(heroic));
+        assert_eq!(wine_prefix_of(&exe), Some(heroic.clone()));
+
+        // On another drive (a Steam Deck's SD card): Heroic's and Lutris's folders there.
+        let sd = tmp.path().join("run").join("media").join("deck").join("SDCARD");
+        let on_sd = sd.join("Games").join("Heroic").join("Prefixes").join("Celeste");
+        let lutris = sd.join("Games").join("hollow-knight");
+        fs::create_dir_all(on_sd.join("drive_c").join("users").join("deck")).unwrap();
+        fs::create_dir_all(lutris.join("drive_c")).unwrap();
+        let found = launcher_prefixes_on(home, std::slice::from_ref(&sd));
+        assert_eq!(found, vec![(heroic, "Heroic"), (on_sd, "Heroic"), (lutris, "Lutris")]);
     }
 }

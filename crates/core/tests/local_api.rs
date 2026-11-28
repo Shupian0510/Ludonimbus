@@ -186,12 +186,13 @@ fn endpoints() {
 
     // Ping.
     let (s, v) = api.get("/v1/ping");
-    assert_eq!((s, v["app"].as_str(), v["apiVersion"].as_u64(), v["headless"].as_bool()), (200, Some("ludonimbus"), Some(5), Some(false)));
+    assert_eq!((s, v["app"].as_str(), v["apiVersion"].as_u64(), v["headless"].as_bool()), (200, Some("ludonimbus"), Some(6), Some(false)));
 
     // Status of the shortcut: cached until asked to refresh.
     let (s, v) = api.get(&format!("/v1/steam/apps/{APPID}"));
     assert_eq!((s, v["managed"].as_bool(), v["key"].as_str(), v["phase"].as_str()), (200, Some(true), Some(KEY), Some("idle")));
-    assert_eq!((v["status"].clone(), v["apiVersion"].as_u64(), v["steamEnabled"].as_bool()), (Value::Null, Some(5), Some(true)));
+    assert_eq!((v["status"].clone(), v["apiVersion"].as_u64(), v["steamEnabled"].as_bool()), (Value::Null, Some(6), Some(true)));
+    assert_eq!((v["paused"].as_bool(), v["appid"].as_u64()), (Some(false), Some(APPID as u64)));
     let (s, v) = api.get(&format!("/v1/steam/apps/{APPID}?account=123&refresh=1"));
     assert_eq!((s, v["status"].as_str()), (200, Some("notUploaded")));
     assert!(v["checkedAt"].is_string());
@@ -326,6 +327,8 @@ fn endpoints() {
     assert_eq!(api.post("/v1/achievements/events/x/ack").0, 400);
     assert_eq!(api.post(&format!("/v1/achievements/events/{}/ack?shown=maybe", ev.seq)).0, 400);
 
+    panel(&api, &fake, &game_dir);
+
     // Nothing else.
     assert_eq!(api.get("/v1/nothing").0, 404);
     assert_eq!(api.request("DELETE", &format!("/v1/games/{KEY}/snapshots"), "").0, 404);
@@ -435,7 +438,7 @@ fn agent_file() {
     assert!(path.starts_with(root()));
     server.publish().unwrap();
     let info = localapi::read_agent_file().unwrap();
-    assert_eq!((info.port, info.token.len(), info.pid, info.api_version, info.headless), (server.port(), 64, std::process::id(), 5, true));
+    assert_eq!((info.port, info.token.len(), info.pid, info.api_version, info.headless), (server.port(), 64, std::process::id(), 6, true));
     let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(raw["apiVersion"].is_u64() && raw["token"].is_string(), "the plugins read camelCase: {raw}");
     assert_eq!(localapi::live_owner(), Some(std::process::id()));
@@ -460,4 +463,108 @@ fn agent_file() {
     localapi::remove_agent_file();
     assert!(path.exists());
     std::fs::remove_file(&path).unwrap();
+}
+
+/// API 6, the Steam Deck's panel: every game, a game by its key, keeping a
+/// save, syncing everything, pausing, waiting for changes, artwork.
+fn panel(api: &Api, fake: &Fake, game_dir: &Path) {
+    let unknown = "/v1/games/no-such-game";
+    let jobs = fake.finished.lock().unwrap().len();
+
+    // Every game of the library, from what this device has.
+    let (s, v) = api.get("/v1/games?refresh=1");
+    assert_eq!((s, v["paused"].as_bool(), v["apiVersion"].as_u64()), (200, Some(false), Some(6)), "{v}");
+    let games = v["games"].as_array().unwrap();
+    assert_eq!(games.len(), 1);
+    let g = &games[0];
+    assert_eq!(
+        (g["key"].as_str(), g["appid"].as_u64(), g["phase"].as_str(), g["status"].as_str()),
+        (Some(KEY), Some(APPID as u64), Some("idle"), Some("synced"))
+    );
+    assert_eq!((g["cover"].clone(), g["conflict"].as_bool()), (Value::Null, Some(false)));
+    let held = fake.busy.begin(KEY).unwrap();
+    assert_eq!(api.get("/v1/games").1["games"][0]["phase"], "syncing");
+    drop(held);
+
+    // A game by its key, as for a Steam shortcut.
+    let (s, v) = api.get(&format!("/v1/games/{KEY}/status?refresh=1"));
+    assert_eq!((s, v["managed"].as_bool(), v["key"].as_str(), v["status"].as_str()), (200, Some(true), Some(KEY), Some("synced")));
+    assert_eq!(api.get(&format!("{unknown}/status")).0, 404);
+
+    // Artwork: none yet, then the one chosen in Ludonimbus.
+    assert_eq!(api.get(&format!("/v1/games/{KEY}/art/cover")).0, 404);
+    assert_eq!(api.get(&format!("/v1/games/{KEY}/art/poster")).0, 400);
+    assert_eq!(api.get(&format!("{unknown}/art/cover")).0, 404);
+    png(&ludonimbus_core::paths::data_dir().join("art").join(KEY).join("cover.png"));
+    let (s, v) = api.get(&format!("/v1/games/{KEY}/art/cover"));
+    assert_eq!(s, 200, "{v}");
+    assert!(v["dataUrl"].as_str().unwrap().starts_with("data:image/png;base64,"));
+    assert!(api.get("/v1/games").1["games"][0]["cover"].as_u64().is_some());
+
+    // Keep this one: a manual version, kept for good.
+    std::fs::write(game_dir.join("save").join("slot1.sav"), b"kept").unwrap();
+    assert_eq!(api.post(&format!("{unknown}/keep")).0, 404);
+    fake.running.lock().unwrap().insert(KEY.into());
+    assert_eq!(api.post(&format!("/v1/games/{KEY}/keep")).0, 409);
+    fake.running.lock().unwrap().clear();
+    assert_eq!(api.post(&format!("/v1/games/{KEY}/keep?comment=before%20the%20boss")), (200, json!({ "started": true })));
+    assert_eq!(finished(fake, jobs + 1), (KEY.to_string(), Ok(())));
+    let list = api.get(&format!("/v1/games/{KEY}/snapshots")).1;
+    let kept = list["snapshots"].as_array().unwrap().iter().find(|x| x["trigger"] == "manual").cloned().expect("a kept version");
+    assert_eq!(kept["comment"], "before the boss");
+
+    // Sync everything: one job per game, writing nothing into saves.
+    std::fs::write(game_dir.join("save").join("slot1.sav"), b"after").unwrap();
+    let (s, v) = api.post("/v1/sync-all");
+    assert_eq!((s, v["started"].as_bool(), v["games"].as_u64()), (200, Some(true), Some(1)));
+    assert_eq!(finished(fake, jobs + 2), (KEY.to_string(), Ok(())));
+    assert_eq!(api.get(&format!("/v1/games/{KEY}/status")).1["status"], "synced");
+
+    // Changes: the current number at once, then a wait that ends when
+    // something changes (pausing here), or after `wait` seconds.
+    let (s, v) = api.get("/v1/changes?after=0");
+    assert_eq!((s, v["paused"].as_bool()), (200, Some(false)));
+    let seq = v["seq"].as_u64().unwrap();
+    assert!(seq > 1_000_000_000_000, "numbers continue across restarts");
+    let t = Instant::now();
+    let v = api.get(&format!("/v1/changes?after={seq}&wait=1")).1;
+    assert!(t.elapsed() >= Duration::from_millis(900) && t.elapsed() < Duration::from_secs(8), "{:?}", t.elapsed());
+    assert_eq!(v["seq"].as_u64(), Some(seq), "nothing changed");
+    assert_eq!(api.get("/v1/changes?after=soon").0, 400);
+    let (port, token) = (api.port, api.token.clone());
+    let pauser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        Api { port, token }.post("/v1/sync/pause")
+    });
+    let t = Instant::now();
+    let v = api.get(&format!("/v1/changes?after={seq}&wait=20")).1;
+    assert!(t.elapsed() < Duration::from_secs(10), "the wait ended with the change: {:?}", t.elapsed());
+    assert_ne!(v["seq"].as_u64(), Some(seq));
+    let (s, p) = pauser.join().unwrap();
+    assert_eq!((s, p["paused"].as_bool()), (200, Some(true)));
+    assert!(p["since"].is_string());
+
+    // Paused: nothing that needs the cloud starts; keeping a save waits in
+    // the queue; the panel and statuses say so.
+    assert!(ludonimbus_core::pause::is_paused());
+    assert_eq!(api.get("/v1/sync/pause").1["paused"], true);
+    assert_eq!(api.get("/v1/games").1["paused"], true);
+    assert_eq!(api.get(&format!("/v1/steam/apps/{APPID}")).1["paused"], true);
+    for path in [format!("/v1/games/{KEY}/sync"), "/v1/sync-all".to_string(), format!("/v1/games/{KEY}/restore/{}", kept["id"].as_str().unwrap())] {
+        let (s, v) = api.post(&path);
+        assert_eq!(s, 409, "{path}");
+        assert!(v["error"].is_string());
+    }
+    std::fs::write(game_dir.join("save").join("slot1.sav"), b"while paused").unwrap();
+    assert_eq!(api.post(&format!("/v1/games/{KEY}/keep")).0, 200);
+    assert_eq!(finished(fake, jobs + 3), (KEY.to_string(), Ok(())));
+    assert_eq!(state::game(KEY).pending.len(), 1, "kept in the queue");
+
+    // Going on.
+    let (s, p) = api.post("/v1/sync/resume");
+    assert_eq!((s, p["paused"].as_bool(), p["since"].clone()), (200, Some(false), Value::Null));
+    assert!(!ludonimbus_core::pause::is_paused());
+    assert_eq!(api.post(&format!("/v1/games/{KEY}/sync")).0, 200);
+    assert_eq!(finished(fake, jobs + 4), (KEY.to_string(), Ok(())));
+    assert_eq!(state::game(KEY).pending.len(), 0, "what waited went up");
 }

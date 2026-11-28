@@ -133,7 +133,8 @@ fn two_devices_full_flow() {
     fs::create_dir_all(&game_a2).unwrap();
     fs::write(game_a2.join("game.exe"), b"exe").unwrap();
     games::set_exe("test-game", &game_a2.join("game.exe")).unwrap();
-    assert_eq!(status(), Status::CanRestore);
+    // A synced saves before, and none are where the game looks now.
+    assert_eq!(status(), Status::SavesMissing);
     assert!(matches!(run(Trigger::PreLaunch), Outcome::Pulled { .. }));
     assert_eq!(read_save(&game_a2, "slot1.sav"), "v3-from-b");
 

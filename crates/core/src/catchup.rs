@@ -19,11 +19,17 @@ use std::time::Duration;
 
 /// The local API that runs (`agent.json`): the tray app's, or the headless
 /// agent's (Deck Game Mode), which does this work too.
-fn local_api() -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(paths::data_dir().join("agent.json")).ok()?;
-    let v = serde_json::from_str::<serde_json::Value>(&text).ok()?;
-    let pid = v["pid"].as_u64().unwrap_or(0) as u32;
-    (pid != 0 && process::pid_alive(pid)).then_some(v)
+fn local_api() -> Option<crate::localapi::AgentInfo> {
+    crate::localapi::live_owner()?;
+    crate::localapi::read_agent_file()
+}
+
+/// Whether the launch wrapper with this process id still runs. Inside the
+/// Flatpak sandbox the wrappers (Steam starts them outside it) can't be
+/// seen: a marker counts as a wrapper running there, and the agent outside
+/// finishes what a terminated one left.
+fn wrapper_alive(pid: u32) -> bool {
+    pid != 0 && (paths::in_flatpak() || process::pid_alive(pid))
 }
 
 /// Whether the tray app (its local API) is running.
@@ -35,7 +41,7 @@ pub fn app_running() -> bool {
 /// finishes a sync after playing that a wrapper hands over (docs/plan-v2.md,
 /// section 5.5).
 pub fn desktop_app_running() -> bool {
-    local_api().is_some_and(|v| v["headless"].as_bool() != Some(true))
+    local_api().is_some_and(|i| !i.headless)
 }
 
 /// What the launch wrapper of a game is doing: "preLaunch", "playing" or
@@ -45,7 +51,7 @@ pub fn runner_phase(key: &str) -> Option<String> {
     match read_marker(&paths::running_dir().join(format!("{key}.json"))) {
         Marker::None => None,
         Marker::Unknown => Some("playing".to_string()),
-        Marker::Read { pid, phase, .. } => (pid != 0 && process::pid_alive(pid)).then(|| phase.unwrap_or_else(|| "playing".to_string())),
+        Marker::Read { pid, phase, .. } => wrapper_alive(pid).then(|| phase.unwrap_or_else(|| "playing".to_string())),
     }
 }
 
@@ -101,7 +107,7 @@ fn wrapper_at(path: &Path) -> Wrapper {
     match read_marker(path) {
         Marker::None => Wrapper::None,
         Marker::Unknown => Wrapper::Running,
-        Marker::Read { pid, .. } if pid != 0 && process::pid_alive(pid) => Wrapper::Running,
+        Marker::Read { pid, .. } if wrapper_alive(pid) => Wrapper::Running,
         Marker::Read { started, .. } => Wrapper::Gone { started },
     }
 }
@@ -206,7 +212,7 @@ pub fn stale_runners(cfg: &AppConfig, except: Option<&str>, log: &dyn Fn(String)
 
 /// Upload (and with "sync", download) the screenshots of one game.
 pub fn screenshots(cfg: &AppConfig, key: &str, log: &dyn Fn(String)) {
-    if cfg.screenshots == crate::config::ScreenshotMode::Off {
+    if cfg.screenshots == crate::config::ScreenshotMode::Off || crate::pause::is_paused() {
         return;
     }
     let Some(g) = cfg.game(key) else { return };

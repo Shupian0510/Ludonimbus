@@ -7,7 +7,7 @@
 
 use crate::adapters::Adapter;
 use crate::config::{AppConfig, GameEntry};
-use crate::{adapters, emugames, games, ludusavi, recomplauncher, snapshot, steam, util, xbox};
+use crate::{adapters, emugames, games, ludusavi, paths, recomplauncher, snapshot, steam, util, xbox};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -107,7 +107,13 @@ pub fn quick(cfg: &AppConfig) -> Vec<Found> {
     }
     // Emulator games: in the data folders of emulators in Steam or the
     // library, and in each emulator's usual folders.
-    let programs: Vec<PathBuf> = out.iter().filter_map(|f| f.exe.as_deref().map(PathBuf::from)).chain(cfg.games.iter().filter_map(|g| g.exe.clone())).collect();
+    // And emulators kept on another drive (a Steam Deck's SD card).
+    let programs: Vec<PathBuf> = out
+        .iter()
+        .filter_map(|f| f.exe.as_deref().map(PathBuf::from))
+        .chain(cfg.games.iter().filter_map(|g| g.exe.clone()))
+        .chain(drive_programs(&paths::extra_drives()))
+        .collect();
     push_new_emulator_games(&mut out, emulator_games(&programs, true));
     attach_ludusavi_titles(&mut out);
     mark_added(cfg, &mut out);
@@ -728,21 +734,76 @@ pub fn game_folders(cfg: &AppConfig) -> Vec<GameFolder> {
     list.push(("EA", pf.join("EA Games")));
     list.push(("EA", pf86.join("Origin Games")));
     list.push(("Ubisoft", pf86.join("Ubisoft").join("Ubisoft Game Launcher").join("games")));
-    for letter in b'C'..=b'Z' {
-        let drive = PathBuf::from(format!("{}:\\", letter as char));
-        list.push(("GOG", drive.join("GOG Games")));
-        list.push((if crate::i18n::is_en() { "Games folder" } else { "游戏文件夹" }, drive.join("Games")));
+    let games_folder = if crate::i18n::is_en() { "Games folder" } else { "游戏文件夹" };
+    if cfg!(windows) {
+        for letter in b'C'..=b'Z' {
+            let drive = PathBuf::from(format!("{}:\\", letter as char));
+            list.push(("GOG", drive.join("GOG Games")));
+            list.push((games_folder, drive.join("Games")));
+        }
+    }
+    let drives = paths::extra_drives();
+    if !cfg!(windows) {
+        if let Some(home) = dirs::home_dir() {
+            list.extend(drive_game_folders(&home, games_folder));
+        }
+        for d in &drives {
+            list.extend(drive_game_folders(d, games_folder));
+        }
     }
 
     let mut seen = HashSet::new();
     let list: Vec<(&str, PathBuf)> = list.into_iter().filter(|(_, p)| p.is_dir() && seen.insert(util::norm_path(&p.to_string_lossy()))).collect();
     let count = |l: &str| list.iter().filter(|(x, _)| *x == l).count();
+    // Where a folder is, when a label is there more than once: its drive
+    // letter, or the name of the drive it is on (Linux).
+    let place = |p: &Path| -> String {
+        if cfg!(windows) {
+            return p.to_string_lossy().chars().take(2).collect::<String>().to_uppercase();
+        }
+        drives.iter().find(|d| p.starts_with(d)).and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "~".to_string())
+    };
     list.iter()
-        .map(|(label, p)| {
-            let drive = p.to_string_lossy().chars().take(2).collect::<String>().to_uppercase();
-            GameFolder { label: if count(label) > 1 { format!("{label} {drive}") } else { label.to_string() }, path: p.to_string_lossy().into_owned() }
+        .map(|(label, p)| GameFolder {
+            label: if count(label) > 1 { format!("{label} {}", place(p)) } else { label.to_string() },
+            path: p.to_string_lossy().into_owned(),
         })
         .collect()
+}
+
+/// The game folders on a drive (Linux), or in the home folder: a Steam
+/// library (SteamOS puts one at the root of an SD card), GOG and Heroic
+/// installs, and a `Games` folder.
+pub fn drive_game_folders<'a>(root: &Path, games_folder: &'a str) -> Vec<(&'a str, PathBuf)> {
+    vec![
+        ("Steam", root.join("steamapps").join("common")),
+        ("Steam", root.join("SteamLibrary").join("steamapps").join("common")),
+        ("GOG", root.join("GOG Games")),
+        ("Heroic", root.join("Games").join("Heroic")),
+        ("Heroic", root.join("Heroic")),
+        (games_folder, root.join("Games")),
+    ]
+}
+
+/// Emulators kept on another drive (Linux): portable programs and AppImages
+/// on a Steam Deck's SD card, in `Applications`, `Emulators` and EmuDeck's
+/// `Emulation/tools`, two folders deep at most. Only the ones a rule knows
+/// are used ([`emulator_games`]).
+pub fn drive_programs(drives: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for d in drives {
+        for dir in [d.join("Applications"), d.join("Emulators"), d.join("Emulation").join("tools")] {
+            for e in walkdir::WalkDir::new(&dir).max_depth(3).into_iter().flatten() {
+                if out.len() >= 300 {
+                    return out;
+                }
+                if e.file_type().is_file() && adapters::detect_with(e.path(), "").is_some_and(|d| d.adapter.is_emulator()) {
+                    out.push(e.path().to_path_buf());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A game installed by a store, registered with Windows, or a subfolder of a

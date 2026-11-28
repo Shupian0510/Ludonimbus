@@ -23,6 +23,7 @@
 //! - [`xbox`]     Xbox app games: launch helper, real game processes
 //! - [`localapi`] the local HTTP API for the Steam plugins, served by the
 //!   desktop app and by the headless agent
+//! - [`pause`]    syncing paused on this device
 
 pub mod achievements;
 pub mod adapters;
@@ -53,6 +54,7 @@ pub mod millennium;
 pub mod nxlan;
 pub mod openlist;
 pub mod paths;
+pub mod pause;
 pub mod playtime;
 pub mod process;
 pub mod prompt;

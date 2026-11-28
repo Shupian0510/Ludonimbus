@@ -11,6 +11,11 @@
 //!   uploads what waits in the queue (see [`Backlog`])
 //! - keeps Steam games that Ludonimbus manages without the wrapper up to
 //!   date while they aren't running (see [`Unwrapped`])
+//!
+//! While syncing is paused ([`ludonimbus_core::pause`]) nothing goes to the
+//! cloud from here: the backlog, screenshots and [`Unwrapped`] wait, and a
+//! sync after a game keeps the saves in the queue. Once it goes on, the
+//! backlog is looked at right away.
 
 use chrono::{DateTime, Utc};
 use ludonimbus_core::catchup::{self, Wrapper};
@@ -72,7 +77,7 @@ pub fn sync_screenshots(app: &AppHandle, only: Option<String>) -> Result<ludonim
     let _guard = SCREENSHOTS_BUSY.lock().unwrap_or_else(|e| e.into_inner());
     let cfg = config::load().map_err(|e| format!("{e:#}"))?;
     let mut total = ludonimbus_core::screenshots::Report::default();
-    if cfg.screenshots == config::ScreenshotMode::Off {
+    if cfg.screenshots == config::ScreenshotMode::Off || ludonimbus_core::pause::is_paused() {
         return Ok(total);
     }
     let cloud = match ludonimbus_core::cloud::open(&cfg) {
@@ -187,6 +192,8 @@ struct Backlog {
     running: Arc<AtomicBool>,
     /// How the last pass went: `true` when nothing failed.
     last: Arc<Mutex<Option<bool>>>,
+    /// Syncing was paused at the last tick.
+    was_paused: bool,
 }
 
 impl Backlog {
@@ -197,6 +204,7 @@ impl Backlog {
             tried: HashSet::new(),
             running: Arc::new(AtomicBool::new(false)),
             last: Arc::new(Mutex::new(None)),
+            was_paused: false,
         }
     }
 
@@ -208,6 +216,17 @@ impl Backlog {
         if let Some(ok) = self.last.lock().ok().and_then(|mut l| l.take()) {
             self.pause = if ok { BACKLOG_EVERY } else { (self.pause * 2).clamp(BACKLOG_EVERY, BACKLOG_MAX) };
             self.next = Instant::now() + self.pause;
+        }
+        // Paused: nothing goes up. Once it goes on, what waits goes up now.
+        if ludonimbus_core::pause::is_paused() {
+            self.was_paused = true;
+            return;
+        }
+        if std::mem::take(&mut self.was_paused) {
+            logger::log("watcher", "syncing goes on again: uploading what waits");
+            self.next = Instant::now();
+            self.pause = BACKLOG_EVERY;
+            self.tried.clear();
         }
         // Not while it is played or synced: the wrapper's own syncs come first.
         let free = |key: &str| {
@@ -340,7 +359,7 @@ impl Unwrapped {
             self.pause = if ok { UNWRAPPED_EVERY } else { (self.pause * 2).clamp(UNWRAPPED_EVERY, UNWRAPPED_MAX) };
             self.next = Instant::now() + self.pause.max(self.floor);
         }
-        if Instant::now() < self.next {
+        if Instant::now() < self.next || ludonimbus_core::pause::is_paused() {
             return;
         }
         self.next = Instant::now() + self.pause;

@@ -268,3 +268,63 @@ jobs:
       retention-days: 30
       save-cache: ${{ github.event_name == 'push' }}
     secrets: inherit
+
+  # The Flatpak of the desktop app (packaging/flatpak), made from the Linux
+  # build's .deb and background service: a workflow artifact, not on
+  # Flathub. What works inside its sandbox: docs/development.md, "Flatpak".
+  linux-flatpak:
+    needs: [changes, linux-build]
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'push' || inputs.build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Ludonimbus-dev.${{ github.run_number }}-linux
+          path: linux
+      - name: flatpak-builder and the GNOME runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          # Ubuntu 24.04 restricts unprivileged user namespaces, which
+          # bubblewrap (Flatpak's sandbox) needs.
+          sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0 || true
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          # The runtime-version of the manifest.
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+      - name: Stage the app
+        working-directory: packaging/flatpak
+        run: |
+          set -euo pipefail
+          # Flathub's shared modules (libayatana-appindicator for the tray icon), at a fixed commit.
+          git clone --quiet https://github.com/flathub/shared-modules shared-modules
+          git -C shared-modules checkout --quiet 34add58f536223b780a3c9f077980cdaa51fc81f
+          mkdir -p unpacked stage/icons stage/lib
+          deb="$(ls "$GITHUB_WORKSPACE"/linux/target/release/bundle/deb/*.deb "$GITHUB_WORKSPACE"/linux/*.deb 2>/dev/null | head -n 1)"
+          (cd unpacked && ar x "$deb" && tar -xf data.tar.*)
+          cp unpacked/usr/bin/ludonimbus-app unpacked/usr/bin/ludonimbus-run unpacked/usr/bin/ludusavi stage/
+          cp -r unpacked/usr/lib/Ludonimbus stage/lib/
+          tar -xzf "$GITHUB_WORKSPACE/linux/Ludonimbus-linux-x86_64.tar.gz" -C unpacked
+          cp unpacked/Ludonimbus-linux-x86_64/ludonimbus-agent stage/
+          icons="$GITHUB_WORKSPACE/app/src-tauri/icons"
+          cp "$icons/32x32.png" "$icons/128x128.png" stage/icons/
+          cp "$icons/128x128@2x.png" stage/icons/256x256.png
+      - name: Build the bundle
+        working-directory: packaging/flatpak
+        run: |
+          flatpak-builder --user --force-clean --repo=repo build io.github.shupian0510.ludonimbus.yml
+          flatpak build-bundle repo Ludonimbus.flatpak io.github.shupian0510.ludonimbus
+      - name: Every library resolves in the sandbox
+        working-directory: packaging/flatpak
+        run: |
+          flatpak install --user -y --noninteractive ./Ludonimbus.flatpak
+          flatpak run --command=sh io.github.shupian0510.ludonimbus -c 'ldd /app/bin/ludonimbus-app /app/bin/ludonimbus-agent /app/bin/ludonimbus-run' | tee ldd.txt
+          if grep -q "not found" ldd.txt; then
+            echo "::error::libraries missing inside the Flatpak sandbox"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ludonimbus-dev.${{ github.run_number }}-flatpak
+          path: packaging/flatpak/Ludonimbus.flatpak
+          retention-days: 30

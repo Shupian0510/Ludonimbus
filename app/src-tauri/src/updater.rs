@@ -47,6 +47,13 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
 
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    // A Flatpak can't replace itself: a newer one is installed over it.
+    if ludonimbus_core::paths::in_flatpak() {
+        return Err(ludonimbus_core::tr!(
+            "Flatpak 版不能在应用里更新：下载新的 Ludonimbus.flatpak，用 flatpak install 覆盖安装",
+            "The Flatpak can't update itself: download the new Ludonimbus.flatpak and install it over this one with flatpak install"
+        ));
+    }
     // The installer replaces ludonimbus-run.exe, which is in use while a game
     // launched from Steam is running.
     if let Ok(cfg) = config::load() {

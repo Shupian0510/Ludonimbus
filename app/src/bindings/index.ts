@@ -61,6 +61,7 @@ export type * from "./Outcome";
 export type * from "./Overview";
 export type * from "./PartKind";
 export type * from "./PartSummary";
+export type * from "./Pause";
 export type * from "./PendingRestore";
 export type * from "./PlatformMark";
 export type * from "./PlaytimeDevice";

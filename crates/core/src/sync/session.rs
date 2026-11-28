@@ -35,7 +35,10 @@ pub(super) struct Session<'a> {
 }
 
 impl<'a> Session<'a> {
+    /// Not while syncing is paused ([`crate::pause`]): everything that opens
+    /// a session reads or writes the cloud for the game.
     pub(super) fn open(ctx: &'a Ctx, cloud: &'a Cloud, game: &'a GameEntry) -> Result<Session<'a>> {
+        crate::pause::check()?;
         Ok(Session { ctx, cloud, game, line: cloud.open(&game.key)?, gate: Gate::default() })
     }
 

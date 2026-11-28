@@ -31,6 +31,7 @@ import type {
   OtherSaves,
   Outcome,
   Overview,
+  Pause,
   PlaytimeSummary,
   SaveCandidate,
   SaveLine,
@@ -167,6 +168,8 @@ export function playtimePlatforms(p: PlaytimeSummary): Array<[string, number]> {
 
 export const api = {
   overview: () => invoke<Overview>("get_overview"),
+  /** Pause syncing on this device, or go on (ludonimbus_core::pause). */
+  setSyncPaused: (paused: boolean) => invoke<Pause | null>("set_sync_paused", { paused }),
   check: (key: string) => invoke<StatusReport>("check_game", { key }),
   sync: (key: string, resolution: "auto" | "local" | "cloud" = "auto") =>
     invoke<Outcome>("sync_game", { key, resolution }),

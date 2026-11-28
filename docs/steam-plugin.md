@@ -23,10 +23,10 @@ ludonimbus-agent ┘   （没有窗口的后台服务：Steam Deck 游戏模式�
 启动时在 `127.0.0.1` 的随机端口上监听，并写入数据文件夹里的 `agent.json`（Windows 是 `%APPDATA%\Ludonimbus\agent.json`，Linux 是 `~/.config/Ludonimbus/agent.json`）：
 
 ```json
-{ "port": 54262, "token": "<64 位十六进制，每次启动都会变>", "pid": 48080, "version": "1.0.0", "apiVersion": 5, "headless": false }
+{ "port": 54262, "token": "<64 位十六进制，每次启动都会变>", "pid": 48080, "version": "1.0.0", "apiVersion": 6, "headless": false }
 ```
 
-`headless` 为 `true` 时是 `ludonimbus-agent` 写的。桌面应用启动时直接写这个文件，正常退出时删除（只删自己写的）；被强制结束时文件会留下，插件连不上就当作「未运行」。`ludonimbus-agent` 每 5 秒看一次：文件里的进程不在了（或没有文件）就写自己的，桌面应用在运行时让开。
+`headless` 为 `true` 时是 `ludonimbus-agent` 写的。Flatpak 版写的文件多一个 `"flatpak": true`：沙箱内外进程号不一样，另一边判断它还在不在时看端口有没有回应。桌面应用启动时直接写这个文件，正常退出时删除（只删自己写的）；被强制结束时文件会留下，插件连不上就当作「未运行」。`ludonimbus-agent` 每 5 秒看一次：文件里的进程不在了（或没有文件）就写自己的，桌面应用在运行时让开。
 
 ### 安全和限制
 
@@ -59,6 +59,14 @@ ludonimbus-agent ┘   （没有窗口的后台服务：Steam Deck 游戏模式�
 | POST | `/v1/steam/plugin/done/{id}?session=&ok=1\|0&error=&<报告>` | （API 5）插件做完一个请求，带上 Steam 现在的设置 |
 | POST | `/v1/steam/apps/{appid}/report?session=&account=&<报告>` | （API 5）插件主动报告 `watch` 里的游戏在 Steam 里的设置（变了才报） |
 | POST | `/v1/games/{key}/steam-cloud/take-over` | （API 5）Steam 游戏页上的「交给 Ludonimbus」：只给「只备份」的游戏，插件连着时在后台接管，立即返回 `{ started: true }`；不是只备份、插件没连上、游戏在运行或在同步时 409 |
+| GET | `/v1/games?refresh=1` | （API 6）游戏库里的每个游戏，只用本机有的（不问云端）：`{ games: [{ key, name, appid, autoSync, store, backlog, phase, status, lastSyncAt, lastSyncedDevice, pending, conflict, lastError, checkedAt, cover, wide }], paused, lang, apiVersion }`。`status` 是上次检查的结果；`cover` / `wide` 是封面 / 横幅图片文件的时间（秒），没有时 `null`。`refresh=1` 时，缓存超过 10 分钟的游戏在后台一个接一个重新检查（同时只有一轮） |
+| GET | `/v1/games/{key}/status?refresh=1` | （API 6）按 key 取一个游戏的状态，返回值和 `/v1/steam/apps/{appid}` 一样 |
+| POST | `/v1/games/{key}/keep?comment=` | （API 6）「保留这一份」：在后台把现在的存档永久保留（`sync::backup_now`，备注默认「在 Steam 里保留」），立即返回 `{ started: true }`；游戏运行中或正在同步时 409。暂停同步时或连不上云端时这一份先排在本机的上传队列里 |
+| POST | `/v1/sync-all` | （API 6）「全部同步」：和应用里一样，每个游戏上传本机改过的存档，什么都不写进存档；云端更新的和冲突的留给用户一个个选。后台一个接一个，跳过运行中、正在同步的游戏。返回 `{ started: true, games }`；已经在全部同步时 409 |
+| GET | `/v1/sync/pause` | （API 6）`{ paused, since }` |
+| POST | `/v1/sync/pause`、`/v1/sync/resume` | （API 6）暂停这台设备的同步 / 继续，返回同上。见下面「暂停同步」 |
+| GET | `/v1/changes?after={seq}&wait={秒}` | （API 6）等到面板显示的东西可能变了（最多 `wait` 秒，上限 25）再返回 `{ seq, paused, apiVersion }`。见下面「变化」 |
+| GET | `/v1/games/{key}/art/{kind}` | （API 6）游戏的图片 `{ dataUrl, version }`：`kind` 是 `cover`、`wide`、`hero`、`logo`、`icon`，和应用显示的一样（Steam 里的游戏用 Steam 的，否则用在 Ludonimbus 里选的；`icon` 还会用程序自己的图标）。最大 6 MiB；没有时 404，别的 `kind` 400 |
 
 `<报告>` 是 Steam 的 app details 里的几项：`available`、`accountEnabled`、`appEnabled`（`bCloudAvailable`、`bCloudEnabledForAccount`、`bCloudEnabledForApp`，1 或 0）、`status`（`eCloudStatus`）、`launchOptions`（`strLaunchOptions`，转义后的；读不到时不带）。
 
@@ -88,11 +96,13 @@ ludonimbus-agent ┘   （没有窗口的后台服务：Steam Deck 游戏模式�
   "playtime": { "totalSecs": 74520, "lastPlayed": "…", "devices": [ /* 各设备明细 */ ] },   // 0.6
   "store": null,                   // API 4：Steam 安装的游戏由谁管存档：steam | backup | managed
   "backlog": null,                 // API 4：玩完后还没传完的：{ state: "uploading" | "waiting", versions, bytes }
-  "apiVersion": 5
+  "paused": false,                 // API 6：这台设备暂停了同步
+  "appid": 3000000001,             // API 6：这台设备启动它用的 Steam app id（快捷方式的，或 Steam 装的游戏的）
+  "apiVersion": 6
 }
 ```
 
-`apiVersion` 从 0.6 起是 2，0.7 是 3，1.0 是 5（4 是 1.0 的测试版）。插件按它决定点击状态项是打开版本列表（2 起）还是打开 Ludonimbus（旧版应用）。
+`apiVersion` 从 0.6 起是 2，0.7 是 3，1.0 是 6（4、5 是 1.0 的测试版）。`status` 多了 `savesMissing`（API 6）：这台设备同步过这个游戏的存档，现在一个文件都找不到了（删了，或者存档所在的 SD 卡没插）。不会把空的存档当成最新版本上传，玩完后和后台的同步也不会自己写回去；用户点「立即同步」/「取回」时取回最新的一份，经 Steam 启动时包装器在启动前照常取回。旧插件不认识这个值时什么都不显示。插件按它决定点击状态项是打开版本列表（2 起）还是打开 Ludonimbus（旧版应用）。
 
 `phase` 的来源：提供接口的程序自己正在同步（桌面应用里界面、本机接口、托盘监视共用一把锁，同一个游戏不会同时跑两个同步）→ `syncing`；`ludonimbus-run` 在 `running/<key>.json` 里写的阶段 → `preLaunch` / `playing` / `uploading`；否则看游戏进程是否在运行。
 
@@ -106,6 +116,20 @@ ludonimbus-agent ┘   （没有窗口的后台服务：Steam Deck 游戏模式�
 | 后台的同步结束时 | 通知窗口（`sync-finished` 事件） | — |
 | `open`、`gamebackup`、`gamebackup/install` | 有 | 404（没有窗口） |
 | 成就 | 托盘里的检测线程往事件队列里放新解锁 | 读得到成就列表和图标，但不检测新解锁，`events` 一直是空的 |
+| 等着上传的 | 托盘的监视：交过来的玩完后同步、上传队列 | 同样的两件事，每 3 分钟一次，继续同步后马上一次（API 6 起） |
+
+### 暂停同步（API 6）
+
+Decky 面板（和 `POST /v1/sync/pause`）可以暂停这台设备的同步，记在数据文件夹的 `paused.json` 里，所有程序（包装器、后台服务、应用）都按它办，重启后也还在，直到继续。实现在 `crates/core/src/pause.rs`。
+
+- 暂停时这台设备不往云端传、也不从云端取：后台的同步、等着上传的、截图、成就和游戏时间的上传都不做。
+- 包装器不做启动前的同步，游戏直接启动；玩完后存档作为一个版本排进本机的上传队列（和连不上云端时一样）。「保留这一份」也排进队列。
+- 要用云端的操作（立即同步、全部同步、恢复版本、应用另一个版本的存档、交给 Ludonimbus）返回 409「同步已暂停」。面板和应用里显示「同步已暂停」和「继续同步」。
+- **继续以后**：提供本机接口的程序（应用或后台服务）马上在后台把队列里的版本按顺序一个接一个传上去（每个建在前一个上面），并补做欠着的玩完后同步。继续时不取回任何东西：别的设备在这期间玩过的更新存档留在云端，等用户取回或下次经 Steam 启动时取回；本机和它走了不同的路就是冲突，由用户选，和离线玩过之后一样。
+
+### 变化（API 6）
+
+Decky 面板不再每 5 秒问一次状态，而是等 `GET /v1/changes`：服务端在有人等的时候每 0.7 秒看一次配置、状态文件、`paused.json`、包装器的运行标记、欠着的同步和上传队列，以及这个程序正在同步哪些游戏；变了就让等待的请求马上返回新的序号，插件再读一次要显示的东西。本机接口自己开始和结束的后台操作会直接通知。同时最多 4 个请求在等（更多的立即拿到当前序号），每个最多 25 秒；没人等时什么都不看。序号从启动时间开始，`after=0` 或拿着上次运行的序号时马上返回。旧应用对它回 404，插件就退回每 5 秒问一次。
 
 ### 经插件改 Steam 的设置（API 5，1.0）
 
@@ -117,6 +141,16 @@ ludonimbus-agent ┘   （没有窗口的后台服务：Steam Deck 游戏模式�
 - **应用里**：插件连着时，接管对话框就是一个确认框（「会关掉这个游戏的 Steam 云存档」，细节在「?」里），不用重启 Steam；「全部接管」也不再要求关掉 Steam 的总开关。交还前确认一次（会重新打开 Steam 云存档）。没有插件、或插件是旧版：和以前一样手动关开关。
 - **Steam 里**：「只备份」的游戏，点状态项弹出的版本列表里有「交给 Ludonimbus…」，Steam 自己的确认框，确认后在应用里接管，列表一直跟到结束；Decky 面板里是同样的按钮。插件能设启动选项时用包装器，否则在后台同步。
 - 旧插件从不 `poll`，什么都不报；旧应用对 `poll` 回 404，插件就每 15 秒才问一次，别的都不做。
+
+## Decky 插件（游戏模式）
+
+源码在 `plugin-decky/`：前端 `src/index.tsx`，后端 `main.py`（只读 `agent.json` 转发请求，外加启动后台服务）。快捷菜单面板里：
+
+- 正在玩（或最近启动）的游戏：封面（`art/wide`，没有时 `art/cover`）、状态、立即同步 / 取回 / 冲突二选一、「保留这一份」、另一个版本的更新存档、版本列表和「设为当前」、「交给 Ludonimbus」（只备份的 Steam 游戏）。
+- 全部游戏（API 6）：每个游戏一行（图标、名字、状态），一个按钮：立即同步，云端更新或本机存档不见了时「取回」，冲突时「选一份…」（Steam 的对话框：用云端的 / 用本机的）；上面是「全部同步」。需要处理的排在前面。
+- 暂停同步 / 继续同步。
+- Ludonimbus 连不上时：「启动 Ludonimbus」，后端运行 `systemctl --user start ludonimbus-agent.service`（插件后端没有用户会话，所以带上 `XDG_RUNTIME_DIR` 和会话总线；以 root 运行时用 `--machine=<用户>@`），等它回应最多 15 秒；没装服务、启动失败、启动了但没回应时分别说明。
+- 面板打开时等 `/v1/changes`，有变化才重新读；旧应用退回每 5 秒一次。
 
 ## 插件
 

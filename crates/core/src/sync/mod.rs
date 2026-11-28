@@ -172,6 +172,12 @@ pub enum Status {
     CloudNewer,
     /// No local saves, the cloud has some (e.g. reinstalled game).
     CanRestore,
+    /// No local saves, while this device synced some before: they were
+    /// deleted, or the drive they are on isn't there. Nothing empty is
+    /// uploaded, and nothing is written back by itself after playing or in
+    /// the background: the user takes them back (「取回」), or a game
+    /// started through Steam gets them before it starts.
+    SavesMissing,
     Conflict,
     Offline,
     Error,

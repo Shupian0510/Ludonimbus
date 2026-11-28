@@ -394,6 +394,7 @@ const overview: Overview = {
   steamFound: true,
   steamRunning: true,
   cloudFetchedAt: ago(2),
+  paused: null,
   // Hollow Knight was added on the laptop only; so was Celeste's GOG version
   // (one game with this PC's Celeste in the save library).
   cloudOnly: [
@@ -710,6 +711,10 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       }
       for (const g of o.games) g.store = mockStore(g);
       return delay(o, 150);
+    }
+    case "set_sync_paused": {
+      overview.paused = args.paused ? { since: new Date().toISOString() } : null;
+      return delay(overview.paused, 100);
     }
     case "get_language": {
       // ?lang=en / ?lang=zh-CN picks the language of the browser preview (docs screenshots).

@@ -141,7 +141,8 @@ export function GameDetail({
     if (note && !(await ui.confirm({ title: t.policy.take, text: note, confirm: t.policy.take }))) return;
     await syncNow(note ? "cloud" : "auto");
   };
-  const newerHere = check?.status === "cloudNewer" || check?.status === "canRestore";
+  // Saves missing here (deleted, or on a drive that isn't there): taking them back is the way too.
+  const newerHere = check?.status === "cloudNewer" || check?.status === "canRestore" || check?.status === "savesMissing";
 
   const backupNow = async () => {
     const comment = await ui.prompt({

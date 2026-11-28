@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.shupian0510.ludonimbus</id>
+  <name>Ludonimbus</name>
+  <summary>Cloud saves for emulators, recomps and non-Steam games</summary>
+  <summary xml:lang="zh-CN">模拟器、重制版和非 Steam 游戏的云存档</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.shupian0510">
+    <name>Shupian0510</name>
+  </developer>
+  <description>
+    <p>Ludonimbus keeps the saves of games Steam doesn't sync in your own cloud storage, with a version history, across PCs and handhelds.</p>
+    <p xml:lang="zh-CN">Ludonimbus 把 Steam 不同步的游戏存档放进你自己的网盘，带版本记录，电脑和掌机之间共用。</p>
+  </description>
+  <launchable type="desktop-id">io.github.shupian0510.ludonimbus.desktop</launchable>
+  <url type="homepage">https://github.com/Shupian0510/Ludonimbus</url>
+  <url type="bugtracker">https://github.com/Shupian0510/Ludonimbus/issues</url>
+  <content_rating type="oars-1.1"/>
+</component>

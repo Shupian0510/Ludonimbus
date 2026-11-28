@@ -438,6 +438,10 @@ pub fn sync(store: &dyn Store, cfg: &AppConfig, at: &Folders) -> Result<Summary>
 
 /// Best-effort upload after a session; failures only go to the log.
 pub fn upload_quietly(cfg: &AppConfig, key: &str, log: impl Fn(String)) {
+    // Paused: the sessions stay on this device until a later upload.
+    if crate::pause::is_paused() {
+        return;
+    }
     match crate::cloud::open(cfg) {
         Ok(Some(cloud)) => {
             // Where it goes is worked out now that the cloud can be asked.

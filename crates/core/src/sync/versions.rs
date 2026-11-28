@@ -41,9 +41,9 @@ pub fn backup_now(ctx: &Ctx, game: &GameEntry, comment: &str) -> Result<Outcome>
     let cloud = ctx.cloud()?;
     let mut s = match Session::open(ctx, cloud, game) {
         Ok(s) => s,
-        Err(e) if cloud::is_unavailable(&e) => {
-            // Not reachable: it waits in the queue, built on what this
-            // device synced last.
+        Err(e) if cloud::is_unavailable(&e) || crate::pause::is_paused_error(&e) => {
+            // Not reachable, or syncing is paused: it waits in the queue,
+            // built on what this device synced last.
             let local = with_carried(None, game, None, false, local)?;
             let st = state::game(&game.key);
             let place = match &st.line {
