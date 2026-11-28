@@ -109,7 +109,7 @@ const oot: AchievementsView = {
   ],
 };
 
-const settings: AchievementSettings = { raUser: null, raConnected: false, steamPopup: true, fallbackPopup: true, ps4KeySource: null };
+const settings: AchievementSettings = { raUser: null, raConnected: false, steamPopup: true, fallbackPopup: false, ps4KeySource: null };
 const views: Record<string, AchievementsView> = { "bloodborne-lantern": bloodborne, "zelda-oot-longshot": oot };
 
 const none = (key: string): AchievementsView => ({

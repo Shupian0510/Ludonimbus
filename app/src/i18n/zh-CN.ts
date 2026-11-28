@@ -1197,7 +1197,7 @@ export const achievements = {
   settingsHint: "非 Steam 游戏的成就：显示在 Steam 游戏页，解锁时弹出 Steam 的成就提醒（需要「在 Steam 中显示云存档状态」）。",
   steamPopupDefault: "新关联的游戏默认弹出 Steam 成就提醒",
   fallback: "Steam 弹不出来时，用 Ludonimbus 自己的小窗口提醒",
-  fallbackHint: "这个小窗口只在窗口化或无边框全屏的游戏上面看得见。",
+  fallbackHint: "默认关闭：Steam 晚一点弹出时，两个提醒会同时出现。这个小窗口只在窗口化或无边框全屏的游戏上面看得见。",
   test: "测试弹窗",
   testInGame: "8 秒后测试（切回游戏看）",
   testLater: (n: number) => `${n} 秒后弹出测试成就，现在切回游戏`,
