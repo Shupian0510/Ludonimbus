@@ -829,7 +829,7 @@ function SaveScan({ game, onAdd, onClose }: { game: GameView; onAdd: (patterns: 
 
   const add = async () => {
     try {
-      onAdd(await Promise.all([...picked].map((p) => api.folderToPattern(p, game.exe))));
+      onAdd(await Promise.all([...picked].map((p) => list?.find((c) => c.path === p)?.pattern ?? api.folderToPattern(p, game.exe))));
       onClose();
     } catch (e) {
       ui.toast(errorText(e), "bad");

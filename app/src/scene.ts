@@ -45,7 +45,7 @@ export const SCENE_SETTINGS: Record<string, string | null> = {
 };
 
 /** "Add game" scenes and their tab. */
-export const SCENE_ADD: Record<string, "scan" | "cloud" | "ludusavi" | "manual"> = {
+export const SCENE_ADD: Record<string, "scan" | "cloud" | "manual"> = {
   "add-game-scan": "scan",
   "add-game-scan-folder": "scan",
   "add-game-cloud": "cloud",

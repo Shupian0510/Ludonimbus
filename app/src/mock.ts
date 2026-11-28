@@ -45,6 +45,7 @@ import type {
   OpenListInfo,
   OtherSaves,
   SaveCandidate,
+  SaveTitle,
   ScreenshotReport,
   Settings,
   SgdbGame,
@@ -1064,8 +1065,6 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay<CloudGame[]>([{ key: "hollow-knight", name: "Hollow Knight", adapter: null, saves: [], exclude: [], waitFor: [], roots: {}, ludusaviTitle: "Hollow Knight" }]);
     case "ludusavi_search":
       return delay(["Hollow Knight", "Hollow Knight: Silksong"]);
-    case "ludusavi_preview":
-      return delay(["C:\\Users\\me\\AppData\\LocalLow\\Team Cherry\\Hollow Knight\\user1.dat"]);
     case "check_update":
       if (mockScene) return delay<UpdateInfo>({ current: "0.5.0", available: false, version: null, notes: null, date: null });
       return delay<UpdateInfo>(
@@ -1127,13 +1126,58 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     }
     case "savefind_suggest":
       return delay<SaveCandidate[]>([
-        { path: "C:\\Users\\me\\AppData\\LocalLow\\Indie Studio\\Some Indie", files: 3, bytes: 48213, modified: ago(60 * 20), sample: ["save0.dat", "settings.json"], reason: L("名字和游戏相近", "similar name") },
-        { path: "D:\\Games\\Some Indie\\saves", files: 2, bytes: 20480, modified: ago(60 * 24 * 3), sample: ["slot1.sav"], reason: L("在游戏目录里", "in the game folder") },
+        {
+          path: "C:\\Users\\me\\AppData\\LocalLow\\Indie Studio\\Some Indie",
+          pattern: "{home}/AppData/LocalLow/Indie Studio/Some Indie/**",
+          files: 3,
+          bytes: 48213,
+          modified: ago(60 * 20),
+          sample: ["save0.dat", "settings.json"],
+          reason: L("Unity 游戏的存档位置（Indie Studio / Some Indie）", "where Unity games keep saves (Indie Studio / Some Indie)"),
+          likely: true,
+        },
+        {
+          path: "D:\\Games\\Some Indie\\saves",
+          pattern: "{install}/saves/**",
+          files: 2,
+          bytes: 20480,
+          modified: ago(60 * 24 * 3),
+          sample: ["slot1.sav"],
+          reason: L("游戏目录里的存档文件夹", "save folder in the game folder"),
+          likely: false,
+        },
+        {
+          path: "C:\\Users\\me\\Documents\\My Games\\Some Indie",
+          pattern: "{documents}/My Games/Some Indie/**",
+          files: 1,
+          bytes: 2048,
+          modified: ago(60 * 24 * 40),
+          sample: ["settings.ini"],
+          reason: L("名字和游戏相近（C:\\Users\\me\\Documents\\My Games）", "similar name (C:\\Users\\me\\Documents\\My Games)"),
+          likely: false,
+        },
       ]);
+    case "savefind_titles":
+      return delay<SaveTitle[]>(
+        (args.name as string).trim()
+          ? [
+              { title: "Some Indie", likely: true, reason: L("名字相同", "same name"), files: 3 },
+              { title: "Some Indie 2", likely: false, reason: L("名字相近", "similar name"), files: 0 },
+            ]
+          : [],
+        700,
+      );
+    case "exe_in_folder":
+      return delay(`${args.path as string}\\Some Indie.exe`);
+    case "add_custom":
+      return delay(((args.name as string) || (args.ludusaviTitle as string) || "game").toLowerCase().replace(/[^a-z0-9]+/g, "-"), 300);
     case "savefind_watch_start":
       return delay(undefined);
     case "savefind_watch_stop":
-      return delay<SaveCandidate[]>([{ path: "C:\\Users\\me\\Saved Games\\Some Indie", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: L("刚才被写入", "just written") }], 600);
+      return delay<SaveCandidate[]>(
+        [{ path: "C:\\Users\\me\\Saved Games\\Some Indie", pattern: "{home}/Saved Games/Some Indie/**", files: 1, bytes: 9120, modified: ago(1), sample: ["slot1.sav"], reason: L("刚才被写入", "just written"), likely: false }],
+        600,
+      );
     case "folder_to_pattern":
       return delay(args.path as string);
     case "sgdb_status":

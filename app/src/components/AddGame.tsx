@@ -8,7 +8,8 @@ import { PlatformFolders } from "./PlatformFolders";
 import { FinderGame, SaveFinder } from "./SaveFinder";
 import { Badge, Button, Empty, Hint, Icon, Modal, PathField, Spinner, useUi } from "./ui";
 
-type Tab = "scan" | "cloud" | "ludusavi" | "manual";
+/** Scanning this device is the main way; finding the saves by name is a step of adding by hand. */
+type Tab = "scan" | "manual" | "cloud";
 
 export function AddGame({
   overview,
@@ -32,22 +33,18 @@ export function AddGame({
         <button className={tab === "scan" ? "on" : ""} onClick={() => setTab("scan")}>
           <Icon name="search" size={16} /> {a.tabScan}
         </button>
-        <button className={tab === "cloud" ? "on" : ""} onClick={() => setTab("cloud")}>
-          <Icon name="cloud" size={16} /> {a.tabCloud}
-        </button>
-        <button className={tab === "ludusavi" ? "on" : ""} onClick={() => setTab("ludusavi")}>
-          <Icon name="library" size={16} /> {t.library.ludusavi}
-        </button>
         <button className={tab === "manual" ? "on" : ""} onClick={() => setTab("manual")}>
           <Icon name="edit" size={16} /> {a.tabManual}
         </button>
+        <button className={tab === "cloud" ? "on" : ""} onClick={() => setTab("cloud")}>
+          <Icon name="cloud" size={16} /> {a.tabCloud}
+        </button>
         {/* What the tab in front is for. */}
-        <Hint text={{ scan: a.scanIntro, cloud: a.cloudIntro, ludusavi: a.ludusaviIntro, manual: a.manualIntro }[tab]} />
+        <Hint text={{ scan: a.scanIntro, cloud: a.cloudIntro, manual: a.manualIntro }[tab]} />
       </div>
       {tab === "scan" && <ScanLocal overview={overview} onChanged={onChanged} onOpen={onAdded} />}
-      {tab === "cloud" && <FromCloud overview={overview} onAdded={onAdded} />}
-      {tab === "ludusavi" && <FromLudusavi onAdded={onAdded} />}
       {tab === "manual" && <Manual onAdded={onAdded} />}
+      {tab === "cloud" && <FromCloud overview={overview} onAdded={onAdded} />}
     </Modal>
   );
 }
@@ -180,94 +177,6 @@ function FromCloud({ overview, onAdded }: { overview: Overview; onAdded: (key: s
           </Button>
         </div>
       ))}
-    </div>
-  );
-}
-
-function FromLudusavi({ onAdded }: { onAdded: (key: string) => void }) {
-  const ui = useUi();
-  const t = useT();
-  const a = t.addGame;
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<string[] | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
-  const [files, setFiles] = useState<string[] | null>(null);
-
-  const search = async () => {
-    if (!query.trim()) return;
-    setResults(null);
-    setPicked(null);
-    try {
-      setResults(await api.ludusaviSearch(query));
-    } catch (e) {
-      ui.toast(errorText(e), "bad");
-      setResults([]);
-    }
-  };
-
-  const pick = async (title: string) => {
-    setPicked(title);
-    setFiles(null);
-    try {
-      setFiles(await api.ludusaviPreview(title));
-    } catch (e) {
-      ui.toast(errorText(e), "bad");
-      setFiles([]);
-    }
-  };
-
-  const add = async () => {
-    if (!picked) return;
-    try {
-      const key = await api.addCustom(picked, null, [], picked);
-      ui.toast(msg().addGame.added(picked));
-      onAdded(key);
-    } catch (e) {
-      ui.toast(errorText(e), "bad");
-    }
-  };
-
-  return (
-    <div className="add-list">
-      <div className="row">
-        <input className="input" placeholder={a.ludusaviPlaceholder} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
-        <Button kind="primary" icon="search" onClick={search}>
-          {t.art.search}
-        </Button>
-      </div>
-      {results && results.length === 0 && <p className="muted">{t.saveFinder.noneFound}</p>}
-      {results?.map((title) => (
-        <div key={title} className={`add-item compact${picked === title ? " picked" : ""}`}>
-          <div className="add-info">
-            <b>{title}</b>
-          </div>
-          <Button small onClick={() => pick(title)}>
-            {a.viewSaves}
-          </Button>
-        </div>
-      ))}
-      {picked && (
-        <div className="panel">
-          <h3>{picked}</h3>
-          {!files ? (
-            <Spinner />
-          ) : files.length === 0 ? (
-            <p className="muted">{a.noLocalSaves}</p>
-          ) : (
-            <ul className="file-list">
-              {files.slice(0, 30).map((f) => (
-                <li key={f}>
-                  <code>{f}</code>
-                </li>
-              ))}
-              {files.length > 30 && <li className="muted">{a.moreFiles(files.length)}</li>}
-            </ul>
-          )}
-          <Button kind="primary" icon="plus" onClick={add}>
-            {a.addNamed(picked)}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -684,11 +593,21 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
     if (exe) await chooseExe(exe);
   };
 
-  const chooseExe = async (exe: string) => {
+  /** `install`: the game folder the user picked, when the program is inside it. */
+  const chooseExe = async (exe: string, install?: string) => {
     const adapter = await api.detectAdapter(exe).catch(() => null);
     setRule(adapter);
     setName(adapter?.name ?? nameFromExe(exe));
-    setGame({ name: adapter?.name ?? nameFromExe(exe), exe, install: exe.replace(/[\\/][^\\/]*$/, "") });
+    setGame({ name: adapter?.name ?? nameFromExe(exe), exe, install: install ?? exe.replace(/[\\/][^\\/]*$/, "") });
+  };
+
+  const pickFolder = async () => {
+    const dir = await api.pickFolder(msg().addGame.pickGameFolder);
+    if (!dir) return;
+    const exe = await api.exeInFolder(dir).catch(() => null);
+    if (exe) return chooseExe(exe, dir);
+    setRule(null);
+    setGame({ name: dir.split(/[\\/]/).filter(Boolean).pop() ?? "", exe: null, install: dir });
   };
 
   const add = async (n: string, saves: string[], title: string | null) => {
@@ -704,7 +623,12 @@ function Manual({ onAdded }: { onAdded: (key: string) => void }) {
           <Button kind="primary" icon="folder" onClick={pick}>
             {a.pickProgram}
           </Button>
-          <Button onClick={() => setGame({ name: "", exe: null, install: null })}>{a.noProgramButton}</Button>
+          <Button icon="folder" onClick={pickFolder}>
+            {a.pickGameFolder}
+          </Button>
+          <button className="link" onClick={() => setGame({ name: "", exe: null, install: null })}>
+            {a.noProgramButton}
+          </button>
         </div>
         <PlatformFolders onPick={chooseExe} />
       </div>
