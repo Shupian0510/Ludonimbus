@@ -26,6 +26,13 @@
 //! device's own, or one another device keeps (docs/plan-v2.md, section 7).
 //! Everything here that takes a key works on the line that key follows.
 //!
+//! A *line key*, `<key>~<line>` ([`line_key`]), names one line of the card
+//! the game `key` belongs to, whichever line this device's game follows:
+//! what a client this device serves keeps its saves under (a Switch keeps
+//! each player's on a line of their own, [`crate::nxlan`]). Game keys never
+//! hold a `~`, so every function that takes a key takes a line key too, and
+//! the queue, locks and caches of the two never meet.
+//!
 //! The functions with the names of 0.6 ([`Cloud::list_snapshots`],
 //! [`Cloud::get_meta`], [`Cloud::download`]) give snapshots in the shape the
 //! app has always shown them in, whichever layout they are stored in.
@@ -83,6 +90,27 @@ struct Known {
     /// The game as this device defines it: what says which game it is and
     /// which files its saves are.
     entry: Option<GameEntry>,
+    /// The name a line this key adds to the card gets (else this device's).
+    line_name: Option<String>,
+    /// The kind of install such a line is for ([`v2::Line::kind`]), when
+    /// it isn't one of this device's games (a Switch's, for a line key).
+    line_kind: Option<String>,
+}
+
+/// The key that names line `line` of the card the game `key` belongs to
+/// (see the module's notes).
+pub fn line_key(key: &str, line: &str) -> String {
+    format!("{key}~{line}")
+}
+
+/// A line key's game key and line.
+pub fn split_line_key(key: &str) -> Option<(&str, &str)> {
+    key.split_once('~').filter(|(k, l)| !k.is_empty() && !l.is_empty())
+}
+
+/// The game key of `key`, a line key or not.
+fn game_of(key: &str) -> &str {
+    split_line_key(key).map_or(key, |(k, _)| k)
 }
 
 /// A save line that has just been read.
@@ -245,8 +273,13 @@ impl Cloud {
             let mut games = self.games.lock().unwrap();
             for g in &cfg.games {
                 let line = wanted_line(cfg, g, state.games.get(&g.key));
-                let known =
-                    Known { line: (line != library::MAIN_LINE).then_some(line), record: g.record.clone().filter(|r| !r.is_empty()), entry: Some(g.clone()) };
+                let known = Known {
+                    line: (line != library::MAIN_LINE).then_some(line),
+                    record: g.record.clone().filter(|r| !r.is_empty()),
+                    entry: Some(g.clone()),
+                    line_name: None,
+                    line_kind: None,
+                };
                 games.insert(g.key.clone(), known);
             }
         }
@@ -261,7 +294,11 @@ impl Cloud {
     /// The id of the save line the game `key` follows.
     pub fn following(&self, key: &str) -> String {
         let games = self.games.lock().unwrap();
-        games.get(key).and_then(|g| g.line.clone()).unwrap_or_else(|| library::MAIN_LINE.to_string())
+        games
+            .get(key)
+            .and_then(|g| g.line.clone())
+            .or_else(|| split_line_key(key).map(|(_, line)| line.to_string()))
+            .unwrap_or_else(|| library::MAIN_LINE.to_string())
     }
 
     /// The record the game `key` belongs to, among `records`.
@@ -282,6 +319,10 @@ impl Cloud {
     /// every other (`solo:…`, [`GameEntry::game`]) has nothing that finds a
     /// card, here or when records are merged.
     fn record_of(&self, key: &str, records: &[v2::GameRecord]) -> String {
+        // A line key's line is on the card of its game.
+        if let Some((game, _)) = split_line_key(key) {
+            return self.record_of(game, records);
+        }
         let known = self.games.lock().unwrap().get(key).cloned().unwrap_or_default();
         if let Some(id) = known.record {
             if library::get(records, &id).is_some() {
@@ -345,6 +386,13 @@ impl Cloud {
         let games = self.games.lock().unwrap();
         let entry = games.get(key).and_then(|g| g.entry.as_ref())?;
         entry.bind.is_empty().then(|| upgrade::line_kind(entry))
+    }
+
+    /// The kind of install a line the game `key` begins is for: the game's
+    /// own ([`Cloud::kind_of`]), or what a line key was described as
+    /// ([`Cloud::describe_new_line`]).
+    fn new_kind(&self, key: &str) -> Option<String> {
+        self.kind_of(key).or_else(|| self.games.lock().unwrap().get(key).and_then(|g| g.line_kind.clone()))
     }
 
     /// What says which game `key` is and which files it keeps: its ids,
@@ -643,14 +691,14 @@ impl Cloud {
         let new_line = |record: Option<&v2::GameRecord>| {
             let (game, folders) = match record {
                 Some(r) if !r.folders.is_empty() => (r.id.clone(), r.folders.clone()),
-                _ => (key.to_string(), vec![key.to_string()]),
+                _ => (game_of(key).to_string(), vec![game_of(key).to_string()]),
             };
             let dirs = vec![v2::line_dir(&folders[0], &want)];
             Place { game, line: want.clone(), folders, dirs }
         };
         if self.access()? == Access::Legacy {
             // Not remembered: the upgrade may put the line on another card.
-            return Ok(if shared { (Place::of_key(key), Seen::Line) } else { (new_line(None), Seen::NewLine) });
+            return Ok(if shared { (Place::of_key(game_of(key)), Seen::Line) } else { (new_line(None), Seen::NewLine) });
         }
         let library = self.library()?;
         let record = self.record_of(key, &library.records);
@@ -662,7 +710,7 @@ impl Cloud {
         if shared {
             // No record yet: there is nothing to read but what a device on
             // 0.6 may have left under this key.
-            return Ok((Place::of_key(key), Seen::NoRecord));
+            return Ok((Place::of_key(game_of(key)), Seen::NoRecord));
         }
         Ok((new_line(library::resolve(&library.records, &record)), Seen::NewLine))
     }
@@ -752,19 +800,19 @@ impl Cloud {
             None => {
                 let stored = match def {
                     Some(_) => None,
-                    None => self.game_def(key)?,
+                    None => self.game_def(game_of(key))?,
                 };
                 // The caller read the line this game follows. When that is
                 // not the shared one, what 0.6 left is one more listing.
                 let has_old = match want == library::MAIN_LINE {
                     true => has_old,
-                    false => self.store.list(&v2::legacy_dir(key))?.iter().any(|e| !e.is_dir && e.name.ends_with(".json")),
+                    false => self.store.list(&v2::legacy_dir(game_of(key)))?.iter().any(|e| !e.is_dir && e.name.ends_with(".json")),
                 };
-                let mut record = upgrade::record_for(key, def.or(stored.as_ref()), None, has_old);
+                let mut record = upgrade::record_for(game_of(key), def.or(stored.as_ref()), None, has_old);
                 record.created_at = Some(now);
                 // Which kind of install begins its line: only the same kind
                 // continues it by itself ([`library::line_to_join`]).
-                if let Some(kind) = self.kind_of(key) {
+                if let Some(kind) = self.new_kind(key) {
                     for l in record.lines.iter_mut().filter(|l| l.kind.is_none()) {
                         l.kind = Some(kind.clone());
                     }
@@ -783,14 +831,15 @@ impl Cloud {
             let def = def.filter(|_| !self.is_bound(key));
             let format = def.map(upgrade::line_format).or_else(|| like.map(|l| l.format.clone()));
             let files = def.map(upgrade::line_def).or_else(|| like.and_then(|l| l.def.clone()));
-            let kind = def.and(self.kind_of(key)).or_else(|| like.and_then(|l| l.kind.clone()));
-            let folder = record.folders.first().cloned().unwrap_or_else(|| key.to_string());
+            let kind = def.and(self.new_kind(key)).or_else(|| like.and_then(|l| l.kind.clone()));
+            let folder = record.folders.first().cloned().unwrap_or_else(|| game_of(key).to_string());
             let own = want != library::MAIN_LINE;
+            let named = self.games.lock().unwrap().get(key).and_then(|g| g.line_name.clone());
             record.lines.push(v2::Line {
                 id: want.clone(),
                 format: format.unwrap_or_else(|| "pc".to_string()),
                 scope: if own { v2::SCOPE_INDEPENDENT } else { v2::SCOPE_SHARED }.to_string(),
-                name: own.then(|| self.device_name.clone()),
+                name: own.then(|| named.unwrap_or_else(|| self.device_name.clone())),
                 path: v2::line_dir(&folder, &want),
                 def: files,
                 kind,
@@ -939,7 +988,7 @@ impl Cloud {
             Seen::Line => false,
             Seen::NewLine => true,
             Seen::NoRecord => {
-                let folder = self.store.list(&join(&["games", key]))?;
+                let folder = self.store.list(&join(&["games", game_of(key)]))?;
                 !folder.iter().any(|e| e.is_dir && matches!(e.name.as_str(), "saves" | "snapshots"))
             }
         };
@@ -1056,6 +1105,33 @@ impl Cloud {
             }
         }
         Ok(out)
+    }
+
+    // ------------------------------------------------- lines by line key
+
+    /// The card the game `key` belongs to as it is now, with every save
+    /// line. A line key naming one of them is `line_key(&card.id, &line.id)`.
+    /// `None` when the cloud has no record of it (or is still laid out the
+    /// way 0.6 left it). The game records are read (not again within a
+    /// minute).
+    pub fn card(&self, key: &str) -> Result<Option<v2::GameRecord>> {
+        if self.access()? == Access::Legacy {
+            return Ok(None);
+        }
+        let library = self.library()?;
+        let id = self.record_of(key, &library.records);
+        Ok(library::resolve(&library.records, &id).cloned())
+    }
+
+    /// The name and kind of install ([`v2::Line::kind`]) the line of the
+    /// line key `key` gets when a write adds it to the card
+    /// ([`Cloud::place_to_write`]), and the card's lines get when that write
+    /// makes the card. A line the card has keeps its own.
+    pub fn describe_new_line(&self, key: &str, name: &str, kind: &str) {
+        let mut games = self.games.lock().unwrap();
+        let known = games.entry(key.to_string()).or_default();
+        known.line_name = Some(name.to_string());
+        known.line_kind = Some(kind.to_string());
     }
 }
 

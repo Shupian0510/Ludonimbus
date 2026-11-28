@@ -680,7 +680,18 @@ const mockNx = {
   address: "192.168.1.20",
   port: 47716,
   fingerprint: "b4bdeea64b1574511583648318fb8953f8ca4905d04b4a460ede11ce11d6d454",
-  devices: [{ id: "sw-1", name: "Switch", pairedAt: new Date(Date.now() - 86400000).toISOString(), lastSeen: new Date(Date.now() - 3600000).toISOString() }],
+  devices: [
+    {
+      id: "sw-1",
+      name: "Switch",
+      pairedAt: new Date(Date.now() - 86400000).toISOString(),
+      lastSeen: new Date(Date.now() - 3600000).toISOString(),
+      users: [
+        { uid: "0123456789abcdef0123456789abcde1", nickname: "Shupian", sync: true, separate: false, line: "Switch · Shupian" },
+        { uid: "0123456789abcdef0123456789abcde2", nickname: "Kid", sync: false, separate: false, line: "Switch · Kid" },
+      ],
+    },
+  ],
   pairingCode: null as string | null,
   error: null,
 };
@@ -1017,11 +1028,20 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "nx_set_enabled":
     case "nx_start_pairing":
     case "nx_cancel_pairing":
-    case "nx_remove_device": {
+    case "nx_remove_device":
+    case "nx_rename_device":
+    case "nx_set_user": {
       if (cmd === "nx_set_enabled") mockNx.enabled = args.enabled as boolean;
       if (cmd === "nx_start_pairing") mockNx.pairingCode = "482915";
       if (cmd === "nx_cancel_pairing") mockNx.pairingCode = null;
       if (cmd === "nx_remove_device") mockNx.devices = [];
+      if (cmd === "nx_rename_device") mockNx.devices.forEach((d) => d.id === args.id && (d.name = args.name as string));
+      if (cmd === "nx_set_user")
+        mockNx.devices.forEach((d) =>
+          d.users.forEach((u) => {
+            if (d.id === args.id && u.uid === args.uid) Object.assign(u, { sync: args.sync as boolean, separate: args.separate as boolean });
+          }),
+        );
       return delay<NxStatus>({ ...mockNx, running: mockNx.enabled });
     }
     case "launch_mode": {

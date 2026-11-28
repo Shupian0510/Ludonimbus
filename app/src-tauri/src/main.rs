@@ -308,6 +308,8 @@ fn main() {
             nx::nx_start_pairing,
             nx::nx_cancel_pairing,
             nx::nx_remove_device,
+            nx::nx_rename_device,
+            nx::nx_set_user,
             achievements::achievements_view,
             achievements::achievements_candidates,
             achievements::achievements_link,

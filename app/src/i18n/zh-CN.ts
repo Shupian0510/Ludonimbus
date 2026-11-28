@@ -281,7 +281,7 @@ export const nx = {
   title: "Switch",
   on: "已打开",
   notRunning: "没有在运行",
-  intro: "Switch 上的 Ludonimbus（Atmosphère 自制程序，开发中）可以通过这台电脑同步存档：电脑负责云盘、版本历史和冲突，Switch 上的存档和 Ryujinx、Eden 里的同一个游戏互通。只在局域网里连接，配对后用加密连接，Switch 只认这台电脑的证书。",
+  intro: "Switch 上的 Ludonimbus（Atmosphère 自制程序，开发中）通过这台电脑把存档备份到云盘：在 Switch 上按一下就上传，电脑负责云盘和版本历史。从别的 Switch、电脑上的 Ryujinx / Eden 取回存档时在 Switch 上确认，Switch 上现在的存档先留一份。只在局域网里连接，配对后用加密连接，Switch 只认这台电脑的证书。",
   allow: "允许 Switch 连接",
   address: "这台电脑的地址",
   fingerprint: "证书指纹（配对时在 Switch 上核对）",
@@ -292,6 +292,16 @@ export const nx = {
   paired: (when: string) => `配对于 ${when}`,
   lastSeen: (when: string) => `上次连接 ${when}`,
   remove: "移除",
+  rename: "改名",
+  renameTitle: "这台 Switch 的名字",
+  renameText: "Switch 上、版本历史里和其他 Switch 上都显示这个名字。",
+  users: "使用者",
+  usersHint:
+    "Switch 上每个使用者的存档分开备份。几台 Switch 上同名的使用者共用一份存档：在一台上玩过，另一台会显示「有更新的进度」，可以取回。「分成不同使用者」后，这台 Switch 上的这个使用者单独存。第一个同步的使用者的存档还会和电脑上的版本比较新旧。",
+  noUsers: "在 Switch 上打开一次 Ludonimbus，这里会列出它的使用者。",
+  userShared: "和同名的使用者共用",
+  userSeparate: "分成不同使用者",
+  userOff: "不同步",
 };
 
 /** 游戏来源：模拟器、重编译…；游戏库里的标识、筛选和分组。 */

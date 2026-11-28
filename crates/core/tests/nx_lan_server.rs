@@ -133,7 +133,7 @@ fn switch_over_https() {
     // Hello over TLS 1.2 (the Switch's mbedTLS) and 1.3.
     for tls in [&tls12, &tls13] {
         let (s, b) = request(port, tls, "GET", "/nx/v1/hello", None, b"").unwrap();
-        assert_eq!((s, json_of(&b)["protocol"].as_u64()), (200, Some(2)));
+        assert_eq!((s, json_of(&b)["protocol"].as_u64()), (200, Some(3)));
     }
     // A Switch that pinned another PC's certificate doesn't get through.
     assert!(request(port, &client(&"00".repeat(32), false), "GET", "/nx/v1/hello", None, b"").is_err());

@@ -3044,3 +3044,19 @@ button.member:hover {
   align-items: center;
   gap: 4px;
 }
+.nx-device {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nx-users {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 12px;
+}
+.nx-users .row > .select {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+}
