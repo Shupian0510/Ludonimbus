@@ -287,7 +287,8 @@ pub async fn get_overview() -> CmdResult<Overview> {
             cloud: cloud_view(&cfg),
             steam_found: steam::root(&cfg).is_some(),
             steam_running: procs.iter().any(|p| p == steam::PROCESS),
-            games: cfg.games.iter().map(|g| game_view(&cfg, g, &procs, &families, &cached.tags)).collect(),
+            // An entry for Ludonimbus itself (added before scans left it out) stays hidden.
+            games: cfg.games.iter().filter(|g| !games::is_ludonimbus(g)).map(|g| game_view(&cfg, g, &procs, &families, &cached.tags)).collect(),
             cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags),
             cloud_fetched_at: cached.fetched_at,
         })
