@@ -8,14 +8,19 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 
 ### 中文
 
+Ludonimbus 现在是你的个人云端游戏数据中心：存档、游戏时间、成就和截图都在你自己的云盘里。存档总是自动上传；从 Steam 启动的游戏在启动前自动取回最新进度；其他平台、其他版本、模拟器之间什么时候换存档，由你决定。
+
 存档和同步
 
-- 新增：同一个游戏的几个版本（Steam、Xbox 应用、GOG、模拟器）显示成一张卡。存档格式相同的版本自动共用同一个进度；存档放在不同位置的版本会问一次。
-- 新增：Steam 商店装的游戏也能加进来。「只备份」给 Steam 云存档再留一份带历史的备份；「接管」以后由 Ludonimbus 同步，可以和其他平台、其他设备共用进度。
+- 新增：同一个游戏的几个版本（Steam、Xbox 应用、GOG、模拟器、Switch）显示成一张卡，各自保存自己的进度。另一个版本有更新的进度时，游戏页有一行提示，从 Steam 启动前也会问（不会拖慢启动）：用那边的进度、继续用这里的，或者以后自动接上。存档通用的两个版本，也可以在版本条菜单里选「和 X 版共用进度」。
+- 改进：不经 Steam 启动的游戏（直接打开、模拟器、Xbox 应用），后台同步只上传，不再自动写进本机。云端有更新时显示「云端较新」，应用在托盘里时弹系统通知（设置里可关），在游戏页按「取回」。启动应用时游戏库提示「N 个游戏和云端不一样」，可以取回、用本机的，或者让这台设备单独存。
+- 新增：游戏库顶部的「全部同步」：先把所有游戏上传，再列出要你决定的游戏。
+- 改进：只有同一个版本（同一家商店、同一个模拟器）在几台设备之间自动共用存档。
+- 新增：Steam 商店装的游戏也能加进来。「只备份」给 Steam 云存档再留一份带历史的备份；「接管」以后由 Ludonimbus 同步，几台设备之间自动接上。装了 Steam 插件时，接管只要确认一次：插件在 Steam 里关掉这个游戏的云存档、改好启动选项，不用重启 Steam；交还时重新打开。Steam 游戏页和 Decky 面板里「只备份」的游戏可以直接「交给 Ludonimbus」。
 - 新增：独立存档。一台设备可以存自己的进度，不和其他设备共用；别的设备可以跟随它。
-- 新增：Xbox 应用（Game Pass）的版本可以和 Steam 版共用进度。写入 Xbox 版是实验性的，只在你自己选择时才写。
+- 新增：Xbox 应用（Game Pass）版的存档可以取回到 Steam 版，反过来也可以。写入 Xbox 版是实验性的，只在你自己选择时才写。
 - 新增：本机装着、还没加入的同一个游戏的版本（比如交给 Steam 云管的 Steam 版）出现在游戏页的版本条上，点一下就加入；「发到…」和「关联其他版本…」里也能直接选它。在 Xbox 应用里玩完，可以把存档发到 Steam 版接着玩。
-- 新增：Switch 游戏的存档可以在 Ryujinx 和 Eden 之间通用。规则列表里的游戏（比如星露谷物语），Switch 版和 PC 版也能共用进度：第一次问一次；另一个平台用更新版本的游戏存的档不会自动换过来。
+- 新增：Switch 游戏的存档可以在 Switch、Ryujinx 和 Eden 之间互相取回。规则列表里的游戏（比如星露谷物语），Switch 版和 PC 版的存档也能互相取回，会自动转换；另一个平台用更新版本的游戏存的档会先提醒。
 - 改进：同步更快，在慢的云盘上尤其明显：启动前检查通常只要一次请求。启动前最多等云端 10 秒；退出后上传超过 10 秒就转到后台继续，不用等着。
 - 改进：判断哪一份更新不再看电脑的时钟。两台设备各有进度时一定会问你，不会悄悄覆盖。
 - 改进：大存档只上传变化了的文件；上传中断后从断的地方接着传。
@@ -23,7 +28,7 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 
 「存档」页签
 
-- 改进：「版本历史」改成「存档」。上面是当前的、每个平台最新的和保留的，自动存档折叠在下面。
+- 改进：「版本历史」改成「存档」，按来源分组：这里的存档在最上面（当前的、保留的，自动存档折叠），另一个版本、Switch、模拟器、另一台设备单独存的各一组。每份存档标出和现在的比新还是旧，别处的主操作是「取回到这里」，要转换的写明，不能取的说明原因。每份存档还记下存的时候玩了多久。
 - 改进：「恢复」改成「设为当前」，可以撤销。「锁定」和「备注」合成「保留」：点星标保留，可以起名字。
 - 新增：把一份存档导出成 `.lnsave` 文件发给朋友；朋友导入后多出一份保留的存档，不改他本机的存档。
 - 新增：删除的存档先进「最近删除」，30 天内可以放回。
@@ -35,12 +40,13 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 改进：界面上的文字少了，说明收在「?」里。
 - 新增：在几个平台上玩过的游戏，游戏时间按平台分别列出。
 - 新增：「收藏」页：总时长、游戏数、成就，以及「已通关」「已归档」两个书架。归档的游戏不在游戏库里显示，存档、游戏时间和成就留在云端，本机的游戏可以卸载。
-- 新增：手柄界面，适合 Windows 掌机。
+- 新增：手柄界面，适合 Windows 掌机。认得出 Xbox 全屏体验和常见的掌机（ROG Xbox Ally、Legion Go S / Go 2、Steam Deck OLED 等）：在全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 直接进手柄界面，游戏启动时的提示也自动全屏。字号跟着屏幕走，用 PlayStation / Nintendo 手柄时显示对应的按键名。
+- 改进：「添加游戏」以扫描本机为主；手动添加先选游戏程序或游戏文件夹，再「找存档位置」：Ludusavi 数据库、游戏引擎（Unity、Unreal、Godot、Ren'Py、GameMaker、RPG Maker）、Steam 云文件夹和 Wine 前缀给出建议，由你勾选。
 
 其他平台
 
 - 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。
-- 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）。
+- 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）：A 一键备份、从不覆盖；X「取回…」从这台 Switch、保留的存档、别的 Switch 或电脑上的版本里选一份，先留一份再写入，L 撤销。几台 Switch 上同名的使用者共用存档；Switch 的名字、同步哪些使用者、是否分成不同使用者都在电脑的「设置 → Switch」里设。需要 Switch 客户端 0.2.0。
 
 安全和可靠性
 
@@ -59,6 +65,8 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 - 修复：一个游戏同时装了 Steam 版和 Xbox 应用版时，Xbox 版会把 Steam 版的存档文件夹当成自己的，看不到自己的存档；Steam 版也可能带上 Xbox 版的存档容器。现在各自只认自己的存档，Ludusavi 数据库里还没有 Xbox 版路径的新游戏也能找到它的存档容器。
 - 修复：备用的成就弹窗每次启动只出现一次；关闭夸克网盘登录窗口后要等 10 分钟才取消登录。
 - 修复：没有缩略图的截图在图库里是空白的；手动添加游戏时，Windows 上的安装文件夹被填成了程序本身。
+- 修复：在 Ludusavi 数据库里选好游戏后「添加」按钮没反应；Ludonimbus 加入 Steam 后自己被当成游戏。
+- 修复：Steam 装的游戏页上，「Ludonimbus」那一项比 Steam 自己的项目低、被截掉。
 
 说明
 
@@ -68,14 +76,19 @@ Each section is shown as-is on the GitHub Release page and in the in-app update 
 
 ### English
 
+Ludonimbus is now your personal cloud hub for game data: saves, play time, achievements and screenshots live in your own cloud. Saves are always uploaded; games started from Steam get the newest progress before they launch; when to move saves between platforms, versions and emulators is up to you.
+
 Saves and sync
 
-- New: several versions of one game (Steam, Xbox app, GOG, emulators) show as one card. Versions whose saves have the same format share one progress automatically; a version that keeps its saves in a different place is asked about once.
-- New: games installed from the Steam store can be added too. "Backup only" keeps a second copy of what Steam Cloud syncs, with history; after "Take over", Ludonimbus syncs the game, so it can share progress with other platforms and other devices.
+- New: several versions of one game (Steam, Xbox app, GOG, emulators, Switch) show as one card, each keeping its own progress. When another version has newer progress, the game page says so in one line and a Steam launch asks first (without holding the launch): use that progress, keep this one, or always continue from there. Two versions whose saves match can also be set to "Share progress with the X version" in the version bar's menu.
+- Improved: games that don't start through Steam (started directly, in an emulator, in the Xbox app) only upload in the background and are never written to by themselves. Newer saves in the cloud show as "Newer in the cloud", a system notification tells you while the app is in the tray (can be turned off in Settings), and "Get from cloud" on the game page takes them. At start the library says "N games differ from the cloud" and lets you get the cloud's, keep this PC's, or let this device keep its own.
+- New: "Sync all" at the top of the library uploads everything, then lists what needs a choice.
+- Improved: only the same version of a game (same store, same emulator) shares saves across devices by itself.
+- New: games installed from the Steam store can be added too. "Backup only" keeps a second copy of what Steam Cloud syncs, with history; after "Take over", Ludonimbus syncs the game and your devices pick up from each other. With the Steam plugin, taking over is one confirmation: the plugin turns Steam Cloud off for the game and sets its launch options in Steam, without restarting Steam, and turns it back on when you give the game back. Backed-up games can be handed to Ludonimbus right from their Steam page or the Decky panel.
 - New: a device's own saves. A device can keep its own progress instead of sharing with the others, and another device can follow it.
-- New: the Xbox app (Game Pass) version can share progress with the Steam version. Writing into the Xbox version is experimental and happens only when you choose it.
+- New: saves of the Xbox app (Game Pass) version can be taken into the Steam version, and the other way round. Writing into the Xbox version is experimental and happens only when you choose it.
 - New: a version of the same game that is installed here but not added yet (such as a Steam version left to Steam Cloud) shows on the game page's version bar; one click adds it. "Send to…" and "Link another version…" offer it too. Play in the Xbox app, then send the save to the Steam version and carry on there.
-- New: saves of Switch games work in both Ryujinx and Eden. For games in the rule list (such as Stardew Valley), the Switch and PC versions can share progress too: you're asked once, and a save made by a newer version of the game on the other platform isn't brought over by itself.
+- New: saves of Switch games can be taken between the Switch, Ryujinx and Eden. For games in the rule list (such as Stardew Valley), the Switch and PC versions can take each other's saves too, converted on the way; a save made by a newer version of the game on the other platform comes with a warning.
 - Improved: sync is faster, most of all on slow clouds: the check before launch usually takes one request. A launch waits for the cloud for at most 10 seconds; an upload that takes longer than 10 seconds after exit carries on in the background.
 - Improved: which save is newer is no longer decided by the PC's clock. When two devices both have progress you are always asked; nothing is overwritten silently.
 - Improved: large saves upload only the files that changed, and an interrupted upload continues where it stopped.
@@ -83,7 +96,7 @@ Saves and sync
 
 The Saves tab
 
-- Improved: "Version history" is now "Saves". The current save, the newest of each platform and the kept ones are at the top; automatic saves are folded away below.
+- Improved: "Version history" is now "Saves", grouped by where saves come from: the ones here first (current, kept, automatic saves folded away), then one group each for another version, the Switch, an emulator, or a device that keeps its own. Each save is compared with the current one; saves from elsewhere have "Take here", saying when they are converted and why when they can't be. Each save also records how long the game had been played.
 - Improved: "Restore" is now "Make current" and can be undone. "Lock" and "Note" became "Keep": star a save to keep it, and give it a name.
 - New: export a save as a `.lnsave` file for a friend; importing it adds one kept save and changes nothing on their PC.
 - New: deleted saves go to "Recently deleted" first and can be put back for 30 days.
@@ -95,12 +108,13 @@ Library and interface
 - Improved: less text on screen; explanations are behind the "?" marks.
 - New: for a game played on several platforms, play time is listed per platform.
 - New: the Collection page: total play time, games and achievements, and two shelves, Finished and Archived. Archived games leave the library; their saves, play time and achievements stay in the cloud, and the game can be uninstalled.
-- New: a gamepad interface for Windows handhelds.
+- New: a gamepad interface for Windows handhelds. It recognises the Xbox full screen experience and common handhelds (ROG Xbox Ally, Legion Go S / Go 2, Steam Deck OLED and others): opened in the full screen experience or Steam Big Picture, Ludonimbus goes straight to the gamepad interface, and questions when a game starts are full screen too. Text scales to the screen, and PlayStation and Nintendo controllers see their own button names.
+- Improved: "Add game" starts from scanning this PC; adding by hand is picking the game's program or folder, then "Find the saves", with suggestions from Ludusavi's database, the game's engine (Unity, Unreal, Godot, Ren'Py, GameMaker, RPG Maker), Steam's cloud folder and Wine prefixes for you to tick.
 
 Other platforms
 
 - New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin.
-- New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview).
+- New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview): A backs up with one press and never overwrites; X "Take…" picks a save from this Switch, kept saves, your other Switches or the PC's version, keeps a copy first, and L undoes it. Users with the same name share saves across Switches; the Switch's name, which users sync and whether a user is kept separate are set on the PC under Settings → Switch. Needs Switch client 0.2.0.
 
 Security and reliability
 
@@ -119,6 +133,8 @@ Security and reliability
 - Fixed: with a game installed both from Steam and from the Xbox app, the Xbox version took the Steam version's save folder for its own and never saw its own saves; the Steam version could pick up the Xbox version's save containers. Each now keeps to its own saves, and the Xbox version finds its containers even for new games Ludusavi's database has no Xbox path for yet.
 - Fixed: the fallback achievement popup appeared only once per run; closing the Quark sign-in window cancelled the sign-in only after 10 minutes.
 - Fixed: screenshots without a thumbnail were blank in the gallery; adding a game by hand on Windows filled in the program itself as its install folder.
+- Fixed: "Add" did nothing after choosing a game in Ludusavi's database; Ludonimbus itself showed up as a game once added to Steam.
+- Fixed: on a Steam-installed game's page, the Ludonimbus item sat lower than Steam's own items and was cut off.
 
 Notes
 
