@@ -196,7 +196,6 @@ fn main() {
             commands::games::pick_folder,
             commands::games::folder_to_pattern,
             commands::games::ludusavi_search,
-            commands::games::ludusavi_preview,
             // Steam
             commands::steam::steam_accounts,
             commands::steam::steam_shortcuts,
@@ -251,6 +250,8 @@ fn main() {
             library::savefind_suggest,
             library::savefind_watch_start,
             library::savefind_watch_stop,
+            library::savefind_titles,
+            library::exe_in_folder,
             library::sgdb_status,
             library::sgdb_set_key,
             library::sgdb_clear_key,

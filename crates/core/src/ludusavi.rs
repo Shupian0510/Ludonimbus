@@ -295,6 +295,18 @@ pub fn resolve_files_in(title: &str, wine_prefix: Option<&std::path::Path>) -> R
     Ok(out)
 }
 
+/// How many save files Ludusavi finds on this PC for each of `titles` (one
+/// run of Ludusavi). A title without saves here is missing.
+pub fn file_counts(titles: &[String]) -> Result<HashMap<String, usize>> {
+    if titles.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let exe = exe_path().ok_or_else(|| anyhow!(crate::tr!("没有找到 ludusavi.exe", "ludusavi.exe not found")))?;
+    let mut cmd = command(&exe);
+    cmd.args(["backup", "--preview", "--api"]).args(titles);
+    Ok(parse_scan(&run_json(cmd)?)?.into_iter().map(|g| (g.title, g.files.len())).collect())
+}
+
 // ---------------------------------------------------------------------------
 // Save locations from the manifest's rules
 //

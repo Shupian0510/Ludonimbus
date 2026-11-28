@@ -70,6 +70,7 @@ fn roots(v: &mut impl TypeVisitor) {
     v.visit::<discover::GameFolder>();
     v.visit::<library::AdapterInfo>();
     v.visit::<savefind::Candidate>();
+    v.visit::<savefind::TitleMatch>();
     v.visit::<library::SgdbStatus>();
     v.visit::<steamgriddb::SgdbGame>();
     v.visit::<steamgriddb::SgdbImage>();

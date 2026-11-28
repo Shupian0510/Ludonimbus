@@ -206,22 +206,10 @@ pub async fn pick_folder(title: Option<String>, start: Option<String>) -> CmdRes
 /// Turn a folder the user picked into a portable save pattern.
 #[tauri::command]
 pub async fn folder_to_pattern(path: String, exe: Option<String>) -> CmdResult<String> {
-    blocking(move || {
-        let install = exe.as_deref().map(Path::new).and_then(Path::parent).map(Path::to_path_buf);
-        let roots = spec::builtin_roots(install.as_deref());
-        let logical = spec::tokenize(Path::new(&path), &roots);
-        let (root, rest) = logical.split_once('/').unwrap_or((&logical, ""));
-        Ok(if rest.is_empty() { format!("{{{root}}}/**") } else { format!("{{{root}}}/{rest}/**") })
-    })
-    .await
+    blocking(move || Ok(ludonimbus_core::savefind::pattern_for(Path::new(&path), exe.as_deref().map(Path::new), None))).await
 }
 
 #[tauri::command]
 pub async fn ludusavi_search(query: String) -> CmdResult<Vec<String>> {
     blocking(move || ludusavi::search(query.trim())).await
-}
-
-#[tauri::command]
-pub async fn ludusavi_preview(title: String) -> CmdResult<Vec<String>> {
-    blocking(move || Ok(ludusavi::resolve_files(&title)?.iter().map(|p| p.display().to_string()).collect())).await
 }

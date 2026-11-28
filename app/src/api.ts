@@ -34,6 +34,7 @@ import type {
   PlaytimeSummary,
   SaveCandidate,
   SaveLine,
+  SaveTitle,
   ScreenshotReport,
   Settings,
   SettingsPatch,
@@ -100,6 +101,7 @@ export type {
   SaveBind,
   SaveCandidate,
   SaveLine,
+  SaveTitle,
   ScreenshotMode,
   ScreenshotReport,
   Settings,
@@ -332,6 +334,9 @@ export const api = {
   saveWatchStart: (exe: string | null, args: string | null, install: string | null) =>
     invoke<void>("savefind_watch_start", { exe, args, install }),
   saveWatchStop: () => invoke<SaveCandidate[]>("savefind_watch_stop"),
+  saveTitles: (name: string, exe: string | null, install: string | null) =>
+    invoke<SaveTitle[]>("savefind_titles", { name, exe, install }),
+  exeInFolder: (path: string) => invoke<string | null>("exe_in_folder", { path }),
   sgdbStatus: () => invoke<SgdbStatus>("sgdb_status"),
   sgdbSetKey: (key: string) => invoke<void>("sgdb_set_key", { key }),
   sgdbClearKey: () => invoke<void>("sgdb_clear_key"),
@@ -348,7 +353,6 @@ export const api = {
   cloudAccount: () => invoke<AccountInfo>("cloud_account"),
   devices: () => invoke<DeviceInfo[]>("list_devices"),
   ludusaviSearch: (query: string) => invoke<string[]>("ludusavi_search", { query }),
-  ludusaviPreview: (title: string) => invoke<string[]>("ludusavi_preview", { title }),
   steamPluginStatus: () => invoke<SteamPluginStatus>("steam_plugin_status"),
   steamPluginInstall: (closeSteam: boolean) => invoke<SteamPluginInstall>("steam_plugin_install", { closeSteam }),
   steamPluginRemove: (closeSteam: boolean) => invoke<void>("steam_plugin_remove", { closeSteam }),

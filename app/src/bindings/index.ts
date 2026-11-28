@@ -77,6 +77,7 @@ export type * from "./Retention";
 export type * from "./SaveBind";
 export type * from "./SaveCandidate";
 export type * from "./SaveLine";
+export type * from "./SaveTitle";
 export type * from "./ScreenshotMode";
 export type * from "./ScreenshotReport";
 export type * from "./Settings";

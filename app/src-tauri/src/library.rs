@@ -4,7 +4,7 @@
 use crate::commands::{blocking, with_steam_closed, CmdResult};
 use anyhow::{anyhow, bail, Result};
 use ludonimbus_core::discover::{self, Found};
-use ludonimbus_core::savefind::{self, Candidate};
+use ludonimbus_core::savefind::{self, Candidate, TitleMatch};
 use ludonimbus_core::steamgriddb::{self as sgdb, SgdbGame, SgdbImage};
 use ludonimbus_core::{config, games, localart, steam, util};
 use serde::Serialize;
@@ -111,7 +111,33 @@ pub async fn savefind_suggest(name: String, exe: Option<String>, install: Option
     .await
 }
 
-static WATCH: Mutex<Option<savefind::Watch>> = Mutex::new(None);
+/// The game in Ludusavi's database: by its Steam app id, its name, similar names.
+#[tauri::command]
+pub async fn savefind_titles(name: String, exe: Option<String>, install: Option<String>) -> CmdResult<Vec<TitleMatch>> {
+    blocking(move || {
+        let exe = exe.map(PathBuf::from);
+        let install = install.map(PathBuf::from).or_else(|| exe.as_deref().and_then(Path::parent).map(Path::to_path_buf));
+        savefind::titles(&name, exe.as_deref(), install.as_deref())
+    })
+    .await
+}
+
+/// The game's program in a folder the user picked (`None`: no program, or
+/// only Ludonimbus's own).
+#[tauri::command]
+pub async fn exe_in_folder(path: String) -> CmdResult<Option<String>> {
+    blocking(move || {
+        let exe = discover::pick_exe(Path::new(&path)).map(|p| p.display().to_string());
+        if let Some(e) = &exe {
+            offer_exe(e);
+        }
+        Ok(exe)
+    })
+    .await
+}
+
+/// The recording of file changes, and the program it was started for.
+static WATCH: Mutex<Option<(savefind::Watch, Option<PathBuf>)>> = Mutex::new(None);
 
 /// A program the user picked, a scan found, or a library game's.
 fn may_launch(exe: &Path) -> bool {
@@ -132,7 +158,7 @@ pub async fn savefind_watch_start(exe: Option<String>, args: Option<String>, ins
         let mut roots = savefind::save_roots();
         roots.extend(install.clone());
         let watch = savefind::Watch::start(&roots)?;
-        *WATCH.lock().unwrap() = Some(watch);
+        *WATCH.lock().unwrap() = Some((watch, exe.clone()));
         if let Some(exe) = exe {
             let mut cmd = std::process::Command::new(&exe);
             cmd.args(util::split_args(args.as_deref().unwrap_or("")));
@@ -150,8 +176,8 @@ pub async fn savefind_watch_start(exe: Option<String>, args: Option<String>, ins
 #[tauri::command]
 pub async fn savefind_watch_stop() -> CmdResult<Vec<Candidate>> {
     blocking(|| {
-        let watch = WATCH.lock().unwrap().take().ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有正在进行的记录", "No recording in progress")))?;
-        Ok(watch.finish())
+        let (watch, exe) = WATCH.lock().unwrap().take().ok_or_else(|| anyhow!(ludonimbus_core::tr!("没有正在进行的记录", "No recording in progress")))?;
+        Ok(watch.finish(exe.as_deref()))
     })
     .await
 }

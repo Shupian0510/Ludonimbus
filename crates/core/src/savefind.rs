@@ -1,14 +1,22 @@
-//! Helping users find where an unknown game keeps its saves:
+//! Helping users find where a game keeps its saves ("找存档位置"):
 //!
-//! - [`suggest`]: folders in the usual save locations whose names look like
-//!   the game.
+//! - [`titles`]: the game in Ludusavi's database, by its Steam app id, its
+//!   name, or a similar name.
+//! - [`suggest`]: folders that may hold its saves, best first: what the
+//!   game's engine and Steam say ([`hints`]), save folders in the game
+//!   folder, and folders in the usual save locations named like the game.
 //! - [`Watch`]: record which files change while the user plays, then point
 //!   at the folders that changed (ignoring caches, logs and other programs'
 //!   usual noise).
+//!
+//! All of them only suggest: the user picks what is used.
+
+pub mod hints;
 
 use crate::discover::match_key;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use hints::{Hint, Places};
 use notify::{EventKind, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -21,6 +29,8 @@ use ts_rs::TS;
 #[ts(rename = "SaveCandidate")]
 pub struct Candidate {
     pub path: String,
+    /// The save pattern to use for it (`{localappdata}/Game/Saved/SaveGames/**`).
+    pub pattern: String,
     pub files: usize,
     pub bytes: u64,
     pub modified: Option<DateTime<Utc>>,
@@ -28,26 +38,29 @@ pub struct Candidate {
     pub sample: Vec<String>,
     /// Why it is suggested (shown to the user).
     pub reason: String,
+    /// The game's engine or Steam says this is where it keeps saves (it may
+    /// not have saved yet: no files).
+    pub likely: bool,
 }
 
-fn home() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from(r"C:\Users\Default"))
+/// The game in Ludusavi's database, as the save finder offers it.
+#[derive(Debug, Clone, Serialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "SaveTitle")]
+pub struct TitleMatch {
+    pub title: String,
+    /// Found by the game's Steam app id or its exact name.
+    pub likely: bool,
+    /// Why it is offered (shown to the user).
+    pub reason: String,
+    /// Save files Ludusavi finds for it on this device (counted for the
+    /// likely ones only).
+    pub files: usize,
 }
 
 /// The folders games usually write saves to.
 pub fn save_roots() -> Vec<PathBuf> {
-    let h = home();
-    let docs = dirs::document_dir().unwrap_or_else(|| h.join("Documents"));
-    let mut roots = vec![
-        docs.join("My Games"),
-        docs.clone(),
-        h.join("Saved Games"),
-        dirs::config_dir().unwrap_or_else(|| h.join("AppData").join("Roaming")),
-        dirs::data_local_dir().unwrap_or_else(|| h.join("AppData").join("Local")),
-        h.join("AppData").join("LocalLow"),
-    ];
-    roots.retain(|r| r.is_dir());
-    roots
+    Places::here().roots()
 }
 
 /// Name fragments to look for: words of the name, the exe name, the folder.
@@ -75,14 +88,20 @@ fn tokens(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<String>
     out
 }
 
-/// Size, file count, newest change and a few names of a folder (bounded).
-fn describe(dir: &Path) -> (usize, u64, Option<DateTime<Utc>>, Vec<String>) {
-    let (mut files, mut bytes, mut newest, mut sample) = (0usize, 0u64, None::<std::time::SystemTime>, Vec::new());
-    for e in walkdir::WalkDir::new(dir).max_depth(5).into_iter().flatten().take(5000) {
+/// Size, file count, newest change and a few names of a folder (bounded);
+/// with `files`, of the matching files directly in it.
+fn describe(dir: &Path, files: Option<&str>) -> (usize, u64, Option<DateTime<Utc>>, Vec<String>) {
+    let glob = files.and_then(|f| globset::Glob::new(&f.to_lowercase()).ok()).map(|g| g.compile_matcher());
+    let (mut count, mut bytes, mut newest, mut sample) = (0usize, 0u64, None::<std::time::SystemTime>, Vec::new());
+    let depth = if glob.is_some() { 1 } else { 5 };
+    for e in walkdir::WalkDir::new(dir).max_depth(depth).into_iter().flatten().take(5000) {
         if !e.file_type().is_file() {
             continue;
         }
-        files += 1;
+        if glob.as_ref().is_some_and(|g| !g.is_match(e.file_name().to_string_lossy().to_lowercase())) {
+            continue;
+        }
+        count += 1;
         if let Ok(md) = e.metadata() {
             bytes += md.len();
             if let Ok(m) = md.modified() {
@@ -95,14 +114,51 @@ fn describe(dir: &Path) -> (usize, u64, Option<DateTime<Utc>>, Vec<String>) {
             sample.push(e.file_name().to_string_lossy().into_owned());
         }
     }
-    (files, bytes, newest.map(DateTime::<Utc>::from), sample)
+    (count, bytes, newest.map(DateTime::<Utc>::from), sample)
 }
 
-/// Folders in the usual save locations (and save-like folders inside the
-/// game folder) that look like they belong to the game, best first.
+/// The save pattern for a folder (or the `files` in it) of a game started
+/// by `exe`: under the most specific root, `{install}` being the program's
+/// folder.
+pub fn pattern_for(path: &Path, exe: Option<&Path>, files: Option<&str>) -> String {
+    let install = exe.and_then(Path::parent).map(Path::to_path_buf);
+    let roots = crate::spec::builtin_roots(install.as_deref());
+    let same = roots.iter().find(|(_, p)| crate::util::same_path(&p.to_string_lossy(), &path.to_string_lossy())).map(|(n, _)| n.clone());
+    let logical = same.unwrap_or_else(|| crate::spec::tokenize(path, &roots));
+    let (root, rest) = logical.split_once('/').unwrap_or((&logical, ""));
+    let tail = files.unwrap_or("**");
+    if rest.is_empty() {
+        format!("{{{root}}}/{tail}")
+    } else {
+        format!("{{{root}}}/{rest}/{tail}")
+    }
+}
+
+/// What [`suggest_in`] looks at; tests point it at made-up folders.
+#[derive(Debug, Clone)]
+pub struct Look {
+    pub places: Places,
+    /// Steam's `userdata` folder.
+    pub steam_userdata: Option<PathBuf>,
+    /// The home whose launchers' Wine prefixes (Heroic, Lutris, Bottles) to
+    /// look in: Linux only.
+    pub prefixes_home: Option<PathBuf>,
+}
+
+impl Look {
+    pub fn here() -> Look {
+        let steam = crate::config::load().ok().and_then(|c| crate::steam::root(&c));
+        Look { places: Places::here(), steam_userdata: steam.map(|r| r.join("userdata")), prefixes_home: if cfg!(windows) { None } else { dirs::home_dir() } }
+    }
+}
+
+/// Folders that may hold the game's saves, best first.
 pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Candidate> {
+    suggest_in(&Look::here(), name, exe, install)
+}
+
+pub fn suggest_in(look: &Look, name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Candidate> {
     let toks = tokens(name, exe, install);
-    let mut scored: Vec<(i64, PathBuf, String)> = Vec::new();
     let score_name = |dir_name: &str| -> i64 {
         let k = match_key(dir_name);
         if k.is_empty() {
@@ -121,54 +177,140 @@ pub fn suggest(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Vec<Ca
             .max()
             .unwrap_or(0)
     };
-    for root in save_roots() {
-        let Ok(rd) = std::fs::read_dir(&root) else { continue };
-        for e in rd.flatten().filter(|e| e.path().is_dir()) {
-            let n = e.file_name().to_string_lossy().into_owned();
-            let s = score_name(&n);
-            if s > 0 {
-                scored.push((s, e.path(), crate::tr!("名字和游戏相近（{}）", "similar name ({})", root.display())));
+
+    // A Windows game on Linux keeps its saves in its Wine / Proton prefix:
+    // the one it is installed in comes first, then a launcher's prefix named
+    // like the game.
+    let mut places: Vec<Places> = Vec::new();
+    let own_prefix = exe.or(install).and_then(hints::wine_prefix_of);
+    if let Some(p) = &own_prefix {
+        places.extend(hints::prefix_user_dirs(p).iter().map(|u| Places::windows(u)));
+    }
+    places.push(look.places.clone());
+    if let Some(home) = &look.prefixes_home {
+        for (prefix, _) in hints::launcher_prefixes(home) {
+            let named = prefix.file_name().is_some_and(|n| score_name(&n.to_string_lossy()) >= 100);
+            if named && own_prefix.as_ref().is_none_or(|o| !crate::util::same_path(&o.to_string_lossy(), &prefix.to_string_lossy())) {
+                places.extend(hints::prefix_user_dirs(&prefix).iter().map(|u| Places::windows(u)));
             }
-            // Company/Game layouts (LocalLow, My Games, AppData).
-            if let Ok(rd2) = std::fs::read_dir(e.path()) {
-                for e2 in rd2.flatten().filter(|e| e.path().is_dir()) {
-                    let s2 = score_name(&e2.file_name().to_string_lossy());
-                    if s2 > 0 {
-                        scored.push((s2 + 5, e2.path(), crate::tr!("名字和游戏相近（{}）", "similar name ({})", e.path().display())));
+        }
+    }
+
+    let mut found: Vec<Hint> = Vec::new();
+    for (i, p) in places.iter().enumerate() {
+        // Where the engine will write even before the first save: only for
+        // the places the game runs in.
+        let first = i == 0;
+        found.extend(hints::engine(p, exe, install, name).into_iter().filter(|h| first || h.path.exists()));
+    }
+    if let (Some(userdata), Some(appid)) = (&look.steam_userdata, hints::steam_appid(exe, install)) {
+        found.extend(hints::steam_cloud(userdata, appid));
+    }
+    let game_dirs: Vec<&Path> = install.into_iter().chain(exe.and_then(Path::parent)).collect();
+    for d in game_dirs {
+        for s in hints::save_dirs_in(d) {
+            found.push(Hint {
+                path: s,
+                files: None,
+                reason: crate::tr!("游戏目录里的存档文件夹", "save folder in the game folder"),
+                likely: false,
+                score: 200,
+            });
+        }
+    }
+    for p in &places {
+        for root in p.roots() {
+            let Ok(rd) = std::fs::read_dir(&root) else { continue };
+            for e in rd.flatten().filter(|e| e.path().is_dir()) {
+                let n = e.file_name().to_string_lossy().into_owned();
+                if hints::is_vendor_name(&n) || hints::is_cache_name(&n) {
+                    continue;
+                }
+                let s = score_name(&n);
+                if s > 0 {
+                    found.push(Hint {
+                        path: e.path(),
+                        files: None,
+                        reason: crate::tr!("名字和游戏相近（{}）", "similar name ({})", root.display()),
+                        likely: false,
+                        score: s,
+                    });
+                }
+                // Company/Game layouts (LocalLow, My Games, AppData).
+                if let Ok(rd2) = std::fs::read_dir(e.path()) {
+                    for e2 in rd2.flatten().filter(|e| e.path().is_dir()) {
+                        let n2 = e2.file_name().to_string_lossy().into_owned();
+                        if hints::is_cache_name(&n2) {
+                            continue;
+                        }
+                        let s2 = score_name(&n2);
+                        if s2 > 0 {
+                            let reason = crate::tr!("名字和游戏相近（{}）", "similar name ({})", e.path().display());
+                            found.push(Hint { path: e2.path(), files: None, reason, likely: false, score: s2 + 5 });
+                        }
                     }
                 }
             }
         }
     }
-    if let Some(dir) = install {
-        for e in walkdir::WalkDir::new(dir).max_depth(3).into_iter().flatten() {
-            if !e.file_type().is_dir() {
-                continue;
-            }
-            let n = e.file_name().to_string_lossy().to_lowercase();
-            if ["save", "saves", "savedata", "savegames", "savegame", "saved", "userdata", "profiles", "profile"].contains(&n.as_str()) {
-                scored.push((80, e.path().to_path_buf(), crate::tr!("游戏目录里的存档文件夹", "save folder in the game folder")));
-            }
-        }
-    }
-    scored.sort_by_key(|a| std::cmp::Reverse(a.0));
-    let mut out: Vec<Candidate> = Vec::new();
-    for (_, path, reason) in scored {
-        let p = path.to_string_lossy().into_owned();
-        if out.iter().any(|c| c.path.eq_ignore_ascii_case(&p)) {
+
+    // Best first; one row per folder (with the best reason it has).
+    found.sort_by_key(|h| (std::cmp::Reverse(h.likely), std::cmp::Reverse(h.score)));
+    let mut out: Vec<(i64, Candidate)> = Vec::new();
+    for h in found {
+        let p = h.path.to_string_lossy().into_owned();
+        let pattern = pattern_for(&h.path, exe, h.files.as_deref());
+        if out.iter().any(|(_, c)| c.pattern == pattern) || places.iter().any(|pl| pl.never_offered(&h.path)) {
             continue;
         }
-        let (files, bytes, modified, sample) = describe(&path);
-        if files == 0 {
+        let (files, bytes, modified, sample) = describe(&h.path, h.files.as_deref());
+        if files == 0 && !h.likely {
             continue;
         }
-        out.push(Candidate { path: p, files, bytes, modified, sample, reason });
+        out.push((h.score, Candidate { path: p, pattern, files, bytes, modified, sample, reason: h.reason, likely: h.likely }));
         if out.len() >= 12 {
             break;
         }
     }
-    out.sort_by_key(|a| std::cmp::Reverse(a.modified));
-    out
+    // A convention with saves in it, then one without (not played yet),
+    // then the others by how well they match; among equals the folder
+    // written to last.
+    out.sort_by_key(|(score, c)| (std::cmp::Reverse(c.likely), std::cmp::Reverse(c.files > 0), std::cmp::Reverse(*score), std::cmp::Reverse(c.modified)));
+    out.into_iter().map(|(_, c)| c).collect()
+}
+
+/// The game in Ludusavi's database: by the Steam app id of its files, by
+/// its exact name, then titles with similar names. Counts the save files
+/// Ludusavi finds on this device for the likely ones (one run of Ludusavi).
+pub fn titles(name: &str, exe: Option<&Path>, install: Option<&Path>) -> Result<Vec<TitleMatch>> {
+    let mut out: Vec<TitleMatch> = Vec::new();
+    let mut push = |title: String, likely: bool, reason: String| {
+        if !out.iter().any(|t| t.title == title) {
+            out.push(TitleMatch { title, likely, reason, files: 0 });
+        }
+    };
+    if let Some(appid) = hints::steam_appid(exe, install) {
+        if let Some(t) = crate::ludusavi::titles_by_steam_id(&[appid].into_iter().collect()).remove(&appid) {
+            push(t, true, crate::tr!("Steam 应用 ID {appid}", "Steam app id {appid}"));
+        }
+    }
+    let name = name.trim();
+    if !name.is_empty() {
+        if let Some(Some(t)) = crate::ludusavi::find_titles(&[name.to_string()])?.into_iter().next() {
+            push(t, true, crate::tr!("名字相同", "same name"));
+        }
+        for t in crate::ludusavi::search(name)?.into_iter().take(6) {
+            push(t, false, crate::tr!("名字相近", "similar name"));
+        }
+    }
+    let likely: Vec<String> = out.iter().filter(|t| t.likely).map(|t| t.title.clone()).collect();
+    if !likely.is_empty() {
+        let counts = crate::ludusavi::file_counts(&likely).unwrap_or_default();
+        for t in out.iter_mut() {
+            t.files = counts.get(&t.title).copied().unwrap_or(0);
+        }
+    }
+    Ok(out)
 }
 
 /// Path fragments of folders that never hold saves: temp files, caches, logs,
@@ -266,14 +408,16 @@ impl Watch {
         self.changes.lock().unwrap().keys().filter(|p| p.is_file()).cloned().collect()
     }
 
-    /// Stop and turn the changes into folder suggestions.
-    pub fn finish(self) -> Vec<Candidate> {
-        folders_from_changes(&self.changed_files())
+    /// Stop and turn the changes into folder suggestions for a game started
+    /// by `exe`.
+    pub fn finish(self, exe: Option<&Path>) -> Vec<Candidate> {
+        folders_from_changes(&self.changed_files(), exe)
     }
 }
 
 /// Group changed files by folder; nested folders fold into their parent.
-pub fn folders_from_changes(files: &[PathBuf]) -> Vec<Candidate> {
+/// Roots that hold many programs' data (Documents, AppData…) are left out.
+pub fn folders_from_changes(files: &[PathBuf], exe: Option<&Path>) -> Vec<Candidate> {
     let mut dirs: BTreeMap<String, (PathBuf, usize)> = BTreeMap::new();
     for f in files {
         if let Some(parent) = f.parent() {
@@ -291,17 +435,21 @@ pub fn folders_from_changes(files: &[PathBuf]) -> Vec<Candidate> {
             kept.push((key, path, n));
         }
     }
+    let here = Places::here();
     let mut out: Vec<Candidate> = kept
         .into_iter()
+        .filter(|(_, path, _)| !here.never_offered(path))
         .map(|(_, path, n)| {
-            let (files, bytes, modified, sample) = describe(&path);
+            let (files, bytes, modified, sample) = describe(&path, None);
             Candidate {
+                pattern: pattern_for(&path, exe, None),
                 path: path.to_string_lossy().into_owned(),
                 files,
                 bytes,
                 modified,
                 sample,
                 reason: crate::tr!("玩游戏时有 {n} 个文件发生变化", "{n} files changed while playing"),
+                likely: false,
             }
         })
         .collect();
@@ -348,11 +496,21 @@ mod tests {
         for f in &files {
             std::fs::write(f, b"x").unwrap();
         }
-        let out = folders_from_changes(&files);
+        let out = folders_from_changes(&files, None);
         assert_eq!(out.len(), 2);
         let game = out.iter().find(|c| Path::new(&c.path).ends_with("Studio/Game")).unwrap();
         assert_eq!(game.files, 3);
         assert!(game.reason.contains('3'));
+        assert!(game.pattern.ends_with("Studio/Game/**"), "{}", game.pattern);
+    }
+
+    #[test]
+    fn patterns_for_folders_and_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("Game.exe");
+        assert_eq!(pattern_for(&tmp.path().join("www").join("save"), Some(&exe), None), "{install}/www/save/**");
+        // The program's own folder, for files in it.
+        assert_eq!(pattern_for(tmp.path(), Some(&exe), Some("Save*.rvdata2")), "{install}/Save*.rvdata2");
     }
 
     #[test]
@@ -370,7 +528,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
-        let out = w.finish();
+        let out = w.finish(None);
         assert_eq!(out.len(), 1, "{out:?}");
         assert!(out[0].path.ends_with("Saves"));
         assert_eq!(out[0].sample, vec!["slot1.sav".to_string()]);

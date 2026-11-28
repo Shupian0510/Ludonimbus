@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { api, errorText, SaveCandidate } from "../api";
+import { api, errorText, SaveCandidate, SaveTitle } from "../api";
 import { bytes, relTime } from "../format";
 import { msg, useT } from "../i18n";
-import { Button, Hint, Icon, PathField, Spinner, useUi } from "./ui";
+import { Badge, Button, Hint, Icon, PathField, Spinner, useUi } from "./ui";
 
 export interface FinderGame {
   name: string;
@@ -26,12 +26,15 @@ export function SaveCandidates({ list, isPicked, onToggle }: { list: SaveCandida
   return (
     <>
       {list.map((c) => (
-        <label key={c.path} className={`finder-item${isPicked(c.path) ? " picked" : ""}`}>
+        <label key={c.pattern} className={`finder-item${isPicked(c.path) ? " picked" : ""}`}>
           <input type="checkbox" checked={isPicked(c.path)} onChange={() => onToggle(c)} />
           <div className="add-info">
-            <code className="path small">{c.path}</code>
+            <div className="row">
+              <code className="path small">{c.pattern.endsWith("/**") ? c.path : `${c.path} · ${c.pattern.split("/").pop()}`}</code>
+              {c.likely && <Badge tone="ok">{f.likely}</Badge>}
+            </div>
             <span className="muted small">
-              {t.library.files(c.files)} · {bytes(c.bytes)}
+              {c.files > 0 ? `${t.library.files(c.files)} · ${bytes(c.bytes)}` : f.noFilesYet}
               {c.modified ? ` · ${f.modified(relTime(c.modified))}` : ""} · {c.reason}
             </span>
             {c.sample.length > 0 && <span className="muted small">{f.sample(c.sample)}</span>}
@@ -42,7 +45,15 @@ export function SaveCandidates({ list, isPicked, onToggle }: { list: SaveCandida
   );
 }
 
-/** Guided setup for a game whose save location Ludonimbus does not know. */
+/** The last folder name of a path, to name a game after its save folder. */
+const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? "";
+
+/**
+ * "Find the saves": one list of suggestions for a game whose save location
+ * Ludonimbus doesn't know yet (its entry in Ludusavi's database, what its
+ * engine and Steam say, folders named like it), best first, to tick. Nothing
+ * is used until the user ticks it and adds the game.
+ */
 export function SaveFinder({
   game,
   onBack,
@@ -61,13 +72,15 @@ export function SaveFinder({
   const t = useT();
   const f = t.saveFinder;
   const [name, setName] = useState(game.name);
+  /** Ticked folders, by path: a suggestion, or `null` for one the user chose. */
   const [picked, setPicked] = useState<Map<string, SaveCandidate | null>>(new Map());
   const [suggestions, setSuggestions] = useState<SaveCandidate[] | null>(null);
-  const [titles, setTitles] = useState<string[] | null>(null);
+  const [titles, setTitles] = useState<SaveTitle[] | null>(null);
+  const [searched, setSearched] = useState<SaveTitle[]>([]);
   const [title, setTitle] = useState<string | null>(null);
-  const [query, setQuery] = useState(game.name);
+  const [query, setQuery] = useState("");
   const [watching, setWatching] = useState(false);
-  const [watched, setWatched] = useState<SaveCandidate[] | null>(null);
+  const [watched, setWatched] = useState<SaveCandidate[]>([]);
 
   // By value: callers build `game` anew on every render, and a search for the
   // same game shouldn't run again (nor an older one land after a newer one).
@@ -77,8 +90,8 @@ export function SaveFinder({
       (s) => live && setSuggestions(s),
       () => live && setSuggestions([]),
     );
-    if (game.name.trim())
-      api.ludusaviSearch(game.name).then(
+    if (game.name.trim() || game.exe)
+      api.saveTitles(game.name, game.exe, game.install).then(
         (t) => live && setTitles(t),
         () => live && setTitles([]),
       );
@@ -86,28 +99,39 @@ export function SaveFinder({
     return () => void (live = false);
   }, [game.name, game.exe, game.install]);
 
+  /** The game's entry in Ludusavi's database and folders exclude each other. */
+  const pickTitle = (tt: string) => {
+    const on = title !== tt;
+    setTitle(on ? tt : null);
+    if (on) {
+      setPicked(new Map());
+      if (!name.trim()) setName(tt);
+    }
+  };
+
   const toggle = (c: SaveCandidate) => {
     const next = new Map(picked);
     if (next.has(c.path)) next.delete(c.path);
     else next.set(c.path, c);
     setPicked(next);
+    setTitle(null);
   };
 
   const search = async () => {
     if (!query.trim()) return;
-    setTitles(null);
     try {
-      setTitles(await api.ludusaviSearch(query));
+      const found = await api.ludusaviSearch(query);
+      const known = new Set((titles ?? []).map((x) => x.title));
+      setSearched(found.filter((x) => !known.has(x)).slice(0, 6).map((x) => ({ title: x, likely: false, reason: f.searched, files: 0 })));
+      if (found.length === 0) ui.toast(f.noneFound, "warn");
     } catch (e) {
       ui.toast(errorText(e), "bad");
-      setTitles([]);
     }
   };
 
   const startWatch = async () => {
     try {
       await api.saveWatchStart(game.exe, game.args ?? null, game.install);
-      setWatched(null);
       setWatching(true);
     } catch (e) {
       ui.toast(errorText(e), "bad");
@@ -129,21 +153,29 @@ export function SaveFinder({
   const pickManual = async () => {
     const start = game.install ?? (game.exe ? game.exe.replace(/[\\/][^\\/]*$/, "") : null);
     const dir = await api.pickFolder(msg().saveFinder.pickTitle, start);
-    if (dir) setPicked(new Map(picked).set(dir, null));
+    if (!dir) return;
+    setPicked(new Map(picked).set(dir, null));
+    setTitle(null);
   };
 
   const submit = async () => {
     try {
-      const saves = await Promise.all([...picked.keys()].map((p) => api.folderToPattern(p, game.exe)));
-      await onDone({ name: name.trim(), saves, ludusaviTitle: saves.length ? null : title });
+      const saves = await Promise.all([...picked.entries()].map(([p, c]) => (c ? c.pattern : api.folderToPattern(p, game.exe))));
+      const ludusaviTitle = saves.length ? null : title;
+      // A name typed, or the database's title, or the save folder's.
+      const first = [...picked.keys()][0];
+      const fallback = ludusaviTitle ?? (first ? folderName(first) : "");
+      await onDone({ name: name.trim() || fallback, saves, ludusaviTitle });
     } catch (e) {
       ui.toast(errorText(e), "bad");
     }
   };
 
   const big = [...picked.values()].some((c) => c && c.bytes > BIG);
-
-  const candidateList = (list: SaveCandidate[]) => <SaveCandidates list={list} isPicked={(p) => picked.has(p)} onToggle={toggle} />;
+  const allTitles = [...(titles ?? []).filter((x) => x.likely), ...(titles ?? []).filter((x) => !x.likely).slice(0, 3), ...searched];
+  const extra = [...watched, ...[...picked.entries()].filter(([, c]) => c === null).map(([p]) => chosen(p, f.chosen))];
+  const loading = !suggestions || !titles;
+  const nothing = !loading && allTitles.length === 0 && suggestions.length === 0 && extra.length === 0;
 
   return (
     <div className="finder">
@@ -153,7 +185,7 @@ export function SaveFinder({
       <div className="form compact">
         <label>
           <span>{f.name}</span>
-          <input className="input" value={name} placeholder={f.namePlaceholder} onChange={(e) => setName(e.target.value)} />
+          <input className="input" value={name} placeholder={title ?? f.namePlaceholder} onChange={(e) => setName(e.target.value)} />
         </label>
         {(game.exe || onChangeExe) && (
           <div className="field">
@@ -176,41 +208,28 @@ export function SaveFinder({
 
       <section className="finder-section">
         <h4>
-          {f.s1Title} <Hint text={f.s1Text} />
+          {f.title} <Hint text={f.titleHint} />
         </h4>
-        <div className="row">
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
-          <Button small icon="search" onClick={search}>
-            {t.art.search}
-          </Button>
-        </div>
-        {!titles ? (
-          <Spinner />
-        ) : titles.length === 0 ? (
-          <p className="muted small">{f.noneFound}</p>
-        ) : (
-          <div className="chips">
-            {titles.slice(0, 8).map((tt) => (
-              <button key={tt} className={`chip${title === tt ? " on" : ""}`} onClick={() => setTitle(title === tt ? null : tt)}>
-                {title === tt && <Icon name="check" size={12} />} {tt}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="finder-section">
-        <h4>
-          {f.s2Title} <Hint text={f.s2Text} />
-        </h4>
-        {!suggestions ? <Spinner /> : suggestions.length === 0 ? <p className="muted small">{f.s2None}</p> : candidateList(suggestions)}
-      </section>
-
-      <section className="finder-section">
-        <h4>
-          {f.s3Title} <Hint text={f.s3Text(!!game.exe)} />
-        </h4>
-        {watching ? (
+        {allTitles.map((x) => (
+          <label key={x.title} className={`finder-item${title === x.title ? " picked" : ""}`}>
+            <input type="checkbox" checked={title === x.title} onChange={() => pickTitle(x.title)} />
+            <div className="add-info">
+              <div className="row">
+                <b>{x.title}</b>
+                <Badge tone="info">{f.ludusavi}</Badge>
+                {x.likely && <Badge tone="ok">{f.likely}</Badge>}
+              </div>
+              <span className="muted small">
+                {x.reason}
+                {x.likely ? ` · ${x.files > 0 ? f.filesHere(x.files) : f.noFilesYet}` : ""}
+              </span>
+            </div>
+          </label>
+        ))}
+        {suggestions && <SaveCandidates list={[...suggestions, ...extra]} isPicked={(p) => picked.has(p)} onToggle={toggle} />}
+        {loading && <Spinner />}
+        {nothing && <p className="muted small">{f.none}</p>}
+        {watching && (
           <div className="banner banner-info">
             <span className="spinner" />
             <span>{f.watching}</span>
@@ -218,44 +237,40 @@ export function SaveFinder({
               {f.done}
             </Button>
           </div>
-        ) : (
-          <div className="row">
-            <Button small icon="play" onClick={startWatch}>
-              {game.exe ? f.startWithGame : f.start}
-            </Button>
-          </div>
         )}
-        {watched && watched.length > 0 && candidateList(watched)}
-      </section>
-
-      <section className="finder-section">
-        <h4>{f.s4Title}</h4>
         <div className="row">
+          <input className="input" value={query} placeholder={f.searchPlaceholder} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
+          <button className="icon-btn" title={t.art.search} aria-label={t.art.search} onClick={search}>
+            <Icon name="search" size={16} />
+          </button>
+        </div>
+        <div className="row">
+          {!watching && (
+            <>
+              <Button small icon="play" onClick={startWatch}>
+                {f.watch}
+              </Button>
+              <Hint text={f.watchHint(!!game.exe)} />
+            </>
+          )}
           <Button small icon="folder" onClick={pickManual}>
             {f.pickFolder}
           </Button>
         </div>
-        {[...picked.entries()]
-          .filter(([, c]) => c === null)
-          .map(([p]) => (
-            <div key={p} className="save-pill">
-              <code>{p}</code>
-              <button className="icon-btn" onClick={() => setPicked(new Map([...picked].filter(([k]) => k !== p)))}>
-                <Icon name="x" size={14} />
-              </button>
-            </div>
-          ))}
       </section>
 
       <div className="finder-foot">
-        <span className="muted small">
-          {picked.size > 0 ? f.picked(picked.size) : title ? f.usingLudusavi(title) : f.nothingPicked}
-        </span>
+        <span className="muted small">{picked.size > 0 ? f.picked(picked.size) : title ? f.usingLudusavi(title) : f.nothingPicked}</span>
         {big && <span className="health health-warn small">{f.big}</span>}
-        <Button kind="primary" icon="plus" onClick={submit} disabled={(picked.size === 0 && !title) || !name.trim()}>
+        <Button kind="primary" icon="plus" onClick={submit} disabled={picked.size === 0 && !title}>
           {submitText ?? f.add}
         </Button>
       </div>
     </div>
   );
+}
+
+/** A folder the user chose, shown as a ticked row. */
+function chosen(path: string, reason: string): SaveCandidate {
+  return { path, pattern: `${path}/**`, files: 0, bytes: 0, modified: null, sample: [], reason, likely: false };
 }

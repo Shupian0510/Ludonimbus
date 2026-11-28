@@ -260,6 +260,7 @@ pub fn add_from_shortcut(account: &str, appid: u32, opts: NewGame) -> Result<Gam
         bail!(crate::tr!("这个快捷方式已经由 Ludonimbus 接管，但本机配置里没有它。请在 Steam 里把目标改回游戏程序后再添加。", "Ludonimbus already took over this shortcut, but it's missing from this PC's configuration. Point the shortcut back at the game's program in Steam, then add it again."));
     }
     let exe = PathBuf::from(&sc.exe);
+    refuse_own_program(Some(&exe))?;
     let rec = recognize(&exe, &sc.launch_options, opts.adapter.as_deref());
     // The recognized rule is the chosen one, or a Switch emulator standing in for it.
     let adapter_key = rec.as_ref().map(|r| r.adapter.key.clone()).or_else(|| opts.adapter.clone());
@@ -335,12 +336,23 @@ pub fn add_custom_with(
     key: Option<String>,
 ) -> Result<GameEntry> {
     let exe = exe.map(crate::xbox::launchable);
+    refuse_own_program(exe.as_deref())?;
     // The user's saves replace the rule (and are relative to the exe folder).
     let rec = exe.as_deref().and_then(|e| recognize(e, args, rule)).filter(|_| saves.is_empty());
     let saves = if saves.is_empty() { rec.as_ref().map(Recognized::saves).unwrap_or_default() } else { saves };
     if saves.is_empty() && ludusavi_title.is_none() && rec.is_none() {
         bail!(crate::tr!("请至少指定一个存档位置", "Choose at least one save location"));
     }
+    // No name typed: the game's title in Ludusavi's database, the rule's, or its program's.
+    let name = match name.trim() {
+        "" => ludusavi_title
+            .clone()
+            .or_else(|| rec.as_ref().map(Recognized::default_name))
+            .or_else(|| exe.as_deref().and_then(Path::file_stem).map(|s| s.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| crate::tr!("未命名游戏", "Untitled game")),
+        n => n.to_string(),
+    };
+    let name = name.as_str();
     config::update(|cfg| {
         if let Some(r) = &rec {
             check_emulator_overlap(cfg, r.adapter, &saves)?;
@@ -367,6 +379,22 @@ pub fn add_custom_with(
         Ok(entry)
     })
     .map(added)
+}
+
+/// Ludonimbus's own programs are never added as a game (Steam lists the
+/// app once the handheld screen is added to it).
+fn refuse_own_program(exe: Option<&Path>) -> Result<()> {
+    if exe.is_some_and(crate::discover::is_own_program) {
+        bail!(crate::tr!("这是 Ludonimbus 自己，不是游戏", "This is Ludonimbus itself, not a game"));
+    }
+    Ok(())
+}
+
+/// A library entry that points at Ludonimbus itself (added from a scan
+/// before such entries were left out): hidden from the library, kept in the
+/// configuration until the user removes it.
+pub fn is_ludonimbus(g: &GameEntry) -> bool {
+    g.exe.as_deref().is_some_and(crate::discover::is_own_program)
 }
 
 /// Recreate a game known to the cloud on this device.
@@ -634,6 +662,7 @@ pub fn set_exe(key: &str, exe: &Path) -> Result<GameEntry> {
     }
     // An Xbox app game's own program cannot be started from outside.
     let exe = &crate::xbox::launchable(exe.to_path_buf());
+    refuse_own_program(Some(exe))?;
     update_game(key, |g| {
         let old_dir = g.exe.as_ref().and_then(|e| e.parent().map(Path::to_path_buf));
         g.exe = Some(exe.to_path_buf());

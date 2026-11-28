@@ -63,6 +63,21 @@ pub fn match_key(name: &str) -> String {
     name.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
+/// One of Ludonimbus's own programs, never a game, though Steam lists one
+/// once the handheld screen is added to it: the app (`ludonimbus-app`, the
+/// Linux `Ludonimbus*.AppImage`), the launch wrapper (`ludonimbus-run`), the
+/// background service (`ludonimbus-agent`), the command line
+/// (`ludonimbus`), and anything in the folder Linux keeps the wrapper and
+/// service in (`~/.config/Ludonimbus/bin`).
+pub fn is_own_program(path: &Path) -> bool {
+    let p = PathBuf::from(util::native_sep(&util::unquote(&path.to_string_lossy())));
+    if util::file_name_lower(&p).starts_with("ludonimbus") {
+        return true;
+    }
+    let bin = crate::paths::data_dir().join("bin");
+    p.parent().is_some_and(|d| util::same_path(&d.to_string_lossy(), &bin.to_string_lossy()))
+}
+
 fn found(source: &str, id: String, name: String) -> Found {
     Found { match_key: match_key(&name), id, name, source: source.into(), ..Default::default() }
 }
@@ -187,6 +202,10 @@ fn steam_shortcuts(cfg: &AppConfig) -> Vec<Found> {
         for c in list {
             if c.wrapped_key.is_some() && c.added_key.is_none() {
                 // Wrapped by a Ludonimbus installation that is not this one.
+                continue;
+            }
+            // Ludonimbus itself (the handheld screen's shortcut).
+            if c.wrapped_key.is_none() && is_own_program(Path::new(&c.exe)) {
                 continue;
             }
             // One emulator starts many games: the launch options tell them apart.
@@ -493,7 +512,7 @@ pub fn pick_exe(dir: &Path) -> Option<PathBuf> {
         .flatten()
     {
         let p = entry.path();
-        if !entry.file_type().is_file() || p.extension().is_none_or(|x| !x.eq_ignore_ascii_case("exe")) || is_junk_exe(p) {
+        if !entry.file_type().is_file() || p.extension().is_none_or(|x| !x.eq_ignore_ascii_case("exe")) || is_junk_exe(p) || is_own_program(p) {
             continue;
         }
         let stem = match_key(&p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
@@ -546,7 +565,7 @@ pub fn folder_scan(cfg: &AppConfig, dir: &Path) -> Vec<Found> {
         .map(|rd| {
             rd.flatten().any(|e| {
                 let p = e.path();
-                p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && !is_junk_exe(&p)
+                p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && !is_junk_exe(&p) && !is_own_program(&p)
             })
         })
         .unwrap_or(false);
@@ -766,8 +785,9 @@ fn registered_programs() -> Vec<Install> {
                 // DisplayIcon is often the game exe ("C:\...\game.exe,0").
                 let icon = get("DisplayIcon");
                 let icon = icon.split(',').next().unwrap_or("").trim().trim_matches('"');
-                let exe = Some(PathBuf::from(icon))
-                    .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && p.starts_with(&dir) && p.is_file() && !is_junk_exe(p));
+                let exe = Some(PathBuf::from(icon)).filter(|p| {
+                    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("exe")) && p.starts_with(&dir) && p.is_file() && !is_junk_exe(p) && !is_own_program(p)
+                });
                 out.push(Install { store: "registry".into(), name: name.trim().to_string(), dir, exe, by_dir_only: false });
             }
         }
@@ -989,6 +1009,56 @@ mod tests {
         assert!(Path::new(list[0].exe.as_ref().unwrap()).ends_with("Content/gamelaunchhelper.exe"));
         assert_eq!(list[0].source, "xbox");
         assert_eq!(pick_exe(&tmp.path().join("Doom Eternal - PC")), Some(game.join("gamelaunchhelper.exe")));
+    }
+
+    #[test]
+    fn knows_its_own_programs() {
+        let mut env = crate::paths::TestEnv::new();
+        let tmp = tempfile::tempdir().unwrap();
+        env.set("LUDONIMBUS_HOME", tmp.path());
+        let own = [
+            r"C:\Program Files\Ludonimbus\ludonimbus-app.exe",
+            r#""C:\Program Files\Ludonimbus\ludonimbus-app.exe""#,
+            r"C:\Program Files\Ludonimbus\ludonimbus-run.exe",
+            "/home/deck/.local/share/ludonimbus/Ludonimbus.AppImage",
+            "/home/deck/Downloads/Ludonimbus_1.0.0_amd64.AppImage",
+            "/home/deck/.config/Ludonimbus/bin/ludonimbus-agent",
+        ];
+        for p in own {
+            assert!(is_own_program(Path::new(p)), "{p}");
+        }
+        // Whatever is in the folder Linux keeps the wrapper in.
+        assert!(is_own_program(&tmp.path().join("bin").join("run")));
+        assert!(!is_own_program(Path::new(r"D:\Games\Hades\Hades.exe")));
+        assert!(!is_own_program(Path::new(r"D:\Games\Nimbus\nimbus.exe")));
+    }
+
+    #[test]
+    fn steam_scan_leaves_out_ludonimbus() {
+        let mut env = crate::paths::TestEnv::new();
+        let tmp = tempfile::tempdir().unwrap();
+        env.set("LUDONIMBUS_HOME", tmp.path().join("home"));
+        let root = tmp.path().join("Steam");
+        std::fs::create_dir_all(root.join("userdata").join("42").join("config")).unwrap();
+        let game = tmp.path().join("Games").join("Hades").join("Hades.exe");
+        let app = tmp.path().join("Ludonimbus").join("ludonimbus-app.exe");
+        for f in [&game, &app] {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, b"x").unwrap();
+        }
+        crate::handheld::add_to_steam(&root, "42", &app).unwrap();
+        let shortcut = |exe: &Path, name: &str| steam::NewShortcut {
+            name: name.into(),
+            exe: exe.to_string_lossy().into_owned(),
+            start_dir: exe.parent().unwrap().to_string_lossy().into_owned(),
+            launch_options: String::new(),
+            icon: String::new(),
+        };
+        steam::add_shortcut(&root, "42", &shortcut(&game, "Hades")).unwrap();
+        let mut cfg = AppConfig::default();
+        cfg.steam.root = Some(root);
+        let names: Vec<String> = steam_shortcuts(&cfg).into_iter().map(|f| f.name).collect();
+        assert_eq!(names, vec!["Hades".to_string()]);
     }
 
     #[test]
