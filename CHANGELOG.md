@@ -67,6 +67,7 @@ Ludonimbus 现在是你的个人云端游戏数据中心：存档、游戏时间
 - 修复：没有缩略图的截图在图库里是空白的；手动添加游戏时，Windows 上的安装文件夹被填成了程序本身。
 - 修复：在 Ludusavi 数据库里选好游戏后「添加」按钮没反应；Ludonimbus 加入 Steam 后自己被当成游戏。
 - 修复：Steam 装的游戏页上，「Ludonimbus」那一项比 Steam 自己的项目低、被截掉。
+- 改进：Ludonimbus 自己的成就小窗口默认关闭：全屏玩游戏时它会和 Steam 的成就弹窗重复出现。需要时在「设置 → 成就」里打开。
 
 说明
 
@@ -135,6 +136,7 @@ Security and reliability
 - Fixed: screenshots without a thumbnail were blank in the gallery; adding a game by hand on Windows filled in the program itself as its install folder.
 - Fixed: "Add" did nothing after choosing a game in Ludusavi's database; Ludonimbus itself showed up as a game once added to Steam.
 - Fixed: on a Steam-installed game's page, the Ludonimbus item sat lower than Steam's own items and was cut off.
+- Improved: Ludonimbus's own achievement window is off by default: in full-screen games it appeared as well as Steam's achievement popup. Turn it on under Settings → Achievements if you want it.
 
 Notes
 

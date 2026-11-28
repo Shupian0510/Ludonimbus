@@ -1196,7 +1196,7 @@ export const achievements: typeof Zh.achievements = {
   settingsHint: "Achievements of non-Steam games: shown on the game's Steam page, with Steam's achievement popup when one unlocks (needs \"Show cloud save status in Steam\").",
   steamPopupDefault: "Show Steam's achievement popup for newly linked games",
   fallback: "When Steam can't show it, use a small Ludonimbus window",
-  fallbackHint: "That window is only visible over windowed or borderless fullscreen games.",
+  fallbackHint: "Off by default: when Steam shows its popup a little late, both appear. The window is only visible over windowed or borderless fullscreen games.",
   test: "Test popup",
   testInGame: "Test in 8 seconds (switch to the game)",
   testLater: (n: number) => `The test achievement pops up in ${n} seconds. Switch to the game now`,

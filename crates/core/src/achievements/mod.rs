@@ -124,6 +124,11 @@ pub struct Settings {
     /// Default for [`Binding::popup`].
     pub steam_popup: bool,
     /// Ludonimbus's own topmost window when Steam could not show the popup.
+    /// Off unless the user turns it on: in a full-screen game Steam often
+    /// shows its popup later than the plugin can confirm, and both appeared.
+    /// Stored under a new name so settings files from 0.6 (which wrote the
+    /// old default `fallbackPopup: true`) start with it off too.
+    #[serde(rename = "ownPopup")]
     pub fallback_popup: bool,
     /// Games the user unlinked: never linked automatically again.
     pub unlinked: BTreeSet<String>,
@@ -140,7 +145,7 @@ impl Default for Settings {
             ra_ulid: None,
             games: BTreeMap::new(),
             steam_popup: true,
-            fallback_popup: true,
+            fallback_popup: false,
             unlinked: BTreeSet::new(),
             ps4_trophy_key: None,
         }
@@ -665,6 +670,18 @@ mod tests {
 
     fn t(s: &str) -> DateTime<Utc> {
         s.parse().unwrap()
+    }
+
+    #[test]
+    fn ludonimbus_own_popup_is_off_unless_turned_on() {
+        assert!(!Settings::default().fallback_popup);
+        // A settings file from 0.6 wrote the old default under the old name.
+        let old: Settings = serde_json::from_str(r#"{"steamPopup":true,"fallbackPopup":true}"#).unwrap();
+        assert!(!old.fallback_popup);
+        assert!(old.steam_popup);
+        // Turned on in 1.0: kept.
+        let on: Settings = serde_json::from_str(&serde_json::to_string(&Settings { fallback_popup: true, ..Settings::default() }).unwrap()).unwrap();
+        assert!(on.fallback_popup);
     }
 
     #[test]
