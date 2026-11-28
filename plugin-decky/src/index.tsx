@@ -2,14 +2,20 @@
 // §2.2): the quick access menu shows the cloud save status of the game
 // that's running (or was last started), with sync now, the conflict choice
 // and newer saves from another version of the game, all with the controller,
-// and the saves in the cloud with "make current".
+// and the saves in the cloud with "make current". A game Steam installed that
+// is backup only can be handed to Ludonimbus: Steam turns its Steam Cloud off
+// and sets its launch options through this plugin (hands.ts).
 import { callable, definePlugin, toaster, useQuickAccessVisible as apiQuickAccessVisible } from "@decky/api";
-import { ButtonItem, PanelSection, PanelSectionRow, Router, staticClasses, useQuickAccessVisible as uiQuickAccessVisible } from "@decky/ui";
+import { ButtonItem, ConfirmModal, PanelSection, PanelSectionRow, Router, showModal, staticClasses, useQuickAccessVisible as uiQuickAccessVisible } from "@decky/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FaCloud } from "react-icons/fa";
+import { SteamHands } from "./hands";
 
 type Reply<T> = { ok: boolean; status: number; body: T & { error?: string } };
 const request = callable<[method: string, path: string], Reply<any>>("request");
+
+/** Steam's Steam Cloud switches and launch options, for Ludonimbus (API 5). */
+const hands = new SteamHands(request);
 
 /** Whether the quick access menu is open (older loaders: @decky/ui's copy). */
 const useQuickAccessVisible: () => boolean = apiQuickAccessVisible ?? uiQuickAccessVisible ?? (() => true);
@@ -37,6 +43,7 @@ interface Status {
   store?: string | null;
   /** API 4: what is left to do in the background after playing. */
   backlog?: { state: "uploading" | "waiting"; versions: number; bytes: number } | null;
+  apiVersion?: number;
 }
 
 interface Snapshot {
@@ -80,6 +87,13 @@ const TEXT = {
     lastSync: (when: string, device: string) => `上次同步 ${when}${device ? ` · ${device}` : ""}`,
     never: "从未同步",
     status: { synced: "已同步", localChanged: "待上传", cloudNewer: "云端更新", conflict: "存档冲突", offline: "离线", error: "出错", noSaves: "没有存档" } as Record<string, string>,
+    takeOver: "交给 Ludonimbus",
+    takeOverTitle: "交给 Ludonimbus？",
+    takeOverText: "会关掉这个游戏的 Steam 云存档。之后由 Ludonimbus 在启动前取回最新的存档、退出后上传，现在的存档会先在云端保留一份。在 Ludonimbus 里可以交还给 Steam。",
+    cancel: "取消",
+    takingOver: "正在交给 Ludonimbus…",
+    takenOver: "已交给 Ludonimbus",
+    cantTakeOver: (reason: string) => `没有交过去：${reason}`,
   },
   en: {
     notRunning: "Ludonimbus isn't running. Open it in desktop mode, or install its background service.",
@@ -105,6 +119,14 @@ const TEXT = {
     lastSync: (when: string, device: string) => `Last sync ${when}${device ? ` · ${device}` : ""}`,
     never: "Never synced",
     status: { synced: "Synced", localChanged: "To upload", cloudNewer: "Newer in cloud", conflict: "Conflict", offline: "Offline", error: "Error", noSaves: "No saves" } as Record<string, string>,
+    takeOver: "Hand to Ludonimbus",
+    takeOverTitle: "Hand this game to Ludonimbus?",
+    takeOverText:
+      "This turns Steam Cloud off for this game. Ludonimbus then fetches the newest saves before it starts and uploads them after you quit; the saves as they are now are kept in the cloud first. You can give it back to Steam in Ludonimbus.",
+    cancel: "Cancel",
+    takingOver: "Handing it to Ludonimbus…",
+    takenOver: "Handed to Ludonimbus",
+    cantTakeOver: (reason: string) => `Not handed over: ${reason}`,
   },
 };
 
@@ -187,6 +209,38 @@ function Panel() {
     load();
   };
 
+  /** Hand a backed-up game to Ludonimbus: it runs in the app, and this follows it to the end. */
+  const takeOver = async (key: string) => {
+    const r = await request("POST", `/v1/games/${key}/steam-cloud/take-over`);
+    if (!r.ok) {
+      toaster.toast({ title: "Ludonimbus", body: t.cantTakeOver(r.body?.error ?? String(r.status)) });
+      return;
+    }
+    toaster.toast({ title: "Ludonimbus", body: t.takingOver });
+    load();
+    for (let i = 0; i < 80; i++) {
+      await new Promise((done) => setTimeout(done, 1500));
+      const s = await request("GET", `/v1/steam/apps/${appid}`);
+      if (!s.ok || s.body?.phase !== "idle") continue;
+      toaster.toast({ title: "Ludonimbus", body: s.body.store === "managed" ? t.takenOver : t.cantTakeOver(s.body.lastError ?? "") });
+      break;
+    }
+    wantDetails.current = true;
+    load();
+  };
+
+  /** Steam's own confirmation: this turns a protection off. */
+  const askTakeOver = (key: string) =>
+    showModal(
+      <ConfirmModal
+        strTitle={t.takeOverTitle}
+        strDescription={t.takeOverText}
+        strOKButtonText={t.takeOver}
+        strCancelButtonText={t.cancel}
+        onOK={() => void takeOver(key)}
+      />,
+    );
+
   if (error) return <PanelSection>{<PanelSectionRow>{error}</PanelSectionRow>}</PanelSection>;
   if (!appid) return <PanelSection><PanelSectionRow>{t.noGame}</PanelSectionRow></PanelSection>;
   if (!status) return <PanelSection><PanelSectionRow>…</PanelSectionRow></PanelSection>;
@@ -233,6 +287,13 @@ function Panel() {
             </ButtonItem>
           </PanelSectionRow>
         )}
+        {status.store === "backup" && (status.apiVersion ?? 0) >= 5 && hands.connected && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={busy} onClick={() => askTakeOver(status.key)}>
+              {t.takeOver}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
       </PanelSection>
       {newer && (
         <PanelSection>
@@ -264,9 +325,15 @@ function Panel() {
   );
 }
 
-export default definePlugin(() => ({
-  name: "Ludonimbus",
-  titleView: <div className={staticClasses.Title}>Ludonimbus</div>,
-  content: <Panel />,
-  icon: <FaCloud />,
-}));
+export default definePlugin(() => {
+  // Runs while the plugin is loaded, not only while the menu is open: the
+  // app may ask for Steam's settings at any time.
+  hands.start();
+  return {
+    name: "Ludonimbus",
+    titleView: <div className={staticClasses.Title}>Ludonimbus</div>,
+    content: <Panel />,
+    icon: <FaCloud />,
+    onDismount: () => hands.stop(),
+  };
+});

@@ -155,6 +155,11 @@ fn route(host: &Arc<dyn Host>, req: &Request) -> ApiResult {
             events::ack(seq, shown, q("reason").map(unescape).as_deref());
             Ok(json!({ "ok": true }))
         }
+        // API 5: the plugins as Steam's hands (localapi::plugin).
+        ("GET", ["v1", "steam", "plugin", "poll"]) => steam_plugin::poll(req),
+        ("POST", ["v1", "steam", "plugin", "done", id]) => steam_plugin::done(req, id),
+        ("POST", ["v1", "steam", "apps", appid, "report"]) => steam_plugin::report(req, parse_appid(appid)?),
+        ("POST", ["v1", "games", key, "steam-cloud", "take-over"]) => steam_plugin::take_over(host, key),
         _ => Err(ApiError::new(404, "not found")),
     }
 }
@@ -421,6 +426,87 @@ fn apply_newer(host: &Arc<dyn Host>, key: &str, id: &str) -> ApiResult {
     }
     let n = savelib::newer_version(&ctx, &g)?.filter(|n| n.snapshot.id == id).ok_or_else(|| ApiError::new(404, "no such newer version"))?;
     in_background(host, ctx.cfg, g, "apply newer saves", move |ctx, g| transfer::apply(ctx, &n.key, &n.snapshot.id, &g.key, None))
+}
+
+// ---------------------------------------------------------------------------
+// The plugins as Steam's hands (API 5, localapi::plugin)
+
+mod steam_plugin {
+    use super::*;
+    use crate::localapi::plugin::{self, AppReport, Caps, Hello};
+
+    /// A query value, unescaped, at most `max` characters.
+    fn text(req: &Request, name: &str, max: usize) -> Option<String> {
+        query_param(&req.query, name).map(|v| unescape(v).chars().take(max).collect())
+    }
+
+    /// A plugin run's id: letters, digits and `-`.
+    fn session(req: &Request) -> Result<String, ApiError> {
+        text(req, "session", 64)
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+            .ok_or_else(|| ApiError::new(400, "bad session"))
+    }
+
+    /// A Steam account id (the `userdata` folder name).
+    fn account(req: &Request) -> Option<String> {
+        text(req, "account", 20).filter(|a| !a.is_empty() && a.chars().all(|c| c.is_ascii_digit()))
+    }
+
+    fn report_of(req: &Request, session: &str) -> Option<AppReport> {
+        // Launch options are at most a few hundred characters; Steam takes more.
+        AppReport::from_query(|n| text(req, n, if n == "launchOptions" { 4096 } else { 16 }), session)
+    }
+
+    pub(super) fn poll(req: &Request) -> ApiResult {
+        let hello = Hello {
+            session: session(req)?,
+            kind: text(req, "kind", 32).unwrap_or_default(),
+            version: text(req, "version", 32).unwrap_or_default(),
+            caps: Caps::parse(&text(req, "caps", 200).unwrap_or_default()),
+            account: account(req),
+        };
+        Ok(plugin::poll(hello, config::load().ok().as_ref()))
+    }
+
+    pub(super) fn done(req: &Request, id: &str) -> ApiResult {
+        let id: u64 = id.parse().map_err(|_| ApiError::new(400, "bad id"))?;
+        let ok = text(req, "ok", 8).is_some_and(|v| v == "1" || v == "true");
+        let report = session(req).ok().and_then(|s| report_of(req, &s));
+        plugin::done(id, ok, text(req, "error", 500).filter(|e| !e.is_empty()), report);
+        Ok(json!({ "ok": true }))
+    }
+
+    pub(super) fn report(req: &Request, appid: u32) -> ApiResult {
+        let session = session(req)?;
+        let account = account(req).ok_or_else(|| ApiError::new(400, "bad account"))?;
+        let report = report_of(req, &session).ok_or_else(|| ApiError::new(400, "bad report"))?;
+        plugin::report(&account, appid, report);
+        Ok(json!({ "ok": true }))
+    }
+
+    /// "Hand to Ludonimbus" on a game's page in Steam: the game is backup
+    /// only, and the plugin turns Steam Cloud off and (when it can) sets the
+    /// launch options; in the background, like a sync.
+    pub(super) fn take_over(host: &Arc<dyn Host>, key: &str) -> ApiResult {
+        let cfg = config::load()?;
+        let g = find_by_key(&cfg, key)?;
+        let Some(link) = g.store.clone() else {
+            return Err(ApiError::new(400, tr!("「{}」不是从 Steam 安装的游戏", "\"{}\" isn't a game installed through Steam", g.name)));
+        };
+        if steamcloud::state(&g) != steamcloud::State::Backup {
+            return Err(ApiError::new(409, tr!("这个游戏现在不是「只备份」", "This game isn't backup only now")));
+        }
+        let hands = plugin::Plugin::for_account(&link.account).ok_or_else(|| {
+            ApiError::new(409, tr!("Steam 插件没有连上 Ludonimbus，请稍后再试", "The Steam plugin isn't connected to Ludonimbus. Try again in a moment"))
+        })?;
+        if let Some(reason) = busy_reason(host.as_ref(), &g) {
+            return Err(ApiError::new(409, reason));
+        }
+        let wrapper = hands.caps.launch_options;
+        in_background(host, cfg, g, "take over from Steam Cloud", move |ctx, g| {
+            steamcloud::take_over_through(ctx, &g.key, wrapper, &hands).map(|_| Outcome::UpToDate)
+        })
+    }
 }
 
 #[cfg(test)]

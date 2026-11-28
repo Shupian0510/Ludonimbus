@@ -34,12 +34,17 @@
 //! GET  /v1/games/{key}/achievements/{id}/icon             a local achievement icon as a data URL
 //! GET  /v1/achievements/events?after={seq}                new unlocks to show (see [`events`])
 //! POST /v1/achievements/events/{seq}/ack?shown=steam|failed&reason=
+//! GET  /v1/steam/plugin/poll?session=&kind=&version=&caps=&account=   a plugin takes requests for Steam (API 5, see [`plugin`])
+//! POST /v1/steam/plugin/done/{id}?ok=&error=&<report>     its answer, with what Steam says now (API 5)
+//! POST /v1/steam/apps/{appid}/report?session=&account=&<report>   what Steam says about a game, on its own (API 5)
+//! POST /v1/games/{key}/steam-cloud/take-over              hand a backed-up Steam game to Ludonimbus through the plugin (API 5)
 //! ```
 //!
 //! The answers are described in docs/steam-plugin.md.
 
 pub mod events;
 mod http;
+pub mod plugin;
 mod routes;
 
 use crate::config::GameEntry;
@@ -60,7 +65,10 @@ use std::time::{Duration, Instant};
 /// 3 (0.7.0): conflict resolution on sync, newer saves in another version.
 /// 4 (1.0.0): what a game still owes the cloud after playing (`backlog`);
 /// games Steam installed (`store`); each version's `platform`.
-pub const API_VERSION: u32 = 4;
+/// 5 (1.0.0): the plugins as Steam's hands: Steam Cloud switches and launch
+/// options of games Steam installed ([`plugin`]); handing a game to
+/// Ludonimbus from inside Steam.
+pub const API_VERSION: u32 = 5;
 
 fn log(msg: impl AsRef<str>) {
     logger::log("agent", msg);

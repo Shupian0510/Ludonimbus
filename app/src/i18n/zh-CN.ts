@@ -406,6 +406,14 @@ export const steamCloud = {
   stepAllOff: "Steam 云已对所有游戏关掉",
   stepAllOffTodo: "先对所有游戏关掉 Steam 云",
   stepAllOffHint: "在 Steam 里：设置 → 云 → 关掉「启用 Steam 云」。Ludonimbus 不会替你改这个开关。Steam 上次没同步完的游戏会跳过，保持只备份。",
+  pluginOff: "会关掉这个游戏的 Steam 云存档。",
+  pluginOffHint:
+    "Ludonimbus 通过 Steam 插件在 Steam 里关掉这个游戏的「在 Steam 云中保留游戏存档」，并改好启动选项，不用重启 Steam。之后从 Steam 启动前取回最新的存档，退出后上传。现在的存档会先在云端保留一份。交还给 Steam 时会重新打开。",
+  pluginAllOff: (n: number) => `会关掉这 ${n} 个游戏的 Steam 云存档。`,
+  pluginAllOffHint: "Ludonimbus 通过 Steam 插件在 Steam 里逐个关掉它们的 Steam 云存档，不用重启 Steam，也不用关掉 Steam 的总开关。Steam 还没同步完的游戏会跳过，保持只备份。",
+  handBackTitle: (name: string) => `把「${name}」交还给 Steam？`,
+  handBackText: "会重新打开这个游戏的 Steam 云存档。Steam 问保留哪一份时选本机的。",
+  handedBackOn: "已交还给 Steam，Steam 云存档开着",
 };
 
 export const steamAction = {

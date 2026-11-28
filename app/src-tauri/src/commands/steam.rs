@@ -5,6 +5,7 @@ use super::{blocking, CmdResult};
 use crate::{art, busy, watcher};
 use anyhow::{anyhow, bail, Result};
 use ludonimbus_core::config;
+use ludonimbus_core::localapi::plugin;
 use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{games, steam, steamcloud, util};
 use serde::Serialize;
@@ -149,28 +150,65 @@ fn steam_game_free(key: &str) -> Result<busy::Guard> {
     busy::begin(key).ok_or_else(|| anyhow!(ludonimbus_core::tr!("正在同步，请稍候", "Syncing; please wait")))
 }
 
-/// Let Ludonimbus keep a Steam game's saves once Steam Cloud is off for it.
-/// `wrapper`: through its launch options, which needs Steam closed
-/// (`close_steam` lets Ludonimbus close and reopen it).
+/// The Steam plugin that changes Steam's settings of the game, when the
+/// user confirmed letting it (`via_plugin`) and one is connected to this
+/// app for the game's account.
+fn hands_for(key: &str, via_plugin: bool) -> Result<Option<plugin::Plugin>> {
+    if !via_plugin {
+        return Ok(None);
+    }
+    let cfg = config::load()?;
+    Ok(cfg.require_game(key)?.store.as_ref().and_then(|l| plugin::Plugin::for_account(&l.account)))
+}
+
+/// Refused because Steam runs (its file can't be changed then).
+fn steam_running(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("STEAM_RUNNING")
+}
+
+/// Let Ludonimbus keep a Steam game's saves. `wrapper`: through its launch
+/// options. Without a plugin (or `via_plugin` off) Steam Cloud has to be
+/// off for the game already, and the launch options go into Steam's file,
+/// which needs Steam closed (`close_steam` lets Ludonimbus close and reopen
+/// it). With `via_plugin` (the user confirmed it) and a Steam plugin that
+/// can, Steam turns Steam Cloud off and sets the launch options itself,
+/// and stays open.
 #[tauri::command]
-pub async fn steam_cloud_take_over(key: String, wrapper: bool, close_steam: bool) -> CmdResult<steamcloud::StoreStatus> {
+pub async fn steam_cloud_take_over(key: String, wrapper: bool, close_steam: bool, via_plugin: bool) -> CmdResult<steamcloud::StoreStatus> {
     blocking(move || {
         let _busy = steam_game_free(&key)?;
         let take = || Ctx::load().and_then(|ctx| steamcloud::take_over(&ctx, &key, wrapper));
-        let entry = if wrapper { with_steam_closed(close_steam, take)? } else { take()? };
+        let entry = match hands_for(&key, via_plugin)? {
+            Some(hands) => match Ctx::load().and_then(|ctx| steamcloud::take_over_through(&ctx, &key, wrapper, &hands)) {
+                // The plugin can't set launch options: Steam's file, with Steam closed.
+                Err(e) if steam_running(&e) => with_steam_closed(close_steam, take)?,
+                r => r?,
+            },
+            None if wrapper => with_steam_closed(close_steam, take)?,
+            None => take()?,
+        };
         steamcloud::status(&config::load()?, &entry)
     })
     .await
 }
 
 /// Give a Steam game back to Steam Cloud (its launch options as before).
+/// With `via_plugin` (the user confirmed it) and a Steam plugin, Steam
+/// turns Steam Cloud on again itself.
 #[tauri::command]
-pub async fn steam_cloud_hand_back(key: String, close_steam: bool) -> CmdResult<steamcloud::StoreStatus> {
+pub async fn steam_cloud_hand_back(key: String, close_steam: bool, via_plugin: bool) -> CmdResult<steamcloud::StoreStatus> {
     blocking(move || {
         let _busy = steam_game_free(&key)?;
         let wrapped = config::load()?.require_game(&key)?.store.as_ref().is_some_and(|s| s.wrapper);
         let hand = || Ctx::load().and_then(|ctx| steamcloud::hand_back(&ctx, &key));
-        let entry = if wrapped { with_steam_closed(close_steam, hand)? } else { hand()? };
+        let entry = match hands_for(&key, via_plugin)? {
+            Some(hands) => match Ctx::load().and_then(|ctx| steamcloud::hand_back_through(&ctx, &key, &hands)) {
+                Err(e) if steam_running(&e) => with_steam_closed(close_steam, hand)?,
+                r => r?,
+            },
+            None if wrapped => with_steam_closed(close_steam, hand)?,
+            None => hand()?,
+        };
         steamcloud::status(&config::load()?, &entry)
     })
     .await
@@ -198,10 +236,17 @@ pub async fn steam_cloud_backup_all() -> CmdResult<Vec<steamcloud::Done>> {
     blocking(|| Ok(steamcloud::backup_all(&config::load()?))).await
 }
 
-/// Take over every game that is backup only (Steam Cloud off for all games).
+/// Take over every game that is backup only: Steam Cloud off for all games
+/// first, or, with `via_plugin` (the user confirmed it) and a Steam plugin
+/// that can, Steam turns it off for each of them and stays open.
 #[tauri::command]
-pub async fn steam_cloud_take_over_all(wrapper: bool, close_steam: bool) -> CmdResult<Vec<steamcloud::Done>> {
+pub async fn steam_cloud_take_over_all(wrapper: bool, close_steam: bool, via_plugin: bool) -> CmdResult<Vec<steamcloud::Done>> {
     blocking(move || {
+        let cfg = config::load()?;
+        let hands = steamcloud::steam_account(&cfg).ok().and_then(|(_, account)| plugin::Plugin::for_account(&account));
+        if let Some(hands) = hands.filter(|h| via_plugin && (!wrapper || h.caps.launch_options)) {
+            return Ctx::load().and_then(|ctx| steamcloud::take_over_all_through(&ctx, wrapper, &hands));
+        }
         let take = || Ctx::load().and_then(|ctx| steamcloud::take_over_all(&ctx, wrapper));
         if wrapper {
             with_steam_closed(close_steam, take)

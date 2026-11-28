@@ -3,9 +3,21 @@
 // "make current". Making one current runs in the Ludonimbus app; the play bar
 // follows its progress like any other sync.
 
-import { DialogBody, DialogButton, DialogButtonPrimary, DialogFooter, DialogHeader, ModalRoot, showModal } from 'millennium';
+import { ConfirmModal, DialogBody, DialogButton, DialogButtonPrimary, DialogFooter, DialogHeader, ModalRoot, showModal } from 'millennium';
 import { useEffect, useState } from 'react';
-import { bytes, dateTime, parseReply, Snapshot, SnapshotList, StoreState, t } from './status';
+import { bytes, currentAccount, dateTime, isGame, parseReply, Snapshot, SnapshotList, StoreState, t } from './status';
+
+/** The game the dialog is about. */
+export interface VersionsOf {
+	gameKey: string;
+	appId: string;
+	name: string;
+	store: StoreState | null;
+	/** Offer "hand to Ludonimbus" (backup only, and the app can do it through this plugin). */
+	canTakeOver: boolean;
+}
+
+const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
 
 type Load = { state: 'loading' } | { state: 'error'; message: string } | { state: 'ok'; list: SnapshotList };
 
@@ -76,24 +88,60 @@ function Row({
 	);
 }
 
-function VersionsDialog({
-	gameKey,
-	name,
-	store,
-	closeModal,
-	onStarted,
-}: {
-	gameKey: string;
-	name: string;
-	store: StoreState | null;
-	closeModal?: () => void;
-	onStarted: () => void;
-}) {
+function VersionsDialog({ of, win, closeModal, onStarted }: { of: VersionsOf; win: Window | null; closeModal?: () => void; onStarted: () => void }) {
+	const { gameKey, name } = of;
 	const m = t();
 	const [load, setLoad] = useState<Load>({ state: 'loading' });
 	const [confirm, setConfirm] = useState<string | null>(null);
 	const [message, setMessage] = useState<string | null>(null);
 	const [working, setWorking] = useState(false);
+	const [store, setStore] = useState(of.store);
+	const [canTakeOver, setCanTakeOver] = useState(of.canTakeOver);
+
+	/**
+	 * Hand the game to Ludonimbus: it runs in the app (the plugin turns Steam
+	 * Cloud off when the app asks), and the dialog follows it to the end.
+	 */
+	const takeOver = async () => {
+		setWorking(true);
+		setMessage(m.takingOver);
+		const err = errorMessage(parseReply(await backend.take_over(gameKey)));
+		if (err) {
+			setWorking(false);
+			setMessage(m.cantTakeOver(err));
+			return;
+		}
+		onStarted();
+		for (let i = 0; i < 80; i++) {
+			await sleep(1500);
+			const s = parseReply(await backend.get_status(of.appId, currentAccount(), false));
+			if (!isGame(s) || s.phase !== 'idle') continue;
+			if (s.store === 'managed') {
+				setStore('managed');
+				setCanTakeOver(false);
+				setMessage(m.takenOver);
+			} else {
+				setMessage(m.cantTakeOver(s.lastError ?? m.cantRead));
+			}
+			break;
+		}
+		setWorking(false);
+	};
+
+	/** Steam's own confirmation: this turns a protection off. */
+	const askTakeOver = () => {
+		showModal(
+			<ConfirmModal
+				strTitle={m.takeOverTitle}
+				strDescription={m.takeOverText}
+				strOKButtonText={m.takeOverDo}
+				strCancelButtonText={m.cancel}
+				onOK={() => void takeOver()}
+			/>,
+			win ?? window,
+			{ strTitle: m.takeOverTitle, bNeverPopOut: true },
+		);
+	};
 
 	useEffect(() => {
 		backend
@@ -160,6 +208,11 @@ function VersionsDialog({
 			</DialogBody>
 			<DialogFooter>
 				<div className="ludonimbus-versions-footer">
+					{canTakeOver && (
+						<DialogButton onClick={askTakeOver} disabled={working || !!list?.busy}>
+							{m.takeOver}
+						</DialogButton>
+					)}
 					<DialogButton onClick={syncNow} disabled={!!list?.busy}>
 						{m.syncNow}
 					</DialogButton>
@@ -179,9 +232,9 @@ function VersionsDialog({
 }
 
 /** Show the saves over the given Steam window. */
-export function showVersions(win: Window | null, gameKey: string, name: string, store: StoreState | null, onStarted: () => void): void {
-	showModal(<VersionsDialog gameKey={gameKey} name={name} store={store} onStarted={onStarted} />, win ?? window, {
-		strTitle: t().versionsTitle(name),
+export function showVersions(win: Window | null, of: VersionsOf, onStarted: () => void): void {
+	showModal(<VersionsDialog of={of} win={win} onStarted={onStarted} />, win ?? window, {
+		strTitle: t().versionsTitle(of.name),
 		bNeverPopOut: true,
 	});
 }

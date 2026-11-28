@@ -276,20 +276,23 @@ export const api = {
   steamCloudAdd: (appids: number[]) => invoke<SteamCloudDone[]>("steam_cloud_add", { appids }),
   steamCloudStatus: (key: string) => invoke<SteamCloudStatus>("steam_cloud_status", { key }),
   /**
-   * Let Ludonimbus keep the game's saves (Steam Cloud must be off for it). Errors start with
-   * STEAM_RUNNING (with the wrapper: close Steam, see withSteamClosed), STEAM_NOT_SYNCED or STEAM_CLOUD_ON.
+   * Let Ludonimbus keep the game's saves. Without `viaPlugin` Steam Cloud must be off for it already;
+   * with it (the user confirmed) a connected Steam plugin turns it off and sets the launch options in
+   * Steam. Errors start with STEAM_RUNNING (launch options in Steam's file: close Steam, see
+   * withSteamClosed), STEAM_NOT_SYNCED or STEAM_CLOUD_ON.
    */
-  steamCloudTakeOver: (key: string, wrapper: boolean, closeSteam: boolean) =>
-    invoke<SteamCloudStatus>("steam_cloud_take_over", { key, wrapper, closeSteam }),
-  /** Back to Steam Cloud: launch options as before, backup only. */
-  steamCloudHandBack: (key: string, closeSteam: boolean) => invoke<SteamCloudStatus>("steam_cloud_hand_back", { key, closeSteam }),
+  steamCloudTakeOver: (key: string, wrapper: boolean, closeSteam: boolean, viaPlugin = false) =>
+    invoke<SteamCloudStatus>("steam_cloud_take_over", { key, wrapper, closeSteam, viaPlugin }),
+  /** Back to Steam Cloud: launch options as before, backup only; with `viaPlugin` Steam turns Steam Cloud on again. */
+  steamCloudHandBack: (key: string, closeSteam: boolean, viaPlugin = false) =>
+    invoke<SteamCloudStatus>("steam_cloud_hand_back", { key, closeSteam, viaPlugin }),
   /** Open the game's properties in Steam (its Steam Cloud switch is there). */
   steamCloudOpenProperties: (key: string) => invoke<void>("steam_cloud_open_properties", { key }),
   /** Every game Steam installed whose save location is known, backup only. */
   steamCloudBackupAll: () => invoke<SteamCloudDone[]>("steam_cloud_backup_all"),
-  /** Take over every backed-up game; refused (STEAM_CLOUD_ON) unless Steam Cloud is off for all games. */
-  steamCloudTakeOverAll: (wrapper: boolean, closeSteam: boolean) =>
-    invoke<SteamCloudDone[]>("steam_cloud_take_over_all", { wrapper, closeSteam }),
+  /** Take over every backed-up game; refused (STEAM_CLOUD_ON) unless Steam Cloud is off for all games, or `viaPlugin` and a Steam plugin turns it off for each. */
+  steamCloudTakeOverAll: (wrapper: boolean, closeSteam: boolean, viaPlugin = false) =>
+    invoke<SteamCloudDone[]>("steam_cloud_take_over_all", { wrapper, closeSteam, viaPlugin }),
   settings: () => invoke<Settings>("get_settings"),
   saveSettings: (patch: SettingsPatch) => invoke<void>("save_settings", { patch }),
   screenshots: (key: string) => invoke<Gallery>("screenshot_gallery", { key }),

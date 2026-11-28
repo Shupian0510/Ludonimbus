@@ -1,5 +1,6 @@
 // Generated from the Rust types by ts-rs. Don't edit: change the Rust type, then run `cargo test -p ludonimbus-app export_bindings` (docs/development.md).
 import type { SteamCloudState } from "./SteamCloudState";
+import type { SteamPluginCaps } from "./SteamPluginCaps";
 import type { SteamWrapperHealth } from "./SteamWrapperHealth";
 
 /**
@@ -22,4 +23,9 @@ globalEnabled: boolean, steamRunning: boolean,
  * Whether its launch options still go through the wrapper; `None` when
  * they aren't meant to.
  */
-wrapper: SteamWrapperHealth | null, };
+wrapper: SteamWrapperHealth | null, 
+/**
+ * A Steam plugin connected to this program can change Steam's settings
+ * of the game: what it can do. `None` without one (or an older plugin).
+ */
+plugin: SteamPluginCaps | null, };

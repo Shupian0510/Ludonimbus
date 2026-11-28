@@ -524,7 +524,15 @@ function mockSteamStatus(key: string): SteamCloudStatus {
     globalEnabled: true,
     steamRunning: true,
     wrapper: a?.state === "managed" && !mockNoWrapper.has(key) ? "ok" : null,
+    // A Steam plugin is connected (not in the docs screenshots, which show the manual steps).
+    plugin: mockScene ? null : { cloud: true, launchOptions: true },
   };
+}
+
+/** What the Steam plugin does in Steam once the user let it: the game's switch. */
+function mockPluginCloud(key: string, on: boolean) {
+  const a = steamCloudApps.find((x) => x.key === key);
+  if (a && !mockScene) a.cloudEnabled = on;
 }
 
 /** Games taken over without the wrapper in their launch options. */
@@ -1209,9 +1217,11 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "steam_cloud_status":
       return delay(mockSteamStatus(key), 200);
     case "steam_cloud_take_over":
+      if (args.viaPlugin) mockPluginCloud(key, false);
       return delay(mockSteamTakeOver(key, args.wrapper !== false), 1200);
     case "steam_cloud_hand_back": {
       const a = steamCloudApps.find((x) => x.key === key);
+      if (args.viaPlugin) mockPluginCloud(key, true);
       if (a) a.state = "backup";
       mockNoWrapper.delete(key);
       return delay(mockSteamStatus(key), 800);
@@ -1228,6 +1238,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
           .filter((a) => a.state === "backup")
           .map((a) => {
             try {
+              if (args.viaPlugin) mockPluginCloud(a.key!, false);
               mockSteamTakeOver(a.key!);
               return { appid: a.appid, key: a.key, error: null };
             } catch (e) {
