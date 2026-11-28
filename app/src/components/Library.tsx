@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, type GameSource, type GameView, type Overview, type StatusReport } from "../api";
-import { bytes, duration, relTime, statusInfo } from "../format";
+import { bytes, duration, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { groupBySource, type Grouped, type SourceGroup, tagText } from "../source";
 import { type Member, membersOf, variantLabel } from "./SaveLibrary";
 import { DifferBanner, DifferDialog, differenceKey, needsChoice, uploadAll } from "./SyncPolicy";
+import { DeviceChip, Pill, Stat, When } from "./kit";
 import { Badge, Button, Empty, Icon, Spinner, Toggle, useUi } from "./ui";
 
 function stored(storage: () => Storage, key: string): string | null {
@@ -31,7 +32,7 @@ const session = () => sessionStorage;
 type Tone = "ok" | "info" | "warn" | "bad" | "muted";
 
 /** How a game on this PC stands with the cloud, in a word and a colour. */
-function statusOf(game: GameView, check?: StatusReport, checking?: boolean): { label: string; tone: Tone } {
+export function statusOf(game: GameView, check?: StatusReport, checking?: boolean): { label: string; tone: Tone } {
   const t = msg().library;
   if (game.running) return { label: t.running, tone: "info" };
   if (!check) return { label: checking ? t.checking : t.notChecked, tone: "muted" };
@@ -41,7 +42,7 @@ function statusOf(game: GameView, check?: StatusReport, checking?: boolean): { l
 export function StatusBadge({ game, check, checking }: { game: GameView; check?: StatusReport; checking?: boolean }) {
   useT();
   const s = statusOf(game, check, checking);
-  return <Badge tone={s.tone}>{s.label}</Badge>;
+  return <Pill tone={s.tone}>{s.label}</Pill>;
 }
 
 /**
@@ -280,6 +281,29 @@ function GroupHead({
   );
 }
 
+/** Check every game again: an icon button that turns into a spinner while it runs. */
+function RefreshButton({ onRefresh, title }: { onRefresh: () => Promise<void>; title: string }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="icon-btn icon-btn-lg"
+      title={title}
+      aria-label={title}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onRefresh();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {busy ? <Spinner /> : <Icon name="sync" />}
+    </button>
+  );
+}
+
 export function Library({
   overview,
   checks,
@@ -326,6 +350,14 @@ export function Library({
   const differing = overview.games.filter((g) => needsChoice(g, checks[g.key]));
   const differKey = differenceKey(differing.map((g) => ({ game: g, check: checks[g.key] })));
   const [dismissed, setDismissed] = useState(() => stored(session, "ln.differ"));
+  // Docs screenshots: the dialog that settles them, once every game was checked.
+  const differScene = useRef(sceneIs("library-differ"));
+  useEffect(() => {
+    if (differScene.current && statusesReady && differing.length > 0) {
+      differScene.current = false;
+      setSettling(differing);
+    }
+  }, [statusesReady, differing]);
 
   const setViewSaved = (v: "grid" | "list") => {
     setView(v);
@@ -550,15 +582,23 @@ export function Library({
                     {g
                       ? (g.platform ?? g.adapterName ?? (g.ludusaviTitle ? t.library.ludusavi : t.library.custom))
                       : (c.main.cloud?.platform ?? c.main.cloud?.adapterName ?? t.savelib.cloudOnly)}
-                    {c.members.length > 1 && ` · ${t.savelib.versions(c.members.length)}`}
+                    {c.members.length > 1 && <span className="chip-count">{t.savelib.versions(c.members.length)}</span>}
                   </small>
                 </span>
               </span>
               <span>{status(c)}</span>
-              <span className="muted">{chk ? `${t.library.files(chk.localFiles)} · ${bytes(chk.localSize)}` : "—"}</span>
               <span className="muted">
-                {g ? relTime(g.lastSyncAt) : "—"}
-                {g?.lastSyncedDevice ? ` · ${g.lastSyncedDevice}` : ""}
+                {chk ? (
+                  <Stat icon="file" title={t.kit.localSaves(chk.localFiles, bytes(chk.localSize))}>
+                    {bytes(chk.localSize)}
+                  </Stat>
+                ) : (
+                  "—"
+                )}
+              </span>
+              <span className="cell-facts">
+                {g ? <When at={g.lastSyncAt} /> : "—"}
+                {g?.lastSyncedDevice && <DeviceChip name={g.lastSyncedDevice} here={g.lastSyncedDevice === overview.deviceName} />}
               </span>
               <span className="muted">{c.secs > 0 ? duration(c.secs) : "—"}</span>
               <span>
@@ -612,9 +652,7 @@ export function Library({
             showMissing={showMissing}
             setShowMissing={setMissingSaved}
           />
-          <Button icon="sync" onClick={onRefresh} title={t.library.refreshTitle}>
-            {t.library.refresh}
-          </Button>
+          <RefreshButton onRefresh={onRefresh} title={t.library.refreshTitle} />
           {overview.games.length > 0 && (
             <Button icon="upload" onClick={syncEverything} disabled={!!busy || syncingAll !== null} title={t.policy.syncAllTitle}>
               {syncingAll !== null ? `${t.policy.syncAll} ${syncingAll}` : t.policy.syncAll}
@@ -647,7 +685,7 @@ export function Library({
 
       {statusesReady && differing.length > 0 && dismissed !== differKey && (
         <DifferBanner
-          count={differing.length}
+          games={differing}
           onReview={() => setSettling(differing)}
           onDismiss={() => {
             setDismissed(differKey);

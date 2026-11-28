@@ -467,6 +467,22 @@ pub struct Question {
     pub keep: String,
     /// Share the progress from now on ("共用进度", [`crate::join::accept`]).
     pub join: String,
+    /// The two saves for the question window to show side by side.
+    pub compare: crate::prompt::Compare,
+}
+
+/// A save as one side of a launch question's comparison.
+fn side(name: &str, s: &SnapshotSummary, newer: bool) -> crate::prompt::Side {
+    crate::prompt::Side {
+        name: name.to_string(),
+        platform: s.platform.clone(),
+        device: s.device_name.clone(),
+        at: Some(s.created_at),
+        playtime: s.playtime,
+        size: Some(s.total_size),
+        files: Some(s.file_count as u64),
+        newer,
+    }
 }
 
 /// A time as a dialog says it: today and yesterday by name, else the date.
@@ -566,5 +582,14 @@ pub fn question(game: &GameEntry, n: &Newer, joinable: bool, notes: &[String], n
         take_note: crate::tr!("这里现在的存档会先保留，可以撤销", "The saves here are kept first; you can undo it"),
         keep: keep.trim().to_string(),
         join: if joinable { crate::tr!("以后自动接上", "Always continue from there") } else { String::new() },
+        compare: crate::prompt::Compare {
+            there: side(&n.source.name, there, true),
+            here: n.here.as_ref().map(|h| side(&n.here_name, h, false)),
+            convert: match &n.source.take {
+                Take::Convert { how } => how.clone(),
+                _ => String::new(),
+            },
+            notes: notes.to_vec(),
+        },
     }
 }

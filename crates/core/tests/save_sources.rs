@@ -138,6 +138,12 @@ fn saves_by_source_and_newer_progress_elsewhere() {
     assert!(q.text.starts_with("PC version · PC-a · today "), "{}", q.text);
     assert!(q.text.contains("50 min more play") && q.text.contains("PC version (here) · PC-b"), "{}", q.text);
     assert_eq!((q.take.as_str(), q.keep.as_str(), q.join.as_str()), ("Use the PC version's progress", "Keep the PC version's", ""));
+    // The window shows the two saves side by side: there (the newer), here.
+    let c = &q.compare;
+    assert_eq!((c.there.name.as_str(), c.there.device.as_str(), c.there.playtime, c.there.newer), ("PC version", "PC-a", Some(3600), true));
+    assert_eq!(c.there.at, Some(from_a.created_at));
+    assert_eq!(c.here.as_ref().map(|h| (h.device.as_str(), h.playtime, h.newer)), Some(("PC-b", Some(600), false)));
+    assert_eq!((c.convert.as_str(), c.notes.len()), ("files", 0));
 
     // Taken here: kept first, the copy says where it came from and how far
     // it was played, and it can be undone. Nothing newer then.

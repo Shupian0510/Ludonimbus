@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import { api, LaunchInfo, PromptRequest } from "./api";
+import { api, LaunchInfo, PlatformMark, PromptRequest } from "./api";
 import App from "./App";
 import { AchievementToast } from "./components/Achievements";
 import { UiProvider } from "./components/ui";
@@ -34,16 +34,16 @@ function Shell({ start }: { start: "desktop" | "handheld" }) {
   );
 }
 
-function Question({ request }: { request: PromptRequest }) {
+function Question({ request, platforms }: { request: PromptRequest; platforms: Record<string, PlatformMark> }) {
   useHandheldZoom(true);
-  return <Prompt request={request} />;
+  return <Prompt request={request} platforms={platforms} />;
 }
 
 function render(lang: LangPref, launch: LaunchInfo) {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <I18nProvider initial={lang}>
-        <UiProvider>{launch.mode === "prompt" && launch.prompt ? <Question request={launch.prompt} /> : <Shell start={launch.mode === "handheld" ? "handheld" : "desktop"} />}</UiProvider>
+        <UiProvider>{launch.mode === "prompt" && launch.prompt ? <Question request={launch.prompt} platforms={launch.platforms ?? {}} /> : <Shell start={launch.mode === "handheld" ? "handheld" : "desktop"} />}</UiProvider>
       </I18nProvider>
     </React.StrictMode>,
   );
@@ -56,7 +56,7 @@ if (toastWindow) {
   ReactDOM.createRoot(document.getElementById("root")!).render(<AchievementToast />);
 } else {
   // Read the saved language first so the window never flashes the other one.
-  const desktop: LaunchInfo = { mode: "desktop", prompt: null };
+  const desktop: LaunchInfo = { mode: "desktop", prompt: null, platforms: {} };
   Promise.all([api.language().then(asPref, () => "system" as LangPref), api.launchMode().catch(() => desktop)]).then(([lang, launch]) =>
     render(lang, launch),
   );

@@ -1,4 +1,4 @@
-/* Ludonimbus — Steam-library-like dark theme */
+/* Ludonimbus — Steam-library-like dark theme. Tokens and components: docs/ui-design.md */
 :root {
   --bg: #171a21;
   --bg-2: #1b2838;
@@ -14,7 +14,30 @@
   --info: #66c0f4;
   --warn: #f0b04a;
   --bad: #e5625a;
+  /* Status colours as text on dark (pills, badges, deltas). */
+  --ok-text: #8fe09a;
+  --info-text: #9bd6f8;
+  --warn-text: #f7c97f;
+  --bad-text: #f3a29c;
+  /* Newer than the save here: the accent; older: muted. */
+  --newer: var(--accent);
+  /* Type scale. */
+  --fs-caption: 11.5px;
+  --fs-small: 12.5px;
+  --fs-body: 14px;
+  --fs-title: 16px;
+  --fs-big: 22px;
+  --fs-page: 26px;
+  /* Spacing steps. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --radius-sm: 6px;
   --radius: 10px;
+  --radius-lg: 14px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
@@ -227,10 +250,6 @@ p {
   border: 1px solid transparent;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s, transform 0.05s;
-}
-.btn:active:not(:disabled) {
-  transform: translateY(1px);
 }
 .btn:disabled {
   opacity: 0.5;
@@ -466,7 +485,6 @@ textarea.input {
   position: relative;
   cursor: pointer;
   flex: none;
-  transition: background 0.15s;
   margin-left: auto;
 }
 .toggle span {
@@ -477,7 +495,6 @@ textarea.input {
   height: 18px;
   border-radius: 50%;
   background: #dfe8f1;
-  transition: left 0.15s;
 }
 .toggle.on {
   background: var(--accent-2);
@@ -568,15 +585,17 @@ textarea.input {
   color: #f6b9b4;
 }
 .banner.conflict {
-  align-items: flex-start;
-}
-.banner.conflict > div:nth-child(2) {
-  flex: 1;
-}
-.conflict-actions {
-  display: flex;
-  gap: 8px;
   flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+.conflict-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.banner.conflict .savecard {
+  background: rgba(18, 24, 33, 0.6);
 }
 .banner.not-here > div {
   flex: 1;
@@ -606,11 +625,14 @@ textarea.input {
   overflow: hidden;
   background: #253447;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
-.card:hover .cover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.55), 0 0 0 2px rgba(102, 192, 244, 0.6);
+/* No motion: the hovered card is outlined. */
+.card:hover .cover,
+.card:focus-visible .cover {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 0 0 2px rgba(102, 192, 244, 0.7);
+}
+.card:focus-visible {
+  outline: none;
 }
 .cover img {
   width: 100%;
@@ -778,7 +800,6 @@ textarea.input {
 .tr.missing .icon-fallback {
   filter: grayscale(1);
   opacity: 0.5;
-  transition: opacity 0.18s ease;
 }
 .card.missing:hover .cover img,
 .card.missing:hover .cover-fallback {
@@ -1018,8 +1039,47 @@ textarea.input {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
   font-size: 13px;
+  flex-wrap: wrap;
+}
+.actionbar-status .facts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.icon-btn-lg {
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  background: #2a3b4f;
+  border: 1px solid #34485f;
+}
+.icon-btn-lg:hover:not(:disabled) {
+  background: #33475e;
+}
+/* The game page's hint row: the newer save, an arrow, the save here. */
+.newer-row {
+  flex-wrap: wrap;
+}
+.newer-strip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  min-width: 0;
+  color: var(--muted);
+}
+.newer-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.newer-side.here .pmark {
+  color: var(--text-2);
 }
 .detail-body {
   padding: 20px 32px 48px;
@@ -1142,7 +1202,7 @@ textarea.input {
 .save-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 118px minmax(200px, 2fr) minmax(100px, 1fr) 76px;
+  grid-template-columns: 120px minmax(150px, 2fr) minmax(110px, 1fr) 150px 64px;
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
@@ -1173,6 +1233,23 @@ button.save-main:hover:not(:disabled) {
 .save-when > .muted {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* How a row compares with where this device is: newer by, played more. */
+.save-delta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.version-tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(125, 143, 163, 0.12);
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 .save-when > .badge {
   flex: none;
@@ -1238,35 +1315,18 @@ button.save-main:hover:not(:disabled) {
 .save-group {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 10px 2px 2px;
-  font-size: 13px;
+  gap: 10px;
+  margin: 18px 2px 4px;
   min-width: 0;
   white-space: nowrap;
 }
 .save-group:first-child {
   margin-top: 0;
 }
-.save-group > .muted {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .save-source {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-/* How a save of another source compares with the one here: in the column
-   the platform takes in the rows of the saves here. */
-.save-cmp {
-  color: var(--text-2);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.save-cmp.newer {
-  color: var(--accent);
 }
 .save-actions > .hint {
   grid-column: 2;
@@ -1289,35 +1349,11 @@ button.save-main:hover:not(:disabled) {
   font-size: 14px;
   opacity: 0.75;
 }
-/* What a save was made on: the program's own logo and its name. */
-.platform-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-2);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .icon-btn.star.on {
   color: var(--warn);
 }
 .icon-btn.star.on svg {
   fill: currentColor;
-}
-.device {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-2);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.device.mine {
-  color: var(--text);
 }
 .tags {
   display: flex;
@@ -1499,12 +1535,6 @@ table.files td:not(:first-child) {
   display: grid;
   place-items: center;
   z-index: 50;
-  animation: fade 0.12s ease;
-}
-@keyframes fade {
-  from {
-    opacity: 0;
-  }
 }
 .modal {
   width: min(520px, calc(100vw - 40px));
@@ -1713,7 +1743,52 @@ table.files td:not(:first-child) {
 .device-card {
   flex-direction: row;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
+}
+.device-card.mine {
+  border-color: rgba(102, 192, 244, 0.4);
+}
+.device-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: rgba(125, 143, 163, 0.12);
+  color: var(--text-2);
+}
+.device-card.mine .device-tile {
+  background: rgba(102, 192, 244, 0.12);
+  color: var(--accent);
+}
+.device-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.device-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.device-title b {
+  font-size: var(--fs-title);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.device-os {
+  color: var(--muted);
+  font-size: var(--fs-small);
 }
 
 /* Updates ----------------------------------------------------------------- */
@@ -1802,7 +1877,6 @@ table.files td:not(:first-child) {
   background: #22303f;
   border: 1px solid #34485f;
   box-shadow: var(--shadow);
-  animation: slide 0.18s ease;
   line-height: 1.45;
 }
 .toast svg {
@@ -1829,12 +1903,6 @@ table.files td:not(:first-child) {
 }
 .toast-bad svg {
   color: var(--bad);
-}
-@keyframes slide {
-  from {
-    transform: translateY(8px);
-    opacity: 0;
-  }
 }
 
 @media (max-width: 1100px) {
@@ -3023,26 +3091,35 @@ button.member:hover {
   flex-direction: column;
 }
 .differ-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 100px minmax(170px, 1fr) auto 30px;
   align-items: center;
-  gap: 8px;
-  padding: 8px 0;
+  gap: 12px;
+  padding: 9px 0;
   border-bottom: 1px solid var(--line);
 }
 .differ-row:last-child {
   border-bottom: none;
 }
+.differ-row > .pill {
+  justify-self: start;
+}
 .differ-name {
-  flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
 }
-.differ-name small {
+.differ-name b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.differ-facts {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
+  min-width: 0;
 }
 .nx-device {
   display: flex;
@@ -3059,4 +3136,592 @@ button.member:hover {
   flex: 0 0 auto;
   width: auto;
   min-width: 0;
+}
+
+/* Component vocabulary (components/kit.tsx, docs/ui-design.md) ------------ */
+/* A state: dot + name. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px 0 8px;
+  border-radius: 11px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: rgba(125, 143, 163, 0.12);
+  color: #9fb0c2;
+}
+.pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.pill-ok {
+  background: rgba(94, 194, 106, 0.13);
+  color: var(--ok-text);
+}
+.pill-ok i {
+  background: var(--ok);
+}
+.pill-info {
+  background: rgba(102, 192, 244, 0.13);
+  color: var(--info-text);
+}
+.pill-info i {
+  background: var(--info);
+}
+.pill-warn {
+  background: rgba(240, 176, 74, 0.14);
+  color: var(--warn-text);
+}
+.pill-warn i {
+  background: var(--warn);
+}
+.pill-bad {
+  background: rgba(229, 98, 90, 0.14);
+  color: var(--bad-text);
+}
+.pill-bad i {
+  background: var(--bad);
+}
+/* A program: its own icon and short name. */
+.pmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+.pmark-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pmark.strong {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+/* A device: its kind and name. */
+.dev {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+.dev svg {
+  flex: none;
+  color: var(--muted);
+}
+.dev-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dev.here {
+  color: var(--text);
+}
+.dev.here svg {
+  color: var(--accent);
+}
+.when {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+.when.strong {
+  color: var(--text);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+/* Newer / older than the save here; more played. */
+.delta,
+.playdelta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 7px 0 5px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.delta.newer {
+  background: rgba(102, 192, 244, 0.16);
+  color: var(--info-text);
+}
+.delta.older {
+  color: var(--muted);
+  padding-left: 2px;
+}
+.delta.same {
+  background: rgba(94, 194, 106, 0.12);
+  color: var(--ok-text);
+}
+.playdelta {
+  color: var(--ok-text);
+  padding-left: 2px;
+}
+.playdelta.less {
+  color: var(--muted);
+}
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat > svg {
+  flex: none;
+  color: var(--muted);
+}
+.convert-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 4px 0 8px;
+  border-radius: 11px;
+  border: 1px dashed #4a6079;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* A save as a card, two side by side to compare. */
+.compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: var(--sp-3);
+}
+.compare.no-arrow {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.compare-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.savecard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: rgba(18, 24, 33, 0.55);
+  border: 1px solid var(--line);
+}
+.savecard.newer {
+  background: rgba(102, 192, 244, 0.07);
+  border-color: rgba(102, 192, 244, 0.5);
+}
+.savecard-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.savecard-tag {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: rgba(125, 143, 163, 0.14);
+  color: var(--text-2);
+}
+.savecard-tag.newer {
+  background: rgba(102, 192, 244, 0.18);
+  color: var(--info-text);
+}
+.savecard-when {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.savecard-when .when {
+  font-size: var(--fs-big);
+  font-weight: 600;
+  color: var(--text);
+}
+.savecard.empty .savecard-when {
+  font-size: var(--fs-title);
+}
+.savecard-date {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+.savecard-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+.savecard-action {
+  margin-top: auto;
+  padding-top: 2px;
+  display: flex;
+}
+
+/* The launch question, full screen (handheld/Prompt.tsx) */
+.hh-prompt-card.with-compare {
+  width: min(1040px, 94vw);
+}
+.hh-prompt-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+.hh-prompt-title h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.25;
+}
+.hh-prompt-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: rgba(102, 192, 244, 0.12);
+}
+.hh-prompt-card.level-warn .hh-prompt-icon {
+  background: rgba(240, 176, 74, 0.12);
+}
+.hh-prompt-card.level-error .hh-prompt-icon {
+  background: rgba(229, 98, 90, 0.12);
+}
+.hh-prompt-notes {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 18px;
+}
+.hh-prompt-note,
+.hh-prompt-caption {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.45;
+}
+.hh-prompt-note {
+  color: var(--warn-text);
+}
+.hh-prompt-note svg,
+.hh-prompt-caption svg {
+  flex: none;
+  margin-top: 2px;
+}
+.hh-prompt-caption {
+  margin-top: 14px;
+  color: var(--text-2);
+}
+.hh-prompt-caption svg {
+  color: var(--ok);
+}
+/* Controller sizes for the shared components. */
+.hh .savecard {
+  padding: 20px 22px;
+  gap: 14px;
+  border-radius: var(--radius-lg);
+}
+.hh .savecard .pmark.strong {
+  font-size: 19px;
+}
+.hh .savecard-when .when {
+  font-size: 32px;
+}
+.hh .savecard-date,
+.hh .dev,
+.hh .stat,
+.hh .when {
+  font-size: 16px;
+}
+.hh .dev svg,
+.hh .stat > svg {
+  width: 19px;
+  height: 19px;
+}
+.hh .savecard-tag,
+.hh .delta,
+.hh .playdelta,
+.hh .pill,
+.hh .convert-chip {
+  height: 28px;
+  font-size: 15px;
+  border-radius: 14px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.hh .pill i {
+  width: 9px;
+  height: 9px;
+}
+.hh .compare-arrow svg {
+  width: 32px;
+  height: 32px;
+}
+/* Amounts as bars (playtime per device). */
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bars-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) minmax(60px, 1fr) 80px;
+  align-items: center;
+  gap: 12px;
+}
+.bars-label {
+  min-width: 0;
+  display: flex;
+}
+.bars-track,
+.meter-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(125, 143, 163, 0.16);
+  overflow: hidden;
+}
+.bars-track i,
+.meter-track i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent-2);
+}
+.bars-value {
+  text-align: right;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+/* How full the cloud is. */
+.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.meter-track {
+  width: 90px;
+}
+.meter.full .meter-track i {
+  background: var(--warn);
+}
+/* Facts at the end of a banner. */
+.banner-facts {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-left: auto;
+}
+.banner > .banner-facts {
+  flex: none;
+}
+/* Handheld: a save row in the desktop's columns, controller-sized. */
+.hh button.hh-list-row.hh-save[data-nav] {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 2fr) minmax(0, 1fr) 190px 90px;
+  align-items: center;
+  gap: 18px;
+}
+.hh-save-when {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.hh-save-when b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hh-save-when .when.strong {
+  font-size: 18px;
+}
+.hh-save-when svg {
+  color: var(--warn);
+  fill: currentColor;
+  flex: none;
+}
+.hh-save-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.hh-save-size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+}
+.hh .pmark {
+  font-size: 16px;
+}
+.hh .pmark.strong {
+  font-size: 19px;
+}
+.hh-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+  margin: 6px 0 4px;
+}
+.hh-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+.hh-caption {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0;
+  color: var(--text-2);
+  font-size: 16px;
+}
+.hh-caption svg {
+  flex: none;
+  color: var(--ok);
+}
+.hh .hh-chip {
+  gap: 10px;
+}
+.hh .hh-banner .compare {
+  margin-bottom: 4px;
+}
+.hh-source-head .dev {
+  font-weight: 400;
+}
+/* Version bar marks: the program, then the device. */
+.member .pmark,
+.member .dev {
+  font-size: 12px;
+}
+.member .pmark + .dev {
+  padding-left: 7px;
+  border-left: 1px solid rgba(125, 143, 163, 0.25);
+}
+.member-tag {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(125, 143, 163, 0.16);
+  color: var(--text-2);
+  font-size: 11px;
+}
+.chip .pmark {
+  font-size: 12px;
+}
+.chip.on .pmark {
+  color: #fff;
+}
+/* One line of components in a banner. */
+.banner-line {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+/* A game without artwork: a short header, not an empty one. */
+.hero.hero-none {
+  height: 150px;
+  background: linear-gradient(160deg, #22344a, #141c26);
+}
+/* A game's small icon; several overlap in a banner. */
+.game-icon {
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.game-icon-letter {
+  display: inline-grid;
+  place-items: center;
+  background: #2f4a66;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.icon-stack {
+  display: inline-flex;
+  align-items: center;
+}
+.icon-stack .game-icon {
+  box-shadow: 0 0 0 2px #2b2a24;
+}
+.icon-stack .game-icon + .game-icon {
+  margin-left: -6px;
+}
+/* A line with an icon in front: what a dialog promises (kept first). */
+.caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+.caption > svg {
+  flex: none;
+  color: var(--ok);
+}
+.cell-facts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* Facts about a found game or a save folder: files, size, when, a few names. */
+.add-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.reason-tag {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+code.sample {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(18, 24, 33, 0.7);
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 320px;
 }

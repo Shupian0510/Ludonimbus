@@ -12,6 +12,7 @@
 //! the desktop app shows the handheld view full screen too, and closing it
 //! hides the window instead of showing the desktop view.
 
+use crate::commands::overview::{platform_marks, PlatformMark};
 use crate::commands::{blocking, with_steam_closed, CmdResult};
 use anyhow::anyhow;
 use ludonimbus_core::config::{self, HandheldMode};
@@ -20,6 +21,7 @@ use ludonimbus_core::savelib::{self, Newer};
 use ludonimbus_core::sync::Ctx;
 use ludonimbus_core::{handheld, steam};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
@@ -56,6 +58,26 @@ pub struct LaunchInfo {
     #[ts(type = r#""desktop" | "handheld" | "prompt""#)]
     mode: &'static str,
     prompt: Option<Request>,
+    /// How the platforms of the saves a question compares are shown (their
+    /// programs' icons, when this device has them).
+    platforms: BTreeMap<String, PlatformMark>,
+}
+
+impl LaunchInfo {
+    fn view(mode: &'static str) -> Self {
+        LaunchInfo { mode, prompt: None, platforms: BTreeMap::new() }
+    }
+
+    fn question(req: Request) -> Self {
+        let platforms = match (&req.compare, config::load()) {
+            (Some(c), Ok(cfg)) => {
+                let sides = std::iter::once(&c.there).chain(c.here.as_ref());
+                platform_marks(&cfg, sides.map(|s| s.platform.as_str()))
+            }
+            _ => BTreeMap::new(),
+        };
+        LaunchInfo { mode: "prompt", prompt: Some(req), platforms }
+    }
 }
 
 /// The desktop app was opened while a controller interface is up: it starts
@@ -86,10 +108,10 @@ pub fn show_again<R: Runtime>(app: &AppHandle<R>) {
 pub async fn launch_mode() -> CmdResult<LaunchInfo> {
     blocking(|| {
         Ok(match mode() {
-            Mode::Desktop if starts_handheld() => LaunchInfo { mode: "handheld", prompt: None },
-            Mode::Desktop => LaunchInfo { mode: "desktop", prompt: None },
-            Mode::Handheld => LaunchInfo { mode: "handheld", prompt: None },
-            Mode::Prompt(f) => LaunchInfo { mode: "prompt", prompt: Some(prompt::read_request(f)?) },
+            Mode::Desktop if starts_handheld() => LaunchInfo::view("handheld"),
+            Mode::Desktop => LaunchInfo::view("desktop"),
+            Mode::Handheld => LaunchInfo::view("handheld"),
+            Mode::Prompt(f) => LaunchInfo::question(prompt::read_request(f)?),
         })
     })
     .await

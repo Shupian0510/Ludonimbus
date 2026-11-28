@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorText, GameView, LocalFile, Outcome, Overview, playtimePlatforms, SaveCandidate, SaveSources, StatusReport } from "../api";
-import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
+import { bytes, dateTime, duration, healthText, outcomeText } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { detectedGroup, groupBySource } from "../source";
@@ -8,7 +8,8 @@ import { AddToSteam } from "./AddToSteam";
 import { ArtPicker } from "./ArtPicker";
 import { GameBackupPanel } from "./GameBackup";
 import { PlatformFolders } from "./PlatformFolders";
-import { StatusBadge } from "./Library";
+import { statusOf } from "./Library";
+import { DeviceChip, Pill, SaveCompare, Stat, When } from "./kit";
 import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Hint, Icon, Menu, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
@@ -239,12 +240,13 @@ export function GameDetail({
   };
 
   const health = healthText(game.health);
+  const status = statusOf(game, check, checking);
   const conflict = check?.status === "conflict" || !!game.conflict;
   const hero = game.art.hero && !heroFailed ? game.art.hero : null;
 
   return (
     <div className="detail">
-      <div className={`hero${hero ? "" : " hero-plain"}`} style={!hero && game.art.cover ? { backgroundImage: `url(${game.art.cover})` } : undefined}>
+      <div className={`hero${hero ? "" : game.art.cover ? " hero-plain" : " hero-none"}`} style={!hero && game.art.cover ? { backgroundImage: `url(${game.art.cover})` } : undefined}>
         {hero && <img className="hero-img" src={hero} alt="" onError={() => setHeroFailed(true)} />}
         <div className="hero-shade" />
         <button className="back" onClick={onBack}>
@@ -272,36 +274,44 @@ export function GameDetail({
             {g.syncNow}
           </Button>
         )}
-        <Button icon="upload" onClick={backupNow} disabled={game.running}>
-          {g.backupTitle}
-        </Button>
-        <Button icon="folder" onClick={() => run(() => api.openSaveFolder(game.key))}>
-          {g.openSaves}
-        </Button>
-        <Menu title={t.saves.more} items={shelves.items} />
+        <button className="icon-btn icon-btn-lg" onClick={backupNow} disabled={game.running} title={g.backupTitle} aria-label={g.backupTitle}>
+          <Icon name="upload" />
+        </button>
+        <button className="icon-btn icon-btn-lg" onClick={() => run(() => api.openSaveFolder(game.key))} title={g.openSaves} aria-label={g.openSaves}>
+          <Icon name="folder" />
+        </button>
+        <Menu title={t.saves.more} items={shelves.items} className="icon-btn icon-btn-lg" />
         <div className="actionbar-status">
-          <StatusBadge game={game} check={check} checking={checking} />
-          {newerHere && check?.head && (
-            <span className="muted" title={dateTime(check.head.createdAt)}>
-              {check.head.deviceName} · {relTime(check.head.createdAt)}
-            </span>
-          )}
+          {checking ? <Spinner /> : <Pill tone={status.tone}>{status.label}</Pill>}
           {check?.incomplete && (
             <span className="status-note">
-              <Badge tone="warn">{g.incomplete}</Badge>
+              <Pill tone="warn">{g.incomplete}</Pill>
               <Hint text={g.incompleteHint} />
             </span>
           )}
           {shelves.marks}
-          <span className="muted">
-            {g.lastSync(relTime(game.lastSyncAt))}
-            {game.lastSyncedDevice ? ` · ${game.lastSyncedDevice}` : ""}
-            {check ? ` · ${g.local(check.localFiles, bytes(check.localSize))}` : ""}
-          </span>
-          {game.playtime.totalSecs > 0 && (
-            <span className="muted playtime" title={playtimeTip(game)}>
-              <Icon name="clock" size={13} /> {g.playtime(duration(game.playtime.totalSecs))}
+          {newerHere && check?.head ? (
+            // What is newer in the cloud: which device, when.
+            <span className="facts">
+              <DeviceChip name={check.head.deviceName} />
+              <When at={check.head.createdAt} />
             </span>
+          ) : (
+            <span className="facts" title={t.kit.lastSync}>
+              <Icon name="cloud" size={14} />
+              <When at={game.lastSyncAt} />
+              {game.lastSyncedDevice && <DeviceChip name={game.lastSyncedDevice} here={game.lastSyncedDevice === overview.deviceName} />}
+            </span>
+          )}
+          {check && (
+            <Stat icon="file" title={t.kit.localSaves(check.localFiles, bytes(check.localSize))}>
+              {bytes(check.localSize)}
+            </Stat>
+          )}
+          {game.playtime.totalSecs > 0 && (
+            <Stat icon="clock" title={playtimeTip(game)}>
+              {duration(game.playtime.totalSecs)}
+            </Stat>
           )}
         </div>
       </div>
@@ -309,25 +319,34 @@ export function GameDetail({
       <div className="detail-body">
         {conflict && check?.head && (
           <div className="banner banner-warn conflict">
-            <Icon name="warn" />
-            <div>
+            <div className="conflict-head">
+              <Icon name="warn" />
               <b>{g.conflictTitle}</b>
-              <p>
-                {g.conflictText(
-                  check.head.deviceName,
-                  dateTime(check.head.createdAt),
-                  bytes(check.head.totalSize),
-                  check.localFiles,
-                  bytes(check.localSize),
-                )}
-              </p>
+              <Hint text={g.conflictHint} />
             </div>
-            <div className="conflict-actions">
-              <Button kind="primary" onClick={takeCloud}>
-                {g.useCloud}
-              </Button>
-              <Button onClick={() => syncNow("local")}>{g.useLocal}</Button>
-            </div>
+            <SaveCompare
+              arrow={false}
+              there={{
+                name: g.cloudSide,
+                device: check.head.deviceName,
+                at: check.head.createdAt,
+                size: check.head.totalSize,
+                files: check.head.fileCount,
+                action: (
+                  <Button kind="primary" onClick={takeCloud}>
+                    {g.useCloud}
+                  </Button>
+                ),
+              }}
+              here={{
+                name: g.localSide,
+                device: overview.deviceName,
+                mine: true,
+                size: check.localSize,
+                files: check.localFiles,
+                action: <Button onClick={() => syncNow("local")}>{g.useLocal}</Button>,
+              }}
+            />
           </div>
         )}
         {check?.tooNew && check.status === "cloudNewer" && (
@@ -367,6 +386,7 @@ export function GameDetail({
             target={game}
             overview={overview}
             newer={sources.newer}
+            marks={sources.platforms}
             disabled={game.running}
             tooNew={sources.tooNew}
             onDismiss={() => setNewerGone(true)}

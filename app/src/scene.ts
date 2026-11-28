@@ -21,6 +21,8 @@ export const SCENE_GAME: Record<string, string> = {
   "game-detail-pending": "zelda-oot-longshot",
   versions: "zelda-oot-longshot",
   "save-sources": "celeste",
+  "game-newer": "celeste",
+  "cloud-game": "hollow-knight",
   "game-settings": "zelda-oot-longshot",
   "art-picker": "fe-fortunes-weave",
   "game-screenshots": "zelda-oot-longshot",

@@ -6,6 +6,7 @@ import { scene, SCENE_ADD, sceneIs } from "../scene";
 import { AddToSteam, SteamCandidate } from "./AddToSteam";
 import { PlatformFolders } from "./PlatformFolders";
 import { FinderGame, SaveFinder } from "./SaveFinder";
+import { Stat } from "./kit";
 import { Badge, Button, Empty, Hint, Icon, Modal, PathField, Spinner, useUi } from "./ui";
 
 /** Scanning this device is the main way; finding the saves by name is a step of adding by hand. */
@@ -426,9 +427,12 @@ function ScanLocal({ overview, onChanged, onOpen }: { overview: Overview; onChan
         </div>
         {f.exe && <code className="path small">{f.exe}</code>}
         {f.saveFiles > 0 && (
-          <span className="muted small">
-            {a.localSaves(f.saveFiles)} · {bytes(f.saveBytes)}
-            {f.saveSample[0] ? ` · ${f.saveSample[0]}` : ""}
+          <span className="add-facts">
+            <Stat icon="file" title={a.localSaves(f.saveFiles)}>
+              {t.library.files(f.saveFiles)}
+            </Stat>
+            <span className="stat">{bytes(f.saveBytes)}</span>
+            {f.saveSample[0] && <code className="sample">{f.saveSample[0]}</code>}
           </span>
         )}
         {kind === "check" && f.source === "ludusavi" && !f.exe && !f.storeGame && (

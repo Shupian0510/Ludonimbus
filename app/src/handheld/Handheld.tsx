@@ -7,14 +7,16 @@
 // keyboard. Adding games, signing in to a cloud and the save finder stay in
 // the desktop view.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, HandheldInfo, HandheldMode, Overview, SaveSource, SaveSources, SnapshotList, SnapshotSummary, TransferPlan } from "../api";
+import { api, errorText, HandheldInfo, HandheldMode, Overview, PlatformMark as Mark, SaveSource, SaveSources, SnapshotList, SnapshotSummary, TransferPlan } from "../api";
 import { cardsOf, type Card } from "../components/Library";
 import { familyOf, variantLabel } from "../components/SaveLibrary";
 import { arrange } from "../components/Saves";
-import { compareWith, saveLine, versionOf } from "../components/SaveSources";
-import { Badge, Spinner, useUi } from "../components/ui";
-import { bytes, dateTime, duration, outcomeText, relTime, statusInfo } from "../format";
+import { versionOf } from "../components/SaveSources";
+import { cmpOf, ConvertChip, Delta, DeviceChip, Pill, PlatformMark, PlayDelta, playedOf, SaveCard, SaveCompare, Side, Stat, When } from "../components/kit";
+import { Badge, Icon, Spinner, useUi } from "../components/ui";
+import { bytes, dateTime, duration, outcomeText, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
+import { sceneIs } from "../scene";
 import { type Button, focusFirst, Glyph, Hints, NavRoot, useButtons } from "./nav";
 
 type Screen = { name: "library" } | { name: "game"; key: string } | { name: "settings" };
@@ -32,7 +34,8 @@ function Shell({ onDesktop }: { onDesktop: () => void }) {
   const h = t.handheld;
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [screen, setScreen] = useState<Screen>({ name: "library" });
+  // Browser preview: ?handheld&scene=handheld-game opens a game with saves from elsewhere (docs screenshots).
+  const [screen, setScreen] = useState<Screen>(() => (sceneIs("handheld-game") ? { name: "game", key: "celeste" } : { name: "library" }));
 
   const reload = useCallback(async () => {
     try {
@@ -129,7 +132,7 @@ function Library({
         </div>
         <div className="hh-card-name">{c.name}</div>
         <div className="hh-card-sub">
-          <Badge tone={status.tone}>{status.label}</Badge>
+          <Pill tone={status.tone}>{status.label}</Pill>
           {c.secs > 0 && <span className="muted">{duration(c.secs)}</span>}
         </div>
       </button>
@@ -318,26 +321,31 @@ function Game({
   const isSide = (s: SnapshotSummary) => s.side ?? (s.trigger === "pre-restore" || s.trigger === "conflict-keep");
   // Steam Cloud keeps this game's saves too; writing into the Xbox app's containers is experimental.
   const note = game?.store && game.store.mode !== "managed" ? t.steamCloud.restoreNote : game?.xboxContainers ? t.saves.xboxNote : null;
+  const marks = { ...(sources?.platforms ?? {}), ...(data?.platforms ?? {}) };
   const row = (s: SnapshotSummary) => {
     const named = s.locked && !!s.comment;
+    const current = isCurrent(s);
     return (
-      <button key={s.id} data-nav className="hh-list-row" onClick={() => setPicked(s)}>
-        <b>{named ? s.comment : dateTime(s.createdAt)}</b>
-        {isCurrent(s) ? (
-          <Badge tone="ok">{t.saves.current}</Badge>
-        ) : s.incomplete ? (
-          <Badge tone="warn">{t.saves.incomplete}</Badge>
-        ) : (s.head ?? s.id === data?.headId) && game ? (
-          <Badge tone="info">{t.saves.newest}</Badge>
-        ) : (
-          isSide(s) && s.trigger !== "shared" && <Badge tone="muted">{t.saves.replaced}</Badge>
-        )}
-        <span className="muted">{s.deviceName}</span>
-        <span className="muted">
-          {named ? `${dateTime(s.createdAt)} · ` : ""}
-          {bytes(s.totalSize)}
+      <button key={s.id} data-nav className={`hh-list-row hh-save${current ? " on" : ""}`} onClick={() => setPicked(s)}>
+        <PlatformMark mark={marks[s.platform ?? ""]} size={22} />
+        <span className="hh-save-when">
+          {named ? <b>{s.comment}</b> : <When at={s.createdAt} strong />}
+          {named && <When at={s.createdAt} />}
+          {s.locked && <Icon name="star" size={16} />}
         </span>
-        {!named && s.comment && <span className="muted">“{s.comment}”</span>}
+        <DeviceChip name={s.deviceName} here={s.deviceId === overview.deviceId} />
+        <span className="hh-save-mark">
+          {current ? (
+            <Pill tone="ok">{t.saves.current}</Pill>
+          ) : s.incomplete ? (
+            <Pill tone="warn">{t.saves.incomplete}</Pill>
+          ) : isSide(s) && s.trigger !== "shared" ? (
+            <Badge tone="muted">{t.saves.replaced}</Badge>
+          ) : (
+            game && <Delta cmp={cmpOf(s, here)} quiet />
+          )}
+        </span>
+        <span className="muted hh-save-size">{bytes(s.totalSize)}</span>
       </button>
     );
   };
@@ -354,19 +362,33 @@ function Game({
           <div className="hh-game-info">
             <h1>{name}</h1>
             {game && (
-              <p className="muted">
-                {game.lastCheck ? statusInfo(game.lastCheck.status).label : t.library.notChecked} · {h.lastSync(relTime(game.lastSyncAt))}
-                {game.lastSyncedDevice ? ` · ${game.lastSyncedDevice}` : ""}
-                {game.playtime.totalSecs > 0 ? ` · ${duration(game.playtime.totalSecs)}` : ""}
-              </p>
+              <div className="hh-facts">
+                {game.lastCheck ? (
+                  <Pill tone={statusInfo(game.lastCheck.status).tone}>{statusInfo(game.lastCheck.status).label}</Pill>
+                ) : (
+                  <Pill tone="muted">{t.library.notChecked}</Pill>
+                )}
+                <span className="hh-fact" title={t.kit.lastSync}>
+                  <Icon name="cloud" size={19} />
+                  <When at={game.lastSyncAt} />
+                  {game.lastSyncedDevice && <DeviceChip name={game.lastSyncedDevice} here={game.lastSyncedDevice === overview.deviceName} />}
+                </span>
+                {game.playtime.totalSecs > 0 && <Stat icon="clock">{duration(game.playtime.totalSecs)}</Stat>}
+              </div>
             )}
             {!game && <p className="muted">{h.cloudOnly}</p>}
             {game && !game.playable && <p className="muted">{h.notInstalled}</p>}
             {newer && (
               <div className="hh-banner">
-                <p>{t.sources.newerRow(newer.source.name)}</p>
-                <p className="muted">{saveLine(newer.source.name, newer.snapshot, newer.here)}</p>
-                <p className="muted">{saveLine(t.sources.hereName(newer.hereName), newer.here)}</p>
+                <SaveCompare
+                  there={snapSide(newer.source.name, newer.snapshot, newer.here, marks, overview.deviceId, true)}
+                  here={newer.here ? snapSide(newer.hereName, newer.here, null, marks, overview.deviceId) : { name: newer.hereName, empty: true }}
+                />
+                {newer.source.take.kind === "convert" && (
+                  <div className="hh-row">
+                    <ConvertChip hint={t.sources.convertHint(newer.source.take.how)} />
+                  </div>
+                )}
                 <div className="hh-row">
                   <button
                     data-nav
@@ -391,7 +413,9 @@ function Game({
             )}
             {game && conflict && (
               <div className="hh-banner warn">
-                <p>{h.conflict}</p>
+                <p>
+                  <b>{t.game.conflictTitle}</b>
+                </p>
                 {game.xboxContainers && <p className="muted">{t.saves.xboxNote}</p>}
                 <div className="hh-row">
                   <button data-nav data-autofocus onClick={() => sync("cloud")} disabled={busy}>
@@ -412,7 +436,11 @@ function Game({
             )}
             {game?.replaced && (
               <div className="hh-row">
-                <span className="muted">{t.saves.replacedBy(relTime(game.replaced.at), game.replaced.device)}</span>
+                <span className="hh-fact">
+                  <Icon name="restore" size={19} />
+                  <DeviceChip name={game.replaced.device} />
+                  <When at={game.replaced.at} />
+                </span>
                 <button data-nav onClick={undo} disabled={busy || game.running}>
                   {t.saves.undo}
                 </button>
@@ -426,8 +454,15 @@ function Game({
             <h2>{h.versions}</h2>
             <div className="hh-row">
               {members.map((m) => (
-                <button key={m.key} data-nav className={`hh-chip${m.key === gameKey ? " on" : ""}${m.playable ? "" : " missing"}`} onClick={() => onOpen(m.key)}>
-                  {variantLabel(m)} · {m.cloud ? t.savelib.cloudOnly : m.playable ? t.savelib.here : t.savelib.notInstalled}
+                <button
+                  key={m.key}
+                  data-nav
+                  className={`hh-chip${m.key === gameKey ? " on" : ""}${m.playable ? "" : " missing"}`}
+                  onClick={() => onOpen(m.key)}
+                  title={m.cloud ? t.savelib.cloudOnly : m.playable ? t.savelib.here : t.savelib.notInstalled}
+                >
+                  <PlatformMark mark={m.source.logo ? { label: variantLabel(m), logo: m.source.logo } : null} label={variantLabel(m)} size={22} />
+                  {m.cloud && <Icon name="cloud" size={18} />}
                 </button>
               ))}
             </div>
@@ -435,7 +470,16 @@ function Game({
         )}
 
         <section>
-          <h2>{groups.length > 0 ? `${t.sources.here} · ${sources?.hereName ?? ""}` : h.history}</h2>
+          <h2 className="hh-source-head">
+            {groups.length > 0 ? (
+              <>
+                <PlatformMark mark={marks[sources?.herePlatform ?? ""]} label={t.sources.hereName(sources?.hereName ?? "")} size={24} strong />
+                <DeviceChip name={overview.deviceName} here />
+              </>
+            ) : (
+              h.history
+            )}
+          </h2>
           {data === null && <Spinner />}
           {data?.snapshots.length === 0 && <p className="muted">{t.saves.empty}</p>}
           <div className="hh-list">
@@ -454,22 +498,32 @@ function Game({
         {groups.map((src) => (
           <section key={src.id}>
             <h2 className="hh-source-head">
-              {sources?.platforms[src.platform]?.logo && <img className="src-logo" src={sources.platforms[src.platform].logo!} alt="" width={24} height={24} />}
-              {src.name}
-              {src.devices.length > 0 && <span className="muted"> · {src.devices.join(" · ")}</span>}
-              {src.take.kind === "convert" && <Badge tone="muted">{t.sources.convert}</Badge>}
+              {src.kind === "device" ? <DeviceChip name={src.name} /> : <PlatformMark mark={marks[src.platform]} label={src.name} size={24} strong />}
+              {src.devices
+                .filter((d) => src.kind !== "device" || d !== src.name)
+                .map((d) => (
+                  <DeviceChip key={d} name={d} />
+                ))}
+              {src.take.kind === "convert" && <ConvertChip hint={t.sources.convertHint(src.take.how)} />}
             </h2>
             <div className="hh-list">
               {src.snapshots.map((s) => {
-                const cmp = compareWith(s, here);
                 const named = s.locked && !!s.comment;
+                const version = versionOf(s);
                 return (
-                  <button key={s.id} data-nav className="hh-list-row" onClick={() => setPickedElsewhere({ source: src, snapshot: s })}>
-                    <b>{named ? s.comment : dateTime(s.createdAt)}</b>
-                    {cmp && <Badge tone={cmp.newer ? "info" : "muted"}>{cmp.text}</Badge>}
-                    {s.incomplete && <Badge tone="warn">{t.saves.incomplete}</Badge>}
-                    <span className="muted">{s.deviceName}</span>
-                    <span className="muted">{[named ? dateTime(s.createdAt) : null, versionOf(s), bytes(s.totalSize)].filter(Boolean).join(" · ")}</span>
+                  <button key={s.id} data-nav className="hh-list-row hh-save" onClick={() => setPickedElsewhere({ source: src, snapshot: s })}>
+                    <PlatformMark mark={marks[s.platform ?? ""]} size={22} />
+                    <span className="hh-save-when">
+                      {named ? <b>{s.comment}</b> : <When at={s.createdAt} strong />}
+                      {named && <When at={s.createdAt} />}
+                      {version && <span className="version-tag">{version}</span>}
+                    </span>
+                    <DeviceChip name={s.deviceName} />
+                    <span className="hh-save-mark">
+                      {s.incomplete ? <Pill tone="warn">{t.saves.incomplete}</Pill> : <Delta cmp={cmpOf(s, here)} />}
+                      <PlayDelta secs={playedOf(s, here)} quiet />
+                    </span>
+                    <span className="muted hh-save-size">{bytes(s.totalSize)}</span>
                   </button>
                 );
               })}
@@ -496,9 +550,13 @@ function Game({
             { b: "b", label: h.cancel, onPress: () => setPicked(null) },
           ]}
         >
+          <SaveCard side={snapSide(picked.locked && picked.comment ? picked.comment : variantLabel(members.find((m) => m.key === gameKey) ?? members[0]), picked, isCurrent(picked) ? null : here, marks, overview.deviceId)} />
           {picked.incomplete && <p className="muted">{t.saves.incompleteHint}</p>}
           {game && !isCurrent(picked) && !picked.incomplete && (
-            <p className="muted">{t.saves.makeCurrentText(game.name, picked.deviceName, dateTime(picked.createdAt))}</p>
+            <p className="hh-caption">
+              <Icon name="shield" size={20} />
+              {t.kit.keptFirst}
+            </p>
           )}
           {game && !isCurrent(picked) && (data?.tooNew ?? []).includes(picked.id) && <p className="muted">{t.saves.tooNew(picked.gameVersion ?? "?")}</p>}
           {game && !isCurrent(picked) && note && <p className="muted">{note}</p>}
@@ -508,6 +566,9 @@ function Game({
         <ElsewhereDialog
           picked={pickedElsewhere}
           here={here}
+          hereName={sources?.hereName ?? name}
+          marks={marks}
+          deviceId={overview.deviceId}
           game={game}
           note={note}
           tooNew={(sources?.tooNew ?? []).includes(pickedElsewhere.snapshot.id)}
@@ -534,6 +595,22 @@ function Game({
   );
 }
 
+/** A save as one side of a comparison: `other` is what it is compared with. */
+function snapSide(name: string, s: SnapshotSummary, other: SnapshotSummary | null | undefined, marks: Record<string, Mark>, deviceId: string, newer?: boolean): Side {
+  return {
+    name,
+    mark: marks[s.platform ?? ""],
+    device: s.deviceName,
+    mine: s.deviceId === deviceId,
+    at: s.createdAt,
+    playtime: s.playtime,
+    played: playedOf(s, other),
+    size: s.totalSize,
+    files: s.fileCount,
+    newer,
+  };
+}
+
 /**
  * A save of another source, picked on the game screen: A takes it here
  * (kept first, can be undone), X sends it to another version. What it is
@@ -542,6 +619,9 @@ function Game({
 function ElsewhereDialog({
   picked: { source, snapshot },
   here,
+  hereName,
+  marks,
+  deviceId,
   game,
   note,
   tooNew,
@@ -552,6 +632,9 @@ function ElsewhereDialog({
 }: {
   picked: { source: SaveSource; snapshot: SnapshotSummary };
   here?: SnapshotSummary;
+  hereName: string;
+  marks: Record<string, Mark>;
+  deviceId: string;
   game?: { name: string; running: boolean };
   note: string | null;
   tooNew: boolean;
@@ -575,12 +658,22 @@ function ElsewhereDialog({
         { b: "b", label: t.handheld.cancel, onPress: onClose },
       ]}
     >
-      <p className="muted">{saveLine(source.name, snapshot, here)}</p>
-      {source.take.kind === "convert" && <p className="muted">{t.sources.convertHint(source.take.how)}</p>}
+      <SaveCompare
+        there={snapSide(source.name, snapshot, here, marks, deviceId, !!here && Date.parse(snapshot.createdAt) > Date.parse(here.createdAt))}
+        here={here ? snapSide(hereName, here, null, marks, deviceId) : { name: hereName, empty: true }}
+      />
+      {source.take.kind === "convert" && (
+        <div className="hh-row">
+          <ConvertChip hint={t.sources.convertHint(source.take.how)} />
+        </div>
+      )}
       {never && <p className="hh-warn">{never}</p>}
       {snapshot.incomplete && <p className="muted">{t.saves.incompleteHint}</p>}
       {game && !same && !never && !snapshot.incomplete && (
-        <p className="muted">{t.sources.takeText(game.name, source.name, source.name === snapshot.deviceName ? null : snapshot.deviceName, dateTime(snapshot.createdAt))}</p>
+        <p className="hh-caption">
+          <Icon name="shield" size={20} />
+          {t.kit.keptFirst}
+        </p>
       )}
       {game && tooNew && <p className="muted">{t.saves.tooNew(snapshot.gameVersion ?? "?")}</p>}
       {game && !source.key && note && <p className="muted">{note}</p>}
