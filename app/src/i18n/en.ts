@@ -261,7 +261,7 @@ export const handheld: typeof Zh.handheld = {
   device: (name) => `This device: ${name}`,
   promptsTitle: "Questions when a game starts",
   promptsText: "On a handheld, questions such as save conflicts show in a full-screen window you can answer with the controller.",
-  modes: { auto: "Automatic (when started from Steam Big Picture / Game Mode)", on: "Always full screen", off: "Always system dialogs" },
+  modes: { auto: "Automatic (in Steam Big Picture / Game Mode and the Xbox full screen experience)", on: "Always full screen", off: "Always system dialogs" },
   steamTitle: "Open Ludonimbus from the Steam library",
   steamIn: "In the Steam library",
   steamNot: "Not in the Steam library yet",
@@ -273,8 +273,10 @@ export const handheld: typeof Zh.handheld = {
   quit: "Close Ludonimbus handheld view",
   promptHint: "Press the matching controller button, or move with the d-pad and press A",
   panelTitle: "Handheld",
-  panelText: "On handhelds such as the ROG Ally, Legion Go or Steam Deck: questions when a game starts show in a full-screen window, and Ludonimbus's controller view can be opened from the Steam library.",
-  detected: (name) => `This device is a ${name}. Questions when a game starts can show in a full-screen window, and Ludonimbus's controller view can be opened from the Steam library.`,
+  panelText:
+    "On handhelds such as the ROG Ally, Legion Go or Steam Deck: questions when a game starts show in a full-screen window, and Ludonimbus's controller view can be opened from the Steam library. Opened in the Xbox full screen experience or Steam Big Picture, Ludonimbus goes straight to the controller view (not with \"Always system dialogs\").",
+  detected: (name) =>
+    `This device is a ${name}. Questions when a game starts can show in a full-screen window, and Ludonimbus's controller view can be opened from the Steam library. Opened in the Xbox full screen experience or Steam Big Picture, Ludonimbus goes straight to the controller view; on the desktop, docked to a monitor, it opens the desktop view as usual.`,
   steamUpdate: "Add again",
   xboxHow: "You can add it to the Xbox app too: My Library → Add game → choose ludonimbus-app.exe in Ludonimbus's install folder, with --handheld as the launch argument. Games started from the Xbox app don't go through Steam; saves sync automatically when games start from Steam.",
   enter: "Open the controller view",
@@ -1107,6 +1109,8 @@ export const onboarding: typeof Zh.onboarding = {
     no: "No, or later",
     yesText: "Full-screen questions are on. Add Ludonimbus to the Steam library too:",
     autostart: "To start Ludonimbus with Windows in Xbox mode too, turn it on in Windows Settings → Apps → Startup. Saves sync without it as well (the launch wrapper syncs when games start from Steam).",
+    fse: "The Xbox full screen experience is on.",
+    bigPicture: "Ludonimbus was opened from Steam Big Picture.",
   },
   done: {
     title: "You're all set",

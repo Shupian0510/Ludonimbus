@@ -41,13 +41,21 @@ export function Onboarding({
   const o = t.onboarding;
   const p = t.steamPlugin;
   const [step, setStep] = useState<Step>(ALL_STEPS.find((s) => s === initialStep) ?? "welcome");
-  // A handheld (by its firmware): one more step for its settings.
+  // A handheld (by its firmware, or the Xbox full screen experience / Steam
+  // Big Picture being up): one more step for its settings.
   const [hh, setHh] = useState<HandheldInfo | null>(null);
   const [isHandheld, setIsHandheld] = useState<boolean | null>(null);
   useEffect(() => {
     api.handheldInfo().then(setHh, () => setHh(null));
   }, []);
-  const STEPS = ALL_STEPS.filter((s) => s !== "handheld" || !!hh?.device || initialStep === "handheld");
+  const handheldSigns = !!hh && (!!hh.device || hh.xboxFse || hh.steamGamepadUi);
+  const STEPS = ALL_STEPS.filter((s) => s !== "handheld" || handheldSigns || initialStep === "handheld");
+  // The handheld step starts with "yes" chosen; "no" puts it back.
+  useEffect(() => {
+    if (step !== "handheld" || isHandheld !== null || !handheldSigns) return;
+    setIsHandheld(true);
+    api.setHandheldMode("on").catch(() => undefined);
+  }, [step, isHandheld, handheldSigns]);
   const [usage, setUsage] = useState<Set<Usage>>(
     new Set(initialStep === "usage" ? ["emulators", "multiDevice"] : initialStep === "done" ? ["emulators", "steamThirdParty"] : []),
   );
@@ -279,7 +287,7 @@ ${o.steam.optional}`} />
               <h2>
                 {o.handheld.title} <Hint text={o.handheld.hint} />
               </h2>
-              <p className="muted">{o.handheld.text(hh?.device ?? "")}</p>
+              <p className="muted">{hh?.device ? o.handheld.text(hh.device) : hh?.xboxFse ? o.handheld.fse : o.handheld.bigPicture}</p>
               <div className="row">
                 <Button
                   kind={isHandheld ? "primary" : "secondary"}

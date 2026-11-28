@@ -49,7 +49,7 @@ fn main() {
     // The handheld screen and the wrapper's questions run as their own
     // process next to the tray app (see handheld.rs).
     if desktop {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| handheld::show_again(app)));
     }
     builder
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -63,6 +63,14 @@ fn main() {
                     let _ = w.set_focus();
                 }
                 return Ok(());
+            }
+            // Opened from the Xbox full screen experience or Steam Big
+            // Picture: the handheld view, full screen (handheld.rs).
+            if handheld::starts_handheld() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.set_fullscreen(true);
+                    let _ = w.set_focus();
+                }
             }
             if let Err(e) = ludonimbus_core::cloud::move_secrets_out_of_config() {
                 ludonimbus_core::logger::log("app", format!("could not move the Baidu SecretKey to the credential store: {e:#}"));
@@ -284,6 +292,7 @@ fn main() {
             handheld::prompt_answer,
             handheld::set_fullscreen,
             handheld::quit_handheld,
+            handheld::handheld_zoom,
             handheld::handheld_info,
             handheld::set_handheld_mode,
             handheld::steam_add_ludonimbus,

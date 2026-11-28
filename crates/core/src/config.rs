@@ -29,7 +29,8 @@ pub struct AppConfig {
     /// Steam screenshots of linked games in the cloud.
     pub screenshots: ScreenshotMode,
     /// Handheld mode: the launch wrapper asks its questions in a full-screen
-    /// window instead of system dialogs (see [`crate::handheld`]).
+    /// window instead of system dialogs, and "Off" also keeps Ludonimbus
+    /// from opening in the handheld view by itself (see [`crate::handheld`]).
     pub handheld: HandheldMode,
     /// The Switch client's connection over the local network (see
     /// [`crate::nxlan`]). Off unless the user turns it on.
@@ -55,7 +56,8 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum HandheldMode {
-    /// When Steam starts the game from Big Picture / Game Mode.
+    /// When Steam starts the game from Big Picture / Game Mode, or the Xbox
+    /// full screen experience is on.
     #[default]
     Auto,
     On,

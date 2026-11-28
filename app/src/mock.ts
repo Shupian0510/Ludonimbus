@@ -959,10 +959,11 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay(undefined);
     case "set_fullscreen":
     case "quit_handheld":
+    case "handheld_zoom":
     case "dismiss_newer":
       return delay(undefined);
     case "handheld_info":
-      return delay<HandheldInfo>({ device: "ROG Ally", steamGamepadUi: false, mode: mockHandheldMode, inSteam: null });
+      return delay<HandheldInfo>({ device: "ROG Ally", steamGamepadUi: false, mode: mockHandheldMode, inSteam: null, xboxFse: false });
     case "set_handheld_mode":
       mockHandheldMode = args.mode as HandheldMode;
       return delay(undefined);

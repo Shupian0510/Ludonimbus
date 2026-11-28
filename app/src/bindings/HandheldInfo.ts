@@ -14,4 +14,8 @@ steamGamepadUi: boolean, mode: HandheldMode,
 /**
  * The Steam shortcut to the handheld screen.
  */
-inSteam: InSteam | null, };
+inSteam: InSteam | null, 
+/**
+ * The Xbox full screen experience is on right now.
+ */
+xboxFse: boolean, };
