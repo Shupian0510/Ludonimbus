@@ -7,8 +7,9 @@
 // pairing code is typed on the Switch.
 import { useEffect, useState } from "react";
 import { api, errorText, NxStatus } from "../api";
-import { dateTime, relTime } from "../format";
+import { dateTime } from "../format";
 import { useT } from "../i18n";
+import { DeviceChip, Stat, When } from "./kit";
 import { Badge, Button, Hint, Icon, Toggle, useUi } from "./ui";
 
 export function NxPanel() {
@@ -92,10 +93,16 @@ export function NxPanel() {
                 <div key={d.id} className="nx-device">
                   <div className="row space">
                     <span>
-                      <b>{d.name || "Switch"}</b>{" "}
-                      <span className="muted small">
-                        {n.paired(dateTime(d.pairedAt))}
-                        {d.lastSeen ? ` · ${n.lastSeen(relTime(d.lastSeen))}` : ""}
+                      <DeviceChip name={d.name || "Switch"} os="switch" />{" "}
+                      <span className="add-facts nx-seen">
+                        <Stat icon="link" title={n.paired(dateTime(d.pairedAt))}>
+                          <When at={d.pairedAt} />
+                        </Stat>
+                        {d.lastSeen && (
+                          <Stat icon="clock" title={n.lastSeenTitle}>
+                            <When at={d.lastSeen} />
+                          </Stat>
+                        )}
                       </span>
                     </span>
                     <span className="row">
@@ -116,7 +123,7 @@ export function NxPanel() {
                       <div key={u.uid} className="row space">
                         <span>
                           {u.nickname}
-                          {u.sync && <span className="muted small"> · {u.line}</span>}
+                          {u.sync && <span className="member-tag">{u.line}</span>}
                         </span>
                         <select
                           className="input select"

@@ -3,9 +3,9 @@
 // hand, and applying a save version from one to another.
 import { useEffect, useMemo, useState } from "react";
 import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, OtherInstall, Outcome, Overview, PlatformMarks, SaveLine, ShareOffer, SnapshotSummary, TransferPlan } from "../api";
-import { bytes, dateTime, outcomeText } from "../format";
+import { bytes, outcomeText } from "../format";
 import { currentLang, msg, useT } from "../i18n";
-import { DeviceChip, PlatformMark, When } from "./kit";
+import { DeviceChip, PlatformMark, Stat, When } from "./kit";
 import { Badge, Button, Hint, Icon, Menu, MenuItem, Modal, Spinner, useUi } from "./ui";
 
 /** One version of a game in the library. */
@@ -420,6 +420,23 @@ export function JoinRow({ gameKey, name, disabled, onChanged }: { gameKey: strin
   );
 }
 
+/** Where a version is: its program, and a tag when it isn't on this PC. */
+function VersionWhere({ m, cloudText }: { m: Member; cloudText?: string }) {
+  const s = useT().savelib;
+  return (
+    <span className="pick-where">
+      <PlatformMark mark={m.source.logo ? { label: variantLabel(m), logo: m.source.logo } : null} label={variantLabel(m)} />
+      {m.cloud ? (
+        <span className="member-tag">
+          <Icon name="cloud" size={11} /> {cloudText ?? s.cloudOnly}
+        </span>
+      ) : (
+        !m.playable && <span className="member-tag">{s.notInstalled}</span>
+      )}
+    </span>
+  );
+}
+
 /** Pick another library entry that is the same game. */
 function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overview; current: Member; onClose: () => void; onLinked: () => Promise<void> }) {
   const t = useT();
@@ -470,9 +487,7 @@ function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overvi
         {others.map((m) => (
           <button key={m.key} className="pick-row" disabled={busy} onClick={() => link(m.key)}>
             <b>{m.name}</b>
-            <span className="muted small">
-              {variantLabel(m)} · {m.cloud ? s.cloudOnly : m.playable ? s.here : s.notInstalled}
-            </span>
+            <VersionWhere m={m} />
           </button>
         ))}
       </div>
@@ -483,8 +498,9 @@ function LinkDialog({ overview, current, onClose, onLinked }: { overview: Overvi
             {fresh.map((i) => (
               <button key={i.id} className="pick-row" disabled={busy} onClick={() => addAndLink(i)}>
                 <b>{i.name}</b>
-                <span className="muted small">
-                  {storeName(i)} · {s.notAdded}
+                <span className="pick-where">
+                  <PlatformMark mark={i.logo ? { label: storeName(i), logo: i.logo } : null} label={storeName(i)} />
+                  <span className="member-tag">{s.notAdded}</span>
                 </span>
               </button>
             ))}
@@ -603,10 +619,7 @@ export function ApplyDialog({
   const row = (m: Member) => (
     <button key={m.key} className="pick-row" onClick={() => setTarget(m)}>
       <b>{m.name}</b>
-      <span className="muted small">
-        {variantLabel(m)}
-        {m.cloud ? ` · ${s.cloudOnlyTarget}` : m.playable ? "" : ` · ${s.notInstalled}`}
-      </span>
+      <VersionWhere m={m} cloudText={s.cloudOnlyTarget} />
     </button>
   );
 
@@ -622,7 +635,11 @@ export function ApplyDialog({
 
   return (
     <Modal title={s.applyTitle(sourceName)} onClose={close} wide footer={footer || undefined}>
-      <p className="muted small">{s.applySource(snapshot.deviceName, dateTime(snapshot.createdAt))}</p>
+      <div className="pick-where apply-source">
+        <DeviceChip name={snapshot.deviceName} here={snapshot.deviceId === overview.deviceId} />
+        <When at={snapshot.createdAt} />
+        <Stat icon="file">{bytes(snapshot.totalSize)}</Stat>
+      </div>
       {!target ? (
         <>
           <h3>{s.pickTarget}</h3>
@@ -635,8 +652,9 @@ export function ApplyDialog({
                 {fresh.map((i) => (
                   <button key={i.id} className="pick-row" disabled={adding} onClick={() => pickInstall(i)} title={s.addInstallTitle(i.store)}>
                     <b>{i.name}</b>
-                    <span className="muted small">
-                      {storeName(i)} · {s.notAdded}
+                    <span className="pick-where">
+                      <PlatformMark mark={i.logo ? { label: storeName(i), logo: i.logo } : null} label={storeName(i)} />
+                      <span className="member-tag">{s.notAdded}</span>
                     </span>
                   </button>
                 ))}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, Gallery, GameView, ScreenshotMode, Shot } from "../api";
 import { bytes, dateTime } from "../format";
 import { msg, useT } from "../i18n";
+import { Stat } from "./kit";
 import { Badge, Button, Hint, Icon, Modal, Spinner, useUi } from "./ui";
 
 /** At most this many thumbnails are downloaded from the cloud at once. */
@@ -104,9 +105,12 @@ export function Screenshots({ game, deviceId }: { game: GameView; deviceId: stri
         </div>
       ) : (
         <>
-          <p className="muted small">
-            {s.summary(data.shots.length, bytes(data.cloudBytes))}
-            {data.mode === "sync" ? ` · ${s.steamNote}` : ""}
+          <p className="add-facts">
+            <Stat icon="image" title={s.summary(data.shots.length, bytes(data.cloudBytes))}>
+              {data.shots.length}
+            </Stat>
+            <Stat icon="cloud">{bytes(data.cloudBytes)}</Stat>
+            {data.mode === "sync" && <Hint text={s.steamNote} />}
           </p>
           <div className="shots">
             {data.shots.map((shot) => (
@@ -177,8 +181,9 @@ function Viewer({ game, shot, label, onClose }: { game: GameView; shot: Shot; la
     <Modal title={`${shot.takenAt ? dateTime(shot.takenAt) : shot.name} · ${label}`} onClose={onClose} wide>
       <div className="shot-view">{url ? <img src={url} alt={shot.name} /> : error ? <div className="banner banner-bad">{error}</div> : <Spinner />}</div>
       <div className="row shot-view-foot">
-        <span className="muted small">
-          {shot.name} · {bytes(shot.size)}
+        <span className="add-facts">
+          <code className="sample">{shot.name}</code>
+          <Stat icon="file">{bytes(shot.size)}</Stat>
         </span>
         {(shot.onThisPc || url) && (
           <Button icon="folder" small onClick={() => api.screenshotReveal(game.key, shot.device, shot.name).catch((e) => ui.toast(errorText(e), "bad"))}>

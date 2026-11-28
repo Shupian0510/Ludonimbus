@@ -2543,7 +2543,7 @@ details.scan-group[open] > summary {
 .ach-row.locked .ach-name { color: var(--muted); }
 .ach-text { flex: 1; min-width: 0; }
 .ach-name { color: var(--text); font-weight: 500; }
-.ach-meta { text-align: right; white-space: nowrap; }
+.ach-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; white-space: nowrap; }
 .ach-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 17px; background: var(--panel-2); color: var(--text-2); vertical-align: 1px; }
 .ach-tag.ach-platinum { background: #6c8ead; color: #fff; }
 .ach-tag.ach-gold { background: #b8912b; color: #fff; }
@@ -3724,4 +3724,60 @@ code.sample {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 320px;
+}
+/* Settings: the sections as chips, kept at the top while scrolling. */
+.section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -6px -32px 16px;
+  padding: 10px 32px;
+  background: rgba(27, 40, 56, 0.92);
+  border-bottom: 1px solid rgba(47, 66, 86, 0.6);
+}
+.section-nav .chip {
+  padding: 4px 11px;
+  font-size: 12.5px;
+}
+.settings > section.panel {
+  scroll-margin-top: 64px;
+}
+/* The game's newest backup: when, device, size, cloud total. */
+.gb-latest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.ach-facts,
+.pick-where {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+}
+.pick-where .member-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.apply-source {
+  margin-bottom: 6px;
+}
+.nx-seen {
+  display: inline-flex;
+  margin-left: 8px;
+}
+.lib-group-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+/* A button alone in a panel keeps its own width. */
+.panel > .btn {
+  align-self: flex-start;
 }

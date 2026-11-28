@@ -268,10 +268,10 @@ function GroupHead({
         </span>
       )}
       <h2>{group.label}</h2>
-      <span className="muted lib-group-meta">
-        {group.detail && <>{group.detail} · </>}
-        {t.source.games(games.length)}
-        {secs > 0 && <> · {duration(secs)}</>}
+      <span className="lib-group-meta">
+        {group.detail && <span className="muted">{group.detail}</span>}
+        <Stat icon="library">{t.source.games(games.length)}</Stat>
+        {secs > 0 && <Stat icon="clock">{duration(secs)}</Stat>}
       </span>
       <div className="lib-group-actions">
         {action("sync", "sync", t.source.syncAll, t.source.syncAllTitle)}

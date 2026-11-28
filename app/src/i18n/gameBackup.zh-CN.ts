@@ -52,7 +52,7 @@ export const gameBackup = {
     sizeResult: (files: number, size: string, exFiles: number, exSize: string) =>
       `${files} 个文件，${size}${exFiles > 0 ? `（排除了 ${exFiles} 个文件，${exSize}）` : ""}`,
     fileOutside: (f: string) => `${f} 不在这个文件夹里，不会被备份。要一起备份，请改选包含它的上一级文件夹。`,
-    latest: (when: string, device: string, size: string) => `最新备份：${when}，来自 ${device}，${size}`,
+    latestTitle: "最新备份",
     stored: (size: string) => `云端占用约 ${size}`,
     backup: "备份到云端",
     update: "更新备份",

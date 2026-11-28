@@ -432,7 +432,8 @@ export function GameDetail({
                   />
                 )}
               </div>
-              <p className={`health health-${health.tone}`}>{health.text}</p>
+              {/* On or off is the switch; only what needs a word is said. */}
+              {game.health.state !== "ok" && game.health.state !== "disabled" && <p className={`health health-${health.tone}`}>{health.text}</p>}
               {health.fixable && (
                 <Button kind="primary" small icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
                   {g.repair}
