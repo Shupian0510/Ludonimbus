@@ -30,12 +30,13 @@ export function GameIcon({ game, size = 28 }: { game: GameView; size?: number })
  */
 export function needsChoice(game: GameView, check?: StatusReport): boolean {
   if (!check || game.running) return false;
-  return check.status === "conflict" || (check.status === "cloudNewer" && !game.autoPull);
+  return check.status === "conflict" || check.status === "savesMissing" || (check.status === "cloudNewer" && !game.autoPull);
 }
 
 /** The saves here are just an older version of the line, which 「全部取回」 may take without anything here being lost. */
 function plainlyOlder(game: GameView, check: StatusReport): boolean {
-  return check.status === "cloudNewer" && !game.xboxContainers && !check.tooNew;
+  // Saves missing here: taking them back loses nothing either.
+  return (check.status === "cloudNewer" || check.status === "savesMissing") && !game.xboxContainers && !check.tooNew;
 }
 
 /** What identifies the set of differences, so that "Not now" holds until it changes. */
@@ -133,7 +134,13 @@ export function DifferDialog({
           <GameIcon game={g} />
           <b>{g.name}</b>
         </span>
-        {check.status === "conflict" ? <Pill tone="warn">{t.game.conflictTitle}</Pill> : <Pill tone="info">{t.format.status.cloudNewer}</Pill>}
+        {check.status === "conflict" ? (
+          <Pill tone="warn">{t.game.conflictTitle}</Pill>
+        ) : check.status === "savesMissing" ? (
+          <Pill tone="warn">{t.format.status.savesMissing}</Pill>
+        ) : (
+          <Pill tone="info">{t.format.status.cloudNewer}</Pill>
+        )}
         <span className="differ-facts">
           {head && <DeviceChip name={head.deviceName} />}
           {head && <When at={head.createdAt} />}

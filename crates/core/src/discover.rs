@@ -1170,4 +1170,24 @@ mod tests {
         assert!(locate(&installs, "Control", &["Control".into()]).is_some());
         assert!(locate(&installs, "Starfield", &["Starfield".into()]).is_none());
     }
+
+    #[test]
+    fn game_folders_and_emulators_on_other_drives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sd = tmp.path().join("SDCARD");
+        let folders: Vec<PathBuf> = drive_game_folders(&sd, "Games folder").into_iter().map(|(_, p)| p).collect();
+        assert!(folders.contains(&sd.join("steamapps").join("common")), "SteamOS puts a library at the root of an SD card");
+        assert!(folders.contains(&sd.join("Games").join("Heroic")));
+        // A program a rule doesn't know isn't an emulator.
+        std::fs::create_dir_all(sd.join("Applications")).unwrap();
+        std::fs::write(sd.join("Applications").join("notes.AppImage"), b"x").unwrap();
+        assert!(drive_programs(std::slice::from_ref(&sd)).is_empty());
+        // Linux: an emulator's AppImage on the card is found (rules match Linux program names there).
+        if cfg!(target_os = "linux") {
+            let app = sd.join("Emulation").join("tools").join("Ryujinx-1.2.3-x64.AppImage");
+            std::fs::create_dir_all(app.parent().unwrap()).unwrap();
+            std::fs::write(&app, b"x").unwrap();
+            assert_eq!(drive_programs(&[sd]), vec![app]);
+        }
+    }
 }
