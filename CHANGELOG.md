@@ -37,7 +37,10 @@ Ludonimbus 现在是你的个人云端游戏数据中心：存档、游戏时间
 
 - 新增：游戏库把本机装着的游戏和只有存档的游戏分开显示；存档只在云端的游戏也会列出来，带封面。
 - 改进：游戏卡的封面保持干净，下面一行显示平台的标志、同步状态和游戏时间。
-- 改进：界面上的文字少了，说明收在「?」里。
+- 改进：界面重做。存档的来源、设备、时间、新了多少、多玩了多久都用图标和小标记显示，不再是一串文字；说明收在「?」里；去掉了界面里的动画。
+- 改进：游戏页最上面先看到进度：现在的存档和别处最新的存档并排显示，要你决定时每张卡片一个按钮；Steam、游戏位置、游戏本体移到「设置」页签。
+- 改进：从 Steam 启动前的「别的版本有更新的进度」和存档冲突，在桌面上也用一个居中的窗口并排显示两份存档，不再是纯文字的系统对话框。
+- 改进：设置页顶部可以直接跳到各节；设备图标按硬件区分台式机、笔记本、掌机和 Steam Deck；首次引导按新的用法重写。
 - 新增：在几个平台上玩过的游戏，游戏时间按平台分别列出。
 - 新增：「收藏」页：总时长、游戏数、成就，以及「已通关」「已归档」两个书架。归档的游戏不在游戏库里显示，存档、游戏时间和成就留在云端，本机的游戏可以卸载。
 - 新增：手柄界面，适合 Windows 掌机。认得出 Xbox 全屏体验和常见的掌机（ROG Xbox Ally、Legion Go S / Go 2、Steam Deck OLED 等）：在全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 直接进手柄界面，游戏启动时的提示也自动全屏。字号跟着屏幕走，用 PlayStation / Nintendo 手柄时显示对应的按键名。
@@ -45,7 +48,8 @@ Ludonimbus 现在是你的个人云端游戏数据中心：存档、游戏时间
 
 其他平台
 
-- 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。
+- 新增：Linux 和 Steam Deck 版（预览）：桌面应用、游戏模式下的后台同步和 Decky 插件。快捷菜单面板能启动后台服务、列出并同步所有游戏、处理任何游戏的冲突、全部同步、暂停 / 继续同步、保留这一份，状态实时更新并显示封面。扫描和找存档会看 SD 卡和其他硬盘；后台服务以低优先级运行、注销后继续。另有 Flatpak 包（预览）。
+- 改进：本机存档全不见了时（删掉了、SD 卡拔了），不会把空存档传上去，显示「本机存档不见了」，可以取回；从 Steam 启动时自动恢复。
 - 新增：Switch 上的自制软件客户端通过局域网和电脑上的 Ludonimbus 同步存档（预览）：A 一键备份、从不覆盖；X「取回…」从这台 Switch、保留的存档、别的 Switch 或电脑上的版本里选一份，先留一份再写入，L 撤销。几台 Switch 上同名的使用者共用存档；Switch 的名字、同步哪些使用者、是否分成不同使用者都在电脑的「设置 → Switch」里设。需要 Switch 客户端 0.2.0。
 
 安全和可靠性
@@ -106,7 +110,10 @@ Library and interface
 
 - New: the library tells games installed on this PC from games that only have saves here; games whose saves are only in the cloud are listed too, with their covers.
 - Improved: covers stay clean; the row under a cover shows the platforms' logos, the sync status and the play time.
-- Improved: less text on screen; explanations are behind the "?" marks.
+- Improved: a redesigned interface. Where a save comes from, its device, time, how much newer it is and how much more was played are shown as icons and small tags instead of lines of text; explanations are behind the "?" marks; the interface no longer animates.
+- Improved: the game page starts with the progress: the current save next to the newest ones elsewhere, one button per card when you need to choose; Steam, game location and game files moved to its Settings tab.
+- Improved: before a Steam launch, "newer progress in another version" and save conflicts show the two saves side by side in a centred window on the desktop too, instead of a text-only system dialog.
+- Improved: Settings has a bar to jump to each section; device icons tell desktops, laptops, handhelds and the Steam Deck apart by their hardware; the first-run guide is rewritten for the new way of working.
 - New: for a game played on several platforms, play time is listed per platform.
 - New: the Collection page: total play time, games and achievements, and two shelves, Finished and Archived. Archived games leave the library; their saves, play time and achievements stay in the cloud, and the game can be uninstalled.
 - New: a gamepad interface for Windows handhelds. It recognises the Xbox full screen experience and common handhelds (ROG Xbox Ally, Legion Go S / Go 2, Steam Deck OLED and others): opened in the full screen experience or Steam Big Picture, Ludonimbus goes straight to the gamepad interface, and questions when a game starts are full screen too. Text scales to the screen, and PlayStation and Nintendo controllers see their own button names.
@@ -114,7 +121,8 @@ Library and interface
 
 Other platforms
 
-- New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin.
+- New: Linux and Steam Deck (preview): the desktop app, background sync in Gaming Mode and a Decky plugin. The quick access panel starts the background service, lists and syncs every game, settles any game's conflict, syncs all, pauses and resumes syncing and keeps a save, with live status and covers. Scanning and the save finder look at SD cards and other drives; the background service runs at low priority and keeps running after logout. There is also a Flatpak package (preview).
+- Improved: when a game's saves are all gone on this device (deleted, SD card removed), an empty save is never uploaded; it shows "Saves missing here" with Get back, and a Steam launch restores them.
 - New: a homebrew client on the Switch syncs saves with Ludonimbus on your PC over the local network (preview): A backs up with one press and never overwrites; X "Take…" picks a save from this Switch, kept saves, your other Switches or the PC's version, keeps a copy first, and L undoes it. Users with the same name share saves across Switches; the Switch's name, which users sync and whether a user is kept separate are set on the PC under Settings → Switch. Needs Switch client 0.2.0.
 
 Security and reliability
