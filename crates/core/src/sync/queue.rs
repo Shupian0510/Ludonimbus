@@ -234,6 +234,25 @@ pub(super) struct Shot {
     pub(super) origin: Option<Origin>,
     /// The manifest to share unchanged files with (large saves).
     pub(super) base: Option<Manifest>,
+    /// How long the game had been played when the saves were what they are.
+    pub(super) played: Played,
+}
+
+/// The playtime a new snapshot records ([`v2::PLAYTIME`]).
+#[derive(Default)]
+pub(super) enum Played {
+    /// The saves here as they are now: the game's playtime now.
+    #[default]
+    Now,
+    /// A copy of an older version: what that one recorded (`None`: it
+    /// didn't say, and neither does the copy).
+    Was(Option<u64>),
+}
+
+/// The game's playtime now, as this device knows it (its own files and its
+/// copies of the others'): no request. `None` before any was recorded.
+fn playtime_now(ctx: &Ctx, key: &str) -> Option<u64> {
+    Some(crate::playtime::summary(&ctx.cfg, key).total_secs).filter(|s| *s > 0)
 }
 
 /// Put a snapshot of `files` into the queue of `key`: complete on this
@@ -308,6 +327,10 @@ pub(super) fn stage_local(ctx: &Ctx, game: &GameEntry, place: &Place, view: &Lin
         installed_version: crate::gamebackup::version::installed(game),
         info: None,
         origin: shot.origin.clone(),
+        playtime: match shot.played {
+            Played::Now => playtime_now(ctx, &game.key),
+            Played::Was(secs) => secs,
+        },
     };
     let manifest = enqueue(&game.key, place, &draft, &local.pack_files(), &local.carried, &local.used_roots(), &shot.comment, shot.base.as_ref())?;
     if !shot.side {
@@ -386,6 +409,9 @@ pub fn queue_files_carrying(line: &OpenLine, f: &Foreign, carried: &[FileRef]) -
             installed_version: None,
             info: None,
             origin: f.origin.clone(),
+            // Files from elsewhere: no playtime of this device says how far
+            // they are.
+            playtime: None,
         };
         enqueue(f.key, &line.place, &draft, &files, carried, &BTreeMap::new(), f.comment, None)
     })();

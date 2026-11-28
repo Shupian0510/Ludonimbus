@@ -79,7 +79,7 @@ pub(crate) use savelines::{flush_queue, start_over};
 pub use savelines::{lines, other_saves, take_from, use_line, LineChoice, LineInfo, LineMember, OtherSave};
 pub use versions::{
     apply_external, backup_now, delete_snapshot, deleted_snapshots, export_snapshot, purge_deleted, restore, restore_deleted, set_snapshot_flags, undo,
-    undoable,
+    undoable, CopyOf,
 };
 
 use crate::cloud::decide::{self, Action, Local};

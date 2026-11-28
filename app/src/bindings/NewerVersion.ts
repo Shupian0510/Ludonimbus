@@ -5,8 +5,18 @@ import type { SnapshotSummary } from "./SnapshotSummary";
  * Another version of a game whose newest saves are newer than anything
  * this version has.
  */
-export type NewerVersion = { key: string, name: string, 
+export type NewerVersion = { 
 /**
- * What it runs on ([`version_label`]).
+ * The version the saves are of; this game's own key when they are on
+ * another line of its card (`line`).
  */
-label: string, snapshot: SnapshotSummary, };
+key: string, name: string, 
+/**
+ * What it is called ([`crate::elsewhere::Source::name`]).
+ */
+label: string, snapshot: SnapshotSummary, 
+/**
+ * The line of the card they are on, when they are taken from it as
+ * they are ([`crate::sync::take_from`]).
+ */
+line?: string | null, };

@@ -1,12 +1,16 @@
-// The "Saves" tab of a game (docs/plan-v2.md, 10.2): the save this device
-// is at, the newest one of each platform, the ones the user keeps and the
-// newest of every other save line come first; everything else is folded
-// away under "automatic saves". One action per row: make it the current one.
+// The "Saves" tab of a game (docs/plan-v2.md, 10.2), grouped by where the
+// saves come from (docs/plan-positioning.md §7, S1). First "here": the save
+// this device is at, the newest one of each platform and the ones the user
+// keeps, everything else folded away under "automatic saves". Then one group
+// per other source on the game's card (another version, the Switch, an
+// emulator, a device that keeps its own), each save compared with the one
+// here. One action per row: make it the current one, or take it here.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, OtherSave, Overview, PlatformMark, PlatformMarks, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot, UnsentSave } from "../api";
+import { api, errorText, GameView, Overview, PlatformMark, SaveSource, SaveSources, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot, UnsentSave } from "../api";
 import { bytes, dateTime, outcomeText, relTime, triggerLabel } from "../format";
 import { msg, useT } from "../i18n";
 import { ApplyDialog, membersOf } from "./SaveLibrary";
+import { compareWith, GroupHead, playedText, sourceHint, useTakeHere, versionOf } from "./SaveSources";
 import { Badge, Button, Empty, Hint, Icon, Menu, MenuItem, useUi } from "./ui";
 
 /** Days a deleted save stays in 「最近删除」 (cloud::TRASH_DAYS). */
@@ -23,8 +27,6 @@ const isShared = (s: SnapshotSummary) => s.trigger === "shared";
 
 interface Row {
   s: SnapshotSummary;
-  /** It is the newest save of another save line. */
-  other?: OtherSave;
 }
 
 /** What the saves were made on: the program's own logo when it is on this PC, and its name. */
@@ -38,8 +40,8 @@ export function PlatformTag({ mark }: { mark?: PlatformMark }) {
   );
 }
 
-/** The rows shown first, and the ones folded away. */
-export function arrange(data: SnapshotList, others: OtherSave[], cloudOnly: boolean): { top: Row[]; auto: Row[]; current: string | null } {
+/** The rows of the saves here shown first, and the ones folded away. */
+export function arrange(data: SnapshotList, cloudOnly: boolean): { top: Row[]; auto: Row[]; current: string | null } {
   const list = data.snapshots;
   const current = cloudOnly ? null : (list.find((s) => s.id === data.lastSyncedId)?.id ?? null);
   const top: Row[] = [];
@@ -60,7 +62,6 @@ export function arrange(data: SnapshotList, others: OtherSave[], cloudOnly: bool
     add(s);
   }
   for (const s of list) if (s.locked) add(s);
-  for (const o of others) top.push({ s: o.snapshot, other: o });
   return { top, auto: list.filter((s) => !shown.has(s.id)).map((s) => ({ s })), current };
 }
 
@@ -73,6 +74,7 @@ export function Saves({
   overview,
   disabled,
   cloudOnly,
+  sources,
   onChanged,
   onApplied,
 }: {
@@ -82,6 +84,8 @@ export function Saves({
   /** The game is running: nothing that changes its saves. */
   disabled: boolean;
   cloudOnly?: boolean;
+  /** The other sources of the game's saves (read by the game page, which shows the hint row from them too). An extra: the tab works without. */
+  sources?: SaveSources | null;
   onChanged: () => Promise<void>;
   /** After saves were sent to `target` (another version of the game). */
   onApplied?: (target: string) => Promise<void>;
@@ -90,14 +94,16 @@ export function Saves({
   const t = useT();
   const v = t.saves;
   const [data, setData] = useState<SnapshotList | null>(null);
-  const [others, setOthers] = useState<{ saves: OtherSave[]; platforms: PlatformMarks; tooNew?: string[] }>({ saves: [], platforms: {} });
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [meta, setMeta] = useState<Record<string, SnapshotMeta>>({});
-  const [sending, setSending] = useState<SnapshotSummary | null>(null);
+  const [sending, setSending] = useState<{ key: string; name: string; snapshot: SnapshotSummary } | null>(null);
   const [autoOpen, setAutoOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [trash, setTrash] = useState<TrashedSnapshot[] | null>(null);
+  const groups = cloudOnly ? [] : (sources?.sources ?? []);
+  const tooNew = useMemo(() => [...(data?.tooNew ?? []), ...(sources?.tooNew ?? [])], [data, sources]);
+  const takeHere = useTakeHere(game, overview, onChanged, tooNew);
 
   const load = useCallback(async () => {
     try {
@@ -110,9 +116,7 @@ export function Saves({
 
   useEffect(() => {
     load();
-    // The other lines are an extra: the tab works without them.
-    if (!cloudOnly) api.otherSaves(game.key).then(setOthers, () => undefined);
-  }, [load, game.key, cloudOnly]);
+  }, [load, game.key]);
 
   const loadTrash = useCallback(async () => {
     try {
@@ -123,11 +127,8 @@ export function Saves({
     }
   }, [game.key, ui]);
 
-  const { top, auto, current } = useMemo(
-    () => (data ? arrange(data, others.saves, !!cloudOnly) : { top: [], auto: [], current: null }),
-    [data, others, cloudOnly],
-  );
-  const marks = useMemo(() => ({ ...others.platforms, ...(data?.platforms ?? {}) }), [data, others]);
+  const { top, auto, current } = useMemo(() => (data ? arrange(data, !!cloudOnly) : { top: [], auto: [], current: null }), [data, cloudOnly]);
+  const marks: Record<string, PlatformMark> = useMemo(() => ({ ...(sources?.platforms ?? {}), ...(data?.platforms ?? {}) }), [data, sources]);
   // Also with one game in the library: the dialog offers the game's versions installed here that aren't added yet.
   const canSend = membersOf(overview).length > 1 || !cloudOnly;
 
@@ -165,21 +166,21 @@ export function Saves({
   };
 
   /** The one action that replaces the saves on this PC, so the one that asks first. */
-  const makeCurrent = async ({ s, other }: Row) => {
+  const makeCurrent = async ({ s }: Row) => {
     const text = v.makeCurrentText(game.name, s.deviceName, dateTime(s.createdAt));
     // Steam Cloud keeps this game's saves too, and will notice they changed.
     const steamToo = !!game.store && game.store.mode !== "managed";
     // Writing into the Xbox app's containers is experimental.
     const note = steamToo ? t.steamCloud.restoreNote : game.xboxContainers ? v.xboxNote : null;
     // Saved on another platform by a newer game than the one here.
-    const tooNew = (data?.tooNew ?? []).includes(s.id) || (others.tooNew ?? []).includes(s.id) ? v.tooNew(s.gameVersion ?? "?") : null;
+    const tooNewText = tooNew.includes(s.id) ? v.tooNew(s.gameVersion ?? "?") : null;
     const ok = await ui.confirm({
       title: v.makeCurrentTitle,
       text:
-        note || tooNew ? (
+        note || tooNewText ? (
           <>
             <p>{text}</p>
-            {tooNew && <p className="muted">{tooNew}</p>}
+            {tooNewText && <p className="muted">{tooNewText}</p>}
             {note && <p className="muted">{note}</p>}
           </>
         ) : (
@@ -189,7 +190,7 @@ export function Saves({
     });
     if (!ok) return;
     try {
-      const o = other ? await api.takeSave(game.key, other.line, s.id) : await api.restore(game.key, s.id);
+      const o = await api.restore(game.key, s.id);
       const done = o.kind === "pulled" || o.kind === "uploaded" || o.kind === "queued";
       const m = msg().saves;
       ui.toast(done ? m.madeCurrent : outcomeText(o, game.name), done ? "ok" : "info", done ? { label: m.undo, run: undo } : undefined);
@@ -277,7 +278,7 @@ export function Saves({
   if (error) return <div className="banner banner-bad">{error}</div>;
   if (!data) return <div className="muted pad">{v.loading}</div>;
   const unsent = cloudOnly ? [] : (data.unsent ?? []);
-  if (data.snapshots.length === 0 && others.saves.length === 0 && unsent.length === 0) return <Empty icon="cloud" title={v.empty} />;
+  if (data.snapshots.length === 0 && groups.length === 0 && unsent.length === 0) return <Empty icon="cloud" title={v.empty} />;
 
   const more = (s: SnapshotSummary, isHead: boolean): MenuItem[] => {
     const items: MenuItem[] = [];
@@ -286,7 +287,7 @@ export function Saves({
     if (!cloudOnly) items.push({ label: v.rename, icon: "edit", onClick: () => rename(s) });
     items.push({ label: open === s.id ? v.hideFiles : v.showFiles, icon: "folder", onClick: () => toggle(s.id) });
     items.push({ label: v.export, icon: "download", disabled: !!missing, title: missing, onClick: () => exportZip(s) });
-    if (canSend) items.push({ label: v.sendTo, icon: "transfer", disabled: !!missing, title: missing, onClick: () => setSending(s) });
+    if (canSend) items.push({ label: v.sendTo, icon: "transfer", disabled: !!missing, title: missing, onClick: () => setSending({ key: game.key, name: game.name, snapshot: s }) });
     if (!cloudOnly) {
       // An incomplete newest version is nobody's current progress, and may go.
       const why = s.locked ? v.deleteKept : isHead && !s.incomplete ? v.deleteNewest : undefined;
@@ -322,13 +323,14 @@ export function Saves({
   );
 
   // A save with the same content as the one this PC is at is that save.
-  const currentHash = data.snapshots.find((s) => s.id === current)?.contentHash;
-  const row = ({ s, other }: Row) => {
-    const isCurrent = !other && (s.id === current || (!!currentHash && s.contentHash === currentHash));
-    const isHead = !other && (s.head ?? s.id === data.headId);
+  const here = data.snapshots.find((s) => s.id === current);
+  const currentHash = here?.contentHash;
+  const row = ({ s }: Row) => {
+    const isCurrent = s.id === current || (!!currentHash && s.contentHash === currentHash);
+    const isHead = s.head ?? s.id === data.headId;
     const mine = s.deviceId === overview.deviceId;
     const named = s.locked && !!s.comment;
-    const id = other ? `${other.line}/${s.id}` : s.id;
+    const id = s.id;
     const incomplete = !!s.incomplete;
     const main = (
       <>
@@ -336,7 +338,6 @@ export function Saves({
         <span className="save-when">
           <b>{named ? s.comment : relTime(s.createdAt)}</b>
           {(named || s.comment) && <span className="muted">{named ? relTime(s.createdAt) : s.comment}</span>}
-          {other && <Badge tone="muted">{other.shared ? v.sharedLine : other.name || v.ownLine}</Badge>}
           {isSide(s) && !isShared(s) && <Badge tone="muted">{v.replaced}</Badge>}
           {incomplete ? (
             <>
@@ -353,7 +354,7 @@ export function Saves({
     );
     const title = `${dateTime(s.createdAt)} · ${triggerLabel(s.trigger)}`;
     return (
-      <div key={id} className={`save${(isSide(s) && !isShared(s)) || incomplete ? " side" : ""}${open === s.id && !other ? " open" : ""}`}>
+      <div key={id} className={`save${(isSide(s) && !isShared(s)) || incomplete ? " side" : ""}${open === s.id ? " open" : ""}`}>
         <div className="save-row">
           {incomplete ? (
             // Its "?" can't be inside a button; its files are in "More".
@@ -361,7 +362,7 @@ export function Saves({
               {main}
             </div>
           ) : (
-            <button className="save-main" onClick={() => !other && toggle(s.id)} disabled={!!other} title={title}>
+            <button className="save-main" onClick={() => toggle(s.id)} title={title}>
               {main}
             </button>
           )}
@@ -372,7 +373,7 @@ export function Saves({
               !cloudOnly && (
                 <Button
                   small
-                  onClick={() => makeCurrent({ s, other })}
+                  onClick={() => makeCurrent({ s })}
                   disabled={disabled || incomplete}
                   title={incomplete ? v.incompleteNoUse : disabled ? v.running : undefined}
                 >
@@ -380,7 +381,7 @@ export function Saves({
                 </Button>
               )
             )}
-            {!other && !cloudOnly && (
+            {!cloudOnly && (
               <button
                 className={`icon-btn star${s.locked ? " on" : ""}`}
                 title={s.locked ? v.unkeep : v.keep}
@@ -390,10 +391,10 @@ export function Saves({
                 <Icon name="star" size={16} />
               </button>
             )}
-            {!other && <Menu title={v.more} items={more(s, isHead)} />}
+            <Menu title={v.more} items={more(s, isHead)} />
           </div>
         </div>
-        {open === s.id && !other && (
+        {open === s.id && (
           <div className="save-files">
             {!meta[s.id] ? (
               <span className="muted">{v.reading}</span>
@@ -418,8 +419,81 @@ export function Saves({
     );
   };
 
+  /** A save of another source: how it compares with the one here, and taking it here. */
+  const sourceRow = (src: SaveSource, s: SnapshotSummary) => {
+    const cmp = compareWith(s, here);
+    const same = !!here && s.contentHash === here.contentHash;
+    const named = s.locked && !!s.comment;
+    const version = versionOf(s);
+    const never = src.take.kind === "never" ? src.take.reason : null;
+    const incomplete = !!s.incomplete;
+    const title = [dateTime(s.createdAt), triggerLabel(s.trigger), version, playedText(s, here)].filter(Boolean).join(" · ");
+    return (
+      <div key={`${src.id}/${s.id}`} className={`save${incomplete ? " side" : ""}`}>
+        <div className="save-row">
+          <div className="save-main" title={title}>
+            <span className={`save-cmp${cmp?.newer ? " newer" : ""}`}>{cmp?.text}</span>
+            <span className="save-when">
+              <b>{named ? s.comment : relTime(s.createdAt)}</b>
+              {named && <span className="muted">{relTime(s.createdAt)}</span>}
+              {version && <span className="muted">{version}</span>}
+              {incomplete && (
+                <>
+                  <Badge tone="warn">{v.incomplete}</Badge>
+                  <Hint text={v.incompleteHint} />
+                </>
+              )}
+            </span>
+            <span className="device">{s.deviceName}</span>
+            <span className="muted save-size">{bytes(s.totalSize)}</span>
+          </div>
+          <div className="save-actions">
+            {same ? (
+              <Badge tone="ok">{v.current}</Badge>
+            ) : (
+              <Button
+                small
+                onClick={() => takeHere.take(src, s)}
+                disabled={disabled || incomplete || !!never}
+                title={incomplete ? v.incompleteNoUse : disabled ? v.running : undefined}
+              >
+                {t.sources.takeHere}
+              </Button>
+            )}
+            {never && <Hint text={never} />}
+            {src.key && (
+              <Menu
+                title={v.more}
+                items={[
+                  {
+                    label: v.sendTo,
+                    icon: "transfer",
+                    disabled: incomplete,
+                    title: incomplete ? v.incompleteNoUse : undefined,
+                    onClick: () => setSending({ key: src.key!, name: src.name, snapshot: s }),
+                  },
+                ]}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // "Here" only needs saying when there are other groups.
+  const newestHere = data.snapshots.find((s) => !isSide(s))?.createdAt;
   return (
     <div className="saves">
+      {groups.length > 0 && sources && (
+        <GroupHead
+          mark={marks[sources.herePlatform]}
+          name={t.sources.here}
+          devices={[sources.hereName, overview.deviceName]}
+          latest={newestHere}
+          hint={t.sources.hereHint}
+        />
+      )}
       {unsent.map(unsentRow)}
       {top.map(row)}
       <div className="saves-foot">
@@ -480,20 +554,35 @@ export function Saves({
             </div>
           ))
         ))}
+      {groups.map((src) => (
+        <div key={src.id} className="save-source">
+          <GroupHead
+            mark={marks[src.platform]}
+            name={src.name}
+            devices={src.devices}
+            latest={src.snapshots[0]?.createdAt}
+            convert={src.take.kind === "convert"}
+            hint={sourceHint(src)}
+          />
+          {src.snapshots.map((s) => sourceRow(src, s))}
+        </div>
+      ))}
       {sending && (
         <ApplyDialog
           overview={overview}
-          sourceKey={game.key}
-          sourceName={game.name}
-          snapshot={sending}
+          sourceKey={sending.key}
+          sourceName={sending.name}
+          snapshot={sending.snapshot}
           onClose={() => setSending(null)}
           onAdded={onChanged}
           onApplied={async (target) => {
             setSending(null);
-            await onApplied?.(target);
+            if (target === game.key) await onChanged();
+            else await onApplied?.(target);
           }}
         />
       )}
+      {takeHere.dialog}
     </div>
   );
 }

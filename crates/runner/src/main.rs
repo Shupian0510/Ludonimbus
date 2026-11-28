@@ -5,8 +5,9 @@
 //! ludonimbus-run --game <key> -- <cmd...>     # explicit command (e.g. Steam %command%)
 //! ludonimbus-run --finish <key>               # finish a sync after playing (no window)
 //! ```
-//! 1. sync before launch (pull newer cloud saves, ask on conflict), and offer
-//!    newer saves of another version of the game (save library). Not for a
+//! 1. sync before launch (pull newer cloud saves, ask on conflict), and ask
+//!    when another version of the game has newer progress (`core::elsewhere`;
+//!    only within the time the wrapper waits before launch). Not for a
 //!    game Steam installed whose saves Steam Cloud keeps (backup only; also
 //!    a managed one found with Steam Cloud on again, see `core::steamcloud`)
 //! 2. start the game and wait for the whole process tree to exit
@@ -32,7 +33,7 @@ use ludonimbus_core::config::{self, GameEntry};
 use ludonimbus_core::prompt::Request;
 use ludonimbus_core::snapshot::Trigger;
 use ludonimbus_core::sync::{self, Ctx, Gate, Outcome, Phase, Resolution};
-use ludonimbus_core::{catchup, games, handheld, logger, paths, playtime, process, prompt, relocate, savelib, spec, steamcloud, tr, transfer, util};
+use ludonimbus_core::{catchup, elsewhere, games, handheld, join, logger, paths, playtime, process, prompt, relocate, spec, steamcloud, tr, util};
 use rfd::{MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -141,7 +142,7 @@ fn system_dialog(req: &Request) -> Option<String> {
         "error" => MessageLevel::Error,
         _ => MessageLevel::Info,
     };
-    let dialog = MessageDialog::new().set_title(&req.title).set_description(&req.text).set_level(level);
+    let dialog = MessageDialog::new().set_title(&req.title).set_description(req.text_with_details()).set_level(level);
     let b = &req.buttons;
     let by_label = |l: &str| b.iter().find(|x| x.label == l).map(|x| x.id.clone());
     match b.len() {
@@ -781,46 +782,136 @@ fn finish(key: &str) -> i32 {
     0
 }
 
-/// Another version of the game (say the Xbox version, played on the PC) has
-/// newer saves than this one: offer to apply them before starting.
-fn offer_newer_version(ctx: &Ctx, game: &GameEntry) {
-    let newer = match savelib::newer_version(ctx, game) {
-        Ok(Some(n)) => n,
-        Ok(None) => return,
-        Err(e) => {
+/// Less than this left of the time before launch: the cloud is slow today,
+/// and nothing more is read before playing.
+const TOO_LITTLE_LEFT: Duration = Duration::from_millis(300);
+
+/// Wait up to `max` for reads on a thread of their own; `None` when they
+/// didn't end in time (they go on by themselves and change nothing) or
+/// ended without a result.
+fn read_within<T: Send + 'static>(max: Duration, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    if max < TOO_LITTLE_LEFT {
+        return None;
+    }
+    match Worker::start(move |_| f()).wait(max) {
+        Poll::Ready(v) => Some(v),
+        Poll::Pending | Poll::Lost => None,
+    }
+}
+
+/// What else the user needs to know before taking `n` into `game`.
+fn take_notes(game: &GameEntry, n: &elsewhere::Newer) -> Vec<String> {
+    let mut notes = Vec::new();
+    // Into the Xbox app's containers: experimental, and always asked.
+    if ludonimbus_core::sync::platform(game) == "pc:xbox" || ludonimbus_core::bind::has_wgs(&game.bind) {
+        notes.push(tr!(
+            "写入 Xbox 版是实验性的（Xbox 应用的云同步可能把存档换回去）。",
+            "Writing into the Xbox version is experimental (the Xbox app's own cloud sync may put its saves back)."
+        ));
+    }
+    // Saved by a newer game than the one here.
+    let here = sync::saves_version(game);
+    let there = &n.snapshot;
+    if sync::too_new(game, here.as_deref(), &there.platform, there.game_version.as_deref()) {
+        let v = there.game_version.as_deref().unwrap_or_default();
+        notes.push(tr!(
+            "那边是游戏 {} 存的，比这里的新：旧版本的游戏读不了，先把这里的游戏更新到 {}。",
+            "It was saved by version {} of the game, newer than here: an older game can't read it, so update the game here to {} first.",
+            v,
+            v
+        ));
+    }
+    notes
+}
+
+/// Another version of the game (the Xbox version, played on the PC; the
+/// Switch) has newer progress than the save here: ask before starting
+/// (docs/plan-positioning.md, section 7, S2). Taking it keeps the saves here
+/// first and can be undone; keeping the save here doesn't ask about that
+/// save again; where the two versions keep the same saves, the progress can
+/// also be shared from now on.
+///
+/// Never holds the launch long: everything read for it runs within `left`,
+/// what is left of the time the wrapper waits before launch, and when the
+/// cloud doesn't answer in that time nothing is asked.
+fn offer_newer_elsewhere(ctx: &Arc<Ctx>, game: &GameEntry, left: Duration) {
+    let started = Instant::now();
+    let (c, g) = (Arc::clone(ctx), game.clone());
+    let newer = match read_within(left, move || elsewhere::newer(&c, &g)) {
+        Some(Ok(Some(n))) => n,
+        Some(Ok(None)) => return,
+        Some(Err(e)) => {
             log(format!("{}: checking other versions failed: {e:#}", game.key));
             return;
         }
+        None => {
+            log(format!("{}: other versions not checked within {} ms; not asking", game.key, left.as_millis()));
+            return;
+        }
     };
-    let when = newer.snapshot.created_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M");
-    let text = tr!(
-        "「{}」的另一个版本（{}）有更新的存档：{} 在 {} 保存。\n\n要先把它发到这个版本再开始吗？这个版本现在的存档会先保留，可以在 Ludonimbus 里撤销。",
-        "Another version of \"{}\" ({}) has newer saves: saved by {} at {}.\n\nSend them to this version before starting? This version's current saves are kept first, so you can undo it in Ludonimbus.",
-        game.name,
-        newer.label,
-        newer.snapshot.device_name,
-        when
-    );
-    let req = Request::new(tr!("Ludonimbus · 另一个版本有更新的存档", "Ludonimbus · Newer saves in another version"), text, "info")
-        .button("apply", tr!("发过来再开始", "Send and start"), "a")
-        .button("skip", tr!("不用", "No thanks"), "b");
-    if ask(&req).as_deref() != Some("apply") {
-        let _ = savelib::dismiss_newer(&game.key, &newer.snapshot.id);
-        return;
+    // Sharing one progress from now on, where the two keep the same saves:
+    // only when the cloud says so in time.
+    let joinable = match newer.source.def {
+        Some(_) => {
+            let (c, g) = (Arc::clone(ctx), game.clone());
+            match read_within(left.saturating_sub(started.elapsed()), move || join::suggestion(&c, &g)) {
+                Some(Ok(Some(s))) if s.fit == join::Fit::Ready && elsewhere::offers(ctx, &newer.source, &s) => Some(s),
+                Some(Err(e)) => {
+                    log(format!("{}: can't tell whether the versions share saves: {e:#}", game.key));
+                    None
+                }
+                _ => None,
+            }
+        }
+        None => None,
+    };
+    let q = elsewhere::question(game, &newer, joinable.is_some(), &take_notes(game, &newer), chrono::Utc::now());
+    let mut req = Request::new(format!("Ludonimbus · {}", q.title), q.text, "info").button("take", q.take, "a").detail(q.take_note);
+    if joinable.is_some() {
+        req = req.button("join", q.join, "x");
     }
-    match transfer::apply(ctx, &newer.key, &newer.snapshot.id, &game.key, None) {
-        Ok(out) => log(format!("{}: applied {} of {}: {out:?}", game.key, newer.snapshot.id, newer.key)),
+    let req = req.button("keep", q.keep, "b");
+    let id = newer.snapshot.id.clone();
+    let result = match ask(&req).as_deref() {
+        Some("take") => elsewhere::take(ctx, game, &newer.source, &id),
+        Some("join") => match joinable {
+            Some(s) => join_and_take(ctx, game, &s),
+            None => return,
+        },
+        // Keep playing with the save here; that save isn't offered again.
+        _ => {
+            log(format!("{}: keeps its saves; {id} of {} isn't offered again", game.key, newer.source.id));
+            let _ = elsewhere::dismiss(&game.key, &id);
+            return;
+        }
+    };
+    match result {
+        Ok(out) => log(format!("{}: took {id} of {}: {out:?}", game.key, newer.source.id)),
         Err(e) => {
-            log(format!("{}: applying {} failed: {e:#}", game.key, newer.key));
+            log(format!("{}: taking {id} of {} failed: {e:#}", game.key, newer.source.id));
             tell(
                 "Ludonimbus",
                 &tr!(
-                    "没能应用另一个版本的存档：\n{e:#}\n\n游戏会用现在的存档启动。",
-                    "The other version's saves couldn't be applied:\n{e:#}\n\nThe game starts with its current saves."
+                    "没能取回那边的进度：\n{e:#}\n\n游戏会用这里现在的存档启动。",
+                    "The progress from there couldn't be taken:\n{e:#}\n\nThe game starts with the saves here."
                 ),
                 "warn",
             );
         }
+    }
+}
+
+/// Share the line of `s` from now on ("共用进度") and continue from its
+/// newest version: the user chose that progress, so where the saves here
+/// differ, the line's newest one is used (the saves here stay in the cloud,
+/// beside the history).
+fn join_and_take(ctx: &Ctx, game: &GameEntry, s: &join::Suggestion) -> Result<Outcome> {
+    match join::accept(ctx, game, s)? {
+        Outcome::Conflict { .. } => {
+            let entry = config::load()?.game(&game.key).cloned().ok_or_else(|| anyhow!("{} is gone", game.key))?;
+            sync::sync(ctx, &entry, Resolution::UseCloud, Trigger::PreLaunch)
+        }
+        out => Ok(out),
     }
 }
 
@@ -953,6 +1044,7 @@ fn run(args: &[String]) -> Result<i32> {
     if game.auto_sync && !game.backup_only() {
         let budget = Duration::from_secs(ctx.cfg.launch_wait_secs);
         let mut notice = |phase| download_notice(&game, phase);
+        let waiting = Instant::now();
         let first = match wait_before_launch(start_sync(&ctx, &game, Resolution::Auto, Trigger::PreLaunch, true), budget, &mut notice) {
             Waited::Finished(out) => Some(out),
             Waited::Lost => Some(Err(anyhow!(tr!("启动前的同步意外中止了", "The sync before launch stopped unexpectedly")))),
@@ -986,7 +1078,7 @@ fn run(args: &[String]) -> Result<i32> {
             Some(Ok(out)) => {
                 log(format!("{key}: pre-launch {out:?}"));
                 if !matches!(out, Outcome::Offline { .. }) {
-                    offer_newer_version(&ctx, &game);
+                    offer_newer_elsewhere(&ctx, &game, budget.saturating_sub(waiting.elapsed()));
                 }
             }
             Some(Err(e)) => {
@@ -1323,6 +1415,28 @@ mod tests {
             AfterExit::Finished(v) => assert_eq!(v, "done"),
             _ => panic!("expected it to be waited for"),
         }
+    }
+
+    #[test]
+    fn newer_progress_elsewhere_is_only_looked_for_within_the_time_left() {
+        // Answered in time.
+        assert_eq!(read_within(ms(2000), || 7), Some(7));
+        // The cloud is slow today: nothing is asked, and the launch goes on.
+        let started = Instant::now();
+        assert_eq!(
+            read_within(ms(400), || {
+                std::thread::sleep(ms(1500));
+                7
+            }),
+            None
+        );
+        assert!(started.elapsed() < ms(1200), "waited {:?}", started.elapsed());
+        // Almost nothing left of the time before launch: not even started.
+        let ran = Arc::new(AtomicBool::new(false));
+        let r = Arc::clone(&ran);
+        assert_eq!(read_within(ms(100), move || r.store(true, Ordering::SeqCst)), None);
+        std::thread::sleep(ms(50));
+        assert!(!ran.load(Ordering::SeqCst));
     }
 
     fn words(s: &str) -> Vec<String> {

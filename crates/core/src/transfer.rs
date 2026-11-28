@@ -301,7 +301,13 @@ fn common_dir(paths: &[PathBuf]) -> Option<PathBuf> {
 /// Whether the two versions keep their saves the same way (so a version's
 /// files apply as they are).
 fn same_layout(src: &CloudGame, tgt: &GameEntry) -> bool {
-    let (a, b) = (spec::effective(&savelib::entry_of(src)), spec::effective(tgt));
+    same_files(&savelib::entry_of(src), tgt)
+}
+
+/// [`same_layout`] of two library entries (one may be only in the cloud,
+/// [`savelib::entry_of`]).
+pub fn same_files(src: &GameEntry, tgt: &GameEntry) -> bool {
+    let (a, b) = (spec::effective(src), spec::effective(tgt));
     if a.ludusavi_title.is_some() || b.ludusavi_title.is_some() || a.saves.is_empty() || a.saves != b.saves {
         return false;
     }
@@ -590,6 +596,36 @@ fn apply_to_cloud(ctx: &Ctx, def: &CloudGame, meta: &SnapshotMeta, zip: &Path, f
     Ok(Outcome::Uploaded { id: new.id })
 }
 
+/// How a save version applied here came about (docs/plan-v2.md, section 9):
+/// `copy` for one taken as it is, `convert:<how>` for one written another
+/// way (`xbox`: out of or into the Xbox app's containers; `rule`: by a
+/// cross-platform rule; `files`: placed by file name).
+pub fn how(plan: &Plan) -> String {
+    match plan {
+        p if p.same => "copy".to_string(),
+        p if p.from_xbox || p.to_xbox => "convert:xbox".to_string(),
+        p if p.format_rule.is_some() => "convert:rule".to_string(),
+        _ => "convert:files".to_string(),
+    }
+}
+
+/// Where the version applied comes from, for the new version's `origin`,
+/// and how long the game had been played when it was made. One listing of
+/// the source's line (its playtime is in the line's index). When the cloud
+/// can't say, the version is made all the same, without them.
+fn copy_of(ctx: &Ctx, source: &str, meta: &SnapshotMeta, plan: &Plan) -> sync::CopyOf {
+    let line = ctx.cloud().ok().and_then(|c| c.open(source).ok());
+    let playtime = line.as_ref().and_then(|l| l.view.get(&meta.id)).and_then(|e| e.playtime());
+    let origin = line.map(|l| crate::cloud::v2::Origin {
+        game: l.place.game.clone(),
+        line: l.place.line.clone(),
+        snapshot: meta.id.clone(),
+        how: how(plan),
+        extra: Default::default(),
+    });
+    sync::CopyOf { origin, playtime, device: meta.device_name.clone() }
+}
+
 /// Apply save version `id` of `source` to `target` (see [`plan`]).
 pub fn apply(ctx: &Ctx, source: &str, id: &str, target: &str, base: Option<&Path>) -> Result<Outcome> {
     let def = source_def(ctx, source)?;
@@ -611,7 +647,8 @@ pub fn apply(ctx: &Ctx, source: &str, id: &str, target: &str, base: Option<&Path
         bail!(crate::tr!("没有可以应用的文件", "There are no files to apply"));
     }
     let comment = applied_comment(&def, &meta);
-    let out = sync::apply_external(ctx, &tgt, &comment, || match work {
+    let copy_of = copy_of(ctx, source, &meta, &plan);
+    let out = sync::apply_external(ctx, &tgt, &comment, Some(copy_of), || match work {
         Work::Same => snapshot::apply(&zip, &meta, &tgt),
         Work::Xbox(dir, changes) => wgs::replace(&dir, &changes).map(|_| ()),
         Work::Files(writes) => {

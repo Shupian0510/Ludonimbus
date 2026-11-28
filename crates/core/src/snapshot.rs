@@ -162,6 +162,15 @@ pub struct SnapshotSummary {
     /// offered as the current one, until the pack is back.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub incomplete: bool,
+    /// How long the game had been played when it was made, in seconds
+    /// ([`crate::cloud::v2::PLAYTIME`]); where that is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playtime: Option<u64>,
+    /// Where a copy came from ([`crate::cloud::v2::Origin::how`]: `restore`,
+    /// `copy`, `convert:…`, `share`); empty for saves made where they were
+    /// played.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub copied: String,
 }
 
 /// The absolute folders of the device that made a snapshot. Layout 2 has no
@@ -197,6 +206,8 @@ impl SnapshotSummary {
             head,
             side: entry.is_side(),
             incomplete: entry.is_incomplete(),
+            playtime: entry.playtime(),
+            copied: entry.origin.as_ref().map(|o| o.how.clone()).unwrap_or_default(),
         }
     }
 }
@@ -250,6 +261,8 @@ impl From<&SnapshotMeta> for SnapshotSummary {
             head: false,
             side: !m.trigger.is_mainline(),
             incomplete: false,
+            playtime: None,
+            copied: String::new(),
         }
     }
 }

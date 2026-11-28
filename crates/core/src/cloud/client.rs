@@ -949,6 +949,15 @@ impl Cloud {
         self.open_at(key, place)
     }
 
+    /// What this device remembers of version `id` of the line the game
+    /// `key` follows, from the last time it read that line: no request when
+    /// the line's place is known. Versions never change, so this is what
+    /// the cloud has, but for the name it may be kept under since.
+    pub fn remembered(&self, key: &str, id: &str) -> Option<v2::IndexEntry> {
+        let place = self.place(key).ok()?;
+        Self::kept_cache(key, &place).snapshots.remove(id)
+    }
+
     /// Read a save line whose place the caller knows.
     pub fn open_at(&self, key: &str, place: Place) -> Result<OpenLine> {
         let mut cache = Self::kept_cache(key, &place);

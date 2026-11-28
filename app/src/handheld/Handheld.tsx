@@ -1,15 +1,17 @@
 // The handheld screen (docs/plan-phase5.md §1.1): full screen, large, run
 // with a controller. Shows the save library (one card per game, grey when
 // it isn't on this device), a game's sync status, its versions and its
-// saves as the desktop's Saves tab arranges them (make one the current one,
-// send it to another version), and the few settings that make sense
-// without a keyboard. Adding games, signing in to a cloud and
-// the save finder stay in the desktop view.
+// saves as the desktop's Saves tab arranges them (here first, then one group
+// per other source; make one the current one, take one here, send it to
+// another version), and the few settings that make sense without a
+// keyboard. Adding games, signing in to a cloud and the save finder stay in
+// the desktop view.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, HandheldInfo, HandheldMode, NewerVersion, Overview, SnapshotList, SnapshotSummary, TransferPlan } from "../api";
+import { api, errorText, HandheldInfo, HandheldMode, Overview, SaveSource, SaveSources, SnapshotList, SnapshotSummary, TransferPlan } from "../api";
 import { cardsOf, type Card } from "../components/Library";
 import { familyOf, variantLabel } from "../components/SaveLibrary";
 import { arrange } from "../components/Saves";
+import { compareWith, saveLine, versionOf } from "../components/SaveSources";
 import { Badge, Spinner, useUi } from "../components/ui";
 import { bytes, dateTime, duration, outcomeText, relTime, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
@@ -214,18 +216,23 @@ function Game({
   const members = familyOf(overview, gameKey);
   const [data, setData] = useState<SnapshotList | null>(null);
   const [autoOpen, setAutoOpen] = useState(false);
-  const [newer, setNewer] = useState<NewerVersion | null>(null);
+  // The other sources of the game's saves, and the newer progress one of them has.
+  const [sources, setSources] = useState<SaveSources | null>(null);
+  const [newerGone, setNewerGone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<SnapshotSummary | null>(null);
+  const [pickedElsewhere, setPickedElsewhere] = useState<{ source: SaveSource; snapshot: SnapshotSummary } | null>(null);
   const [applying, setApplying] = useState<{ source: string; sourceName: string; snapshot: SnapshotSummary; target?: string } | null>(null);
   const conflict = !!game?.conflict || game?.lastCheck?.status === "conflict";
+  const newer = newerGone ? undefined : sources?.newer;
 
   const load = useCallback(() => {
     api.snapshots(gameKey).then(setData, () => setData({ snapshots: [], headId: null, lastSyncedId: null, platforms: {} }));
+    if (game && overview.cloud.kind !== "none") api.saveSources(gameKey).then(setSources, () => setSources(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameKey]);
   useEffect(() => {
     load();
-    if (game && members.length > 1) api.newerVersion(gameKey).then(setNewer, () => setNewer(null));
     const id = requestAnimationFrame(focusFirst);
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -278,8 +285,34 @@ function Game({
     }
   };
 
+  /**
+   * Take a save of another source here: one of a line that keeps the same
+   * files as it is (the dialog it was picked in asked), another version's
+   * through the dialog that shows where its files go.
+   */
+  const takeHere = async (src: SaveSource, s: SnapshotSummary) => {
+    if (!game) return;
+    setPickedElsewhere(null);
+    if (src.key) return setApplying({ source: src.key, sourceName: src.name, snapshot: s, target: gameKey });
+    if (!src.line) return;
+    setBusy(true);
+    try {
+      const o = await api.takeSave(game.key, src.line, s.id);
+      const done = o.kind === "pulled" || o.kind === "uploaded" || o.kind === "queued";
+      ui.toast(done ? msg().sources.taken : outcomeText(o, game.name));
+      await onChanged();
+      load();
+    } catch (e) {
+      ui.toast(errorText(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // The same rows, in the same order, as the desktop's Saves tab.
-  const { top, auto, current } = useMemo(() => (data ? arrange(data, [], !game) : { top: [], auto: [], current: null }), [data, game]);
+  const { top, auto, current } = useMemo(() => (data ? arrange(data, !game) : { top: [], auto: [], current: null }), [data, game]);
+  const here = data?.snapshots.find((s) => s.id === current);
+  const groups = sources?.sources ?? [];
   const currentHash = data?.snapshots.find((s) => s.id === current)?.contentHash;
   const isCurrent = (s: SnapshotSummary) => s.id === current || (!!currentHash && s.contentHash === currentHash);
   const isSide = (s: SnapshotSummary) => s.side ?? (s.trigger === "pre-restore" || s.trigger === "conflict-keep");
@@ -331,19 +364,27 @@ function Game({
             {game && !game.playable && <p className="muted">{h.notInstalled}</p>}
             {newer && (
               <div className="hh-banner">
-                <p>{h.newer(newer.label, newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))}</p>
+                <p>{t.sources.newerRow(newer.source.name)}</p>
+                <p className="muted">{saveLine(newer.source.name, newer.snapshot, newer.here)}</p>
+                <p className="muted">{saveLine(t.sources.hereName(newer.hereName), newer.here)}</p>
                 <div className="hh-row">
-                  <button data-nav onClick={() => setApplying({ source: newer.key, sourceName: newer.name, snapshot: newer.snapshot, target: gameKey })}>
-                    {h.applyHere}
+                  <button
+                    data-nav
+                    onClick={() =>
+                      newer.source.key ? takeHere(newer.source, newer.snapshot) : setPickedElsewhere({ source: newer.source, snapshot: newer.snapshot })
+                    }
+                    disabled={busy || game?.running}
+                  >
+                    {t.sources.take}
                   </button>
                   <button
                     data-nav
                     onClick={() => {
                       api.dismissNewer(gameKey, newer.snapshot.id);
-                      setNewer(null);
+                      setNewerGone(true);
                     }}
                   >
-                    {h.notNow}
+                    {t.sources.notNow}
                   </button>
                 </div>
               </div>
@@ -394,7 +435,7 @@ function Game({
         )}
 
         <section>
-          <h2>{h.history}</h2>
+          <h2>{groups.length > 0 ? `${t.sources.here} · ${sources?.hereName ?? ""}` : h.history}</h2>
           {data === null && <Spinner />}
           {data?.snapshots.length === 0 && <p className="muted">{t.saves.empty}</p>}
           <div className="hh-list">
@@ -409,6 +450,32 @@ function Game({
             {autoOpen && auto.map((r) => row(r.s))}
           </div>
         </section>
+
+        {groups.map((src) => (
+          <section key={src.id}>
+            <h2 className="hh-source-head">
+              {sources?.platforms[src.platform]?.logo && <img className="src-logo" src={sources.platforms[src.platform].logo!} alt="" width={24} height={24} />}
+              {src.name}
+              {src.devices.length > 0 && <span className="muted"> · {src.devices.join(" · ")}</span>}
+              {src.take.kind === "convert" && <Badge tone="muted">{t.sources.convert}</Badge>}
+            </h2>
+            <div className="hh-list">
+              {src.snapshots.map((s) => {
+                const cmp = compareWith(s, here);
+                const named = s.locked && !!s.comment;
+                return (
+                  <button key={s.id} data-nav className="hh-list-row" onClick={() => setPickedElsewhere({ source: src, snapshot: s })}>
+                    <b>{named ? s.comment : dateTime(s.createdAt)}</b>
+                    {cmp && <Badge tone={cmp.newer ? "info" : "muted"}>{cmp.text}</Badge>}
+                    {s.incomplete && <Badge tone="warn">{t.saves.incomplete}</Badge>}
+                    <span className="muted">{s.deviceName}</span>
+                    <span className="muted">{[named ? dateTime(s.createdAt) : null, versionOf(s), bytes(s.totalSize)].filter(Boolean).join(" · ")}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </main>
       <Hints items={[["a", h.select], ...(game ? ([["y", h.syncNow]] as Array<[Button, string]>) : []), ["b", h.back]]} />
 
@@ -437,6 +504,19 @@ function Game({
           {game && !isCurrent(picked) && note && <p className="muted">{note}</p>}
         </Dialog>
       )}
+      {pickedElsewhere && (
+        <ElsewhereDialog
+          picked={pickedElsewhere}
+          here={here}
+          game={game}
+          note={note}
+          tooNew={(sources?.tooNew ?? []).includes(pickedElsewhere.snapshot.id)}
+          busy={busy}
+          onTake={() => takeHere(pickedElsewhere.source, pickedElsewhere.snapshot)}
+          onSend={(src) => (setApplying({ source: src, sourceName: pickedElsewhere.source.name, snapshot: pickedElsewhere.snapshot }), setPickedElsewhere(null))}
+          onClose={() => setPickedElsewhere(null)}
+        />
+      )}
       {applying && (
         <Apply
           overview={overview}
@@ -444,7 +524,6 @@ function Game({
           onClose={() => setApplying(null)}
           onDone={async (target) => {
             setApplying(null);
-            setNewer(null);
             await onChanged();
             if (target !== gameKey) onOpen(target);
             else load();
@@ -452,6 +531,60 @@ function Game({
         />
       )}
     </>
+  );
+}
+
+/**
+ * A save of another source, picked on the game screen: A takes it here
+ * (kept first, can be undone), X sends it to another version. What it is
+ * compared with the save here, and why it can't be taken when it can't.
+ */
+function ElsewhereDialog({
+  picked: { source, snapshot },
+  here,
+  game,
+  note,
+  tooNew,
+  busy,
+  onTake,
+  onSend,
+  onClose,
+}: {
+  picked: { source: SaveSource; snapshot: SnapshotSummary };
+  here?: SnapshotSummary;
+  game?: { name: string; running: boolean };
+  note: string | null;
+  tooNew: boolean;
+  busy: boolean;
+  onTake: () => void;
+  onSend: (key: string) => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const never = source.take.kind === "never" ? source.take.reason : null;
+  const same = !!here && snapshot.contentHash === here.contentHash;
+  return (
+    <Dialog
+      title={t.handheld.versionActions(snapshot.deviceName, dateTime(snapshot.createdAt))}
+      onClose={onClose}
+      buttons={[
+        ...(game && !same
+          ? [{ b: "a" as Button, label: t.sources.takeHere, onPress: onTake, disabled: busy || game.running || !!snapshot.incomplete || !!never }]
+          : []),
+        ...(source.key ? [{ b: "x" as Button, label: t.saves.sendTo, onPress: () => onSend(source.key!), disabled: !!snapshot.incomplete }] : []),
+        { b: "b", label: t.handheld.cancel, onPress: onClose },
+      ]}
+    >
+      <p className="muted">{saveLine(source.name, snapshot, here)}</p>
+      {source.take.kind === "convert" && <p className="muted">{t.sources.convertHint(source.take.how)}</p>}
+      {never && <p className="hh-warn">{never}</p>}
+      {snapshot.incomplete && <p className="muted">{t.saves.incompleteHint}</p>}
+      {game && !same && !never && !snapshot.incomplete && (
+        <p className="muted">{t.sources.takeText(game.name, source.name, source.name === snapshot.deviceName ? null : snapshot.deviceName, dateTime(snapshot.createdAt))}</p>
+      )}
+      {game && tooNew && <p className="muted">{t.saves.tooNew(snapshot.gameVersion ?? "?")}</p>}
+      {game && !source.key && note && <p className="muted">{note}</p>}
+    </Dialog>
   );
 }
 

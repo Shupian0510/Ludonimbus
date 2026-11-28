@@ -10,7 +10,7 @@ use super::carry::{carry, local_here};
 use super::gate::{Gate, GaveUp, Phase, Watched};
 use super::incomplete::{incomplete_error, keep_local_copy, note_missing};
 use super::publish::flush;
-use super::queue::{stage_local, with_queue, Shot};
+use super::queue::{stage_local, with_queue, Played, Shot};
 use super::{base_manifest, holding, local_of, log, mark_synced, must_wait, note_replaced, remember_base, Ctx, Outcome};
 use crate::cloud::decide::{self, Action, Local};
 use crate::cloud::saves;
@@ -236,7 +236,9 @@ impl<'a> Session<'a> {
             how: "restore".to_string(),
             extra: v2::Extra::new(),
         };
-        let shot = Shot { bases, parent: Some(from.to_string()), trigger: Some(trigger), origin: Some(origin), ..Shot::default() };
+        // As far as the version it is a copy of was played.
+        let played = Played::Was(self.line.view.get(from).and_then(|e| e.playtime()));
+        let shot = Shot { bases, parent: Some(from.to_string()), trigger: Some(trigger), origin: Some(origin), played, ..Shot::default() };
         let outcome = self.push(&local, shot, launching)?;
         if let Outcome::Uploaded { id } | Outcome::Queued { id, .. } = &outcome {
             let _ = state::update_game(self.key(), |g| {

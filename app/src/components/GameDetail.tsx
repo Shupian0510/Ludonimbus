@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, LocalFile, NewerVersion, Outcome, Overview, playtimePlatforms, SaveCandidate, StatusReport } from "../api";
+import { api, errorText, GameView, LocalFile, Outcome, Overview, playtimePlatforms, SaveCandidate, SaveSources, StatusReport } from "../api";
 import { bytes, dateTime, duration, healthText, outcomeText, relTime } from "../format";
 import { msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
@@ -14,7 +14,8 @@ import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Hint, Icon, Menu, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Saves } from "./Saves";
-import { ApplyDialog, familyOf, UndoRow, VersionBar } from "./SaveLibrary";
+import { UndoRow, VersionBar } from "./SaveLibrary";
+import { NewerRow } from "./SaveSources";
 import { handBack, StorePanel, TakeOverDialog } from "./SteamCloud";
 import { GameAchievements } from "./Achievements";
 import { useShelves } from "./Collection";
@@ -48,15 +49,7 @@ export function GameDetail({
   const ui = useUi();
   const t = useT();
   const g = t.game;
-  // Another version of this game (on another device or platform) has newer saves.
-  const [newer, setNewer] = useState<NewerVersion | null>(null);
-  const [applyNewer, setApplyNewer] = useState(false);
-  const versionCount = familyOf(overview, game.key).length;
   const shelves = useShelves(overview, game.key, onChanged);
-  useEffect(() => {
-    if (versionCount < 2 || overview.cloud.kind === "none") return;
-    api.newerVersion(game.key).then(setNewer, () => setNewer(null));
-  }, [game.key, versionCount, overview.cloud.kind]);
   const [tab, setTab] = useState<Tab>(
     sceneIs("game-settings") ? "config" : sceneIs("game-screenshots") ? "screenshots" : sceneIs("game-achievements") ? "achievements" : "versions",
   );
@@ -64,7 +57,7 @@ export function GameDetail({
   useEffect(() => {
     const target = sceneIs("game-files")
       ? () => document.getElementById("game-backup")
-      : sceneIs("game-screenshots", "game-achievements", "versions")
+      : sceneIs("game-screenshots", "game-achievements", "versions", "save-sources")
         ? () => document.querySelector(".detail-body .tabs")
         : null;
     if (!target) return;
@@ -79,6 +72,21 @@ export function GameDetail({
     }, 600);
   }, []);
   const [versionsKey, setVersionsKey] = useState(0);
+  // The other sources of this game's saves (another version, a device that keeps its own…):
+  // the Saves tab's groups, and the hint row when one of them has newer progress. Read again
+  // whenever the saves changed; the page works without.
+  const [sources, setSources] = useState<SaveSources | null>(null);
+  const [newerGone, setNewerGone] = useState(false);
+  useEffect(() => {
+    if (overview.cloud.kind === "none") return setSources(null);
+    let live = true;
+    api.saveSources(game.key).then(
+      (s) => live && setSources(s),
+      () => live && setSources(null),
+    );
+    setNewerGone(false);
+    return () => void (live = false);
+  }, [game.key, versionsKey, overview.cloud.kind]);
   const [heroFailed, setHeroFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
   const [dialog, setDialog] = useState<"art" | "steam" | "takeover" | null>(sceneIs("art-picker") ? "art" : null);
@@ -354,40 +362,15 @@ export function GameDetail({
           </div>
         )}
 
-        {newer && (
-          <div className="banner banner-info not-here">
-            <Icon name="transfer" />
-            <div>
-              <b>{t.savelib.newerTitle(newer.label)}</b> <Hint text={t.savelib.newerText(newer.snapshot.deviceName, dateTime(newer.snapshot.createdAt))} />
-            </div>
-            <Button small kind="primary" onClick={() => setApplyNewer(true)}>
-              {t.savelib.applyHere}
-            </Button>
-            <Button
-              small
-              kind="ghost"
-              onClick={() => {
-                api.dismissNewer(game.key, newer.snapshot.id).catch(() => undefined);
-                setNewer(null);
-              }}
-            >
-              {t.savelib.notNow}
-            </Button>
-          </div>
-        )}
-        {applyNewer && newer && (
-          <ApplyDialog
+        {sources?.newer && !newerGone && (
+          <NewerRow
+            target={game}
             overview={overview}
-            sourceKey={newer.key}
-            sourceName={newer.name}
-            snapshot={newer.snapshot}
-            target={game.key}
-            onClose={() => setApplyNewer(false)}
-            onApplied={async () => {
-              setApplyNewer(false);
-              setNewer(null);
-              await onChanged();
-            }}
+            newer={sources.newer}
+            disabled={game.running}
+            tooNew={sources.tooNew}
+            onDismiss={() => setNewerGone(true)}
+            onDone={() => after()}
           />
         )}
 
@@ -522,7 +505,15 @@ export function GameDetail({
         </div>
 
         {tab === "versions" && (
-          <Saves key={versionsKey} game={game} overview={overview} disabled={game.running} onChanged={() => after()} onApplied={async (k) => onOpen(k)} />
+          <Saves
+            key={versionsKey}
+            game={game}
+            overview={overview}
+            disabled={game.running}
+            sources={sources}
+            onChanged={() => after()}
+            onApplied={async (k) => onOpen(k)}
+          />
         )}
         {tab === "files" && <Files game={game} />}
         {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}

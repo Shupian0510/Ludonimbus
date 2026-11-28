@@ -44,6 +44,7 @@ fn roots(v: &mut impl TypeVisitor) {
     v.visit::<commands::lines::OtherSaves>();
     v.visit::<commands::lines::ShareOffer>();
     v.visit::<commands::saves::UploadResult>();
+    v.visit::<commands::sources::SaveSources>();
     // Adding and changing games
     v.visit::<cloud::CloudGame>();
     v.visit::<commands::games::GamePatch>();

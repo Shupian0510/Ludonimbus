@@ -325,53 +325,30 @@ pub fn version_label(g: &GameEntry) -> String {
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "NewerVersion")]
 pub struct Newer {
+    /// The version the saves are of; this game's own key when they are on
+    /// another line of its card (`line`).
     pub key: String,
     pub name: String,
-    /// What it runs on ([`version_label`]).
+    /// What it is called ([`crate::elsewhere::Source::name`]).
     pub label: String,
     pub snapshot: crate::snapshot::SnapshotSummary,
+    /// The line of the card they are on, when they are taken from it as
+    /// they are ([`crate::sync::take_from`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
 }
 
-/// The newest save version among the other versions of `game` (on this
-/// device or only in the cloud), when it is newer than this version's
-/// newest version in the cloud and its saves on this device, and the user
-/// hasn't waved it off. This is how playing on another device in another
-/// version (the Xbox version on the PC, the Steam version on the Deck)
-/// carries over.
+/// The newest progress among the other versions of `game` (on this device
+/// or only in the cloud), when it is newer than the save here and the user
+/// hasn't waved it off: [`crate::elsewhere::newer`], as the Steam plugins
+/// and the local interface show it. This is how playing on another device
+/// in another version (the Xbox version on the PC, the Steam version on the
+/// Deck) carries over.
 pub fn newer_version(ctx: &crate::sync::Ctx, game: &GameEntry) -> Result<Option<Newer>> {
-    let cached = cached(&ctx.cfg);
-    let fam = index(&ctx.cfg, &cached.games);
-    let mine = fam.get(&game.key).cloned().unwrap_or_else(|| game.key.clone());
-    let same = |k: &str| k != game.key && fam.get(k) == Some(&mine);
-    let others: Vec<GameEntry> = ctx
-        .cfg
-        .games
-        .iter()
-        .filter(|g| same(&g.key))
-        .cloned()
-        .chain(cached.games.iter().filter(|c| same(&c.key) && ctx.cfg.game(&c.key).is_none()).map(entry_of))
-        .collect();
-    if others.is_empty() {
-        return Ok(None);
-    }
-    let cloud = ctx.cloud()?;
-    let own = cloud.list_snapshots(&game.key)?;
-    let mut newest = crate::sync::mainline_head(&own).map(|h| h.created_at);
-    if let Ok(local) = crate::snapshot::local_state(game) {
-        let touched = local.files.iter().map(|f| f.mtime).max().and_then(|s| DateTime::<Utc>::from_timestamp(s, 0));
-        newest = newest.max(touched);
-    }
-    let mut best: Option<Newer> = None;
-    for o in &others {
-        let Some(head) = crate::sync::mainline_head(&cloud.list_snapshots(&o.key)?) else { continue };
-        let newer_than_mine = newest.is_none_or(|n| head.created_at > n);
-        let newest_so_far = best.as_ref().is_none_or(|b| head.created_at > b.snapshot.created_at);
-        if newer_than_mine && newest_so_far {
-            best = Some(Newer { key: o.key.clone(), name: o.name.clone(), label: version_label(o), snapshot: head });
-        }
-    }
-    let dismissed = state::game(&game.key).newer_dismissed;
-    Ok(best.filter(|b| dismissed.as_deref() != Some(b.snapshot.id.as_str())))
+    let Some(n) = crate::elsewhere::newer(ctx, game)? else { return Ok(None) };
+    let key = n.source.key.clone().unwrap_or_else(|| game.key.clone());
+    let name = ctx.cfg.game(&key).map(|g| g.name.clone()).or_else(|| cached(&ctx.cfg).games.into_iter().find(|c| c.key == key).map(|c| c.name));
+    Ok(Some(Newer { key, name: name.unwrap_or_else(|| game.name.clone()), label: n.source.name, snapshot: n.snapshot, line: n.source.line }))
 }
 
 /// Don't offer this save version of another version again.

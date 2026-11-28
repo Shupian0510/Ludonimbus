@@ -40,7 +40,15 @@ function Question({ request }: { request: PromptRequest }) {
         <div className="hh-dialog-buttons">
           {request.buttons.map((b) => (
             <button key={b.id} data-nav data-autofocus={b.key === "a" || undefined} onClick={() => answer(b.id)}>
-              <Glyph b={b.key} /> {b.label}
+              <Glyph b={b.key} />{" "}
+              {b.detail ? (
+                <span className="hh-button-label">
+                  {b.label}
+                  <small>{b.detail}</small>
+                </span>
+              ) : (
+                b.label
+              )}
             </button>
           ))}
         </div>

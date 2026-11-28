@@ -36,6 +36,10 @@ pub struct Button {
     /// the window is closed.
     #[ts(type = r#""a" | "b" | "x" | "y""#)]
     pub key: String,
+    /// A small line under the button: what choosing it means besides its
+    /// name. A system dialog has no place for it and says it in the text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub detail: String,
 }
 
 impl Request {
@@ -44,8 +48,27 @@ impl Request {
     }
 
     pub fn button(mut self, id: &str, label: impl Into<String>, key: &str) -> Self {
-        self.buttons.push(Button { id: id.into(), label: label.into(), key: key.into() });
+        self.buttons.push(Button { id: id.into(), label: label.into(), key: key.into(), detail: String::new() });
         self
+    }
+
+    /// Give the button added last a small line ([`Button::detail`]).
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        if let Some(b) = self.buttons.last_mut() {
+            b.detail = detail.into();
+        }
+        self
+    }
+
+    /// The text with what the buttons' small lines say, for a dialog that
+    /// can only show text.
+    pub fn text_with_details(&self) -> String {
+        let mut text = self.text.clone();
+        for b in self.buttons.iter().filter(|b| !b.detail.is_empty()) {
+            text.push_str("\n\n");
+            text.push_str(&crate::tr!("「{}」：{}", "\"{}\": {}", b.label, b.detail));
+        }
+        text
     }
 
     /// What closing the window means: the "b" button's answer.
@@ -191,8 +214,11 @@ mod tests {
     #[test]
     fn requests_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
-        let req = Request::new("Ludonimbus", "Both changed", "warn").button("cloud", "Use cloud", "a").button("cancel", "Don't start", "b");
+        let req =
+            Request::new("Ludonimbus", "Both changed", "warn").button("cloud", "Use cloud", "a").detail("kept first").button("cancel", "Don't start", "b");
         assert_eq!(req.cancel_id(), Some("cancel"));
+        assert_eq!((req.buttons[0].detail.as_str(), req.buttons[1].detail.as_str()), ("kept first", ""));
+        assert!(req.text_with_details().starts_with("Both changed\n\n") && req.text_with_details().contains("kept first"));
         let file = tmp.path().join("p.json");
         std::fs::write(&file, serde_json::to_vec(&req).unwrap()).unwrap();
         assert_eq!(read_request(&file).unwrap(), req);

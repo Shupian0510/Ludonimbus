@@ -231,6 +231,8 @@ pub struct Draft {
     pub installed_version: Option<String>,
     pub info: Option<Info>,
     pub origin: Option<Origin>,
+    /// [`v2::PLAYTIME`], where it is known.
+    pub playtime: Option<u64>,
 }
 
 /// The content hash of a set of save files: the one 0.6 computes
@@ -272,6 +274,9 @@ pub fn draft_with(place: &Place, draft: &Draft, files: &[LocalFile], carried: &[
     let mut extra = v2::Extra::new();
     if !plan.sizes.is_empty() {
         extra.insert(packs::PACK_SIZES.to_string(), serde_json::json!(plan.sizes));
+    }
+    if let Some(secs) = draft.playtime {
+        extra.insert(v2::PLAYTIME.to_string(), secs.into());
     }
     let (content_hash, total_size) = match carried.is_empty() {
         true => (content_hash(files), files.iter().fold(0u64, |sum, f| sum.saturating_add(f.size))),

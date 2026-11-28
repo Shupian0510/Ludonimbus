@@ -6,7 +6,7 @@ use crate::achievements as ach;
 use crate::config::{self, AppConfig, GameEntry};
 use crate::snapshot::Trigger;
 use crate::sync::{self, Ctx, Outcome, Resolution, Status, StatusReport};
-use crate::{catchup, playtime, savelib, state, steam, steamcloud, tr, transfer};
+use crate::{catchup, playtime, savelib, state, steam, steamcloud, tr};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -424,8 +424,8 @@ fn apply_newer(host: &Arc<dyn Host>, key: &str, id: &str) -> ApiResult {
     if let Some(reason) = busy_reason(host.as_ref(), &g) {
         return Err(ApiError::new(409, reason));
     }
-    let n = savelib::newer_version(&ctx, &g)?.filter(|n| n.snapshot.id == id).ok_or_else(|| ApiError::new(404, "no such newer version"))?;
-    in_background(host, ctx.cfg, g, "apply newer saves", move |ctx, g| transfer::apply(ctx, &n.key, &n.snapshot.id, &g.key, None))
+    let n = crate::elsewhere::newer(&ctx, &g)?.filter(|n| n.snapshot.id == id).ok_or_else(|| ApiError::new(404, "no such newer version"))?;
+    in_background(host, ctx.cfg, g, "apply newer saves", move |ctx, g| crate::elsewhere::take(ctx, g, &n.source, &n.snapshot.id))
 }
 
 // ---------------------------------------------------------------------------
