@@ -104,6 +104,7 @@ export type * from "./SteamCloudApp";
 export type * from "./SteamCloudDone";
 export type * from "./SteamCloudState";
 export type * from "./SteamCloudStatus";
+export type * from "./SteamPluginCaps";
 export type * from "./SteamPluginInstall";
 export type * from "./SteamPluginProgress";
 export type * from "./SteamPluginStatus";

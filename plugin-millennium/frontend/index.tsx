@@ -4,6 +4,7 @@
 import { definePlugin, Field, Millennium } from 'millennium';
 import { useEffect, useState } from 'react';
 import { AchievementsBar } from './achievements';
+import { hands } from './hands';
 import { PlayBarStatus } from './playbar';
 import { parseReply, setLang, t } from './status';
 import { SteamPlaytime } from './steamplaytime';
@@ -69,6 +70,7 @@ export default definePlugin(() => {
 	// New achievement unlocks: shown with Steam's own popup (toast.ts).
 	toasts.start();
 	steamPlaytime.start();
+	hands.start();
 
 	return {
 		title: t().label,
@@ -79,6 +81,7 @@ export default definePlugin(() => {
 			for (const doc of Array.from(bars.keys())) detach(doc);
 			toasts.stop();
 			steamPlaytime.stop();
+			hands.stop();
 		},
 	};
 });

@@ -402,6 +402,15 @@ export const steamCloud: typeof Zh.steamCloud = {
   stepAllOff: "Steam Cloud is off for all games",
   stepAllOffTodo: "Turn Steam Cloud off for all games first",
   stepAllOffHint: "In Steam: Settings → Cloud → turn off \"Enable Steam Cloud\". Ludonimbus never flips this switch for you. Games whose last Steam sync wasn't complete are skipped and stay backup only.",
+  pluginOff: "This turns Steam Cloud off for this game.",
+  pluginOffHint:
+    "Through the Steam plugin, Ludonimbus turns off \"Keep game saves in the Steam Cloud\" for this game in Steam and sets its launch options, without restarting Steam. From then on the newest saves are fetched before it starts from Steam and uploaded after you quit. The saves as they are now are kept in the cloud first. Giving it back to Steam turns Steam Cloud on again.",
+  pluginAllOff: (n) => `This turns Steam Cloud off for these ${n} ${n === 1 ? "game" : "games"}.`,
+  pluginAllOffHint:
+    "Through the Steam plugin, Ludonimbus turns Steam Cloud off for each of them in Steam, without restarting Steam or turning off Steam's switch for all games. Games Steam hasn't finished syncing are skipped and stay backup only.",
+  handBackTitle: (name) => `Give ${name} back to Steam?`,
+  handBackText: "This turns Steam Cloud on again for this game. If Steam asks which saves to keep, pick this PC's.",
+  handedBackOn: "Given back to Steam; Steam Cloud is on",
 };
 
 export const steamAction: typeof Zh.steamAction = {

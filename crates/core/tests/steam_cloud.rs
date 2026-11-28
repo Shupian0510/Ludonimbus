@@ -10,9 +10,10 @@ use ludonimbus_core::cloud::store::{Entry, Store};
 use ludonimbus_core::cloud::Cloud;
 use ludonimbus_core::config::{self, AppConfig, GameEntry, StoreMode};
 use ludonimbus_core::games::{self, FoundChoice};
+use ludonimbus_core::localapi::plugin::AppReport;
 use ludonimbus_core::snapshot::{self, SnapshotSummary, Trigger};
 use ludonimbus_core::steam::{self, WrapperHealth};
-use ludonimbus_core::steamcloud::{self, Polled, State};
+use ludonimbus_core::steamcloud::{self, Polled, State, SteamHands};
 use ludonimbus_core::sync::{self, Ctx, Outcome, Resolution};
 use ludonimbus_core::{state, vdf};
 use std::fs;
@@ -335,6 +336,145 @@ fn games_installed_through_steam() {
     taking_over(root, &runner);
     without_steam_cloud(root, &runner);
     batches(root);
+    through_steam(root, &runner);
+}
+
+/// Steam itself as a plugin sees it, in memory: what it says about the game,
+/// changed as the plugin would change it.
+struct FakeHands {
+    now: Mutex<AppReport>,
+    sets_options: bool,
+    /// Setting launch options fails (Steam doesn't take them).
+    options_fail: bool,
+    calls: Mutex<Vec<String>>,
+}
+
+impl FakeHands {
+    fn new(sets_options: bool) -> FakeHands {
+        let now = AppReport {
+            available: true,
+            account_enabled: true,
+            app_enabled: true,
+            status: Some(3),
+            launch_options: Some(USER_OPTIONS.to_string()),
+            session: "fake".into(),
+            at: chrono::Utc::now(),
+        };
+        FakeHands { now: Mutex::new(now), sets_options, options_fail: false, calls: Mutex::new(Vec::new()) }
+    }
+
+    fn now(&self) -> AppReport {
+        self.now.lock().unwrap().clone()
+    }
+
+    fn calls(&self) -> Vec<String> {
+        std::mem::take(&mut *self.calls.lock().unwrap())
+    }
+}
+
+impl SteamHands for FakeHands {
+    fn sets_launch_options(&self) -> bool {
+        self.sets_options
+    }
+    fn read(&self, _account: &str, _appid: u32) -> Result<AppReport> {
+        self.calls.lock().unwrap().push("read".into());
+        Ok(self.now())
+    }
+    fn set_cloud(&self, _account: &str, _appid: u32, on: bool) -> Result<AppReport> {
+        self.calls.lock().unwrap().push(format!("cloud {on}"));
+        self.now.lock().unwrap().app_enabled = on;
+        Ok(self.now())
+    }
+    fn set_launch_options(&self, _account: &str, _appid: u32, options: &str) -> Result<AppReport> {
+        self.calls.lock().unwrap().push(format!("options {options}"));
+        if self.options_fail {
+            anyhow::bail!("Steam didn't take them");
+        }
+        self.now.lock().unwrap().launch_options = Some(options.to_string());
+        Ok(self.now())
+    }
+}
+
+/// Taking over and handing back with a Steam plugin: Steam turns Steam Cloud
+/// off and on and sets the launch options while it runs; Steam's files are
+/// never edited. When the launch options don't take, Steam Cloud goes back
+/// on. A plugin that can't set launch options turns the switch off and
+/// leaves them to Steam's file.
+fn through_steam(root: &Path, runner: &Path) {
+    let store = Logged::default();
+    let p = Device::new(root, &store, "P");
+    p.add();
+    p.steam.save("slot1.sav", "p1");
+    let before = uploaded(p.sync());
+    let original = p.steam.local();
+
+    // Steam itself says it is still syncing: refused, nothing changed, even
+    // though its files say the last sync was complete.
+    p.steam.set_sync_state("synchronized");
+    let hands = FakeHands::new(true);
+    hands.now.lock().unwrap().status = Some(6);
+    let err = format!("{:#}", steamcloud::take_over_through(&p.ctx(), KEY, true, &hands).unwrap_err());
+    assert!(err.starts_with("STEAM_NOT_SYNCED:"), "{err}");
+    assert_eq!(hands.calls(), ["read"]);
+    // Steam says it is done, though its files say otherwise: Steam counts.
+    p.steam.set_sync_state("changesincloud");
+    hands.now.lock().unwrap().status = Some(3);
+
+    // Launch options that don't take: Steam Cloud is turned on again, the
+    // game stays backup only.
+    let failing = FakeHands { options_fail: true, ..FakeHands::new(true) };
+    assert!(steamcloud::take_over_through(&p.ctx(), KEY, true, &failing).is_err());
+    let wrapped = steam::wrapper_options(runner, KEY, USER_OPTIONS);
+    assert_eq!(failing.calls(), ["read".to_string(), "cloud false".into(), format!("options {wrapped}"), "cloud true".into()]);
+    assert!(failing.now().app_enabled);
+    assert_eq!(p.mode(), StoreMode::Backup);
+
+    // Taken over: Steam Cloud off and the wrapper in the launch options,
+    // in Steam, with the user's own options (as Steam has them) behind it.
+    // The saves before are kept; Steam's files aren't touched.
+    let entry = steamcloud::take_over_through(&p.ctx(), KEY, true, &hands).unwrap();
+    let link = entry.store.clone().unwrap();
+    assert_eq!((link.mode, link.wrapper, link.original_options.as_deref()), (StoreMode::Managed, true, Some(USER_OPTIONS)));
+    assert_eq!(hands.calls(), ["read".to_string(), "cloud false".into(), format!("options {wrapped}")]);
+    let now = hands.now();
+    assert!(!now.on() && now.launch_options.as_deref() == Some(wrapped.as_str()));
+    assert_eq!(p.steam.local(), original);
+    let kept: Vec<SnapshotSummary> = p.versions().into_iter().filter(|v| v.locked).collect();
+    assert!(kept.len() == 1 && kept[0].id == before, "{kept:?}");
+
+    // Handed back: Steam Cloud on first, then the launch options as they were.
+    let entry = steamcloud::hand_back_through(&p.ctx(), KEY, &hands).unwrap();
+    let link = entry.store.unwrap();
+    assert_eq!((link.mode, link.wrapper, link.original_options), (StoreMode::Backup, false, None));
+    assert_eq!(hands.calls(), ["cloud true".to_string(), "read".into(), format!("options {USER_OPTIONS}")]);
+    assert!(hands.now().on());
+    assert_eq!(hands.now().launch_options.as_deref(), Some(USER_OPTIONS));
+
+    // Without the wrapper the launch options are left alone.
+    let entry = steamcloud::take_over_through(&p.ctx(), KEY, false, &hands).unwrap();
+    assert_eq!((entry.store.as_ref().unwrap().mode, entry.store.as_ref().unwrap().wrapper), (StoreMode::Managed, false));
+    assert_eq!(hands.calls(), ["read", "cloud false"]);
+    steamcloud::hand_back_through(&p.ctx(), KEY, &hands).unwrap();
+    assert_eq!(hands.calls(), ["cloud true"]);
+
+    // A plugin that can't set launch options: the switch is turned off in
+    // Steam, the launch options go into Steam's file (Steam closed, here a
+    // fake folder), which then has to say the switch is off too.
+    let old = FakeHands::new(false);
+    p.steam.set_sync_state("synchronized");
+    let err = format!("{:#}", steamcloud::take_over_through(&p.ctx(), KEY, true, &old).unwrap_err());
+    assert!(err.starts_with("STEAM_CLOUD_ON:"), "{err}");
+    assert_eq!(old.calls(), ["read", "cloud false"]);
+    p.steam.set_shared(GAME_OFF);
+    let entry = steamcloud::take_over_through(&p.ctx(), KEY, true, &old).unwrap();
+    assert_eq!(entry.store.unwrap().mode, StoreMode::Managed);
+    assert_eq!(old.calls(), ["read"], "off already: nothing turned");
+    assert_eq!(p.steam.launch_options().as_deref(), Some(wrapped.as_str()));
+    // Handing back turns it on in Steam and the options go back in the file.
+    steamcloud::hand_back_through(&p.ctx(), KEY, &old).unwrap();
+    assert_eq!(old.calls(), ["cloud true"]);
+    assert_eq!(p.steam.launch_options().as_deref(), Some(USER_OPTIONS));
+    assert_eq!(p.mode(), StoreMode::Backup);
 }
 
 /// Only the one value of Steam's file changes, and it goes back byte for

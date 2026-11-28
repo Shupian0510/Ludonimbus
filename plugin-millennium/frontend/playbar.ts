@@ -6,7 +6,8 @@
 // often, so a MutationObserver puts the item back whenever it disappears.
 
 import { playSectionClasses } from 'millennium';
-import { BackupStatus, describe, describeInstall, isGame, parseBackup, parseReply, Reply, t, View } from './status';
+import { hands } from './hands';
+import { BackupStatus, currentAccount, describe, describeInstall, isGame, parseBackup, parseReply, Reply, t, View } from './status';
 import { showVersions } from './versions';
 
 const MARK = 'data-ludonimbus';
@@ -14,7 +15,6 @@ const STYLE_ID = 'ludonimbus-style';
 const POLL_MS = 5000;
 const FAST_POLL_MS = 1500;
 const REFRESH_MS = 2 * 60 * 1000;
-const STEAMID64_BASE = BigInt('76561197960265728');
 
 const CLOUD_SVG =
 	'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/></svg>';
@@ -23,18 +23,27 @@ const SYNC_SVG =
 
 // Typography comes from Steam's own classes (PlayBarLabel, PlayBarDetailLabel,
 // GameStatIcon); `.ludonimbus-plain` only applies when they were not found.
+//
+// Layout, as Steam's own stats: the row (GameStatsSection) wraps and only its
+// first line shows. On a Steam game's page that line is much taller than a
+// stat (Steam's cloud status keeps its other states, hidden, stacked in a grid
+// under it), so the item sits at the top of the line like Steam's do, never
+// centred in it. It always stays on the first line: it starts from a small
+// width and grows up to what it needs, the text cut off with "…" when the
+// row is short of room.
 const CSS = `
-.ludonimbus-stat { display: flex; align-items: center; cursor: pointer; min-width: 0; }
+.ludonimbus-stat.ludonimbus-stat { display: flex; align-items: flex-start; align-self: flex-start; cursor: pointer; flex: 1 1 0px; min-width: 120px; max-width: max-content; }
 .ludonimbus-stat .ludonimbus-icon { display: flex; flex: none; }
 .ludonimbus-stat .ludonimbus-icon svg { width: 26px; height: 26px; }
-.ludonimbus-stat .ludonimbus-text { min-width: 0; }
+.ludonimbus-stat .ludonimbus-text { min-width: 0; overflow: hidden; }
+.ludonimbus-stat .ludonimbus-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ludonimbus-stat .ludonimbus-detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
 .ludonimbus-stat[data-busy="1"] .ludonimbus-icon { animation: ludonimbus-pulse 1.2s ease-in-out infinite; color: #66c0f4; }
 .ludonimbus-stat[data-tone="info"] .ludonimbus-detail { color: rgba(102, 192, 244, 0.9); }
 .ludonimbus-stat[data-tone="warn"] .ludonimbus-detail { color: #e5b143; }
 .ludonimbus-stat[data-tone="bad"] .ludonimbus-detail { color: #ff7b7b; }
 .ludonimbus-stat:hover .ludonimbus-label { color: rgba(255, 255, 255, 0.8); }
-.ludonimbus-stat .ludonimbus-sync { display: none; flex: none; align-items: center; justify-content: center; width: 26px; height: 26px; margin-left: 8px; padding: 0; border: 0; border-radius: 3px; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.6); cursor: pointer; }
+.ludonimbus-stat .ludonimbus-sync { display: none; flex: none; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 5px 0 0 8px; padding: 0; border: 0; border-radius: 3px; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.6); cursor: pointer; }
 .ludonimbus-stat .ludonimbus-sync svg { width: 16px; height: 16px; }
 .ludonimbus-stat[data-can-sync="1"] .ludonimbus-sync { display: flex; }
 .ludonimbus-stat .ludonimbus-sync:hover { background: rgba(255,255,255,0.16); color: #fff; }
@@ -75,15 +84,7 @@ export function currentAppId(): string | null {
 	return m ? m[1] : null;
 }
 
-/** Steam account id (the `userdata` folder name) of the signed-in user. */
-export function currentAccount(): string {
-	try {
-		const id: string | undefined = (window as any).App?.m_CurrentUser?.strSteamID;
-		return id ? (BigInt(id) - STEAMID64_BASE).toString() : '';
-	} catch {
-		return '';
-	}
-}
+export { currentAccount };
 
 export class PlayBarStatus {
 	private appId: string | null = null;
@@ -300,7 +301,8 @@ export class PlayBarStatus {
 		if (detail && detail.textContent !== view.text) detail.textContent = view.text;
 		// The language may only be known after the first reply.
 		const label = item.querySelector('.ludonimbus-label');
-		if (label && label.textContent !== t().label) label.textContent = t().label;
+		const labelText = view.label ?? t().label;
+		if (label && label.textContent !== labelText) label.textContent = labelText;
 		const sync = item.querySelector<HTMLElement>('.ludonimbus-sync');
 		if (sync && sync.title !== t().syncNow) sync.title = t().syncNow;
 		if (item.title !== view.tip) item.title = view.tip;
@@ -333,8 +335,10 @@ export class PlayBarStatus {
 		const view = describe(reply, this.appId);
 		if (view?.action === 'versions') {
 			const appId = this.appId;
-			showVersions(this.doc.defaultView, reply.key, reply.name, reply.store ?? null, () => {
-				// A sync or restore started: follow it closely.
+			// Backup only, an app that can take it over through this plugin (API 5).
+			const canTakeOver = reply.store === 'backup' && (reply.apiVersion ?? 0) >= 5 && hands.connected;
+			showVersions(this.doc.defaultView, { gameKey: reply.key, appId, name: reply.name, store: reply.store ?? null, canTakeOver }, () => {
+				// A sync, restore or take-over started: follow it closely.
 				this.load(appId, false).then(() => this.later(FAST_POLL_MS));
 			});
 		} else {

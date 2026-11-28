@@ -109,6 +109,8 @@ export interface View {
 	key: string | null;
 	/** What a click does: show the version history, open Ludonimbus (conflicts, repairs), or open its restore dialog for the game files. */
 	action?: 'versions' | 'open' | 'install';
+	/** The item's label, when not the usual one (a game Steam installed: Steam's own cloud status is beside it). */
+	label?: string;
 }
 
 /** `GET /v1/games/{key}/gamebackup`. */
@@ -167,6 +169,18 @@ export function isGame(r: Reply | null): r is GameStatus {
 	return !!r && 'managed' in r && r.managed === true;
 }
 
+const STEAMID64_BASE = BigInt('76561197960265728');
+
+/** Steam account id (the `userdata` folder name) of the signed-in user. */
+export function currentAccount(): string {
+	try {
+		const id: string | undefined = (window as any).App?.m_CurrentUser?.strSteamID;
+		return id ? (BigInt(id) - STEAMID64_BASE).toString() : '';
+	} catch {
+		return '';
+	}
+}
+
 /** Steam gives every non-Steam shortcut an app id with the top bit set. */
 export function isShortcutAppId(appId: string): boolean {
 	const n = Number(appId);
@@ -189,6 +203,14 @@ const pl = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const TEXTS = {
 	'zh-CN': {
 		label: 'Ludonimbus 云存档',
+		labelShort: 'Ludonimbus',
+		takeOver: '交给 Ludonimbus…',
+		takeOverTitle: '交给 Ludonimbus？',
+		takeOverText: '会关掉这个游戏的 Steam 云存档。之后由 Ludonimbus 在启动前取回最新的存档、退出后上传，现在的存档会先在云端保留一份。在 Ludonimbus 里可以交还给 Steam。',
+		takeOverDo: '交给 Ludonimbus',
+		takingOver: '正在交给 Ludonimbus…',
+		takenOver: '已交给 Ludonimbus',
+		cantTakeOver: (reason: string) => `没有交过去：${reason}`,
 		syncNow: '立即同步',
 		connecting: '正在连接 Ludonimbus…',
 		connected: (v: string) => `已连接 Ludonimbus ${v}`,
@@ -269,6 +291,15 @@ const TEXTS = {
 	},
 	en: {
 		label: 'Ludonimbus Cloud Saves',
+		labelShort: 'Ludonimbus',
+		takeOver: 'Hand to Ludonimbus…',
+		takeOverTitle: 'Hand this game to Ludonimbus?',
+		takeOverText:
+			"This turns Steam Cloud off for this game. Ludonimbus then fetches the newest saves before it starts and uploads them after you quit; the saves as they are now are kept in the cloud first. You can give it back to Steam in Ludonimbus.",
+		takeOverDo: 'Hand to Ludonimbus',
+		takingOver: 'Handing it to Ludonimbus…',
+		takenOver: 'Handed to Ludonimbus',
+		cantTakeOver: (reason: string) => `Not handed over: ${reason}`,
 		syncNow: 'Sync now',
 		connecting: 'Connecting to Ludonimbus…',
 		connected: (v: string) => `Connected to Ludonimbus ${v}`,
@@ -428,7 +459,8 @@ export function describe(reply: Reply | null, appId: string): View | null {
 	const action: 'versions' | 'open' = !needsApp && (g.apiVersion ?? 1) >= 2 ? 'versions' : 'open';
 	tips.push(action === 'versions' ? m.clickVersions : m.clickToOpen);
 	const tip = tips.join('\n');
-	const base = { tip, key: g.key, canSync: false, busy: false, action };
+	// A game Steam installed: Steam's own "Cloud status" is beside the item, so it says just "Ludonimbus".
+	const base = { tip, key: g.key, canSync: false, busy: false, action, label: g.store ? m.labelShort : undefined };
 
 	switch (g.phase) {
 		case 'preLaunch':
@@ -459,7 +491,8 @@ export function describe(reply: Reply | null, appId: string): View | null {
 	}
 
 	const when = g.lastSyncAt ? relTime(g.lastSyncAt) : '';
-	const canSync = true;
+	// Backup only: Steam Cloud syncs it; the item just says how the backups stand.
+	const canSync = g.store !== 'backup';
 	switch (g.status) {
 		case 'synced':
 			return { ...base, text: g.store === 'backup' ? m.backedUp(when) : m.synced(when), tone: 'ok', canSync };

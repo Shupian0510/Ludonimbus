@@ -186,12 +186,12 @@ fn endpoints() {
 
     // Ping.
     let (s, v) = api.get("/v1/ping");
-    assert_eq!((s, v["app"].as_str(), v["apiVersion"].as_u64(), v["headless"].as_bool()), (200, Some("ludonimbus"), Some(4), Some(false)));
+    assert_eq!((s, v["app"].as_str(), v["apiVersion"].as_u64(), v["headless"].as_bool()), (200, Some("ludonimbus"), Some(5), Some(false)));
 
     // Status of the shortcut: cached until asked to refresh.
     let (s, v) = api.get(&format!("/v1/steam/apps/{APPID}"));
     assert_eq!((s, v["managed"].as_bool(), v["key"].as_str(), v["phase"].as_str()), (200, Some(true), Some(KEY), Some("idle")));
-    assert_eq!((v["status"].clone(), v["apiVersion"].as_u64(), v["steamEnabled"].as_bool()), (Value::Null, Some(4), Some(true)));
+    assert_eq!((v["status"].clone(), v["apiVersion"].as_u64(), v["steamEnabled"].as_bool()), (Value::Null, Some(5), Some(true)));
     let (s, v) = api.get(&format!("/v1/steam/apps/{APPID}?account=123&refresh=1"));
     assert_eq!((s, v["status"].as_str()), (200, Some("notUploaded")));
     assert!(v["checkedAt"].is_string());
@@ -435,7 +435,7 @@ fn agent_file() {
     assert!(path.starts_with(root()));
     server.publish().unwrap();
     let info = localapi::read_agent_file().unwrap();
-    assert_eq!((info.port, info.token.len(), info.pid, info.api_version, info.headless), (server.port(), 64, std::process::id(), 4, true));
+    assert_eq!((info.port, info.token.len(), info.pid, info.api_version, info.headless), (server.port(), 64, std::process::id(), 5, true));
     let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert!(raw["apiVersion"].is_u64() && raw["token"].is_string(), "the plugins read camelCase: {raw}");
     assert_eq!(localapi::live_owner(), Some(std::process::id()));

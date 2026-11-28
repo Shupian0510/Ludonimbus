@@ -306,6 +306,72 @@ function ack_event(seq, shown, reason)
     return request("POST", "/v1/achievements/events/" .. s .. "/ack?shown=" .. how .. "&reason=" .. urlencode(reason))
 end
 
+-- Steam's hands (API 5) ------------------------------------------------------
+-- The frontend reads and changes Steam's own settings of a game (Steam Cloud
+-- switch, launch options) when the app asks; these forward the asking and
+-- the answers. Queries come escaped from the frontend: only URL-safe
+-- characters get through.
+
+local function query_part(value)
+    local q = tostring(value or "")
+    if #q <= 6000 and q:match("^[%w%-_%.~%%=&]*$") then
+        return q
+    end
+    return nil
+end
+
+---@ffi
+--- Take what the app asks of Steam, and say what this plugin can do.
+---@param query string
+---@return string
+function plugin_poll(query)
+    local q = query_part(query)
+    if not q then
+        return failure("bad_request")
+    end
+    return request("GET", "/v1/steam/plugin/poll?" .. q)
+end
+
+---@ffi
+--- Answer a request, with what Steam says about the game now.
+---@param id string
+---@param query string
+---@return string
+function plugin_done(id, query)
+    local i = digits(id)
+    local q = query_part(query)
+    if not i or not q then
+        return failure("bad_request")
+    end
+    return request("POST", "/v1/steam/plugin/done/" .. i .. "?" .. q)
+end
+
+---@ffi
+--- Say what Steam says about a game (its Steam Cloud switch, launch options).
+---@param appid string
+---@param query string
+---@return string
+function plugin_report(appid, query)
+    local id = digits(appid)
+    local q = query_part(query)
+    if not id or not q then
+        return failure("bad_request")
+    end
+    return request("POST", "/v1/steam/apps/" .. id .. "/report?" .. q)
+end
+
+---@ffi
+--- Hand a backed-up Steam game to Ludonimbus: Steam Cloud off, Ludonimbus syncs it.
+---@param key string
+---@return string
+function take_over(key)
+    local k = key_part(key)
+    if not k then
+        return failure("bad_request")
+    end
+    return request("POST", "/v1/games/" .. k .. "/steam-cloud/take-over")
+end
+
 local function on_load()
     logger:info("Ludonimbus plugin loaded (Millennium " .. millennium.version() .. ")")
     millennium.ready()

@@ -16,17 +16,24 @@ const plain = (e: unknown) => errorText(e).replace(/^[A-Z_]+:\s*/, "");
 export const openSteamProperties = (ui: Ui, key: string) => api.steamCloudOpenProperties(key).catch((e) => ui.toast(plain(e), "bad"));
 
 /**
- * Give the game back to Steam Cloud. Nothing of the saves changes, so it is
- * done at once; what is left is the user's to do in Steam.
+ * Give the game back to Steam Cloud. Nothing of the saves changes, so
+ * without a Steam plugin it is done at once and turning Steam Cloud on is
+ * the user's to do in Steam. With a plugin that can, Steam turns it on
+ * itself, once the user confirmed.
  */
 export async function handBack(ui: Ui, game: GameView, onChanged: () => Promise<void>) {
+  const m = msg().steamCloud;
   try {
-    const s = await withSteamClosed(ui, (close) => api.steamCloudHandBack(game.key, close));
+    const before = await api.steamCloudStatus(game.key).catch(() => null);
+    const viaPlugin = !!before?.plugin?.cloud;
+    const turnsOn = viaPlugin && !!before?.cloudUsed && !before.cloudEnabled;
+    if (turnsOn && !(await ui.confirm({ title: m.handBackTitle(game.name), text: m.handBackText, confirm: m.handBack }))) return;
+    const s = await withSteamClosed(ui, (close) => api.steamCloudHandBack(game.key, close, viaPlugin));
     if (!s) return;
     // "Backup only" means versions are stored again by themselves.
     if (!game.autoSync) await api.updateGame(game.key, { autoSync: true });
-    const m = msg().steamCloud;
-    ui.toast(m.handedBack, "ok", { label: m.openProperties, run: () => openSteamProperties(ui, game.key) });
+    if (viaPlugin && s.cloudEnabled && s.globalEnabled) ui.toast(m.handedBackOn);
+    else ui.toast(m.handedBack, "ok", { label: m.openProperties, run: () => openSteamProperties(ui, game.key) });
     await onChanged();
   } catch (e) {
     ui.toast(plain(e), "bad");
@@ -119,10 +126,13 @@ export function StorePanel({ game, onChanged, onTakeOver }: { game: GameView; on
 }
 
 /**
- * Taking a game over from Steam Cloud. The two things Steam's files have to
- * show are the user's to bring about in Steam, so they are listed as they
- * read now; the check that counts is the backend's when "take over" is
- * pressed (with Steam closed its files are as it left them).
+ * Taking a game over from Steam Cloud. With a Steam plugin that can, this
+ * is the one confirmation that Steam Cloud gets turned off for the game:
+ * Steam does it, and sets the launch options, while it runs. Without one,
+ * the two things Steam's files have to show are the user's to bring about
+ * in Steam, so they are listed as they read now; the check that counts is
+ * the backend's when "take over" is pressed (with Steam closed its files
+ * are as it left them).
  */
 export function TakeOverDialog({ game, onClose, onDone }: { game: GameView; onClose: () => void; onDone: () => Promise<void> }) {
   const t = useT();
@@ -145,9 +155,15 @@ export function TakeOverDialog({ game, onClose, onDone }: { game: GameView; onCl
     };
   }, [game.key]);
 
+  const off = !!status && (!status.cloudEnabled || !status.globalEnabled);
+  // A Steam plugin reads and changes Steam's settings live; when the switch
+  // is on, this dialog asks to let it turn it off.
+  const viaPlugin = !!status?.plugin?.cloud;
+  const ask = viaPlugin && !!status?.cloudUsed && !off;
+
   const take = async () => {
     try {
-      const s = await withSteamClosed(ui, (close) => api.steamCloudTakeOver(game.key, !noWrapper, close));
+      const s = await withSteamClosed(ui, (close) => api.steamCloudTakeOver(game.key, !noWrapper, close, viaPlugin));
       if (!s) return;
       ui.toast(noWrapper ? msg().steamCloud.takenBackground : msg().steamCloud.taken);
       await onDone();
@@ -156,7 +172,6 @@ export function TakeOverDialog({ game, onClose, onDone }: { game: GameView; onCl
     }
   };
 
-  const off = !!status && (!status.cloudEnabled || !status.globalEnabled);
   const step = (done: boolean, text: string, hint: string, extra?: JSX.Element) => (
     <li className={done ? "done" : ""}>
       <Icon name={done ? "check" : "clock"} size={16} />
@@ -182,18 +197,27 @@ export function TakeOverDialog({ game, onClose, onDone }: { game: GameView; onCl
         </>
       }
     >
-      <ul className="steps-list">
-        {status?.cloudUsed !== false && step(!!status?.synchronized, status?.synchronized ? c.stepSynced : c.stepSyncedTodo, c.stepSyncedHint)}
-        {status?.cloudUsed !== false &&
-          step(
-            off,
-            off ? c.stepOff : c.stepOffTodo,
-            c.stepOffHint,
-            <Button small kind="ghost" onClick={() => openSteamProperties(ui, game.key)}>
-              {c.openProperties}
-            </Button>,
-          )}
-      </ul>
+      {ask ? (
+        <>
+          <p>
+            {c.pluginOff} <Hint text={c.pluginOffHint} />
+          </p>
+          {!status?.synchronized && <ul className="steps-list">{step(false, c.stepSyncedTodo, c.stepSyncedHint)}</ul>}
+        </>
+      ) : (
+        <ul className="steps-list">
+          {status?.cloudUsed !== false && step(!!status?.synchronized, status?.synchronized ? c.stepSynced : c.stepSyncedTodo, c.stepSyncedHint)}
+          {status?.cloudUsed !== false &&
+            step(
+              off,
+              off ? c.stepOff : c.stepOffTodo,
+              c.stepOffHint,
+              <Button small kind="ghost" onClick={() => openSteamProperties(ui, game.key)}>
+                {c.openProperties}
+              </Button>,
+            )}
+        </ul>
+      )}
       <div className="check-line">
         <label>
           <input type="checkbox" checked={noWrapper} onChange={(e) => setNoWrapper(e.target.checked)} />
@@ -283,23 +307,25 @@ export function StoreGamesRow({ onChanged }: { onChanged: () => void | Promise<v
 }
 
 /**
- * Taking over every backed-up game: Steam Cloud has to be off for all games
+ * Taking over every backed-up game. With a Steam plugin that can, this is
+ * the one confirmation that Steam Cloud gets turned off for these games,
+ * and Steam does it. Without one, Steam Cloud has to be off for all games
  * (the account's switch), which is the user's to do in Steam.
  */
 function TakeOverAllDialog({ games, onClose, onDone }: { games: SteamCloudApp[]; onClose: () => void; onDone: (done: SteamCloudDone[]) => Promise<void> }) {
   const t = useT();
   const c = t.steamCloud;
   const ui = useUi();
-  const [off, setOff] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<SteamCloudStatus | null>(null);
   const [noWrapper, setNoWrapper] = useState(false);
-  // The account's switch as Steam's files have it now, read through any of the games.
+  // The account's switch as Steam has it now, read through any of the games.
   const probe = games[0]?.key;
   useEffect(() => {
     if (!probe) return;
     let live = true;
     const read = () =>
       api.steamCloudStatus(probe).then(
-        (s) => live && setOff(!s.globalEnabled),
+        (s) => live && setStatus(s),
         () => undefined,
       );
     read();
@@ -309,10 +335,13 @@ function TakeOverAllDialog({ games, onClose, onDone }: { games: SteamCloudApp[];
       clearInterval(timer);
     };
   }, [probe]);
+  const off = status ? !status.globalEnabled : null;
+  // The launch options of all of them go through Steam too (or aren't changed).
+  const viaPlugin = !!status?.plugin?.cloud && (noWrapper || status.plugin.launchOptions);
 
   const take = async () => {
     try {
-      const done = await withSteamClosed(ui, (close) => api.steamCloudTakeOverAll(!noWrapper, close));
+      const done = await withSteamClosed(ui, (close) => api.steamCloudTakeOverAll(!noWrapper, close, viaPlugin));
       if (done) await onDone(done);
     } catch (e) {
       // Refused as a whole (Steam Cloud still on): the dialog stays.
@@ -335,14 +364,20 @@ function TakeOverAllDialog({ games, onClose, onDone }: { games: SteamCloudApp[];
         </>
       }
     >
-      <ul className="steps-list">
-        <li className={off ? "done" : ""}>
-          <Icon name={off ? "check" : "clock"} size={16} />
-          <span>
-            {off ? c.stepAllOff : c.stepAllOffTodo} <Hint text={c.stepAllOffHint} />
-          </span>
-        </li>
-      </ul>
+      {viaPlugin && !off ? (
+        <p>
+          {c.pluginAllOff(games.length)} <Hint text={c.pluginAllOffHint} />
+        </p>
+      ) : (
+        <ul className="steps-list">
+          <li className={off ? "done" : ""}>
+            <Icon name={off ? "check" : "clock"} size={16} />
+            <span>
+              {off ? c.stepAllOff : c.stepAllOffTodo} <Hint text={c.stepAllOffHint} />
+            </span>
+          </li>
+        </ul>
+      )}
       <div className="check-line">
         <label>
           <input type="checkbox" checked={noWrapper} onChange={(e) => setNoWrapper(e.target.checked)} />

@@ -13,11 +13,16 @@
 //! it is added: there is nothing to take over from. Should Steam start
 //! syncing it later, it goes back to backup only like any other.
 //!
-//! Ludonimbus never flips a Steam Cloud switch. It takes a game over only
-//! once Steam's files show the switch off and Steam's last sync of the game
-//! complete ([`take_over`]), and goes back to backup only by itself as soon
-//! as the switch reads on again ([`recheck`]: before every sync of a managed
-//! game, before each launch, and in the background).
+//! Without a Steam plugin Ludonimbus never flips a Steam Cloud switch: it
+//! takes a game over only once Steam's files show the switch off and
+//! Steam's last sync of the game complete ([`take_over`]). With a plugin
+//! that can ([`crate::localapi::plugin`]), the user confirms once and Steam
+//! itself turns the switch off, and sets the launch options while it runs
+//! ([`take_over_through`], [`hand_back_through`]). Either way the game goes
+//! back to backup only by itself as soon as the switch reads on again
+//! ([`recheck`]: before every sync of a managed game, before each launch,
+//! and in the background): as a plugin that still polls says, else as
+//! Steam's files say.
 //!
 //! Steam's own cloud folder is `{steamuser}` in save paths
 //! ([`crate::spec::steam_user_dir`]): each device finds it in its own Steam
@@ -25,14 +30,15 @@
 
 use crate::config::{self, AppConfig, GameEntry, StoreLink, StoreMode};
 use crate::games::{self, FoundChoice};
+use crate::localapi::plugin::{self, AppReport, Caps};
 use crate::snapshot::{self, Trigger};
-use crate::steam::{self, InstalledApp, WrapperHealth};
+use crate::steam::{self, AppCloud, InstalledApp, WrapperHealth};
 use crate::sync::{self, Ctx, Outcome, Resolution, Status};
 use crate::{catchup, discover, logger, ludusavi, paths, process};
 use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 fn log(msg: impl AsRef<str>) {
@@ -91,6 +97,40 @@ fn busy(game: &GameEntry) -> Option<String> {
     None
 }
 
+/// Steam Cloud and the game as Steam itself says, through a plugin that
+/// still polls (`report`); else as Steam's files say. How Steam's last sync
+/// went is always the files'.
+fn steam_says(root: Option<&Path>, link: &StoreLink, report: Option<&AppReport>) -> AppCloud {
+    let files = root.map(|r| steam::app_cloud(r, &link.account, link.appid)).unwrap_or_default();
+    match report {
+        Some(r) => AppCloud { sync_state: files.sync_state, used: r.available, enabled: r.app_enabled, global: r.account_enabled },
+        None => files,
+    }
+}
+
+/// The game's launch options now: as a plugin that still polls read them,
+/// else from Steam's file.
+fn options_now(root: Option<&Path>, link: &StoreLink, report: Option<&AppReport>) -> Option<String> {
+    match report.and_then(|r| r.launch_options.clone()) {
+        Some(o) => Some(o).filter(|o| !o.trim().is_empty()),
+        None => root.and_then(|r| steam::launch_options(r, &link.account, link.appid).ok().flatten()),
+    }
+}
+
+/// Steam itself, live: what a Steam plugin can read and change in it while
+/// it runs ([`plugin::Plugin`]; tests have a fake). Every change answers
+/// with what Steam says afterwards.
+pub trait SteamHands {
+    /// The launch options can be set through it (otherwise in Steam's file,
+    /// with Steam closed).
+    fn sets_launch_options(&self) -> bool;
+    fn read(&self, account: &str, appid: u32) -> Result<AppReport>;
+    /// Turn the game's own Steam Cloud switch on or off.
+    fn set_cloud(&self, account: &str, appid: u32, on: bool) -> Result<AppReport>;
+    /// Set the game's launch options (`""`: none).
+    fn set_launch_options(&self, account: &str, appid: u32, options: &str) -> Result<AppReport>;
+}
+
 // ------------------------------------------------------------- what's here
 
 /// A game Steam installed on this device.
@@ -114,11 +154,13 @@ pub struct StoreApp {
 /// The games Steam installed, for the account in use, by name.
 pub fn apps(cfg: &AppConfig) -> Vec<StoreApp> {
     let Ok((root, account)) = steam_account(cfg) else { return Vec::new() };
+    let fresh = plugin::Fresh::load();
     let mut out: Vec<StoreApp> = steam::installed_apps(&root)
         .into_iter()
         .map(|a| {
             let entry = entry_of(cfg, &account, a.appid);
-            let cloud = steam::app_cloud(&root, &account, a.appid);
+            let link = StoreLink { account: account.clone(), appid: a.appid, ..StoreLink::default() };
+            let cloud = steam_says(Some(&root), &link, fresh.get(&account, a.appid).as_ref());
             StoreApp {
                 appid: a.appid,
                 name: a.name,
@@ -152,25 +194,30 @@ pub struct StoreStatus {
     /// Whether its launch options still go through the wrapper; `None` when
     /// they aren't meant to.
     pub wrapper: Option<WrapperHealth>,
+    /// A Steam plugin connected to this program can change Steam's settings
+    /// of the game: what it can do. `None` without one (or an older plugin).
+    pub plugin: Option<Caps>,
 }
 
 pub fn status(cfg: &AppConfig, game: &GameEntry) -> Result<StoreStatus> {
     let link = store_link(game)?;
     let root = steam::root(cfg);
-    let cloud = root.as_deref().map(|r| steam::app_cloud(r, &link.account, link.appid)).unwrap_or_default();
+    let report = plugin::fresh(&link.account, link.appid);
+    let cloud = steam_says(root.as_deref(), link, report.as_ref());
     let wrapper = link.wrapper.then(|| {
-        let options = root.as_deref().and_then(|r| steam::launch_options(r, &link.account, link.appid).ok().flatten());
+        let options = options_now(root.as_deref(), link, report.as_ref());
         steam::wrapper_health(options.as_deref(), &game.key, &paths::runner_exe())
     });
     Ok(StoreStatus {
         mode: state(game),
-        synchronized: cloud.synchronized(),
+        synchronized: report.as_ref().and_then(AppReport::synced).unwrap_or_else(|| cloud.synchronized()),
         sync_state: cloud.sync_state,
         cloud_enabled: cloud.enabled,
         cloud_used: cloud.used,
         global_enabled: cloud.global,
         steam_running: steam::is_running(),
         wrapper,
+        plugin: plugin::connected(&link.account),
     })
 }
 
@@ -179,7 +226,7 @@ pub fn status(cfg: &AppConfig, game: &GameEntry) -> Result<StoreStatus> {
 /// "missing", "changed", "runnerMoved"). "ok" when they aren't meant to.
 pub fn wrapper_word(cfg: &AppConfig, game: &GameEntry) -> &'static str {
     let Some(link) = game.store.as_ref().filter(|l| l.wrapper) else { return "ok" };
-    let options = steam::root(cfg).and_then(|r| steam::launch_options(&r, &link.account, link.appid).ok().flatten());
+    let options = options_now(steam::root(cfg).as_deref(), link, plugin::fresh(&link.account, link.appid).as_ref());
     match steam::wrapper_health(options.as_deref(), &game.key, &paths::runner_exe()) {
         steam::WrapperHealth::Ok => "ok",
         steam::WrapperHealth::Missing => "missing",
@@ -459,6 +506,119 @@ pub fn take_over(ctx: &Ctx, key: &str, wrapper: bool) -> Result<GameEntry> {
     Ok(entry)
 }
 
+/// Why a change in Steam didn't read back.
+fn not_changed(what: &str) -> anyhow::Error {
+    anyhow!(crate::tr!(
+        "Steam 没有改过来（{what}）。请在 Steam 里看一下这个游戏的属性，再试一次",
+        "Steam didn't take the change ({what}). Look at the game's properties in Steam and try again"
+    ))
+}
+
+/// Set the launch options through Steam itself and check that they read
+/// back as set.
+fn set_options_through(hands: &dyn SteamHands, link: &StoreLink, options: &str) -> Result<()> {
+    let after = hands.set_launch_options(&link.account, link.appid, options)?;
+    if after.launch_options.as_deref().map(str::trim) != Some(options.trim()) {
+        return Err(not_changed("LaunchOptions"));
+    }
+    Ok(())
+}
+
+/// [`take_over`] with Steam's own hands ([`SteamHands`], a Steam plugin),
+/// once the user confirmed that Steam Cloud is turned off for the game:
+///
+/// 1. The game isn't running and isn't being synced.
+/// 2. What Steam says now is read. Steam is done syncing the game with
+///    Steam Cloud (`STEAM_NOT_SYNCED:`; Steam's status when it says so,
+///    else its files).
+/// 3. With `wrapper`, the wrapper program is there; the user's launch
+///    options are the ones Steam has now.
+/// 4. The saves as they are now are a kept version in the cloud.
+/// 5. Steam turns Steam Cloud off for the game (read first: the switch is a
+///    toggle), and it reads back off.
+/// 6. With `wrapper`, Steam sets the launch options while it runs and they
+///    read back as set; otherwise the switch is turned on again and this
+///    fails.
+/// 7. The entry is managed.
+///
+/// Nothing in Steam changes before step 5. When the plugin can't set launch
+/// options, the switch is turned off and the rest is [`take_over`]'s, in
+/// Steam's file with Steam closed (`STEAM_RUNNING:` while it runs).
+pub fn take_over_through(ctx: &Ctx, key: &str, wrapper: bool, hands: &dyn SteamHands) -> Result<GameEntry> {
+    let game = ctx.game(key)?;
+    let link = store_link(&game)?.clone();
+    if let Some(reason) = busy(&game) {
+        bail!(reason);
+    }
+    let root = steam::root(&ctx.cfg);
+    let now = hands.read(&link.account, link.appid)?;
+    let files = root.as_deref().map(|r| steam::app_cloud(r, &link.account, link.appid)).unwrap_or_default();
+    if now.available && !now.synced().unwrap_or_else(|| files.synchronized()) {
+        bail!(crate::tr!(
+            "STEAM_NOT_SYNCED: Steam 还没有和云端同步完「{}」。等 Steam 同步完成（必要时启动一次游戏再退出），然后再接管",
+            "STEAM_NOT_SYNCED: Steam hasn't finished syncing \"{}\" with Steam Cloud. Let it finish (start the game once and quit if needed), then take it over",
+            game.name
+        ));
+    }
+    // Off already (the game's switch, or the account's): nothing to turn.
+    let turn_off = || -> Result<bool> {
+        if !now.on() {
+            return Ok(false);
+        }
+        let after = hands.set_cloud(&link.account, link.appid, false)?;
+        if after.available && after.app_enabled {
+            return Err(not_changed("Steam Cloud"));
+        }
+        log(format!("{key}: Steam turned Steam Cloud off for the game"));
+        Ok(true)
+    };
+    if wrapper && !hands.sets_launch_options() {
+        // The launch options go into Steam's file, with Steam closed.
+        turn_off()?;
+        return take_over(ctx, key, true);
+    }
+    let runner = paths::runner_exe();
+    let mut original = link.original_options.clone();
+    if wrapper {
+        if !runner.is_file() {
+            bail!(crate::tr!("找不到启动包装器 {}，请重新安装 Ludonimbus", "The launch wrapper {} is missing. Please reinstall Ludonimbus", runner.display()));
+        }
+        let current = options_now(root.as_deref(), &link, Some(&now));
+        // Through the wrapper already (taken over before): the user's own
+        // options are behind it.
+        original = match current.as_deref().and_then(steam::parse_wrapped) {
+            Some(w) => original.or_else(|| Some(w.original).filter(|o| !o.is_empty())),
+            None => current,
+        };
+    }
+    keep_before(ctx, &game)?;
+    let turned = turn_off()?;
+    if wrapper {
+        let options = steam::wrapper_options(&runner, key, original.as_deref().unwrap_or_default());
+        if let Err(e) = set_options_through(hands, &link, &options) {
+            if turned {
+                if let Err(back) = hands.set_cloud(&link.account, link.appid, true) {
+                    log(format!("{key}: Steam Cloud couldn't be turned on again: {back:#}"));
+                }
+            }
+            return Err(e);
+        }
+    }
+    let entry = games::update_game(key, |g| {
+        if let Some(s) = g.store.as_mut() {
+            s.mode = StoreMode::Managed;
+            if wrapper {
+                s.wrapper = true;
+                s.original_options = original.clone();
+            }
+        }
+        g.auto_sync = true;
+        Ok(())
+    })?;
+    log(format!("{key}: taken over from Steam Cloud through Steam ({})", if wrapper { "through the wrapper" } else { "without the wrapper" }));
+    Ok(entry)
+}
+
 /// Put back the launch options a game Steam installed had before the
 /// wrapper went in, while they still go through it for this game (changed
 /// in Steam since, they are the user's and stay). Needs Steam closed then
@@ -498,14 +658,56 @@ pub fn hand_back(ctx: &Ctx, key: &str) -> Result<GameEntry> {
     Ok(entry)
 }
 
+/// [`hand_back`] with Steam's own hands, once the user confirmed it: Steam
+/// turns Steam Cloud on for the game again first (when it doesn't read back
+/// on, the hand-back goes on and the user turns it on in Steam), then the
+/// launch options go back to what they were before the wrapper: through
+/// Steam while it runs, or in Steam's file with Steam closed when the
+/// plugin can't set them (`STEAM_RUNNING:` while it runs). Backup only
+/// again.
+pub fn hand_back_through(ctx: &Ctx, key: &str, hands: &dyn SteamHands) -> Result<GameEntry> {
+    let game = ctx.game(key)?;
+    let link = store_link(&game)?.clone();
+    if let Some(reason) = busy(&game) {
+        bail!(reason);
+    }
+    match hands.set_cloud(&link.account, link.appid, true) {
+        Ok(r) if r.app_enabled || !r.available => log(format!("{key}: Steam turned Steam Cloud on for the game again")),
+        Ok(_) => log(format!("{key}: Steam Cloud didn't read back on")),
+        Err(e) => log(format!("{key}: Steam Cloud couldn't be turned on again: {e:#}")),
+    }
+    if !link.wrapper || !hands.sets_launch_options() {
+        return hand_back(ctx, key);
+    }
+    let now = hands.read(&link.account, link.appid)?;
+    let current = options_now(steam::root(&ctx.cfg).as_deref(), &link, Some(&now));
+    if let Some(w) = current.as_deref().and_then(steam::parse_wrapped).filter(|w| w.key == game.key) {
+        let before = link.original_options.clone().or_else(|| Some(w.original).filter(|o| !o.is_empty()));
+        set_options_through(hands, &link, before.as_deref().unwrap_or_default())?;
+        log(format!("{key}: launch options given back through Steam"));
+    }
+    let entry = games::update_game(key, |g| {
+        if let Some(s) = g.store.as_mut() {
+            s.mode = StoreMode::Backup;
+            s.wrapper = false;
+            s.original_options = None;
+        }
+        Ok(())
+    })?;
+    log(format!("{key}: handed back to Steam Cloud through Steam"));
+    Ok(entry)
+}
+
 /// Whether Steam Cloud is still off for a game Ludonimbus manages. When it
 /// reads on again, the game goes back to backup only in the configuration
 /// and the changed entry is returned: from then on nothing is written into
 /// its saves by itself. The wrapper stays in the launch options; it does no
-/// harm there. Steam's files that can't be found count as on.
+/// harm there. What a Steam plugin that still polls says counts first (it
+/// sees Steam's switch live); otherwise Steam's files, and those that can't
+/// be found count as on.
 pub fn recheck(cfg: &AppConfig, game: &GameEntry) -> Result<Option<GameEntry>> {
     let Some(link) = game.store.as_ref().filter(|s| s.mode == StoreMode::Managed) else { return Ok(None) };
-    let cloud = steam::root(cfg).map(|r| steam::app_cloud(&r, &link.account, link.appid)).unwrap_or_default();
+    let cloud = steam_says(steam::root(cfg).as_deref(), link, plugin::fresh(&link.account, link.appid).as_ref());
     if !cloud.on() {
         return Ok(None);
     }
@@ -555,6 +757,22 @@ pub fn take_over_all(ctx: &Ctx, wrapper: bool) -> Result<Vec<Done>> {
         .filter_map(|g| g.store.as_ref().filter(|s| s.account == account).map(|s| (s.appid, g.key.clone())))
         .collect();
     Ok(backed_up.into_iter().map(|(appid, key)| Done::of(appid, Some(key.clone()), take_over(ctx, &key, wrapper))).collect())
+}
+
+/// [`take_over_all`] with Steam's own hands, once the user confirmed that
+/// Steam Cloud is turned off for these games: the account's switch can stay
+/// on, and each game goes through [`take_over_through`]. Steam stays open
+/// when the launch options can be set through it.
+pub fn take_over_all_through(ctx: &Ctx, wrapper: bool, hands: &dyn SteamHands) -> Result<Vec<Done>> {
+    let (_, account) = steam_account(&ctx.cfg)?;
+    let backed_up: Vec<(u32, String)> = ctx
+        .cfg
+        .games
+        .iter()
+        .filter(|g| state(g) == State::Backup)
+        .filter_map(|g| g.store.as_ref().filter(|s| s.account == account).map(|s| (s.appid, g.key.clone())))
+        .collect();
+    Ok(backed_up.into_iter().map(|(appid, key)| Done::of(appid, Some(key.clone()), take_over_through(ctx, &key, wrapper, hands))).collect())
 }
 
 /// Give every game back to Steam Cloud, and every wrapper out of the
