@@ -8,7 +8,7 @@ use ludonimbus_core::cloud::{self, CloudGame};
 use ludonimbus_core::config::{self, AppConfig, CloudConfig, CloudKind, GameEntry};
 use ludonimbus_core::state::{self, ConflictInfo};
 use ludonimbus_core::sync::{self, Ctx};
-use ludonimbus_core::{adapters, games, localart, logos, playtime, process, savelib, spec, steam, steamcloud};
+use ludonimbus_core::{adapters, games, localart, logos, pause, playtime, process, savelib, spec, steam, steamcloud};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use ts_rs::TS;
@@ -267,6 +267,9 @@ pub struct Overview {
     /// list kept on this PC (refreshed by `refresh_cloud_library`).
     cloud_only: Vec<CloudOnlyView>,
     cloud_fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Syncing is paused on this device (from the Steam Deck's panel or the
+    /// local API, see `ludonimbus_core::pause`).
+    paused: Option<pause::Pause>,
 }
 
 fn cloud_view(cfg: &AppConfig) -> CloudView {
@@ -303,7 +306,23 @@ pub async fn get_overview() -> CmdResult<Overview> {
             games: cfg.games.iter().filter(|g| !games::is_ludonimbus(g)).map(|g| game_view(&cfg, g, &procs, &families, &cached.tags)).collect(),
             cloud_only: cloud_only_views(&cfg, &cached.games, &families, &cached.tags),
             cloud_fetched_at: cached.fetched_at,
+            paused: pause::get(),
         })
+    })
+    .await
+}
+
+/// Pause syncing on this device, or go on (the backlog then goes up, see
+/// the watcher).
+#[tauri::command]
+pub async fn set_sync_paused(paused: bool) -> CmdResult<Option<pause::Pause>> {
+    blocking(move || {
+        if paused {
+            pause::pause()?;
+        } else {
+            pause::resume()?;
+        }
+        Ok(pause::get())
     })
     .await
 }

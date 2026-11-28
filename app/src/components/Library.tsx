@@ -7,7 +7,7 @@ import { groupBySource, type Grouped, type SourceGroup, tagText } from "../sourc
 import { type Member, membersOf, variantLabel } from "./SaveLibrary";
 import { DifferBanner, DifferDialog, differenceKey, needsChoice, uploadAll } from "./SyncPolicy";
 import { DeviceChip, Pill, Stat, When } from "./kit";
-import { Badge, Button, Empty, Icon, Spinner, Toggle, useUi } from "./ui";
+import { Badge, Button, Empty, Hint, Icon, Spinner, Toggle, useUi } from "./ui";
 
 function stored(storage: () => Storage, key: string): string | null {
   try {
@@ -670,6 +670,16 @@ export function Library({
           <span>{t.library.noCloud}</span>
           <Button small kind="primary" onClick={onSettings}>
             {t.library.connect}
+          </Button>
+        </div>
+      )}
+      {overview.paused && (
+        <div className="banner banner-info">
+          <Icon name="clock" />
+          <span>{t.library.paused}</span>
+          <Hint text={t.library.pausedHint} />
+          <Button small kind="primary" onClick={() => api.setSyncPaused(false).then(() => onChanged([]))}>
+            {t.library.resume}
           </Button>
         </div>
       )}

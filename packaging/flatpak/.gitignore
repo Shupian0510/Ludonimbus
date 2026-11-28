@@ -1,0 +1,7 @@
+# Made by the Flatpak build (CI, or by hand as in docs/development.md).
+stage/
+shared-modules/
+.flatpak-builder/
+build/
+repo/
+*.flatpak

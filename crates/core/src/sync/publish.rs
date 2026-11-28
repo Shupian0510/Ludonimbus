@@ -245,6 +245,7 @@ pub(super) fn flush(cloud: &Cloud, line: &mut OpenLine, game: Option<&GameEntry>
 /// Upload one waiting version (nothing when another process did already).
 /// It stays in the queue until [`drop_pending`].
 pub fn upload_pending(cloud: &Cloud, m: &SnapshotMeta) -> Result<()> {
+    crate::pause::check()?;
     let key = m.game.as_str();
     let Some((mut manifest, old)) = queued(key).into_iter().find(|(q, _)| q.id == m.id) else { return Ok(()) };
     let _lock = lock_game(key, &Gate::default())?;
@@ -265,11 +266,12 @@ pub fn drop_pending(m: &SnapshotMeta) -> Result<()> {
 }
 
 /// Upload the versions of `key` that were made while the cloud couldn't be
-/// reached.
+/// reached (or while syncing was paused). Not while it is paused.
 pub fn flush_pending(cloud: &Cloud, key: &str) -> Result<usize> {
     if queued(key).is_empty() {
         return Ok(0);
     }
+    crate::pause::check()?;
     let _lock = lock_game(key, &Gate::default())?;
     let mut line = cloud.open(key)?;
     flush(cloud, &mut line, None, None)

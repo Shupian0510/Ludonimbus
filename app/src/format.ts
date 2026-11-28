@@ -48,6 +48,7 @@ const statusTone: Record<Status, "ok" | "info" | "warn" | "bad" | "muted"> = {
   localChanged: "info",
   cloudNewer: "info",
   canRestore: "info",
+  savesMissing: "warn",
   notUploaded: "info",
   conflict: "warn",
   offline: "muted",

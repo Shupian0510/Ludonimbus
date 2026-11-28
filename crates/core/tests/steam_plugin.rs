@@ -158,7 +158,7 @@ fn exchange(api: &Api) {
     // told to send its reports (this program hasn't heard from it before).
     let v = api.poll("s1", ACCOUNT);
     assert_eq!(v["resend"].as_bool(), Some(true));
-    assert_eq!(v["apiVersion"].as_u64(), Some(5));
+    assert_eq!(v["apiVersion"].as_u64(), Some(6));
     let mut watch: Vec<u64> = v["watch"].as_array().unwrap().iter().map(|x| x.as_u64().unwrap()).collect();
     watch.sort();
     assert_eq!(watch, [APPID as u64, BACKED as u64]);

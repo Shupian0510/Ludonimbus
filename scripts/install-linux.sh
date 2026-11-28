@@ -4,6 +4,7 @@
 # §1.5, §2.1). Run it from the folder of the Linux download:
 #
 #   ./install-linux.sh              install or update
+#   ./install-linux.sh --flatpak    only the background service, for the Flatpak of Ludonimbus
 #   ./install-linux.sh --uninstall  remove the program (your settings stay)
 #
 # What goes where:
@@ -12,6 +13,12 @@
 #   ~/.config/Ludonimbus/bin/ludonimbus-agent        the background service (Game Mode)
 #   ~/.local/share/applications/ludonimbus.desktop   menu entry
 #   ~/.config/systemd/user/ludonimbus-agent.service  starts the service at login
+#
+# The service runs at a lower CPU and disk priority than games, and keeps
+# running after you log out (switching between Game Mode and desktop mode
+# logs you out): that needs "lingering" for your user, which this script
+# turns on when it may (it tells you the one command when it needs your
+# password).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -21,6 +28,8 @@ app_dir="$data/ludonimbus"
 bin="$config/Ludonimbus/bin"
 unit_dir="$config/systemd/user"
 unit="ludonimbus-agent.service"
+flatpak_id="io.github.shupian0510.ludonimbus"
+user="${USER:-$(id -un)}"
 have_systemd=0
 command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1 && have_systemd=1
 
@@ -32,6 +41,60 @@ if [ "${1:-}" = "--uninstall" ]; then
   rm -rf "$app_dir" "$bin"
   [ "$have_systemd" = 1 ] && systemctl --user daemon-reload || true
   echo "Ludonimbus removed. Settings and saves records are still in $config/Ludonimbus."
+  exit 0
+fi
+
+# Writes the user service that runs `$1` (the agent, or the Flatpak's).
+write_unit() {
+  mkdir -p "$unit_dir"
+  cat > "$unit_dir/$unit" <<EOF
+[Unit]
+Description=Ludonimbus background service (cloud saves)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=$1
+Restart=on-failure
+RestartSec=10
+# Games run beside it: syncing in the background yields the CPU and the disk to them.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+# Starts the service now and at every login, and keeps it running after
+# logging out when lingering can be turned on without a password.
+start_service() {
+  if [ "$have_systemd" != 1 ]; then
+    echo "systemd isn't available: start the background service yourself (e.g. from your session's autostart): $1"
+    return
+  fi
+  systemctl --user daemon-reload
+  systemctl --user enable "$unit" >/dev/null
+  systemctl --user restart "$unit"
+  if command -v loginctl >/dev/null; then
+    if [ "$(loginctl show-user "$user" -p Linger --value 2>/dev/null || true)" != "yes" ]; then
+      if ! loginctl --no-ask-password enable-linger "$user" >/dev/null 2>&1; then
+        echo "To keep the background service running when you switch to Game Mode or log out, run this once (it asks for your password):"
+        echo "  sudo loginctl enable-linger $user"
+      fi
+    fi
+  fi
+}
+
+if [ "${1:-}" = "--flatpak" ]; then
+  if ! command -v flatpak >/dev/null || ! flatpak info "$flatpak_id" >/dev/null 2>&1; then
+    echo "The Flatpak $flatpak_id isn't installed." >&2
+    exit 1
+  fi
+  write_unit "$(command -v flatpak) run --command=ludonimbus-agent $flatpak_id"
+  start_service "flatpak run --command=ludonimbus-agent $flatpak_id"
+  echo "Background service for the Flatpak installed."
   exit 0
 fi
 
@@ -66,26 +129,8 @@ Terminal=false
 EOF
 
 if [ -x "$bin/ludonimbus-agent" ]; then
-  cat > "$unit_dir/$unit" <<EOF
-[Unit]
-Description=Ludonimbus background service (cloud saves)
-After=network-online.target
-
-[Service]
-ExecStart="$bin/ludonimbus-agent"
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-EOF
-  if [ "$have_systemd" = 1 ]; then
-    systemctl --user daemon-reload
-    systemctl --user enable "$unit" >/dev/null
-    systemctl --user restart "$unit"
-  else
-    echo "systemd isn't available: start $bin/ludonimbus-agent yourself (e.g. from your session's autostart)."
-  fi
+  write_unit "\"$bin/ludonimbus-agent\""
+  start_service "$bin/ludonimbus-agent"
 fi
 
 echo "Ludonimbus installed."

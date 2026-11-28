@@ -44,7 +44,14 @@ pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// No tray icon could be made (the Flatpak without a StatusNotifier host,
+/// a desktop without one): closing the window quits, or nothing would.
+static NO_TRAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn main() {
+    // Inside the Flatpak: the user's folders, where the launch wrapper and
+    // the Decky plugin find Ludonimbus's data (core::paths).
+    ludonimbus_core::paths::use_host_folders();
     let desktop = *handheld::mode() == handheld::Mode::Desktop;
     let mut builder = tauri::Builder::default();
     // The handheld screen and the wrapper's questions run as their own
@@ -99,7 +106,10 @@ fn main() {
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
-            tray.build(app)?;
+            if let Err(e) = tray.build(app) {
+                ludonimbus_core::logger::log("app", format!("no tray icon ({e}); closing the window quits"));
+                NO_TRAY.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             watcher::spawn(app.handle().clone());
             agent::spawn(app.handle().clone());
             // The Switch client's LAN connection, when turned on.
@@ -145,7 +155,7 @@ fn main() {
             // and so do the other windows (the achievement popup, the Quark
             // sign-in): their code waits for them to be gone.
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if desktop && window.label() == "main" {
+                if desktop && window.label() == "main" && !NO_TRAY.load(std::sync::atomic::Ordering::SeqCst) {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -154,6 +164,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             // The library page
             commands::overview::get_overview,
+            commands::overview::set_sync_paused,
             commands::overview::set_shelf,
             commands::overview::collection_stats,
             // Saves and their versions

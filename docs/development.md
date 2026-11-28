@@ -67,7 +67,25 @@ cargo build --release -p ludonimbus-agent          # 游戏模式的后台服务
 
 **Decky 插件**（`plugin-decky/`，游戏模式的快捷菜单）：`npm ci && npm run build` 生成 `dist/index.js`；装到 Deck 时把 `dist/`、`main.py`、`plugin.json`、`package.json` 放进 `~/homebrew/plugins/Ludonimbus/`。后端只读 `~/.config/Ludonimbus/agent.json` 转发请求。本机接口只有一份实现，在 core 的 [`localapi`](../crates/core/src/localapi/mod.rs)，桌面应用和后台服务共用，说明见 [steam-plugin.md](steam-plugin.md)；测试是 `crates/core/tests/local_api.rs`（临时端口、假的宿主和临时数据文件夹）。
 
-**后台服务**：`ludonimbus-agent --once` 只补做一次「被强制结束的包装器」然后退出，排查时有用；正常由 `systemd --user` 一直运行，日志和应用写在同一个文件夹。
+**后台服务**：`ludonimbus-agent --once` 只补做一次「被强制结束的包装器」然后退出，排查时有用；正常由 `systemd --user` 一直运行，日志和应用写在同一个文件夹。`install-linux.sh` 写的用户服务以较低的 CPU 和磁盘优先级运行（`Nice=10`、`IOSchedulingClass=best-effort`、`IOSchedulingPriority=7`），并尝试为当前用户打开 lingering（`loginctl enable-linger`），让它在切换游戏模式 / 桌面模式（会注销）后继续运行；要密码时脚本会打印那一条 `sudo loginctl enable-linger <用户>`。Decky 面板连不上 Ludonimbus 时，「启动 Ludonimbus」经插件的 Python 后端运行 `systemctl --user start ludonimbus-agent.service`。
+
+**Linux 的其他硬盘**：扫描（游戏文件夹、模拟器程序）和存档查找器（Heroic / Lutris 的前缀）也看 `/run/media/<用户>/*`、`/run/media/mmcblk0p1` 这类直接挂在 `/run/media` 下的盘、`/var/mnt/*`、`/mnt/*`（`core::paths::extra_drives`，最多 32 个）：Steam 库（SteamOS 把 SD 卡的库放在卡的根目录）、GOG / Heroic、`Games` 文件夹，`Applications`、`Emulators`、EmuDeck 的 `Emulation/tools` 里的模拟器。
+
+### Flatpak
+
+桌面应用另有一个 Flatpak 包（[`packaging/flatpak/`](../packaging/flatpak/io.github.shupian0510.ludonimbus.yml)，应用 id `io.github.shupian0510.ludonimbus`，不上 Flathub）。CI 的 `linux-flatpak`（合并进 dev 后跟在 `linux-build` 后面，或者手动运行 CI 时勾上 build）用 Linux 下载包里的 `.deb` 和后台服务打出 `Ludonimbus.flatpak`，放进 workflow artifact，并在沙箱里用 `ldd` 检查每个库都找得到。手动打包时照 [`ci.yml`](../.github/workflows/ci.yml) 里这个任务的步骤：装 `flatpak-builder` 和 `org.gnome.Platform//49` + `org.gnome.Sdk//49`，把 Flathub 的 shared-modules 克隆到 `packaging/flatpak/shared-modules`，把 `.deb` 里的 `usr/bin/{ludonimbus-app,ludonimbus-run,ludusavi}`、`usr/lib/Ludonimbus/`、后台服务和图标放进 `packaging/flatpak/stage/`，再 `flatpak-builder --user --repo=repo build io.github.shupian0510.ludonimbus.yml` 和 `flatpak build-bundle repo Ludonimbus.flatpak io.github.shupian0510.ludonimbus`。安装：`flatpak install --user Ludonimbus.flatpak`。
+
+**权限**（manifest 的 `finish-args`）：网络、Wayland / X11、GPU；家目录（存档到处都是）；`/run/media`、`/mnt`、`/var/mnt`（SD 卡、U 盘、其他硬盘）；Steam 的 Flatpak（`~/.var/app/com.valvesoftware.Steam`）、规则认得的模拟器的 Flatpak、Heroic / Lutris / Bottles 的 Flatpak 文件夹（家目录权限不包括别的应用的 `~/.var/app`）；通知（`org.freedesktop.Notifications`）、密码（Secret Service，`org.freedesktop.secrets`：KWallet、GNOME 钥匙串）、托盘（`org.kde.StatusNotifierWatcher`；托盘要的 libayatana-appindicator 用 shared-modules 编进包里，Tauri 启动时加载它，没有就退出）。
+
+**数据文件夹**：沙箱里的 XDG 文件夹指向 `~/.var/app/<id>`；应用和后台服务一启动就把它们改回用户自己的（`core::paths::use_host_folders`），所以数据仍在 `~/.config/Ludonimbus`，模拟器和 Steam 的文件夹也照常找得到：Steam 启动的包装器、Decky 插件都在沙箱外面，要读同一份数据。沙箱内外的进程号不一样，所以 `agent.json` 里记着 `flatpak: true`，另一边判断写它的程序还在不在时看端口有没有回应（`localapi::live_owner`）。
+
+**在沙箱里做不到的**（应用直接说明原因，不会做一半）：
+
+- **Steam 的文件**：沙箱里看不到 Steam 在不在运行，也不能关闭或启动它，所以不改 Steam 的文件：加到 Steam、修复快捷方式、写文件改启动选项、装 Millennium 都会提示改用 AppImage（`steam::outside_sandbox`）。Steam 插件连着时，启动选项和 Steam 云开关经插件由 Steam 自己改，照常可用。
+- **沙箱外的进程**：不经包装器启动的游戏（直接打开、在模拟器里开）看不到，玩完后不会自动同步；经 Steam 启动（包装器）照常。包装器的运行标记一律当作「在运行」，被强制结束的会话由沙箱外的后台服务补做。
+- **后台服务**：不能在沙箱里安装或启动 systemd 用户服务。游戏模式要后台服务时，在桌面模式的终端里运行 Linux 下载包的 `./install-linux.sh --flatpak`：写一个用 `flatpak run --command=ludonimbus-agent io.github.shupian0510.ludonimbus` 运行后台服务的用户服务（同样的优先级和 lingering）。它在沙箱里运行，限制同上；也可以直接装 Linux 下载包的后台服务（`./install-linux.sh`），两者用同一个数据文件夹。
+- **托盘**：托盘图标要桌面有 StatusNotifier 宿主（Deck 的桌面模式 KDE 有）；做不出托盘图标时，关闭窗口就退出，不再藏到托盘里（再打开 Ludonimbus 时窗口照常出来）。
+- **更新**：应用里的「更新」不管 Flatpak；用新的 `Ludonimbus.flatpak` 覆盖安装。
 
 **Switch 客户端**（单独的仓库 [Ludonimbus-NX](https://github.com/Shupian0510/Ludonimbus-NX)，本地放在本仓库旁边）：用 devkitPro 编译。devkitpro.org 拒绝这台电脑的下载，WSL2 里的 `/opt/devkitpro` 是从 Docker Hub 的官方镜像 `devkitpro/devkita64` 解出来的；编译：
 

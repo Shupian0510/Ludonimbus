@@ -3,8 +3,10 @@
 //! first, then the decision ([`decide::decide`]) and what this device makes
 //! of it. A sync nobody chose ([`Resolution::Auto`]) also goes by the game
 //! and by who started it: [`backup_only`], [`upload_only`],
-//! [`not_into_containers`], [`not_too_new`]. After playing comes the
-//! bookkeeping. And [`check`]: the same decision, with nothing changed.
+//! [`not_into_containers`], [`not_too_new`], [`not_into_missing`]. While
+//! syncing is paused on this device nothing reaches the cloud ([`paused`]).
+//! After playing comes the bookkeeping. And [`check`]: the same decision,
+//! with nothing changed.
 
 use super::carry::{local_here, scope_of_platform, too_new, with_carried};
 use super::gate::{is_gave_up, Gate, GaveUp, Phase};
@@ -34,6 +36,33 @@ fn offline(ctx: &Ctx, game: &GameEntry, trigger: Trigger, err: anyhow::Error) ->
     if matches!(trigger, Trigger::PreLaunch) {
         return Ok(Outcome::Offline { message });
     }
+    queue_here(ctx, game, trigger, message)
+}
+
+/// While syncing is paused on this device ([`crate::pause`]): nothing goes
+/// to the cloud or comes from it. Before launch the game starts without a
+/// sync; after playing and in the background the saves changed here wait in
+/// the queue, as when the cloud can't be reached, and go up once syncing
+/// goes on. What the user asked for that needs the cloud is refused.
+fn paused(ctx: &Ctx, game: &GameEntry, trigger: Trigger) -> Result<Outcome> {
+    let message = crate::pause::Paused.to_string();
+    match trigger {
+        Trigger::PreLaunch => {
+            log(format!("{}: syncing is paused; starting without a sync", game.key));
+            Ok(Outcome::Offline { message })
+        }
+        Trigger::AutoExit | Trigger::Passive => {
+            log(format!("{}: syncing is paused; the saves wait in the queue", game.key));
+            queue_here(ctx, game, trigger, message)
+        }
+        _ => Err(crate::pause::Paused.into()),
+    }
+}
+
+/// Keep the saves here as a version in the queue, built on what this device
+/// synced last, when they changed since; `message` says why it isn't
+/// uploaded now.
+fn queue_here(ctx: &Ctx, game: &GameEntry, trigger: Trigger, message: String) -> Result<Outcome> {
     let local = local_here(None, game, None, false)?;
     let st = state::game(&game.key);
     if local.is_empty() || st.last_synced_hash.as_deref() == Some(local.hash.as_str()) {
@@ -128,6 +157,12 @@ pub(super) fn fresh(ctx: &Ctx, game: &GameEntry) -> GameEntry {
 fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate, upload: bool) -> Result<Outcome> {
     // A game Steam installed is managed only while Steam Cloud stays off.
     let game = &crate::steamcloud::rechecked(&ctx.cfg, fresh(ctx, game));
+    if crate::pause::is_paused() {
+        return match ctx.cloud() {
+            Err(e) if cloud::is_not_configured(&e) => Ok(Outcome::NoCloud),
+            _ => paused(ctx, game, trigger),
+        };
+    }
     let cloud = match ctx.cloud() {
         Ok(c) => c,
         Err(e) if cloud::is_not_configured(&e) => return Ok(Outcome::NoCloud),
@@ -179,6 +214,9 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
     let seen = with_queue(&s.line.view, &s.line.place, &game.key);
     let loc = local_of(&local, &st);
     let mut action = holding(decide::decide(&loc, &seen), &loc, &seen);
+    if missing_here(&local, &st) && resolution == Resolution::Auto && !matches!(trigger, Trigger::PreLaunch | Trigger::SyncNow) {
+        action = not_into_missing(&game.key, action);
+    }
     if game.backup_only() && resolution == Resolution::Auto {
         action = backup_only(&game.key, action, &loc, &seen);
     }
@@ -260,6 +298,33 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
         }
     }
     Ok(outcome)
+}
+
+/// Every save file of the game is gone from this device: the scan finds
+/// none, while this device synced a version of it before (only versions
+/// with files are ever synced, so that one had some). The files were
+/// deleted, or they are on a drive that isn't there now (a Steam Deck's SD
+/// card). Nothing empty is ever uploaded ([`decide::settle`] has nothing to
+/// push without saves); the game shows [`Status::SavesMissing`] and the
+/// user takes them back (「取回」).
+pub(super) fn missing_here(local: &LocalState, st: &state::GameState) -> bool {
+    local.is_empty() && st.last_synced_id.is_some()
+}
+
+/// What a sync that nobody chose does when the saves here are all gone
+/// ([`missing_here`]): nothing is written into the game's folder by itself
+/// after playing or in the background, whoever keeps the game up to date.
+/// The user takes them back (a sync they start does), and a game started
+/// through Steam gets them before it starts, as it gets any newer version
+/// (the launch wrapper's sync before launch).
+fn not_into_missing(key: &str, action: Action) -> Action {
+    match action {
+        Action::Pull { id } => {
+            log(format!("{key}: the saves here are gone; {id} is written back only when the user takes it or the game starts through Steam"));
+            Action::Nothing
+        }
+        other => other,
+    }
 }
 
 /// What a sync that nobody chose for does with a game whose saves Steam
@@ -451,5 +516,8 @@ pub fn check(ctx: &Ctx, game: &GameEntry) -> StatusReport {
     let loc = local_of(&local, &st);
     let action = holding(decide::decide(&loc, &view), &loc, &view);
     report.status = decide::Status::of(&action, &loc, &view).into();
+    if report.status == Status::CanRestore && missing_here(&local, &st) {
+        report.status = Status::SavesMissing;
+    }
     report
 }

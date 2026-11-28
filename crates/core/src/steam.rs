@@ -491,11 +491,13 @@ fn steam_command(root: &Path) -> std::process::Command {
 
 /// Start Steam again (after closing it to change its shortcuts).
 pub fn launch(root: &Path) -> Result<()> {
+    outside_sandbox()?;
     steam_command(root).spawn().map(|_| ()).with_context(|| crate::tr!("无法启动 Steam", "Couldn't start Steam"))
 }
 
 /// Ask Steam to exit and wait for it.
 pub fn shutdown(root: &Path) -> Result<()> {
+    outside_sandbox()?;
     if !is_running() {
         return Ok(());
     }
@@ -523,9 +525,24 @@ fn running_in(root: &Path) -> bool {
     live && !cfg!(test) && is_running()
 }
 
+/// Inside the Flatpak sandbox Steam's processes can't be seen, and Steam
+/// can't be closed or started: its files aren't changed from there (a
+/// running Steam overwrites them). The Steam plugin still changes launch
+/// options and Steam Cloud switches through Steam itself.
+pub fn outside_sandbox() -> Result<()> {
+    if crate::paths::in_flatpak() {
+        bail!(crate::tr!(
+            "Flatpak 版看不到 Steam 是否在运行，也不能关闭它，所以不改 Steam 的文件。这一步请用 Linux 下载包里的 AppImage（install-linux.sh），或者在 Steam 里装好 Ludonimbus 的 Steam 插件。",
+            "The Flatpak can't see whether Steam is running or close it, so it doesn't change Steam's files. Do this with the AppImage from the Linux download (install-linux.sh), or with Ludonimbus's Steam plugin in Steam."
+        ));
+    }
+    Ok(())
+}
+
 /// A running Steam overwrites `shortcuts.vdf` in its own install folder, so
 /// edits there need Steam closed.
 fn ensure_steam_closed(root: &Path) -> Result<()> {
+    outside_sandbox()?;
     if running_in(root) {
         bail!(crate::tr!(
             "STEAM_RUNNING: 修改 Steam 快捷方式前需要先关闭 Steam（Steam 运行时会覆盖修改）",
@@ -538,6 +555,7 @@ fn ensure_steam_closed(root: &Path) -> Result<()> {
 /// Steam writes `localconfig.vdf` (launch options among it) when it exits,
 /// so changing a game's launch options needs Steam closed too.
 pub(crate) fn ensure_closed_for_options(root: &Path) -> Result<()> {
+    outside_sandbox()?;
     if running_in(root) {
         bail!(crate::tr!(
             "STEAM_RUNNING: 修改游戏的启动选项前需要先关闭 Steam（Steam 退出时会覆盖修改）",

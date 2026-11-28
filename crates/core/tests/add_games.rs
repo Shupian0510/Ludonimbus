@@ -43,7 +43,7 @@ impl Machine {
     }
 
     fn look(&self) -> Look {
-        Look { places: Places::windows(&self.home), steam_userdata: None, prefixes_home: None }
+        Look { places: Places::windows(&self.home), steam_userdata: None, prefixes_home: None, drives: Vec::new() }
     }
 
     fn suggest(&self, name: &str, exe: &Path) -> Vec<Candidate> {

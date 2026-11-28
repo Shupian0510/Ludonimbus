@@ -1,0 +1,78 @@
+# Flatpak of the Ludonimbus desktop app (docs/development.md, "Flatpak").
+# Built in CI (.github/workflows/ci.yml, job linux-flatpak) from the Linux
+# build's .deb and background service, staged in ./stage; not on Flathub.
+#
+# Inside the sandbox Ludonimbus keeps its data in ~/.config/Ludonimbus (the
+# app puts the XDG folders back to the user's, core::paths::use_host_folders)
+# so that the launch wrapper Steam starts, the background service and the
+# Decky plugin, which run outside it, share it. What can't work in here is
+# listed in docs/development.md.
+app-id: io.github.shupian0510.ludonimbus
+# The GNOME runtime has the WebKitGTK 4.1 the app links (CI checks that every
+# library resolves in the sandbox).
+runtime: org.gnome.Platform
+runtime-version: "49"
+sdk: org.gnome.Sdk
+command: ludonimbus-app
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Saves are all over the home folder (emulators, Wine and Proton prefixes,
+  # Steam's userdata); Ludonimbus's own data is ~/.config/Ludonimbus.
+  - --filesystem=home
+  # Other drives: a Steam Deck's SD card and USB drives, other disks.
+  - --filesystem=/run/media
+  - --filesystem=/mnt
+  - --filesystem=/var/mnt
+  # Other Flatpaks' folders aren't part of the home folder in the sandbox:
+  # Steam's, the emulators' the rules know, and the launchers' Wine prefixes.
+  - --filesystem=~/.var/app/com.valvesoftware.Steam
+  - --filesystem=~/.var/app/org.DolphinEmu.dolphin-emu
+  - --filesystem=~/.var/app/info.cemu.Cemu
+  - --filesystem=~/.var/app/org.azahar_emu.Azahar
+  - --filesystem=~/.var/app/org.ryujinx.Ryujinx
+  - --filesystem=~/.var/app/org.yuzu_emu.yuzu
+  - --filesystem=~/.var/app/net.rpcs3.RPCS3
+  - --filesystem=~/.var/app/net.pcsx2.PCSX2
+  - --filesystem=~/.var/app/org.duckstation.DuckStation
+  - --filesystem=~/.var/app/org.ppsspp.PPSSPP
+  - --filesystem=~/.var/app/org.libretro.RetroArch
+  - --filesystem=~/.var/app/com.heroicgameslauncher.hgl
+  - --filesystem=~/.var/app/net.lutris.Lutris
+  - --filesystem=~/.var/app/com.usebottles.bottles
+  # Notifications, passwords (Secret Service: KWallet, GNOME Keyring) and the
+  # tray icon.
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+
+modules:
+  # The tray icon needs libayatana-appindicator (Tauri loads it at start).
+  # CI clones flathub/shared-modules here at a fixed commit.
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  - name: ludonimbus
+    buildsystem: simple
+    build-commands:
+      # The app, the Steam launch wrapper (copied to ~/.config/Ludonimbus/bin
+      # at start, where Steam's launch options point), the background
+      # service and Ludusavi, all beside each other as in the other packages.
+      - install -Dm755 -t /app/bin ludonimbus-app ludonimbus-run ludonimbus-agent ludusavi
+      # Tauri's resources: /app/bin/../lib/<product name>.
+      - mkdir -p /app/lib && cp -r lib/Ludonimbus /app/lib/Ludonimbus
+      - install -Dm644 icons/32x32.png /app/share/icons/hicolor/32x32/apps/io.github.shupian0510.ludonimbus.png
+      - install -Dm644 icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.shupian0510.ludonimbus.png
+      - install -Dm644 icons/256x256.png /app/share/icons/hicolor/256x256/apps/io.github.shupian0510.ludonimbus.png
+      - install -Dm644 io.github.shupian0510.ludonimbus.desktop /app/share/applications/io.github.shupian0510.ludonimbus.desktop
+      - install -Dm644 io.github.shupian0510.ludonimbus.metainfo.xml /app/share/metainfo/io.github.shupian0510.ludonimbus.metainfo.xml
+    sources:
+      - type: dir
+        path: stage
+      - type: file
+        path: io.github.shupian0510.ludonimbus.desktop
+      - type: file
+        path: io.github.shupian0510.ludonimbus.metainfo.xml

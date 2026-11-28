@@ -143,12 +143,20 @@ pub struct Look {
     /// The home whose launchers' Wine prefixes (Heroic, Lutris, Bottles) to
     /// look in: Linux only.
     pub prefixes_home: Option<PathBuf>,
+    /// Other drives whose launchers' prefixes to look in too (Linux: a
+    /// Steam Deck's SD card, see [`crate::paths::extra_drives`]).
+    pub drives: Vec<PathBuf>,
 }
 
 impl Look {
     pub fn here() -> Look {
         let steam = crate::config::load().ok().and_then(|c| crate::steam::root(&c));
-        Look { places: Places::here(), steam_userdata: steam.map(|r| r.join("userdata")), prefixes_home: if cfg!(windows) { None } else { dirs::home_dir() } }
+        Look {
+            places: Places::here(),
+            steam_userdata: steam.map(|r| r.join("userdata")),
+            prefixes_home: if cfg!(windows) { None } else { dirs::home_dir() },
+            drives: crate::paths::extra_drives(),
+        }
     }
 }
 
@@ -188,7 +196,7 @@ pub fn suggest_in(look: &Look, name: &str, exe: Option<&Path>, install: Option<&
     }
     places.push(look.places.clone());
     if let Some(home) = &look.prefixes_home {
-        for (prefix, _) in hints::launcher_prefixes(home) {
+        for (prefix, _) in hints::launcher_prefixes_on(home, &look.drives) {
             let named = prefix.file_name().is_some_and(|n| score_name(&n.to_string_lossy()) >= 100);
             if named && own_prefix.as_ref().is_none_or(|o| !crate::util::same_path(&o.to_string_lossy(), &prefix.to_string_lossy())) {
                 places.extend(hints::prefix_user_dirs(&prefix).iter().map(|u| Places::windows(u)));

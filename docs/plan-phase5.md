@@ -127,6 +127,7 @@ H、W 已实现，自动测试通过，等你按 [testing-v0.7.md](testing-v0.7.
 - **本地接口 API 3**（应用和后台服务都支持）：同步时可以带 `resolution=cloud|local`（手柄处理冲突），新增「另一个版本有更新的存档」的查询、应用和忽略。
 - **Decky 插件**（`plugin-decky/`）：快捷菜单面板显示正在玩（或最近启动）的游戏的云存档状态，立即同步、冲突二选一、另一个版本有更新的存档时应用、版本列表里恢复，全部手柄可用。后端只读 `agent.json` 转发请求。
 - **安装**：`scripts/install-linux.sh` 装到家目录（只读系统也能用）：AppImage、包装器、后台服务、菜单项、systemd 用户服务；`--uninstall` 卸载。CI 新增 `linux-dev-build`：main 上每次提交生成 Linux 下载包（AppImage + 包装器 + 后台服务 + 安装脚本）和 Decky 插件 zip。
+- **进度（2026-11-28，对照 OpenSave 补上的 Deck 功能）**：Decky 面板连不上时可以「启动 Ludonimbus」（经插件后端 `systemctl --user start`）；列出游戏库里的每个游戏（状态、立即同步 / 取回、冲突二选一、全部同步）；暂停 / 继续同步（[pause.rs](../crates/core/src/pause.rs)）；「保留这一份」；用 `/v1/changes` 等变化代替每 5 秒轮询，显示封面（本机接口 API 6，见 [steam-plugin.md](steam-plugin.md)）。本机存档全不见了时不上传空存档，显示「本机存档不见了」，只在用户取回或经 Steam 启动前写回。后台服务的用户服务降低优先级、尝试打开 lingering，也补传等着上传的版本。扫描和存档查找器看 `/run/media`、`/var/mnt`、`/mnt` 下的其他硬盘。桌面应用的 Flatpak 包（CI artifact，沙箱里做不到的见 [development.md](development.md)「Flatpak」）。都还没在真机上试过。
 - **还没做 / 待验证**：AppImage 进正式发布流程（release.yml 还没改，另一个会话在改它）；Linux 上的自动更新；Steam 快捷方式用了 Proton 但程序不是 `.exe` 的情况（`CompatToolMapping`）；EmuDeck 的符号链接；Flatpak 版 Steam 的启动选项能不能调用家目录里的包装器（沙箱）；Millennium 插件在 Linux 桌面模式里能不能用；Decky 插件在真机上的界面。
 
 ---
