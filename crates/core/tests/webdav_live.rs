@@ -135,6 +135,7 @@ fn webdav_live() {
         last_seen: chrono::Utc::now(),
         layout: 0,
         installs: Vec::new(),
+        kind: None,
     })
     .unwrap();
     repo.put_device(&DeviceInfo {
@@ -145,6 +146,7 @@ fn webdav_live() {
         last_seen: chrono::Utc::now(),
         layout: 0,
         installs: Vec::new(),
+        kind: None,
     })
     .unwrap();
     let devices = repo.list_devices().unwrap();

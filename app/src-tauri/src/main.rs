@@ -67,7 +67,15 @@ fn main() {
             let _ = config::load();
             if !desktop {
                 if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.set_fullscreen(true);
+                    if handheld::prompt_dialog() {
+                        // A question on the desktop: a window of its own, centred and in front.
+                        let _ = w.set_min_size(None::<tauri::Size>);
+                        let _ = w.set_size(tauri::LogicalSize::new(940.0, 480.0));
+                        let _ = w.center();
+                        let _ = w.set_always_on_top(true);
+                    } else {
+                        let _ = w.set_fullscreen(true);
+                    }
                     let _ = w.set_focus();
                 }
                 return Ok(());
@@ -306,6 +314,7 @@ fn main() {
             savelibrary::transfer_apply,
             handheld::launch_mode,
             handheld::prompt_answer,
+            handheld::prompt_shown,
             handheld::set_fullscreen,
             handheld::quit_handheld,
             handheld::handheld_zoom,

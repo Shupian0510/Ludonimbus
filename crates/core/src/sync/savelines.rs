@@ -83,6 +83,9 @@ pub struct LineMember {
     pub platform: String,
     /// It is this device.
     pub here: bool,
+    /// What kind of device it is ([`crate::cloud::DeviceInfo::kind`]); empty
+    /// when its record doesn't say.
+    pub kind: String,
 }
 
 /// Which save line a game follows on this device (docs/plan-v2.md,
@@ -107,7 +110,7 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
     let known = cloud.lines_of(&game.key)?;
     let devices = cloud.list_devices().unwrap_or_default();
     let (own_id, own_name) = ctx.device();
-    let me = || LineMember { device: own_name.to_string(), platform: platform(game), here: true };
+    let me = || LineMember { device: own_name.to_string(), platform: platform(game), here: true, kind: crate::handheld::device_kind().to_string() };
     // A device with two versions of the game on one line is named once.
     let names = |members: &[LineMember]| {
         let mut out: Vec<String> = Vec::new();
@@ -128,7 +131,12 @@ pub fn lines(ctx: &Ctx, game: &GameEntry) -> Result<Vec<LineInfo>> {
                 .iter()
                 .filter(|d| d.id != own_id)
                 .flat_map(|d| {
-                    d.installs.iter().filter(|i| i.dir == l.path).map(|i| LineMember { device: d.name.clone(), platform: i.platform.clone(), here: false })
+                    d.installs.iter().filter(|i| i.dir == l.path).map(|i| LineMember {
+                        device: d.name.clone(),
+                        platform: i.platform.clone(),
+                        here: false,
+                        kind: d.kind.clone().unwrap_or_default(),
+                    })
                 })
                 .collect();
             if current {

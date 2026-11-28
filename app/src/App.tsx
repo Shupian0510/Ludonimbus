@@ -9,6 +9,7 @@ import { CloudGameDetail } from "./components/CloudGameDetail";
 import { GameDetail } from "./components/GameDetail";
 import { Library } from "./components/Library";
 import { SettingsPage } from "./components/Settings";
+import { learnDeviceKinds } from "./components/kit";
 import { Icon, Spinner, useUi } from "./components/ui";
 import { UpdateDialog } from "./components/Update";
 import { outcomeText } from "./format";
@@ -38,6 +39,7 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
       const o = await api.overview();
       setOverview(o);
       setLoadError(null);
+      learnDeviceKinds([{ name: o.deviceName, kind: o.deviceKind }]);
       // Seed statuses from the cached last check.
       setChecks((prev) => {
         const next = { ...prev };

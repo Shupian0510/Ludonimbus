@@ -117,6 +117,25 @@ pub async fn launch_mode() -> CmdResult<LaunchInfo> {
     .await
 }
 
+/// The wrapper's question is a window of its own on the desktop (centred,
+/// not full screen) rather than full screen.
+pub fn prompt_dialog() -> bool {
+    match mode() {
+        Mode::Prompt(f) => prompt::read_request(f).is_ok_and(|r| r.dialog),
+        _ => false,
+    }
+}
+
+/// The question is on screen: the wrapper stops waiting to fall back to a
+/// system dialog.
+#[tauri::command]
+pub async fn prompt_shown() -> CmdResult<()> {
+    if let Mode::Prompt(f) = mode() {
+        prompt::mark_shown(f).map_err(|e| format!("{e:#}"))?;
+    }
+    Ok(())
+}
+
 /// The wrapper's question was answered: tell it and close.
 #[tauri::command]
 pub async fn prompt_answer(app: AppHandle, choice: Option<String>) -> CmdResult<()> {

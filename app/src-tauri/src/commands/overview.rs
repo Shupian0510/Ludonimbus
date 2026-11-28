@@ -259,6 +259,8 @@ pub struct CloudView {
 pub struct Overview {
     device_id: String,
     device_name: String,
+    /// What kind of device this is ([`ludonimbus_core::handheld::device_kind`]).
+    device_kind: String,
     cloud: CloudView,
     steam_found: bool,
     steam_running: bool,
@@ -299,6 +301,7 @@ pub async fn get_overview() -> CmdResult<Overview> {
         Ok(Overview {
             device_id: cfg.device.id.clone(),
             device_name: cfg.device.name.clone(),
+            device_kind: ludonimbus_core::handheld::device_kind().to_string(),
             cloud: cloud_view(&cfg),
             steam_found: steam::root(&cfg).is_some(),
             steam_running: procs.iter().any(|p| p == steam::PROCESS),

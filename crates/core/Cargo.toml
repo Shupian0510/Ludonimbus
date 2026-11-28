@@ -65,6 +65,8 @@ windows-sys = { version = "0.59", features = [
   # foreground to the launch wrapper's question window (handheld.rs, prompt.rs).
   "Win32_System_LibraryLoader",
   "Win32_UI_WindowsAndMessaging",
+  # Whether this is a laptop (a battery of its own), for the device record (handheld.rs).
+  "Win32_System_Power",
 ] }
 
 [dev-dependencies]

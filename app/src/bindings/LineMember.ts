@@ -12,4 +12,9 @@ platform: string,
 /**
  * It is this device.
  */
-here: boolean, };
+here: boolean, 
+/**
+ * What kind of device it is ([`crate::cloud::DeviceInfo::kind`]); empty
+ * when its record doesn't say.
+ */
+kind: string, };

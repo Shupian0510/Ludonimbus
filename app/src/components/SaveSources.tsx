@@ -2,15 +2,13 @@
 // the other sources of saves on its card (another version, the Switch, an
 // emulator, a device that keeps its own), shown as groups in the Saves tab
 // and on the handheld screen, each save compared with the one here; taking
-// one here; and the one-line hint on the game page when another version
-// has newer progress.
+// one here (the game page's progress cards and the Saves tab).
 import { useState } from "react";
-import { api, errorText, NewerElsewhere, Overview, PlatformMark as Mark, SaveSource, SnapshotSummary } from "../api";
+import { api, errorText, Overview, SaveSource, SnapshotSummary } from "../api";
 import { dateTime, outcomeText } from "../format";
 import { msg, useT } from "../i18n";
-import { cmpOf, ConvertChip, Delta, DeviceChip, PlatformMark, PlayDelta, playedOf, When } from "./kit";
 import { ApplyDialog } from "./SaveLibrary";
-import { Button, Icon, useUi } from "./ui";
+import { useUi } from "./ui";
 
 /** The game the saves are taken to. `xboxContainers`: written into the Xbox app's containers (experimental). */
 export interface TakeTarget {
@@ -100,69 +98,4 @@ export function useTakeHere(target: TakeTarget, overview: Overview, onDone: () =
     />
   );
   return { take, dialog };
-}
-
-/**
- * One line on the game page when another version has newer progress than
- * the save here, shown rather than told: that save (its program, device,
- * time, how much newer and further played), an arrow, the save here; take
- * it, or say no (that save isn't offered again).
- */
-export function NewerRow({
-  target,
-  overview,
-  newer,
-  marks,
-  disabled,
-  tooNew,
-  onDismiss,
-  onDone,
-}: {
-  target: TakeTarget;
-  overview: Overview;
-  newer: NewerElsewhere;
-  marks: Record<string, Mark>;
-  disabled?: boolean;
-  tooNew?: string[];
-  onDismiss: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const t = useT();
-  const m = t.sources;
-  const { take, dialog } = useTakeHere(target, overview, onDone, tooNew);
-  const there = newer.snapshot;
-  const here = newer.here;
-  return (
-    <div className="banner banner-info newer-row">
-      <span className="newer-strip">
-        <span className="newer-side">
-          <PlatformMark mark={marks[there.platform ?? ""]} label={newer.source.name} strong />
-          <DeviceChip name={there.deviceName} />
-          <When at={there.createdAt} />
-          <Delta cmp={cmpOf(there, here)} />
-          <PlayDelta secs={playedOf(there, here)} quiet />
-        </span>
-        <Icon name="arrow" size={16} />
-        <span className="newer-side here">
-          <PlatformMark mark={marks[here?.platform ?? ""]} label={m.hereName(newer.hereName)} />
-          {here ? <When at={here.createdAt} /> : <span className="muted">{t.kit.noSaves}</span>}
-        </span>
-        {newer.source.take.kind === "convert" && <ConvertChip hint={m.convertHint(newer.source.take.how)} />}
-      </span>
-      <Button small kind="primary" onClick={() => take(newer.source, there)} disabled={disabled} title={disabled ? t.savelib.running : undefined}>
-        {m.take}
-      </Button>
-      <Button
-        small
-        kind="ghost"
-        onClick={() => {
-          api.dismissNewer(target.key, there.id).catch(() => undefined);
-          onDismiss();
-        }}
-      >
-        {m.notNow}
-      </Button>
-      {dialog}
-    </div>
-  );
 }

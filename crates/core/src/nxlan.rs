@@ -817,8 +817,16 @@ fn register_device(cfg: &AppConfig, d: &Paired, client: String) {
     std::thread::spawn(move || {
         let (id, name) = device_tuple(&d);
         // It reaches the cloud through this PC, so it knows the layout this PC knows.
-        let info =
-            DeviceInfo { id, name, os: "switch".into(), app_version: client, last_seen: Utc::now(), layout: crate::cloud::v2::LAYOUT, installs: Vec::new() };
+        let info = DeviceInfo {
+            id,
+            name,
+            os: "switch".into(),
+            app_version: client,
+            last_seen: Utc::now(),
+            layout: crate::cloud::v2::LAYOUT,
+            installs: Vec::new(),
+            kind: Some("switch".into()),
+        };
         if let Err(e) = cloud(&cfg).and_then(|c| c.put_device(&info)) {
             failed(&cfg, &e);
         }

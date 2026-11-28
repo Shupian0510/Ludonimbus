@@ -12,7 +12,7 @@ import { cardsOf, type Card } from "../components/Library";
 import { familyOf, variantLabel } from "../components/SaveLibrary";
 import { arrange } from "../components/Saves";
 import { versionOf } from "../components/SaveSources";
-import { cmpOf, ConvertChip, Delta, DeviceChip, Pill, PlatformMark, PlayDelta, playedOf, SaveCard, SaveCompare, Side, Stat, When } from "../components/kit";
+import { cmpOf, ConvertChip, Delta, DeviceChip, learnDeviceKinds, Pill, PlatformMark, PlayDelta, playedOf, SaveCard, SaveCompare, Side, Stat, When } from "../components/kit";
 import { Badge, Icon, Spinner, useUi } from "../components/ui";
 import { bytes, dateTime, duration, outcomeText, statusInfo } from "../format";
 import { currentLang, msg, useT } from "../i18n";
@@ -39,7 +39,9 @@ function Shell({ onDesktop }: { onDesktop: () => void }) {
 
   const reload = useCallback(async () => {
     try {
-      setOverview(await api.overview());
+      const o = await api.overview();
+      setOverview(o);
+      learnDeviceKinds([{ name: o.deviceName, kind: o.deviceKind }]);
       setError(null);
     } catch (e) {
       setError(errorText(e));
@@ -499,6 +501,7 @@ function Game({
           <section key={src.id}>
             <h2 className="hh-source-head">
               {src.kind === "device" ? <DeviceChip name={src.name} /> : <PlatformMark mark={marks[src.platform]} label={src.name} size={24} strong />}
+              {src.kind !== "version" && <span className="line-tag">{src.kind === "device" ? t.sources.ownTag : t.sources.sharedTag}</span>}
               {src.devices
                 .filter((d) => src.kind !== "device" || d !== src.name)
                 .map((d) => (

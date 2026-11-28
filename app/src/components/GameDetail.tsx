@@ -9,14 +9,14 @@ import { ArtPicker } from "./ArtPicker";
 import { GameBackupPanel } from "./GameBackup";
 import { PlatformFolders } from "./PlatformFolders";
 import { statusOf } from "./Library";
-import { DeviceChip, Pill, SaveCompare, Stat, When } from "./kit";
+import { DeviceChip, Pill, Stat, When } from "./kit";
 import { withSteamClosed } from "./steamAction";
 import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Hint, Icon, Menu, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
-import { Saves } from "./Saves";
+import { Saves, useSnapshotList } from "./Saves";
 import { UndoRow, VersionBar } from "./SaveLibrary";
-import { NewerRow } from "./SaveSources";
+import { Progress } from "./Progress";
 import { handBack, StorePanel, TakeOverDialog } from "./SteamCloud";
 import { GameAchievements } from "./Achievements";
 import { useShelves } from "./Collection";
@@ -52,7 +52,7 @@ export function GameDetail({
   const g = t.game;
   const shelves = useShelves(overview, game.key, onChanged);
   const [tab, setTab] = useState<Tab>(
-    sceneIs("game-settings") ? "config" : sceneIs("game-screenshots") ? "screenshots" : sceneIs("game-achievements") ? "achievements" : "versions",
+    sceneIs("game-settings", "game-files") ? "config" : sceneIs("game-screenshots") ? "screenshots" : sceneIs("game-achievements") ? "achievements" : "versions",
   );
   // Docs screenshots: open on the game files card, or on the tabs.
   useEffect(() => {
@@ -73,6 +73,7 @@ export function GameDetail({
     }, 600);
   }, []);
   const [versionsKey, setVersionsKey] = useState(0);
+  const list = useSnapshotList(game.key, versionsKey, overview.cloud.kind === "none");
   // The other sources of this game's saves (another version, a device that keeps its own…):
   // the Saves tab's groups, and the hint row when one of them has newer progress. Read again
   // whenever the saves changed; the page works without.
@@ -241,6 +242,8 @@ export function GameDetail({
   };
 
   const health = healthText(game.health);
+  // Something in the settings tab needs a look: the Steam shortcut, the game's program.
+  const setupNeedsLook = (!!game.steam && health.tone !== "ok" && health.tone !== "muted") || (!!game.exe && !game.exeExists);
   const status = statusOf(game, check, checking);
   const conflict = check?.status === "conflict" || !!game.conflict;
   const hero = game.art.hero && !heroFailed ? game.art.hero : null;
@@ -318,38 +321,6 @@ export function GameDetail({
       </div>
 
       <div className="detail-body">
-        {conflict && check?.head && (
-          <div className="banner banner-warn conflict">
-            <div className="conflict-head">
-              <Icon name="warn" />
-              <b>{g.conflictTitle}</b>
-              <Hint text={g.conflictHint} />
-            </div>
-            <SaveCompare
-              arrow={false}
-              there={{
-                name: g.cloudSide,
-                device: check.head.deviceName,
-                at: check.head.createdAt,
-                size: check.head.totalSize,
-                files: check.head.fileCount,
-                action: (
-                  <Button kind="primary" onClick={takeCloud}>
-                    {g.useCloud}
-                  </Button>
-                ),
-              }}
-              here={{
-                name: g.localSide,
-                device: overview.deviceName,
-                mine: true,
-                size: check.localSize,
-                files: check.localFiles,
-                action: <Button onClick={() => syncNow("local")}>{g.useLocal}</Button>,
-              }}
-            />
-          </div>
-        )}
         {check?.tooNew && check.status === "cloudNewer" && (
           <div className="banner banner-info">
             <Icon name="warn" /> {g.tooNew(check.tooNew)} <Hint text={g.tooNewHint} />
@@ -370,6 +341,21 @@ export function GameDetail({
             <Icon name="cloud" /> {g.pending(game.pending)}
           </div>
         )}
+        {game.steam && (health.tone === "warn" || health.tone === "bad") && (
+          <div className="banner banner-warn">
+            <Icon name="steam" />
+            <span>{health.text}</span>
+            {health.fixable ? (
+              <Button small kind="primary" icon="check" onClick={() => steamAction((close) => api.steamRepair(game.key, close), msg().game.repaired)}>
+                {g.repair}
+              </Button>
+            ) : (
+              <Button small onClick={() => setTab("config")}>
+                {g.tabConfig}
+              </Button>
+            )}
+          </div>
+        )}
         {!game.playable && (
           <div className="banner banner-info not-here">
             <Icon name="locate" />
@@ -382,18 +368,19 @@ export function GameDetail({
           </div>
         )}
 
-        {sources?.newer && !newerGone && (
-          <NewerRow
-            target={game}
-            overview={overview}
-            newer={sources.newer}
-            marks={sources.platforms}
-            disabled={game.running}
-            tooNew={sources.tooNew}
-            onDismiss={() => setNewerGone(true)}
-            onDone={() => after()}
-          />
-        )}
+        <Progress
+          game={game}
+          overview={overview}
+          check={check}
+          data={list.data}
+          sources={sources}
+          newerGone={newerGone}
+          onDismissNewer={() => setNewerGone(true)}
+          onTakeCloud={takeCloud}
+          onUseLocal={() => syncNow("local")}
+          onTakeNewer={takeNewer}
+          onDone={() => after()}
+        />
 
         <VersionBar
           overview={overview}
@@ -409,7 +396,42 @@ export function GameDetail({
         />
         <UndoRow game={game} onChanged={() => after()} />
 
-        <div className="cards2">
+        <div className="tabs">
+          <button className={tab === "versions" ? "on" : ""} onClick={() => setTab("versions")}>
+            {g.tabVersions}
+          </button>
+          <button className={tab === "screenshots" ? "on" : ""} onClick={() => setTab("screenshots")}>
+            {g.tabScreenshots}
+          </button>
+          <button className={tab === "achievements" ? "on" : ""} onClick={() => setTab("achievements")}>
+            {t.achievements.tab}
+          </button>
+          <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>
+            {g.tabFiles}
+          </button>
+          <button className={tab === "config" ? "on" : ""} onClick={() => setTab("config")}>
+            {g.tabConfig}
+            {setupNeedsLook && <i className="tab-dot" title={t.library.needsAttention} />}
+          </button>
+        </div>
+
+        {tab === "versions" && (
+          <Saves
+            key={versionsKey}
+            game={game}
+            overview={overview}
+            disabled={game.running}
+            sources={sources}
+            list={list}
+            onChanged={() => after()}
+            onApplied={async (k) => onOpen(k)}
+          />
+        )}
+        {tab === "files" && <Files game={game} />}
+        {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
+        {tab === "config" && (
+          <>
+        <div className="setup-stack">
           {game.store && <StorePanel game={game} onChanged={() => after()} onTakeOver={() => setDialog("takeover")} />}
           {!game.store && (
             <section className="panel">
@@ -508,38 +530,9 @@ export function GameDetail({
 
         <GameBackupPanel game={game} onChanged={onChanged} />
 
-        <div className="tabs">
-          <button className={tab === "versions" ? "on" : ""} onClick={() => setTab("versions")}>
-            {g.tabVersions}
-          </button>
-          <button className={tab === "files" ? "on" : ""} onClick={() => setTab("files")}>
-            {g.tabFiles}
-          </button>
-          <button className={tab === "screenshots" ? "on" : ""} onClick={() => setTab("screenshots")}>
-            {g.tabScreenshots}
-          </button>
-          <button className={tab === "config" ? "on" : ""} onClick={() => setTab("config")}>
-            {g.tabConfig}
-          </button>
-          <button className={tab === "achievements" ? "on" : ""} onClick={() => setTab("achievements")}>
-            {t.achievements.tab}
-          </button>
-        </div>
-
-        {tab === "versions" && (
-          <Saves
-            key={versionsKey}
-            game={game}
-            overview={overview}
-            disabled={game.running}
-            sources={sources}
-            onChanged={() => after()}
-            onApplied={async (k) => onOpen(k)}
-          />
+            <Config game={game} allGames={overview.games} onChanged={onChanged} onRemoved={onRemoved} />
+          </>
         )}
-        {tab === "files" && <Files game={game} />}
-        {tab === "screenshots" && <Screenshots game={game} deviceId={overview.deviceId} />}
-        {tab === "config" && <Config game={game} allGames={overview.games} onChanged={onChanged} onRemoved={onRemoved} />}
         {tab === "achievements" && <GameAchievements gameKey={game.key} />}
       </div>
 

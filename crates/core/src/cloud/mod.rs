@@ -109,6 +109,12 @@ pub struct DeviceInfo {
     /// The save lines this device syncs, and where it is on each.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub installs: Vec<DeviceInstall>,
+    /// What kind of device it is, from its hardware ([`crate::handheld::device_kind`]):
+    /// "desktop", "laptop", "handheld", "deck" or "switch". Records of older
+    /// versions don't say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub kind: Option<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -693,5 +699,6 @@ pub fn device_info(cfg: &AppConfig) -> DeviceInfo {
         last_seen: Utc::now(),
         layout: v2::LAYOUT,
         installs,
+        kind: Some(crate::handheld::device_kind().to_string()),
     }
 }
