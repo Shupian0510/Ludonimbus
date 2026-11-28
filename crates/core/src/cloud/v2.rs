@@ -266,6 +266,16 @@ pub struct Line {
     /// nothing is assumed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub def: Option<String>,
+    /// What kind of install began the line ([`super::upgrade::line_kind`]):
+    /// a store's version of a PC game (`steam`, `epic`, `gog`, `xbox`, `pc`
+    /// for any other), the Switch itself (`switch`), one emulator
+    /// (`emu:<rule>`), one recompilation (`recomp:<rule>`). Installs of the
+    /// same kind that keep the same files (`def`) are the same version and
+    /// share the line by themselves; other versions only when the user says
+    /// so (docs/plan-positioning.md, section 3). Lines made before 1.0
+    /// don't say: `def` alone decides for them, as it did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     /// Versions of the game that keep these saves in other folders, and
     /// which folder of theirs is which folder here: what a user confirmed
     /// once on one device, so that the next device with such a version
@@ -283,6 +293,11 @@ pub struct Line {
 pub struct LineBind {
     /// Which files those versions keep ([`Line::def`] of a line of theirs).
     pub def: String,
+    /// The kind of install a user confirmed them for ([`Line::kind`]):
+    /// another kind keeping the same files is another version, not covered.
+    /// Bindings confirmed before 1.0 don't say, and are for any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     pub map: Vec<crate::bind::Bind>,
     #[serde(flatten)]
     pub extra: Extra,

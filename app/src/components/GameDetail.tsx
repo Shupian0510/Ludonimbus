@@ -14,7 +14,7 @@ import { SaveCandidates } from "./SaveFinder";
 import { Badge, Button, Hint, Icon, Menu, Modal, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { Screenshots } from "./Screenshots";
 import { Saves } from "./Saves";
-import { ApplyDialog, familyOf, JoinRow, UndoRow, VersionBar } from "./SaveLibrary";
+import { ApplyDialog, familyOf, UndoRow, VersionBar } from "./SaveLibrary";
 import { handBack, StorePanel, TakeOverDialog } from "./SteamCloud";
 import { GameAchievements } from "./Achievements";
 import { useShelves } from "./Collection";
@@ -120,6 +120,19 @@ export function GameDetail({
     if (game.xboxContainers && !(await ui.confirm({ title: g.useCloud, text: t.saves.xboxNote, confirm: g.useCloud }))) return;
     await syncNow("cloud");
   };
+
+  /**
+   * 「取回」: the cloud has newer saves of this game's own line, which a game
+   * that doesn't start through Steam doesn't take by itself. A sync the
+   * user starts takes them; into the Xbox app's containers, or from a newer
+   * game, only once the user has read why not by itself.
+   */
+  const takeNewer = async () => {
+    const note = [game.xboxContainers ? t.saves.xboxNote : "", check?.tooNew ? t.saves.tooNew(check.tooNew) : ""].filter(Boolean).join(" ");
+    if (note && !(await ui.confirm({ title: t.policy.take, text: note, confirm: t.policy.take }))) return;
+    await syncNow(note ? "cloud" : "auto");
+  };
+  const newerHere = check?.status === "cloudNewer" || check?.status === "canRestore";
 
   const backupNow = async () => {
     const comment = await ui.prompt({
@@ -242,9 +255,15 @@ export function GameDetail({
       </div>
 
       <div className="actionbar">
-        <Button kind="primary" icon="sync" onClick={() => syncNow()} disabled={game.running || conflict} busyText={g.syncing}>
-          {g.syncNow}
-        </Button>
+        {newerHere ? (
+          <Button kind="primary" icon="download" onClick={takeNewer} disabled={game.running || conflict} busyText={g.syncing} title={t.policy.takeTitle}>
+            {t.policy.take}
+          </Button>
+        ) : (
+          <Button kind="primary" icon="sync" onClick={() => syncNow()} disabled={game.running || conflict} busyText={g.syncing}>
+            {g.syncNow}
+          </Button>
+        )}
         <Button icon="upload" onClick={backupNow} disabled={game.running}>
           {g.backupTitle}
         </Button>
@@ -254,6 +273,11 @@ export function GameDetail({
         <Menu title={t.saves.more} items={shelves.items} />
         <div className="actionbar-status">
           <StatusBadge game={game} check={check} checking={checking} />
+          {newerHere && check?.head && (
+            <span className="muted" title={dateTime(check.head.createdAt)}>
+              {check.head.deviceName} · {relTime(check.head.createdAt)}
+            </span>
+          )}
           {check?.incomplete && (
             <span className="status-note">
               <Badge tone="warn">{g.incomplete}</Badge>
@@ -380,7 +404,6 @@ export function GameDetail({
           store={game.store ? { onTakeOver: () => setDialog("takeover"), onHandBack: () => handBack(ui, game, () => after()) } : undefined}
         />
         <UndoRow game={game} onChanged={() => after()} />
-        {overview.cloud.kind !== "none" && !game.joined && <JoinRow key={game.key} gameKey={game.key} name={game.name} disabled={game.running} onChanged={() => after()} />}
 
         <div className="cards2">
           {game.store && <StorePanel game={game} onChanged={() => after()} onTakeOver={() => setDialog("takeover")} />}

@@ -64,4 +64,10 @@ store: StoreView | null,
 /**
  * The collection's shelves its card is on (`finished`, `archived`).
  */
-shelves?: Array<string>, };
+shelves?: Array<string>, 
+/**
+ * Newer saves of its own line come here by themselves (through Steam,
+ * or Steam Cloud): a newer version in the cloud needs nothing from the
+ * user ([`auto_pull`]).
+ */
+autoPull: boolean, };

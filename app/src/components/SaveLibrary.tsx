@@ -2,7 +2,7 @@
 // Xbox, emulator version… on this PC or only in the cloud), linking them by
 // hand, and applying a save version from one to another.
 import { useEffect, useMemo, useState } from "react";
-import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, OtherInstall, Outcome, Overview, PlatformMarks, SaveLine, SnapshotSummary, TransferPlan } from "../api";
+import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, OtherInstall, Outcome, Overview, PlatformMarks, SaveLine, ShareOffer, SnapshotSummary, TransferPlan } from "../api";
 import { bytes, dateTime, outcomeText, relTime } from "../format";
 import { currentLang, msg, useT } from "../i18n";
 import { Badge, Button, Hint, Icon, Menu, MenuItem, Modal, Spinner, useUi } from "./ui";
@@ -141,6 +141,24 @@ export function VersionBar({
     return () => void (live = false);
   }, [current, hasCloud, !game, stamp, tick]);
 
+  // 「共用进度」 with another version, an advanced choice: only where the two versions' saves are compatible.
+  const [offer, setOffer] = useState<ShareOffer | null>(null);
+  const joined = !!game?.joined;
+  useEffect(() => {
+    if (!game || !hasCloud || joined) return setOffer(null);
+    let live = true;
+    api.shareOffer(current).then(
+      (o) => live && setOffer(o),
+      () => live && setOffer(null),
+    );
+    return () => void (live = false);
+  }, [current, hasCloud, !game, joined, tick]);
+  const share = async (o: ShareOffer) => {
+    const p = msg().policy;
+    if (!(await ui.confirm({ title: p.shareTitle(o.label), text: p.shareText, confirm: p.shareConfirm }))) return;
+    await done(() => api.joinAnswer(current, "accept", o.suggestion), p.shared(o.label));
+  };
+
   const done = async (f: () => Promise<Outcome | null | void>, ok: string) => {
     try {
       const o = await f();
@@ -212,6 +230,7 @@ export function VersionBar({
     }
     if (onEditSaves) menu.push({ label: s.editSaves, onClick: onEditSaves });
     if (game.joined) menu.push({ label: s.leaveJoin, disabled, title: why, onClick: () => done(() => api.joinAnswer(current, "leave"), msg().savelib.left) });
+    else if (offer) menu.push({ label: t.policy.share(offer.label), hint: t.policy.shareHint(offer.label), divider: true, disabled, title: why, onClick: () => share(offer) });
     if (members.length > 1) menu.push({ label: s.split, onClick: split });
   }
 

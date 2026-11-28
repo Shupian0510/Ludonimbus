@@ -51,6 +51,10 @@ pub struct AppConfig {
     /// After playing, always wait until the upload is done (for someone who
     /// turns the device off right after).
     pub wait_for_upload: bool,
+    /// While the app is in the tray, a system notification when a game that
+    /// isn't brought up to date by itself gets newer saves in the cloud
+    /// (docs/plan-positioning.md, section 6). On unless turned off.
+    pub cloud_newer_notifications: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -111,6 +115,7 @@ impl Default for AppConfig {
             launch_wait_secs: 10,
             exit_wait_secs: 10,
             wait_for_upload: false,
+            cloud_newer_notifications: true,
         }
     }
 }

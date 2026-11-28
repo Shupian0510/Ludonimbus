@@ -2,7 +2,9 @@
 //! into Eden on PC B (the game linked from the cloud follows PC B's
 //! emulator), and Eden's save goes back to Ryujinx. yuzu's size file stays
 //! out of the snapshots. A game added on PC C without linking takes over
-//! the cloud's key, and the same game can't be added twice on one PC.
+//! the cloud's key when it was added in the same emulator (another
+//! emulator's is another version), and the same game can't be added twice
+//! on one PC.
 
 use ludonimbus_core::cloud::CloudGame;
 use ludonimbus_core::config::{self, AppConfig, GameEntry};
@@ -193,6 +195,9 @@ fn switch_game_moves_between_ryujinx_and_eden() {
     let ed_c = eden(&tmp.path().join("C"), &roms);
     let c = games::add_from_shortcut("42", shortcut(&root_c, &ed_c, &nsp), plain(None, None, vec![])).unwrap();
     assert_ne!(c.key, cloud.key);
+    // Ryujinx's is another version of the game: Eden keeps its own.
+    assert_eq!(games::adopt_cloud_key(&c.key, std::slice::from_ref(&cloud)).unwrap(), None);
+    let cloud = CloudGame { adapter: Some("eden".into()), ..cloud };
     let other = CloudGame { key: "zelda".into(), saves: vec!["{nxsave-0100000000010000}/**".into()], ..cloud.clone() };
     assert_eq!(games::adopt_cloud_key(&c.key, &[other.clone(), cloud.clone()]).unwrap(), Some(cloud.key.clone()));
     let cfg = config::load().unwrap();

@@ -84,6 +84,26 @@ pub fn owe(key: &str) -> Result<()> {
     util::atomic_write(&owed_file(key), note.to_string().as_bytes())
 }
 
+/// [`owe`] for a sync in the background ([`Trigger::Passive`]) that
+/// couldn't be done now: the tray app noticed a game end while the game
+/// was being synced, or a terminated wrapper's session couldn't be
+/// finished. Done later as such a sync, which only uploads for most games
+/// (`run`'s `only_uploads`). A sync the launch wrapper owes already stays
+/// as it is.
+pub fn owe_passive(key: &str) -> Result<()> {
+    if is_owed(key) {
+        return Ok(());
+    }
+    let note = serde_json::json!({ "since": Utc::now(), "pid": std::process::id(), "passive": true });
+    util::atomic_write(&owed_file(key), note.to_string().as_bytes())
+}
+
+/// Whether the sync `key` owes is one in the background ([`owe_passive`]).
+fn owed_passive(key: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(owed_file(key)) else { return false };
+    serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v["passive"].as_bool() == Some(true))
+}
+
 pub fn is_owed(key: &str) -> bool {
     owed_file(key).is_file()
 }
@@ -142,7 +162,8 @@ pub(super) fn settle_owed(key: &str) {
 }
 
 /// Do the sync of `key` after playing that is still owed ([`owe`]): the
-/// usual sync, as right after the game. `None` when nothing is owed (any
+/// usual sync, as right after the game (as the background's, for one the
+/// background owes: [`owe_passive`]). `None` when nothing is owed (any
 /// more). The note goes once the outcome is final ([`Outcome::is_final`]),
 /// and stays while the cloud can't be reached. A conflict is only noted:
 /// the next launch of the game asks.
@@ -164,5 +185,6 @@ pub fn finish_owed(ctx: &Ctx, key: &str) -> Result<Option<Outcome>> {
         settle_owed(key);
         return Ok(None);
     };
-    sync_with(ctx, &game, Resolution::Auto, Trigger::AutoExit, &gate).map(Some)
+    let trigger = if owed_passive(key) { Trigger::Passive } else { Trigger::AutoExit };
+    sync_with(ctx, &game, Resolution::Auto, trigger, &gate).map(Some)
 }

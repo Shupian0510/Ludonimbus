@@ -358,7 +358,14 @@ export const api = {
   setLanguage: (language: string) => invoke<void>("set_language", { language }),
   checkUpdate: () => invoke<UpdateInfo>("check_update"),
   installUpdate: () => invoke<void>("install_update"),
+  /** 「全部同步」 for one game: upload what changed here, write nothing into its saves, and say how it stands. */
+  uploadGame: (key: string) => invoke<UploadResult>("upload_game", { key }),
+  /** Another version's line this one can share (「共用进度」), when it fits; null otherwise. */
+  shareOffer: (key: string) => invoke<ShareOffer | null>("share_offer", { key }),
 };
+
+export type { ShareOffer, UploadResult } from "./bindings";
+import type { ShareOffer, UploadResult } from "./bindings";
 
 export function errorText(e: unknown): string {
   if (typeof e === "string") return e;

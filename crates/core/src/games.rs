@@ -164,13 +164,18 @@ pub fn switch_title(saves: &[String]) -> Option<u64> {
 }
 
 /// A Switch game just added on this device that the cloud already has
-/// under another key (added on another device, maybe in another emulator):
-/// take over that key so both sync the same saves. Returns the new key.
-/// Only for a game that hasn't synced yet.
+/// under another key, added on another device in the same emulator (or on
+/// the Switch itself, for the Switch's saves): take over that key so both
+/// sync the same saves. Returns the new key. Only for a game that hasn't
+/// synced yet. Another emulator's is another version of the game
+/// (docs/plan-positioning.md, section 3): it stays apart, on the same
+/// card.
 pub fn adopt_cloud_key(key: &str, cloud: &[CloudGame]) -> Result<Option<String>> {
     let cfg = config::load()?;
-    let Some(title) = cfg.game(key).and_then(|g| switch_title(&g.saves)) else { return Ok(None) };
-    let Some(cg) = cloud.iter().find(|c| c.key != key && cfg.game(&c.key).is_none() && switch_title(&c.saves) == Some(title)) else {
+    let Some(game) = cfg.game(key) else { return Ok(None) };
+    let Some(title) = switch_title(&game.saves) else { return Ok(None) };
+    let same_kind = |c: &CloudGame| c.adapter.as_deref().map(str::to_lowercase) == game.adapter.as_deref().map(str::to_lowercase);
+    let Some(cg) = cloud.iter().find(|c| c.key != key && cfg.game(&c.key).is_none() && switch_title(&c.saves) == Some(title) && same_kind(c)) else {
         return Ok(None);
     };
     config::update(|cfg| {

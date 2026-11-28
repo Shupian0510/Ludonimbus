@@ -141,9 +141,12 @@ fn read_marker(path: &Path) -> Marker {
 /// renaming it first, so two programs never handle the same one. Returns
 /// the games handled.
 ///
-/// A catch-up sync that doesn't get the saves into the cloud (the cloud
-/// can't be reached, an error) leaves the game owing a sync after playing
-/// ([`sync::owe`]): the tray app, or the game's next sync, does it then.
+/// The catch-up sync is one in the background ([`Trigger::Passive`]): it
+/// uploads, and a newer version in the cloud stays there for the next
+/// launch through Steam to take (docs/plan-positioning.md, section 2). One
+/// that doesn't get the saves into the cloud (the cloud can't be reached,
+/// an error) leaves the game owing such a sync ([`sync::owe_passive`]): the
+/// tray app, or the game's next sync, does it then.
 pub fn stale_runners(cfg: &AppConfig, except: Option<&str>, log: &dyn Fn(String)) -> Vec<String> {
     let mut done = Vec::new();
     let Ok(rd) = std::fs::read_dir(paths::running_dir()) else { return done };
@@ -184,7 +187,7 @@ pub fn stale_runners(cfg: &AppConfig, except: Option<&str>, log: &dyn Fn(String)
                 // The marker is only the claim; what is still to do is noted
                 // where the syncs after playing are tried again.
                 if !settled {
-                    if let Err(e) = sync::owe(&key) {
+                    if let Err(e) = sync::owe_passive(&key) {
                         log(format!("{key}: can't note the sync for later ({e:#})"));
                     }
                 }

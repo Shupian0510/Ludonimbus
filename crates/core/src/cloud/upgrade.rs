@@ -285,6 +285,57 @@ pub fn line_def(game: &CloudGame) -> String {
     blake3::hash(what.as_bytes()).to_hex()[..16].to_string()
 }
 
+/// What kind of install a game on this device is, for [`Line::kind`]: two
+/// installs of one kind that keep the same files ([`line_def`]) are the
+/// same version of the game, and nothing else is (docs/plan-positioning.md,
+/// section 3).
+///
+/// - An emulator's game: `emu:<rule>`. Ryujinx and Eden keep the same files
+///   for a Switch title, and are still two versions; one emulator on two
+///   devices is one.
+/// - A recompilation: `recomp:<rule>`.
+/// - A game's saves on the Switch itself: `switch`.
+/// - A PC game: the store it is from, as far as this device can tell. A
+///   game Steam installed, or one in a Steam library folder, is `steam`,
+///   on Windows and in Proton alike; the Xbox app's is `xbox`; one in the
+///   folders Epic and GOG install into by default is `epic` or `gog`; any
+///   other is `pc`.
+pub fn line_kind(game: &crate::config::GameEntry) -> String {
+    match game.adapter.as_deref().and_then(adapters::find) {
+        Some(a) if a.is_emulator() => return format!("emu:{}", a.key),
+        Some(a) => return format!("recomp:{}", a.key),
+        None if games::switch_console(&game.saves) => return "switch".to_string(),
+        None => {}
+    }
+    if game.store.is_some() {
+        return "steam".to_string();
+    }
+    if games::source(game).kind == games::SourceKind::Xbox || game.exe.as_deref().and_then(crate::xbox::package_name).is_some() {
+        return "xbox".to_string();
+    }
+    let exe = game.exe.as_deref().map(|e| e.to_string_lossy().replace('\\', "/").to_lowercase()).unwrap_or_default();
+    let kind = if exe.contains("/steamapps/common/") {
+        "steam"
+    } else if exe.contains("/epic games/") {
+        "epic"
+    } else if exe.contains("/gog galaxy/games/") || exe.contains("/gog games/") {
+        "gog"
+    } else {
+        "pc"
+    };
+    kind.to_string()
+}
+
+/// Whether installs of the kinds `a` and `b` ([`line_kind`]) are the same
+/// version, as far as that can be told: a line that doesn't say (made
+/// before 1.0) is taken for any.
+pub fn same_kind(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
 /// The record the upgrade writes for one key (before [`library::save`] and
 /// before records are merged). `game` is `None` for a folder without a
 /// `game.json`; `oldest` is when the oldest snapshot in its old folder was

@@ -42,6 +42,34 @@ pub async fn join_suggestion(key: String) -> CmdResult<Option<join::Suggestion>>
     blocking(move || with_game(&key, join::suggestion)).await
 }
 
+/// Another version's line the game can share (「共用进度」, an advanced
+/// choice in the version bar's menu), with how that version is called.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareOffer {
+    suggestion: join::Suggestion,
+    /// The version whose line it is ("Xbox", "Steam", "Ryujinx").
+    label: String,
+}
+
+/// [`join_suggestion`] when it fits: the two versions' saves are the same
+/// files, or a rule says so. `None` otherwise; nothing changes.
+#[tauri::command]
+pub async fn share_offer(key: String) -> CmdResult<Option<ShareOffer>> {
+    blocking(move || {
+        with_game(&key, |ctx, g| {
+            let Some(s) = join::suggestion(ctx, g)?.filter(|s| s.fit == join::Fit::Ready) else { return Ok(None) };
+            let label = match platform_marks(&ctx.cfg, [s.platform.as_str()]).remove(&s.platform) {
+                Some(mark) => mark.label,
+                None if !s.from.is_empty() => s.from.clone(),
+                None => s.device.clone(),
+            };
+            Ok(Some(ShareOffer { suggestion: s, label }))
+        })
+    })
+    .await
+}
+
 /// What the user answered to [`join_suggestion`]: `accept` (with the
 /// suggestion) shares the line and syncs with it, `decline` (with the
 /// suggestion) never suggests it again, `leave` stops sharing.
