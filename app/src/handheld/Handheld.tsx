@@ -382,7 +382,7 @@ function Game({
               <div className="hh-banner">
                 <SaveCompare
                   there={snapSide(newer.source.name, newer.snapshot, newer.here, marks, overview.deviceId, true)}
-                  here={newer.here ? snapSide(newer.hereName, newer.here, null, marks, overview.deviceId) : { name: newer.hereName, empty: true }}
+                  here={newer.here ? { ...snapSide(newer.hereName, newer.here, null, marks, overview.deviceId), tag: t.sources.here } : { name: newer.hereName, empty: true }}
                 />
                 {newer.source.take.kind === "convert" && (
                   <div className="hh-row">

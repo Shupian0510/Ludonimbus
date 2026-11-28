@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, Gallery, GameView, ScreenshotMode, Shot } from "../api";
 import { bytes, dateTime } from "../format";
 import { msg, useT } from "../i18n";
-import { Stat } from "./kit";
+import { DeviceChip, Stat } from "./kit";
 import { Badge, Button, Hint, Icon, Modal, Spinner, useUi } from "./ui";
 
 /** At most this many thumbnails are downloaded from the cloud at once. */
@@ -114,7 +114,7 @@ export function Screenshots({ game, deviceId }: { game: GameView; deviceId: stri
           </p>
           <div className="shots">
             {data.shots.map((shot) => (
-              <Tile key={`${shot.device}/${shot.name}`} game={game} shot={shot} label={deviceLabel(shot)} limit={limit} onOpen={() => setOpen(shot)} />
+              <Tile key={`${shot.device}/${shot.name}`} game={game} shot={shot} here={shot.device === deviceId} limit={limit} onOpen={() => setOpen(shot)} />
             ))}
           </div>
         </>
@@ -128,13 +128,14 @@ export function Screenshots({ game, deviceId }: { game: GameView; deviceId: stri
 function Tile({
   game,
   shot,
-  label,
+  here,
   limit,
   onOpen,
 }: {
   game: GameView;
   shot: Shot;
-  label: string;
+  /** Taken on this device. */
+  here: boolean;
   limit: <T>(job: () => Promise<T>) => Promise<T>;
   onOpen: () => void;
 }) {
@@ -160,7 +161,7 @@ function Tile({
       <div className="shot-meta">
         <span className="muted small">{shot.takenAt ? dateTime(shot.takenAt) : shot.name}</span>
         <span className="shot-badges">
-          <Badge tone="muted">{label}</Badge>
+          <DeviceChip name={shot.deviceName ?? shot.device.slice(0, 10)} here={here} />
           {!shot.inCloud && <Badge tone="info">{s.onlyHere}</Badge>}
           {!shot.onThisPc && <Badge tone="muted">{s.onlyCloud}</Badge>}
         </span>

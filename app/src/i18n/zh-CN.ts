@@ -1276,7 +1276,6 @@ export const sources = {
   takeText: (game: string, source: string, device: string | null, at: string) =>
     `「${game}」在这台设备上的存档会换成${gap(source)}在 ${device ? `${device} ` : ""}${at} 的这一份，现在的会先保留，可以撤销。`,
   taken: "已取回到这里",
-  keptFirst: "取回时这里现在的存档会先保留，可以撤销。",
   take: "取回",
   notNow: "不用",
 };

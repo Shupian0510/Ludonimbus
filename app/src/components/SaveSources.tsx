@@ -10,7 +10,7 @@ import { dateTime, outcomeText } from "../format";
 import { msg, useT } from "../i18n";
 import { cmpOf, ConvertChip, Delta, DeviceChip, PlatformMark, PlayDelta, playedOf, When } from "./kit";
 import { ApplyDialog } from "./SaveLibrary";
-import { Button, Hint, Icon, useUi } from "./ui";
+import { Button, Icon, useUi } from "./ui";
 
 /** The game the saves are taken to. `xboxContainers`: written into the Xbox app's containers (experimental). */
 export interface TakeTarget {
@@ -148,7 +148,6 @@ export function NewerRow({
           {here ? <When at={here.createdAt} /> : <span className="muted">{t.kit.noSaves}</span>}
         </span>
         {newer.source.take.kind === "convert" && <ConvertChip hint={m.convertHint(newer.source.take.how)} />}
-        <Hint text={m.keptFirst} />
       </span>
       <Button small kind="primary" onClick={() => take(newer.source, there)} disabled={disabled} title={disabled ? t.savelib.running : undefined}>
         {m.take}

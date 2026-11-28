@@ -1271,7 +1271,6 @@ export const sources: typeof Zh.sources = {
   takeText: (game, source, device, at) =>
     `The saves of "${game}" on this device are replaced with this one of ${source}${device ? ` from ${device}` : ""}, ${at}. The ones here now are kept first, and you can undo it.`,
   taken: "Taken here",
-  keptFirst: "Taking it keeps the saves here first; you can undo it.",
   take: "Take",
   notNow: "No thanks",
 };
