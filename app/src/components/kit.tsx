@@ -4,7 +4,7 @@
 // the same on every page and on the handheld screen. Facts are never words
 // joined by dots.
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { PlatformMark as Mark, SnapshotSummary } from "../api";
 import { bytes, dateTime, duration, relTime } from "../format";
 import { msg, useT } from "../i18n";
@@ -41,10 +41,64 @@ export function PlatformMark({ mark, label, size = 16, strong }: { mark?: Mark |
 
 export type DeviceKind = "desktop" | "laptop" | "handheld" | "deck" | "switch";
 
+const KINDS: DeviceKind[] = ["desktop", "laptop", "handheld", "deck", "switch"];
+
 /**
- * What kind of device a name (and the OS its record gives) suggests.
- * Windows names new PCs DESKTOP-… or LAPTOP-…; handhelds and the Steam
- * Deck go by their makers' names.
+ * What kind each device is, by name, as the devices' own records say (from
+ * their hardware; written by 1.0 and later): learnt from this device, the
+ * device list and the save lines, remembered across starts.
+ */
+const known = new Map<string, DeviceKind>(
+  (() => {
+    try {
+      return Object.entries(JSON.parse(localStorage.getItem("ln.deviceKinds") ?? "{}") as Record<string, DeviceKind>);
+    } catch {
+      return [];
+    }
+  })(),
+);
+let knownVersion = 0;
+const knownListeners = new Set<() => void>();
+
+export function learnDeviceKinds(list: Array<{ name: string; kind?: string | null }>) {
+  let changed = false;
+  for (const d of list) {
+    const kind = d.kind as DeviceKind;
+    if (d.name && KINDS.includes(kind) && known.get(d.name) !== kind) {
+      known.set(d.name, kind);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  knownVersion++;
+  try {
+    localStorage.setItem("ln.deviceKinds", JSON.stringify(Object.fromEntries(known)));
+  } catch {
+    /* only a convenience */
+  }
+  knownListeners.forEach((l) => l());
+}
+
+function useKnownKinds() {
+  return useSyncExternalStore(
+    (l) => {
+      knownListeners.add(l);
+      return () => void knownListeners.delete(l);
+    },
+    () => knownVersion,
+  );
+}
+
+/** A device's kind: what its record says, else what its name suggests. */
+export function kindOf(name: string, os?: string | null, kind?: string | null): DeviceKind {
+  if (kind && KINDS.includes(kind as DeviceKind)) return kind as DeviceKind;
+  return known.get(name) ?? deviceKind(name, os);
+}
+
+/**
+ * What kind of device a name (and the OS its record gives) suggests, for
+ * devices whose record doesn't say. Windows names new PCs DESKTOP-… or
+ * LAPTOP-…; handhelds and the Steam Deck go by their makers' names.
  */
 export function deviceKind(name: string, os?: string | null): DeviceKind {
   const n = name.toLowerCase();
@@ -57,12 +111,13 @@ export function deviceKind(name: string, os?: string | null): DeviceKind {
 }
 
 /** A device: its kind and its name. `here`: this device. */
-export function DeviceChip({ name, os, here, label }: { name: string; os?: string | null; here?: boolean; label?: string }) {
+export function DeviceChip({ name, os, kind, here, label }: { name: string; os?: string | null; kind?: string | null; here?: boolean; label?: string }) {
   useT();
+  useKnownKinds();
   if (!name) return null;
   return (
     <span className={`dev${here ? " here" : ""}`} title={here ? msg().kit.thisDevice(name) : name}>
-      <Icon name={`dev-${deviceKind(name, os)}`} size={15} />
+      <Icon name={`dev-${kindOf(name, os, kind)}`} size={15} />
       <span className="dev-name">{label ?? name}</span>
     </span>
   );
@@ -227,6 +282,8 @@ export interface Side {
   newer?: boolean;
   /** A small tag at the top right ("这里"). */
   tag?: ReactNode;
+  /** The tag in a state colour ("当前" in green). */
+  tagTone?: "ok";
   /** Shown when there is no save ("还没有存档"). */
   empty?: boolean;
   /** Its action (a button under the facts). */
@@ -247,7 +304,7 @@ export function SaveCard({ side }: { side: Side }) {
             {k.newer}
           </span>
         ) : (
-          side.tag && <span className="savecard-tag">{side.tag}</span>
+          side.tag && <span className={`savecard-tag${side.tagTone ? ` ${side.tagTone}` : ""}`}>{side.tag}</span>
         )}
       </div>
       {side.empty ? (
@@ -311,6 +368,7 @@ export function SourceHead({
   mine,
   latest,
   convert,
+  tag,
   hint,
 }: {
   mark?: Mark | null;
@@ -323,11 +381,14 @@ export function SourceHead({
   latest?: string | null;
   /** How its saves are converted to be taken here (the chip's "?"). */
   convert?: string | null;
+  /** A label after the name: "单独存" for another device's own line, "共用" for the shared one. */
+  tag?: string | null;
   hint: string;
 }) {
   return (
     <div className="save-group">
       {device ? <DeviceChip name={name} /> : <PlatformMark mark={mark} label={name} size={18} strong />}
+      {tag && <span className="line-tag">{tag}</span>}
       {devices
         .filter((d) => !device || d !== name)
         .map((d) => (

@@ -9,6 +9,9 @@ import { withSteamClosed } from "./steamAction";
 import { Button, Hint, Icon, Spinner, useUi } from "./ui";
 
 export type Usage = "emulators" | "recomps" | "steamThirdParty" | "multiDevice";
+/** The welcome step's three points: your cloud, Steam, other versions. */
+const WELCOME_ICONS = ["cloud", "steam", "transfer"];
+
 const USAGES: { id: Usage; icon: string }[] = [
   { id: "emulators", icon: "play" },
   { id: "recomps", icon: "library" },
@@ -132,11 +135,13 @@ export function Onboarding({
             <div className="ob-welcome">
               <img src="/app-icon.svg" alt="" className="ob-logo" />
               <h2>{o.welcome.title}</h2>
-              <p className="ob-lead">{o.welcome.lead}</p>
+              <p className="ob-lead">
+                {o.welcome.lead} <Hint text={o.welcome.hint} />
+              </p>
               <ul className="ob-points">
-                {o.welcome.points.map((p) => (
+                {o.welcome.points.map((p, i) => (
                   <li key={p.title}>
-                    <Icon name="check" size={16} />
+                    <Icon name={WELCOME_ICONS[i] ?? "check"} size={18} />
                     <div>
                       <b>{p.title}</b>
                       <span className="muted small">{p.text}</span>

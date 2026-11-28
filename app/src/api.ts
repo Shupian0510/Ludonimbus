@@ -250,6 +250,8 @@ export const api = {
   requestInstall: (key: string) => invoke<void>("game_backup_request_install", { key }),
   launchMode: () => invoke<LaunchInfo>("launch_mode"),
   promptAnswer: (choice: string | null) => invoke<void>("prompt_answer", { choice }),
+  /** The question is on screen: the wrapper stops waiting to ask with a system dialog instead. */
+  promptShown: () => invoke<void>("prompt_shown"),
   setFullscreen: (on: boolean) => invoke<void>("set_fullscreen", { on }),
   quitHandheld: () => invoke<void>("quit_handheld"),
   handheldZoom: (on: boolean) => invoke<void>("handheld_zoom", { on }),

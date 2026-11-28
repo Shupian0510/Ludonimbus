@@ -232,15 +232,15 @@ function mockLines(key: string): SaveLine[] {
   const at = lineOf[key] ?? "main";
   const lines: SaveLine[] = [{ id: "main", name: "", shared: true, current: false, devices: [], members: [] }];
   if (key === "zelda-oot-longshot") {
-    lines[0].members.push({ device: "Steam Deck", platform: p, here: false });
-    lines.push({ ...kidLine(), shared: false, current: false, devices: [], members: [{ device: "KID-PC", platform: p, here: false }] });
+    lines[0].members.push({ device: "Steam Deck", platform: p, here: false, kind: "deck" });
+    lines.push({ ...kidLine(), shared: false, current: false, devices: [], members: [{ device: "KID-PC", platform: p, here: false, kind: "laptop" }] });
   }
-  if (key === "celeste") lines[0].members.push({ device: "LAPTOP", platform: "pc:xbox", here: false });
-  if (key === "hades") lines[0].members.push({ device: "Steam Deck", platform: p, here: false });
+  if (key === "celeste") lines[0].members.push({ device: "LAPTOP", platform: "pc:xbox", here: false, kind: "laptop" });
+  if (key === "hades") lines[0].members.push({ device: "Steam Deck", platform: p, here: false, kind: "deck" });
   if (at === "own") lines.push({ id: "own", name: "DESKTOP-MAIN", shared: false, current: false, devices: [], members: [] });
   const mine = lines.find((l) => l.id === at) ?? lines[0];
   mine.current = true;
-  mine.members.push({ device: "DESKTOP-MAIN", platform: p, here: true });
+  mine.members.push({ device: "DESKTOP-MAIN", platform: p, here: true, kind: "desktop" });
   for (const l of lines) l.devices = [...new Set(l.members.map((m) => m.device))];
   return lines;
 }
@@ -390,6 +390,7 @@ const playtime: Record<string, PlaytimeSummary> = {
 const overview: Overview = {
   deviceId: "d-mock",
   deviceName: "DESKTOP-MAIN",
+  deviceKind: "desktop",
   cloud: { kind: "googleDrive", label: "player@example.com", error: null },
   steamFound: true,
   steamRunning: true,
@@ -1019,8 +1020,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay<AccountInfo>({ label: "player@example.com", used: 3.2e9, total: 15e9 });
     case "list_devices":
       return delay<DeviceInfo[]>([
-        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(1), layout: 2 },
-        { id: "d-laptop", name: "LAPTOP", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(300), layout: 2 },
+        { id: "d-mock", name: "DESKTOP-MAIN", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(1), layout: 2, kind: "desktop" },
+        { id: "d-laptop", name: "LAPTOP", os: "windows x86_64", appVersion: "1.0.0", lastSeen: ago(300), layout: 2, kind: "laptop" },
         // Still on 0.6: its record says no layout.
         { id: "d-handheld", name: "GPD-Win-Mini", os: "windows x86_64", appVersion: "0.6.2", lastSeen: ago(60 * 26) },
       ]);
@@ -1048,6 +1049,12 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       // Browser preview: `?handheld` opens the handheld view, `?prompt` a launch question
       // (`?prompt=newer`: another version has newer progress, as the wrapper asks it).
       const q = new URLSearchParams(location.search);
+      // Scenes for the docs screenshots: the questions as windows on the desktop, the handheld game screen.
+      if (mockScene === "prompt-newer") q.set("prompt", "newer");
+      if (mockScene === "prompt-conflict") q.set("prompt", "conflict");
+      if (mockScene.startsWith("prompt-")) q.set("window", "");
+      if (mockScene === "handheld-game") q.set("handheld", "");
+      const dialog = q.has("window");
       if (q.get("prompt") === "newer")
         return delay<LaunchInfo>({
           mode: "prompt",
@@ -1069,6 +1076,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
               convert: "files",
               notes: [],
             },
+            dialog,
           },
           platforms: platformMarks,
         });
@@ -1093,6 +1101,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
               convert: "",
               notes: [],
             },
+            dialog,
           },
           platforms: platformMarks,
         });
@@ -1101,6 +1110,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "prompt_answer":
       console.info("prompt answer:", args.choice);
       return delay(undefined);
+    case "prompt_shown":
     case "set_fullscreen":
     case "quit_handheld":
     case "handheld_zoom":

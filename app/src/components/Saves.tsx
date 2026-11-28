@@ -55,6 +55,36 @@ export function arrange(data: SnapshotList, cloudOnly: boolean): { top: Row[]; a
   return { top, auto: list.filter((s) => !shown.has(s.id)).map((s) => ({ s })), current };
 }
 
+/** A game's list of saves, read when `key` or `stamp` changes (not at all while `skip`). */
+export interface SnapshotsState {
+  data: SnapshotList | null;
+  error: string | null;
+  reload: () => Promise<void>;
+}
+
+export function useSnapshotList(key: string, stamp: unknown = 0, skip = false): SnapshotsState {
+  const [data, setData] = useState<SnapshotList | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const reload = useCallback(async () => {
+    try {
+      setData(await api.snapshots(key));
+      setError(null);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [key]);
+  useEffect(() => {
+    if (!skip) reload();
+  }, [reload, stamp, skip]);
+  return { data, error, reload };
+}
+
+/** The save this device is at, else the newest one that isn't kept beside the history. */
+export function currentOf(data: SnapshotList | null): SnapshotSummary | null {
+  if (!data) return null;
+  return data.snapshots.find((s) => s.id === data.lastSyncedId) ?? data.snapshots.find((s) => !isSide(s)) ?? null;
+}
+
 /**
  * A game's saves in the cloud. `cloudOnly`: a game this PC doesn't have
  * (only exporting and sending to another version work).
@@ -67,6 +97,7 @@ export function Saves({
   sources,
   onChanged,
   onApplied,
+  list,
 }: {
   /** `xboxContainers`: its saves are written into the Xbox app's containers, which is experimental. */
   game: { key: string; name: string; store?: GameView["store"]; xboxContainers?: boolean };
@@ -79,12 +110,14 @@ export function Saves({
   onChanged: () => Promise<void>;
   /** After saves were sent to `target` (another version of the game). */
   onApplied?: (target: string) => Promise<void>;
+  /** The list, when the page reads it already (the game page shows the current save at its top). */
+  list?: SnapshotsState;
 }) {
   const ui = useUi();
   const t = useT();
   const v = t.saves;
-  const [data, setData] = useState<SnapshotList | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const own = useSnapshotList(game.key, 0, !!list);
+  const { data, error, reload: load } = list ?? own;
   const [open, setOpen] = useState<string | null>(null);
   const [meta, setMeta] = useState<Record<string, SnapshotMeta>>({});
   const [sending, setSending] = useState<{ key: string; name: string; snapshot: SnapshotSummary } | null>(null);
@@ -94,19 +127,6 @@ export function Saves({
   const groups = cloudOnly ? [] : (sources?.sources ?? []);
   const tooNew = useMemo(() => [...(data?.tooNew ?? []), ...(sources?.tooNew ?? [])], [data, sources]);
   const takeHere = useTakeHere(game, overview, onChanged, tooNew);
-
-  const load = useCallback(async () => {
-    try {
-      setData(await api.snapshots(game.key));
-      setError(null);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, [game.key]);
-
-  useEffect(() => {
-    load();
-  }, [load, game.key]);
 
   const loadTrash = useCallback(async () => {
     try {
@@ -565,6 +585,7 @@ export function Saves({
             devices={src.devices}
             latest={src.snapshots[0]?.createdAt}
             convert={src.take.kind === "convert" ? t.sources.convertHint(src.take.how) : null}
+            tag={src.kind === "device" ? t.sources.ownTag : src.kind === "shared" ? t.sources.sharedTag : null}
             hint={sourceWhat(src)}
           />
           {src.snapshots.map((s) => sourceRow(src, s))}

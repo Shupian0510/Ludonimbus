@@ -252,7 +252,7 @@ export const handheld = {
   device: (name: string) => `本机：${name}`,
   promptsTitle: "启动游戏时的提示",
   promptsText: "掌机上，存档冲突之类的提示用全屏窗口显示，可以用手柄选择。",
-  modes: { auto: "自动（Steam 大屏幕 / 游戏模式、Xbox 全屏体验里）", on: "总是全屏", off: "总是用系统对话框" },
+  modes: { auto: "自动（Steam 大屏幕 / 游戏模式、Xbox 全屏体验里全屏）", on: "总是全屏", off: "总是不全屏" },
   steamTitle: "从 Steam 游戏库打开 Ludonimbus",
   steamIn: "已经在 Steam 游戏库里",
   steamNot: "还不在 Steam 游戏库里",
@@ -264,7 +264,7 @@ export const handheld = {
   quit: "关闭 Ludonimbus 掌机界面",
   panelTitle: "掌机",
   panelText:
-    "在 ROG Ally、Legion Go、Steam Deck 这类掌机上：游戏启动时的提示用全屏窗口显示，可以从 Steam 游戏库打开 Ludonimbus 的手柄界面。在 Xbox 全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 时直接进手柄界面（「总是用系统对话框」时不会）。",
+    "在 ROG Ally、Legion Go、Steam Deck 这类掌机上：游戏启动时的提示用全屏窗口显示，可以从 Steam 游戏库打开 Ludonimbus 的手柄界面。在 Xbox 全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 时直接进手柄界面（「总是不全屏」时不会）。不全屏时，两份存档的问题在一个居中的窗口里显示。",
   detected: (name: string) =>
     `这台设备是 ${name}。游戏启动时的提示可以用全屏窗口显示，Ludonimbus 的手柄界面可以从 Steam 游戏库打开。在 Xbox 全屏体验或 Steam 大屏幕模式里打开 Ludonimbus 时直接进手柄界面；接上显示器在桌面上用时照常是桌面界面。`,
   steamUpdate: "重新添加",
@@ -1060,21 +1060,22 @@ export const onboarding = {
   start: "开始设置",
   welcome: {
     title: "欢迎使用 Ludonimbus",
-    lead: "给 Steam 里的非 Steam 游戏补上云存档：模拟器、重编译游戏、第三方 PC 游戏，像 Steam 云存档一样自动同步。",
+    lead: "你的游戏数据，放在你自己的云盘里。",
+    hint: "上传总是自动的。写进游戏的存档只在从 Steam 启动时自动取回；别的平台、别的版本的进度由你在游戏页取回，换之前这里的存档会先保留，可以撤销。开发者没有服务器，也收集不到任何数据。",
     points: [
-      { title: "启动前拉取，退出后上传", text: "照常从 Steam 点「开始游戏」，存档自动同步。" },
-      { title: "每次存档都有记录", text: "可以设回去、导出、保留；冲突时两份都会留着。" },
-      { title: "存档在你自己的云盘", text: "开发者没有服务器，也收集不到任何数据。" },
+      { title: "存档、时长、成就、截图", text: "都在你自己的云盘里" },
+      { title: "从 Steam 启动，自动同步", text: "启动前取回，退出后上传" },
+      { title: "别的平台和版本，由你来取", text: "Xbox 版、Switch、模拟器之间，一键取回" },
     ],
   },
   usage: {
-    title: "你想用 Ludonimbus 做什么？",
+    title: "你在哪里玩？",
     lead: "可以多选，只用来推荐设置。",
     items: {
-      emulators: { title: "模拟器游戏", text: "Dolphin、Ryujinx、PCSX2、RetroArch 等 19 个模拟器，大部分可以按游戏同步。" },
-      recomps: { title: "重编译 / 移植游戏", text: "Ship of Harkinian、Zelda 64: Recompiled 等 140 多个项目，自动认出存档位置。" },
-      steamThirdParty: { title: "给 Steam 里的第三方游戏加云存档", text: "Epic、GOG、Xbox 应用和其他 PC 游戏，加进 Steam 后自动同步。" },
-      multiDevice: { title: "在多台设备之间同步存档", text: "台式机、笔记本、掌机之间接着玩，换电脑也不丢存档。" },
+      emulators: { title: "模拟器", text: "Dolphin、Ryujinx、PCSX2 等，按游戏存" },
+      recomps: { title: "重编译 / 移植", text: "140 多个项目，自动认出存档位置" },
+      steamThirdParty: { title: "Steam 外的 PC 游戏", text: "Epic、GOG、Xbox 应用，加进 Steam 就自动同步" },
+      multiDevice: { title: "几台设备、掌机", text: "台式机、笔记本、掌机、Steam Deck 之间接着玩" },
     },
   },
   cloud: {
@@ -1125,13 +1126,13 @@ export const onboarding = {
     artSkipped: "封面：跳过了（可以在设置里填写）",
     steamOk: "Steam 插件：已启用",
     steamSkipped: "Steam 插件：跳过了（可以在设置里安装）",
-    next: "下一步是把游戏加进来。「扫描本机」会列出找到的游戏，勾选就能批量添加。",
+    next: "下一步：把游戏加进来。「扫描本机」会列出找到的游戏。",
     tips: {
-      emulators: "模拟器游戏可以按游戏同步，也可以整个模拟器一起同步；扫描会把模拟器里有存档的游戏逐个列出来。",
-      recomps: "常见的重编译游戏会被自动认出，用 RecompLauncher 安装的游戏会直接出现在扫描结果里。",
-      steamThirdParty: "不在 Steam 里的游戏可以一键加入 Steam。",
-      steamStatus: "装上「在 Steam 中显示云存档状态」后，游戏页上就能看到同步状态。",
-      multiDevice: "在另一台电脑上装好 Ludonimbus 并连接同一个云盘，「添加游戏 → 云端已有」里就能找到这些游戏。",
+      emulators: "模拟器里有存档的游戏会逐个列出来。",
+      recomps: "常见的重编译游戏会被自动认出。",
+      steamThirdParty: "不在 Steam 里的游戏可以一键加入 Steam，从 Steam 启动就自动同步。",
+      steamStatus: "装上 Steam 插件，Steam 的游戏页上就能看到同步状态。",
+      multiDevice: "别的设备装好 Ludonimbus、连上同一个云盘，「添加游戏 → 云端已有」里就有这些游戏；别处更新的进度在游戏页上取回。",
       docs: "每个功能的详细说明在文档网站上。",
     },
     openSettings: "去设置",
@@ -1271,6 +1272,8 @@ export const sources = {
         ? "按这个游戏的跨平台规则，放进这个版本的存档文件夹。"
         : "两个版本的存档放在不同的地方，会按文件名放进这个版本的存档文件夹。",
   takeHere: "取回到这里",
+  ownTag: "单独存",
+  sharedTag: "共用",
   takeTitle: "取回到这里？",
   /** `device`: where it was saved, when the source isn't named after it already. */
   takeText: (game: string, source: string, device: string | null, at: string) =>

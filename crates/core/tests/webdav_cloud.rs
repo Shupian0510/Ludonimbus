@@ -143,6 +143,7 @@ fn layout_and_migration(port: u16, tmp: &Path) {
             last_seen: chrono::Utc::now(),
             layout: 0,
             installs: Vec::new(),
+            kind: None,
         })
         .unwrap();
     let ids = ["01AAA", "01BBB", "01CCC"];

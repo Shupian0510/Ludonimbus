@@ -1059,28 +1059,6 @@ textarea.input {
 .icon-btn-lg:hover:not(:disabled) {
   background: #33475e;
 }
-/* The game page's hint row: the newer save, an arrow, the save here. */
-.newer-row {
-  flex-wrap: wrap;
-}
-.newer-strip {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  min-width: 0;
-  color: var(--muted);
-}
-.newer-side {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.newer-side.here .pmark {
-  color: var(--text-2);
-}
 .detail-body {
   padding: 20px 32px 48px;
   max-width: 1300px;
@@ -3768,4 +3746,101 @@ code.sample {
 /* A button alone in a panel keeps its own width. */
 .panel > .btn {
   align-self: flex-start;
+}
+/* The same question as a window of its own on the desktop: the card is the window. */
+.hh-prompt.as-window {
+  display: block;
+  background: #1b2633;
+}
+.hh-prompt.as-window .hh-prompt-card {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  padding: 26px 30px;
+  overflow: auto;
+}
+.hh-prompt.as-window .hh-prompt-title {
+  margin-bottom: 20px;
+}
+.hh-prompt.as-window .hh-prompt-title h1 {
+  font-size: 24px;
+}
+.hh-prompt.as-window .hh-prompt-icon {
+  width: 44px;
+  height: 44px;
+}
+.hh-prompt.as-window .savecard-when .when {
+  font-size: 26px;
+}
+.hh-prompt.as-window button[data-nav] {
+  font-size: 15px;
+  padding: 10px 16px;
+}
+/* Game page: the progress at the top (components/Progress.tsx). */
+.progress {
+  margin-bottom: 16px;
+}
+.progress.decide {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  background: rgba(102, 192, 244, 0.06);
+  border: 1px solid rgba(102, 192, 244, 0.22);
+}
+.progress.decide.warn {
+  background: rgba(240, 176, 74, 0.07);
+  border-color: rgba(240, 176, 74, 0.3);
+}
+.progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 2px 12px;
+  color: var(--warn-text);
+}
+.progress-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--sp-3);
+}
+.progress-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.savecard-tag.ok {
+  background: rgba(94, 194, 106, 0.14);
+  color: var(--ok-text);
+}
+/* A tab with something inside that needs a look. */
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+/* "单独存" / "共用" after a device's name in a group head. */
+.line-tag {
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px dashed #4a6079;
+  color: var(--text-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.hh .line-tag {
+  font-size: 15px;
+  padding: 2px 10px;
+}
+/* The game's setup in its settings tab: one panel under another. */
+.setup-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.setup-stack .panel {
+  margin-bottom: 0;
 }

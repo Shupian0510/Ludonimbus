@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, DeviceInfo, errorText, Overview } from "../api";
 import { useT } from "../i18n";
-import { deviceKind, Pill, Stat, When } from "./kit";
+import { kindOf, learnDeviceKinds, Pill, Stat, When } from "./kit";
 import { Empty, Hint, Icon, Spinner } from "./ui";
 
 /** The system a device record names ("windows x86_64", "linux x86_64", "switch"). */
@@ -21,7 +21,13 @@ export function Devices({ overview }: { overview: Overview | null }) {
 
   useEffect(() => {
     if (!overview || overview.cloud.kind === "none") return;
-    api.devices().then(setDevices, (e) => setError(errorText(e)));
+    api.devices().then(
+      (list) => {
+        setDevices(list);
+        learnDeviceKinds(list);
+      },
+      (e) => setError(errorText(e)),
+    );
   }, [overview]);
 
   // A device whose Ludonimbus knows an older cloud layout than this one's.
@@ -52,7 +58,7 @@ export function Devices({ overview }: { overview: Overview | null }) {
             return (
               <div key={d.id} className={`panel device-card${mine ? " mine" : ""}`}>
                 <span className="device-tile">
-                  <Icon name={`dev-${deviceKind(d.name, d.os)}`} size={30} />
+                  <Icon name={`dev-${kindOf(d.name, d.os, d.kind)}`} size={30} />
                 </span>
                 <div className="device-body">
                   <div className="device-title">

@@ -2,7 +2,8 @@
 // docs/plan-phase5.md §1.2): each answer has its controller button (A / B /
 // X / Y) and can also be picked with the d-pad. Closing the window answers
 // with the B button. A question about two saves (another version's newer
-// progress, a conflict) shows them as two cards side by side.
+// progress, a conflict) shows them as two cards side by side; on the desktop
+// it is a window of its own (`dialog`), run with the mouse or keyboard.
 import { useEffect } from "react";
 import { api, PlatformMark, PromptCompare, PromptRequest, PromptSide } from "../api";
 import { useT } from "../i18n";
@@ -55,14 +56,18 @@ function Question({ request, platforms }: { request: PromptRequest; platforms: R
   };
   useButtons({ b: by("b") ?? (() => answer(null)), x: by("x"), y: by("y") });
   useEffect(() => {
-    const id = requestAnimationFrame(focusFirst);
+    const id = requestAnimationFrame(() => {
+      focusFirst();
+      // On screen now: the wrapper won't fall back to a system dialog.
+      api.promptShown().catch(() => undefined);
+    });
     return () => cancelAnimationFrame(id);
   }, []);
   const c = request.compare;
   const details = request.buttons.filter((b) => b.detail);
 
   return (
-    <div className="hh hh-prompt">
+    <div className={`hh hh-prompt${request.dialog ? " as-window" : ""}`}>
       <div className={`hh-prompt-card level-${request.level}${c ? " with-compare" : ""}`}>
         <div className="hh-prompt-title">
           <span className="hh-prompt-icon">

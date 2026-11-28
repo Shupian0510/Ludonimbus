@@ -10,4 +10,10 @@ layout?: number,
 /**
  * The save lines this device syncs, and where it is on each.
  */
-installs?: Array<DeviceInstall>, };
+installs?: Array<DeviceInstall>, 
+/**
+ * What kind of device it is, from its hardware ([`crate::handheld::device_kind`]):
+ * "desktop", "laptop", "handheld", "deck" or "switch". Records of older
+ * versions don't say.
+ */
+kind?: string, };

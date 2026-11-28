@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, CloudOnlyView, errorText, GameSource, GameView, JoinSuggestion, LineMember, OtherInstall, Outcome, Overview, PlatformMarks, SaveLine, ShareOffer, SnapshotSummary, TransferPlan } from "../api";
 import { bytes, outcomeText } from "../format";
 import { currentLang, msg, useT } from "../i18n";
-import { DeviceChip, PlatformMark, Stat, When } from "./kit";
+import { DeviceChip, learnDeviceKinds, PlatformMark, Stat, When } from "./kit";
 import { Badge, Button, Hint, Icon, Menu, MenuItem, Modal, Spinner, useUi } from "./ui";
 
 /** One version of a game in the library. */
@@ -136,7 +136,10 @@ export function VersionBar({
     if (!game || !hasCloud) return setLines(null);
     let live = true;
     api.lineMembers(current).then(
-      (l) => live && setLines(l),
+      (l) => {
+        learnDeviceKinds(l.lines.flatMap((x) => x.members.map((m) => ({ name: m.device, kind: m.kind }))));
+        if (live) setLines(l);
+      },
       () => live && setLines(null),
     );
     return () => void (live = false);
@@ -253,7 +256,7 @@ export function VersionBar({
     ) : (
       <span key={`${m.device}/${m.platform}/${i}`} className="member">
         <PlatformMark mark={lines?.platforms[m.platform]} size={15} />
-        <DeviceChip name={m.device} />
+        <DeviceChip name={m.device} kind={m.kind} />
       </span>
     );
   // Lines somebody is on; before the cloud answers, just this device.

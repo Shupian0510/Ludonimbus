@@ -24,7 +24,8 @@
 //! the wrapper doesn't start it. Once the game runs, the game ends by itself
 //! and the saves are uploaded as usual.
 //!
-//! Questions are system dialogs on the desktop and a full-screen window on
+//! Questions are system dialogs on the desktop (a question about two saves
+//! shows in a window of its own there too) and a full-screen window on
 //! handhelds (`ludonimbus-app --prompt`, see `core::prompt`).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -125,13 +126,41 @@ fn windowed() -> bool {
     }
 }
 
+/// How long a question's window on the desktop may take to show before a
+/// system dialog asks instead: the app starting cold, never the user.
+const DIALOG_OPENS_WITHIN: Duration = Duration::from_secs(4);
+
+/// Where a question is asked.
+#[derive(Debug, PartialEq, Eq)]
+enum Asker {
+    /// Full screen, run with a controller (handhelds, Big Picture).
+    FullScreen,
+    /// A window of its own on the desktop: a question about two saves,
+    /// which a system dialog can only list as text.
+    Window,
+    System,
+}
+
+fn asker(windowed: bool, req: &Request) -> Asker {
+    match (windowed, req.compare.is_some()) {
+        (true, _) => Asker::FullScreen,
+        (false, true) => Asker::Window,
+        (false, false) => Asker::System,
+    }
+}
+
 /// Ask a question; returns the chosen button's id (`None`: closed).
 fn ask(req: &Request) -> Option<String> {
-    if windowed() {
-        match prompt::ask_window(req) {
+    match asker(windowed(), req) {
+        Asker::FullScreen => match prompt::ask_window(req) {
             Ok(choice) => return choice,
             Err(e) => log(format!("prompt window failed ({e:#}); using a system dialog")),
-        }
+        },
+        Asker::Window => match prompt::ask_dialog(req, DIALOG_OPENS_WITHIN) {
+            Ok(choice) => return choice,
+            Err(e) => log(format!("question window failed ({e:#}); using a system dialog")),
+        },
+        Asker::System => {}
     }
     system_dialog(req)
 }
@@ -1247,6 +1276,18 @@ fn run(args: &[String]) -> Result<i32> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[test]
+    fn questions_about_two_saves_get_a_window_on_the_desktop() {
+        let plain = Request::new("Ludonimbus", "Can't find the game", "warn").button("ok", "OK", "a");
+        let two = plain.clone().compare(prompt::Compare::default());
+        assert_eq!(asker(true, &plain), Asker::FullScreen);
+        assert_eq!(asker(true, &two), Asker::FullScreen);
+        assert_eq!(asker(false, &two), Asker::Window);
+        assert_eq!(asker(false, &plain), Asker::System);
+        // Never long before a system dialog takes over.
+        assert!(DIALOG_OPENS_WITHIN <= Duration::from_secs(5));
+    }
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)

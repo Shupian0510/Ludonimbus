@@ -162,6 +162,65 @@ const KNOWN: &[(&[&str], &str)] = &[
     (&["anbernic", "win600"], "ANBERNIC Win600"),
 ];
 
+/// What kind of device this is, for its record in the cloud (the other
+/// devices show it by an icon): "deck", "handheld", "laptop" or "desktop".
+/// A Switch registers itself as "switch". Read once: a known handheld by
+/// its firmware ([`device`]), a laptop by its battery or its chassis.
+pub fn device_kind() -> &'static str {
+    static K: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    K.get_or_init(|| kind_of(device().as_deref(), has_battery(), chassis_type()))
+}
+
+/// SMBIOS chassis types: hand held, and the portable ones (portable,
+/// laptop, notebook, sub notebook, tablet, convertible, detachable).
+const CHASSIS_HANDHELD: u32 = 11;
+const CHASSIS_PORTABLE: &[u32] = &[8, 9, 10, 14, 30, 31, 32];
+
+fn kind_of(handheld: Option<&str>, battery: bool, chassis: Option<u32>) -> &'static str {
+    match handheld {
+        Some(name) if name.starts_with("Steam Deck") => "deck",
+        Some(_) => "handheld",
+        None if chassis == Some(CHASSIS_HANDHELD) => "handheld",
+        None if battery || chassis.is_some_and(|c| CHASSIS_PORTABLE.contains(&c)) => "laptop",
+        None => "desktop",
+    }
+}
+
+/// The machine runs on a battery of its own (not a controller's or a
+/// mouse's).
+fn has_battery() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+        // SAFETY: fills the struct it is given and touches nothing else.
+        let mut s: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+        // 128: no system battery; 255: unknown.
+        unsafe { GetSystemPowerStatus(&mut s) != 0 && s.BatteryFlag != 128 && s.BatteryFlag != 255 }
+    }
+    #[cfg(not(windows))]
+    {
+        let Ok(dir) = std::fs::read_dir("/sys/class/power_supply") else {
+            return false;
+        };
+        dir.flatten().any(|e| {
+            let read = |f: &str| std::fs::read_to_string(e.path().join(f)).map(|s| s.trim().to_string()).unwrap_or_default();
+            read("type") == "Battery" && read("scope") != "Device"
+        })
+    }
+}
+
+/// The SMBIOS chassis type, where the system gives it cheaply (Linux).
+fn chassis_type() -> Option<u32> {
+    #[cfg(not(windows))]
+    {
+        std::fs::read_to_string("/sys/class/dmi/id/chassis_type").ok()?.trim().parse().ok()
+    }
+    #[cfg(windows)]
+    {
+        None
+    }
+}
+
 /// The handheld this is, when its firmware names a known one. Only a hint
 /// for defaults (the first-run guide's handheld step, Settings): it never
 /// switches the view by itself, since a handheld can sit in a dock.
@@ -233,6 +292,19 @@ pub fn add_to_steam(root: &std::path::Path, account: &str, app: &std::path::Path
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_kinds() {
+        assert_eq!(kind_of(Some("Steam Deck OLED"), true, Some(1)), "deck");
+        assert_eq!(kind_of(Some("ROG Ally"), true, None), "handheld");
+        // A handheld the list doesn't know, by its chassis.
+        assert_eq!(kind_of(None, true, Some(11)), "handheld");
+        assert_eq!(kind_of(None, true, None), "laptop");
+        assert_eq!(kind_of(None, false, Some(10)), "laptop");
+        assert_eq!(kind_of(None, false, Some(3)), "desktop");
+        assert_eq!(kind_of(None, false, None), "desktop");
+        assert!(["deck", "handheld", "laptop", "desktop"].contains(&device_kind()));
+    }
 
     #[test]
     fn known_names() {

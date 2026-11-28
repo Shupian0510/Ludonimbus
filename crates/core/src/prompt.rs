@@ -8,6 +8,12 @@
 //! [`open_window`] shows one without waiting, for a question that only
 //! matters until something else happens (a download that finishes first
 //! closes it).
+//!
+//! On the desktop a question about two saves ([`Request::compare`]) shows in
+//! a window of its own as well, centred and not full screen
+//! ([`Request::dialog`], [`ask_dialog`]): a system dialog can only list them
+//! as text. When that window doesn't show within a few seconds, the caller
+//! asks with a system dialog instead.
 
 use crate::paths;
 use anyhow::{anyhow, Context, Result};
@@ -30,6 +36,9 @@ pub struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub compare: Option<Compare>,
+    /// A window of its own on the desktop, centred, in front, not full
+    /// screen ([`ask_dialog`]).
+    pub dialog: bool,
 }
 
 /// Two saves to choose between before playing: the one offered (another
@@ -87,7 +96,7 @@ pub struct Button {
 
 impl Request {
     pub fn new(title: impl Into<String>, text: impl Into<String>, level: &str) -> Self {
-        Request { title: title.into(), text: text.into(), level: level.into(), buttons: Vec::new(), compare: None }
+        Request { title: title.into(), text: text.into(), level: level.into(), buttons: Vec::new(), compare: None, dialog: false }
     }
 
     /// Show the two saves the question is about ([`Request::compare`]).
@@ -153,9 +162,23 @@ pub fn app_exe() -> PathBuf {
 }
 
 pub fn answer_path(request: &Path) -> PathBuf {
+    beside(request, ".answer")
+}
+
+/// Written by the app once the question is on screen ([`mark_shown`]).
+pub fn shown_path(request: &Path) -> PathBuf {
+    beside(request, ".shown")
+}
+
+fn beside(request: &Path, ext: &str) -> PathBuf {
     let mut s = request.as_os_str().to_owned();
-    s.push(".answer");
+    s.push(ext);
     PathBuf::from(s)
+}
+
+/// The question is on screen (called by the app).
+pub fn mark_shown(request: &Path) -> Result<()> {
+    crate::util::atomic_write(&shown_path(request), b"1")
 }
 
 pub fn read_request(path: &Path) -> Result<Request> {
@@ -172,6 +195,28 @@ pub fn write_answer(request: &Path, choice: Option<&str>) -> Result<()> {
 /// back to a system dialog).
 pub fn ask_window(req: &Request) -> Result<Option<String>> {
     open_window(req)?.wait()
+}
+
+/// Ask in a window of its own on the desktop (centred, not full screen) and
+/// wait for the answer. `Err` when the window isn't on screen within
+/// `opens_within` (the app is missing, slow to start, or exited): it is
+/// closed, and the caller asks with a system dialog.
+pub fn ask_dialog(req: &Request, opens_within: std::time::Duration) -> Result<Option<String>> {
+    let mut req = req.clone();
+    req.dialog = true;
+    let mut window = open_window(&req)?;
+    let start = std::time::Instant::now();
+    while !window.shown() {
+        if let Some(answer) = window.poll()? {
+            // Answered (or closed) before the marker was seen.
+            return Ok(answer);
+        }
+        if start.elapsed() >= opens_within {
+            return Err(anyhow!("the question window didn't show within {} ms", opens_within.as_millis()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    window.wait()
 }
 
 /// Show a question in a full-screen window and go on: [`Window::poll`] for
@@ -219,6 +264,11 @@ pub struct Window {
 }
 
 impl Window {
+    /// The question is on screen ([`mark_shown`]).
+    pub fn shown(&self) -> bool {
+        shown_path(&self.file).is_file()
+    }
+
     /// `Ok(None)` while the window is open; `Ok(Some(choice))` once it is
     /// gone, `choice` being what [`ask_window`] returns. `Err`: it exited
     /// without ever showing (old version, crashed).
@@ -252,6 +302,7 @@ impl Drop for Window {
             let _ = self.child.wait();
         }
         let _ = std::fs::remove_file(answer_path(&self.file));
+        let _ = std::fs::remove_file(shown_path(&self.file));
         let _ = std::fs::remove_file(&self.file);
     }
 }
@@ -259,6 +310,17 @@ impl Drop for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dialog_without_the_app_fails_at_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("LUDONIMBUS_APP", tmp.path().join("missing-app.exe"));
+        let start = std::time::Instant::now();
+        let req = Request::new("Ludonimbus", "Newer progress", "info").button("take", "Take", "a");
+        assert!(ask_dialog(&req, std::time::Duration::from_secs(4)).is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        std::env::remove_var("LUDONIMBUS_APP");
+    }
 
     #[test]
     fn requests_round_trip() {
@@ -275,6 +337,9 @@ mod tests {
         let file = tmp.path().join("p.json");
         std::fs::write(&file, serde_json::to_vec(&req).unwrap()).unwrap();
         assert_eq!(read_request(&file).unwrap(), req);
+        assert!(!shown_path(&file).exists());
+        mark_shown(&file).unwrap();
+        assert!(shown_path(&file).is_file() && shown_path(&file).to_string_lossy().ends_with("p.json.shown"));
         write_answer(&file, Some("cloud")).unwrap();
         let a: Answer = serde_json::from_slice(&std::fs::read(answer_path(&file)).unwrap()).unwrap();
         assert_eq!(a.choice.as_deref(), Some("cloud"));

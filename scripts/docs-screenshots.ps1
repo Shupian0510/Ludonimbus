@@ -32,8 +32,10 @@ $Repo = Split-Path -Parent $PSScriptRoot
 
 $all = @(
     # Library, game page
-    "library-grid", "library-sources", "collection", "game-detail", "game-detail-steam", "game-detail-conflict", "game-detail-pending",
-    "versions", "game-settings", "art-picker", "game-screenshots", "game-achievements", "game-files",
+    "library-grid", "library-sources", "library-differ", "collection", "game-detail", "game-detail-steam", "game-detail-conflict", "game-detail-pending",
+    "game-newer", "versions", "save-sources", "game-settings", "art-picker", "game-screenshots", "game-achievements", "game-files", "cloud-game",
+    # Devices; the launch questions as desktop windows; the handheld game screen
+    "devices", "prompt-newer", "prompt-conflict", "handheld-game",
     # Settings
     "settings", "settings-cloud", "settings-cloud-google", "settings-cloud-folder", "settings-cloud-migrate",
     "settings-cloud-webdav", "settings-cloud-s3", "settings-cloud-quark", "settings-language", "settings-sgdb",

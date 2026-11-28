@@ -35,7 +35,8 @@ function Shell({ start }: { start: "desktop" | "handheld" }) {
 }
 
 function Question({ request, platforms }: { request: PromptRequest; platforms: Record<string, PlatformMark> }) {
-  useHandheldZoom(true);
+  // Full screen it is zoomed to the screen; a window on the desktop isn't.
+  useHandheldZoom(!request.dialog);
   return <Prompt request={request} platforms={platforms} />;
 }
 
