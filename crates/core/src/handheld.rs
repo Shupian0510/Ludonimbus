@@ -205,10 +205,9 @@ pub const HANDHELD_ARG: &str = "--handheld";
 /// it can be opened from the Steam library where there is no tray).
 pub fn steam_shortcut(root: &std::path::Path, account: &str) -> Option<crate::steam::Shortcut> {
     let (_, list) = crate::steam::read_shortcuts(root, account).ok()?;
-    list.into_iter().find(|s| {
-        let exe = crate::util::file_name_lower(std::path::Path::new(&crate::util::native_sep(&crate::util::unquote(&s.exe))));
-        exe.starts_with("ludonimbus-app") && s.launch_options.contains(HANDHELD_ARG)
-    })
+    // Any of Ludonimbus's own programs: `ludonimbus-app.exe` on Windows, the
+    // AppImage (`Ludonimbus….AppImage`) or `ludonimbus-app` on Linux.
+    list.into_iter().find(|s| crate::discover::is_own_program(std::path::Path::new(&s.exe)) && s.launch_options.contains(HANDHELD_ARG))
 }
 
 /// Add a Steam shortcut that opens Ludonimbus's handheld screen (replacing

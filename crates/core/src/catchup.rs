@@ -52,6 +52,11 @@ pub fn runner_phase(key: &str) -> Option<String> {
 /// Process names that mean "this game is running": its `waitFor` and its
 /// program (not the Xbox app's launch helper, which every Xbox game shares).
 pub fn watch_names(g: &crate::config::GameEntry) -> Vec<String> {
+    // An old entry pointing at Ludonimbus itself (hidden from the library):
+    // its process is the app, which must never count as the game running.
+    if crate::games::is_ludonimbus(g) {
+        return Vec::new();
+    }
     let mut names: Vec<String> = crate::spec::effective(g).wait_for.iter().map(|s| s.to_lowercase()).collect();
     if let Some(exe) = g.exe.as_deref().filter(|e| !crate::xbox::is_launch_helper(e)) {
         names.push(crate::util::file_name_lower(exe));
@@ -220,6 +225,14 @@ pub fn screenshots(cfg: &AppConfig, key: &str, log: &dyn Fn(String)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_entry_for_ludonimbus_itself_never_counts_as_a_game_running() {
+        let own = crate::config::GameEntry { exe: Some("C:/Program Files/Ludonimbus/ludonimbus-app.exe".into()), ..Default::default() };
+        assert!(watch_names(&own).is_empty());
+        let game = crate::config::GameEntry { exe: Some("D:/Games/Celeste/Celeste.exe".into()), ..Default::default() };
+        assert_eq!(watch_names(&game), vec!["celeste.exe".to_string()]);
+    }
 
     #[test]
     fn a_marker_that_cant_be_read_is_a_wrapper_still_there() {
