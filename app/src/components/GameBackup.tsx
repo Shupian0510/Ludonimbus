@@ -23,6 +23,7 @@ import { msg, useT } from "../i18n";
 import { useTauriEvent } from "../useTauriEvent";
 import { duration } from "./SpeedTest";
 import { withSteamClosed } from "./steamAction";
+import { DeviceChip, Stat, When } from "./kit";
 import { Badge, Button, Hint, Icon, Modal, Spinner, useUi } from "./ui";
 
 const startJob = (kind: BackupJob["kind"], target: string | null = null): BackupJob => ({
@@ -217,7 +218,10 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
               {preview ? (
                 preview.map((p) => (
                   <div key={p.kind} className="small">
-                    <b>{c.kind[p.kind]}</b> {p.kind === "program" ? p.name : ""} {p.version ?? ""} · {c.previewLine(p.files, bytes(p.bytes))}
+                    <b>{c.kind[p.kind]}</b> {p.kind === "program" ? p.name : ""} {p.version && <span className="version-tag">{p.version}</span>}{" "}
+                    <Stat icon="file" title={c.previewLine(p.files, bytes(p.bytes))}>
+                      {bytes(p.bytes)}
+                    </Stat>
                     {p.excludedFiles > 0 && <span className="muted">{c.previewExcluded(p.excludedFiles, bytes(p.excludedBytes))}</span>}
                   </div>
                 ))
@@ -230,10 +234,18 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
           )}
 
           {latest && (
-            <div className="small">
-              {c.latest(dateTime(latest.createdAt), latest.deviceName, bytes(latest.totalSize))}
-              <span className="muted"> · {c.stored(bytes(info.storedBytes))}</span>
-              <div className="muted">{partsText(latest.components)}</div>
+            // The newest backup: when, from which device, how big; what the cloud holds in all.
+            <div className="gb-latest">
+              <Stat icon="upload" title={c.latestTitle}>
+                <When at={latest.createdAt} />
+              </Stat>
+              <DeviceChip name={latest.deviceName} />
+              <Stat icon="file" title={partsText(latest.components)}>
+                {bytes(latest.totalSize)}
+              </Stat>
+              <Stat icon="cloud" title={c.stored(bytes(info.storedBytes))}>
+                {bytes(info.storedBytes)}
+              </Stat>
             </div>
           )}
           {slowText && <div className="health health-warn">{slowText}</div>}
@@ -279,7 +291,7 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
             <JobProgress job={job} onStop={() => run(() => gameBackupApi.cancel(key))} />
           ) : (
             <div className="row">
-              <Button kind="primary" icon="upload" disabled={!info.rootExists || game.running} onClick={() => run(startBackup)}>
+              <Button icon="upload" disabled={!info.rootExists || game.running} onClick={() => run(startBackup)}>
                 {latest ? c.update : c.backup}
               </Button>
               {latest && (
@@ -302,9 +314,10 @@ export function GameBackupPanel({ game, onChanged }: { game: GameView; onChanged
             <div className="gb-versions">
               {info.versions.map((v) => (
                 <div key={v.id} className="gb-version">
-                  <span className="grow">
-                    {dateTime(v.createdAt)} · {v.deviceName} · {bytes(v.totalSize)}
-                    <span className="muted small"> — {partsText(v.components)}</span>
+                  <span className="grow gb-latest" title={partsText(v.components)}>
+                    <When at={v.createdAt} />
+                    <DeviceChip name={v.deviceName} />
+                    <Stat icon="file">{bytes(v.totalSize)}</Stat>
                   </span>
                   <Button small kind="ghost" icon="trash" disabled={busy} title={c.delete} onClick={() => run(() => remove(v))} />
                 </div>

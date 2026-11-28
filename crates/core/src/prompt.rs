@@ -11,6 +11,7 @@
 
 use crate::paths;
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ts_rs::TS;
@@ -24,6 +25,48 @@ pub struct Request {
     /// "info", "warn" or "error".
     pub level: String,
     pub buttons: Vec<Button>,
+    /// The two saves the question is about, for the window to show side by
+    /// side. A system dialog has only [`Request::text`], which says the same.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub compare: Option<Compare>,
+}
+
+/// Two saves to choose between before playing: the one offered (another
+/// version's newer progress, the cloud's) and the one here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(rename = "PromptCompare")]
+pub struct Compare {
+    pub there: Side,
+    /// `None`: there are no saves here yet.
+    pub here: Option<Side>,
+    /// How the saves are converted to be used here ("xbox", "rule",
+    /// "files"); empty when they are taken as they are.
+    pub convert: String,
+    /// What else to know before choosing, one line each.
+    pub notes: Vec<String>,
+}
+
+/// One of the two saves of a [`Compare`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(rename = "PromptSide")]
+pub struct Side {
+    /// What it is called: "GOG 版", "云端", "本机"…
+    pub name: String,
+    /// What it was made on ([`crate::sync::platform`]): which program's
+    /// icon the window shows. Empty when not known.
+    pub platform: String,
+    /// The device that made it.
+    pub device: String,
+    pub at: Option<DateTime<Utc>>,
+    /// How long the game had been played when it was made, in seconds.
+    pub playtime: Option<u64>,
+    pub size: Option<u64>,
+    pub files: Option<u64>,
+    /// The newer of the two: the window stresses it.
+    pub newer: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, TS)]
@@ -44,7 +87,13 @@ pub struct Button {
 
 impl Request {
     pub fn new(title: impl Into<String>, text: impl Into<String>, level: &str) -> Self {
-        Request { title: title.into(), text: text.into(), level: level.into(), buttons: Vec::new() }
+        Request { title: title.into(), text: text.into(), level: level.into(), buttons: Vec::new(), compare: None }
+    }
+
+    /// Show the two saves the question is about ([`Request::compare`]).
+    pub fn compare(mut self, compare: Compare) -> Self {
+        self.compare = Some(compare);
+        self
     }
 
     pub fn button(mut self, id: &str, label: impl Into<String>, key: &str) -> Self {
@@ -214,8 +263,12 @@ mod tests {
     #[test]
     fn requests_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
-        let req =
-            Request::new("Ludonimbus", "Both changed", "warn").button("cloud", "Use cloud", "a").detail("kept first").button("cancel", "Don't start", "b");
+        let side = |name: &str, newer| Side { name: name.into(), device: "PC".into(), at: Some(Utc::now()), playtime: Some(3600), newer, ..Side::default() };
+        let req = Request::new("Ludonimbus", "Both changed", "warn")
+            .button("cloud", "Use cloud", "a")
+            .detail("kept first")
+            .button("cancel", "Don't start", "b")
+            .compare(Compare { there: side("Cloud", true), here: Some(side("This PC", false)), convert: String::new(), notes: vec!["note".into()] });
         assert_eq!(req.cancel_id(), Some("cancel"));
         assert_eq!((req.buttons[0].detail.as_str(), req.buttons[1].detail.as_str()), ("kept first", ""));
         assert!(req.text_with_details().starts_with("Both changed\n\n") && req.text_with_details().contains("kept first"));

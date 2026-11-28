@@ -3,11 +3,12 @@
 // a backup of the game itself, and applying its saves to another version.
 import { useEffect, useState } from "react";
 import { api, CloudGameInfo, CloudOnlyView, errorText, Overview, playtimePlatforms, ShortcutView } from "../api";
-import { bytes, dateTime, duration } from "../format";
+import { bytes, duration } from "../format";
 import { msg, useT } from "../i18n";
 import { AccountPicker, useAccounts } from "./AddGame";
 import { VersionBar } from "./SaveLibrary";
 import { Saves } from "./Saves";
+import { Bars, DeviceChip, Stat, When } from "./kit";
 import { Button, Hint, Icon, Menu, Modal, useUi } from "./ui";
 import { useShelves } from "./Collection";
 
@@ -55,7 +56,7 @@ export function CloudGameDetail({
   const played = playtime.devices.filter((d) => d.secs > 0);
   return (
     <div className="detail">
-      <div className={`hero${hero ? "" : " hero-plain"}`} style={!hero && game.art.cover ? { backgroundImage: `url(${game.art.cover})` } : undefined}>
+      <div className={`hero${hero ? "" : game.art.cover ? " hero-plain" : " hero-none"}`} style={!hero && game.art.cover ? { backgroundImage: `url(${game.art.cover})` } : undefined}>
         {hero && <img className="hero-img missing-art" src={hero} alt="" onError={() => setHeroFailed(true)} />}
         <div className="hero-shade" />
         <button className="back" onClick={onBack}>
@@ -70,18 +71,13 @@ export function CloudGameDetail({
         <Button kind="primary" icon="plus" onClick={() => setAdding(true)}>
           {s.addHere}
         </Button>
-        {info?.gameBackup && (
-          <Button icon="download" onClick={install}>
-            {s.installFromCloud}
-          </Button>
-        )}
-        <Menu title={t.saves.more} items={shelves.items} />
+        <Menu title={t.saves.more} items={shelves.items} className="icon-btn icon-btn-lg" />
         <div className="actionbar-status">
           {shelves.marks}
           {playtime.totalSecs > 0 && (
-            <span className="muted playtime">
-              <Icon name="clock" size={13} /> {t.game.playtime(duration(playtime.totalSecs))}
-            </span>
+            <Stat icon="clock" title={t.game.playtimeTitle}>
+              {duration(playtime.totalSecs)}
+            </Stat>
           )}
         </div>
       </div>
@@ -89,16 +85,28 @@ export function CloudGameDetail({
       <div className="detail-body">
         <div className="banner banner-info not-here">
           <Icon name="cloud" />
-          <div>
+          <span>
             <b>{s.cloudBannerTitle}</b> <Hint text={s.cloudBannerText} />
-            {info && (
-              <p className="muted small">
-                {info.gameBackup
-                  ? s.installHint(bytes(info.gameBackup.size), info.gameBackup.deviceName, dateTime(info.gameBackup.createdAt))
-                  : s.noGameBackup}
-              </p>
-            )}
-          </div>
+          </span>
+          {info?.gameBackup ? (
+            // The game itself is backed up: how big, from which device, when.
+            <span className="banner-facts">
+              <Stat icon="download" title={s.gameBackup}>
+                {bytes(info.gameBackup.size)}
+              </Stat>
+              <DeviceChip name={info.gameBackup.deviceName} />
+              <When at={info.gameBackup.createdAt} />
+              <Button small icon="download" onClick={install}>
+                {s.installFromCloud}
+              </Button>
+            </span>
+          ) : (
+            info && (
+              <span className="banner-facts muted small">
+                {s.noGameBackupShort} <Hint text={s.noGameBackup} />
+              </span>
+            )
+          )}
         </div>
 
         <VersionBar overview={overview} current={game.key} onOpen={onOpen} onChanged={onChanged} />
@@ -109,18 +117,10 @@ export function CloudGameDetail({
               <Icon name="clock" />
               <h3>{s.playedOn}</h3>
             </div>
-            {played.map((d) => (
-              <div key={d.device} className="row space">
-                <span>{d.deviceName}</span>
-                <span className="muted">{duration(d.secs)}</span>
-              </div>
-            ))}
-            {playtimePlatforms(playtime).map(([name, secs]) => (
-              <div key={name} className="row space muted small">
-                <span>{name}</span>
-                <span>{duration(secs)}</span>
-              </div>
-            ))}
+            <Bars rows={played.map((d) => ({ key: d.device, label: <DeviceChip name={d.deviceName} here={d.thisDevice} />, value: d.secs }))} format={duration} />
+            {playtimePlatforms(playtime).length > 0 && (
+              <Bars rows={playtimePlatforms(playtime).map(([name, secs]) => ({ key: name, label: <span className="pmark">{name}</span>, value: secs }))} format={duration} />
+            )}
           </section>
         )}
 

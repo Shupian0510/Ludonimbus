@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react";
 import { api, DeviceInfo, errorText, Overview } from "../api";
-import { dateTime, relTime } from "../format";
 import { useT } from "../i18n";
-import { Badge, Empty, Hint, Icon, Spinner } from "./ui";
+import { deviceKind, Pill, Stat, When } from "./kit";
+import { Empty, Hint, Icon, Spinner } from "./ui";
+
+/** The system a device record names ("windows x86_64", "linux x86_64", "switch"). */
+function osName(os: string): string {
+  const o = os.toLowerCase();
+  if (o.startsWith("windows")) return "Windows";
+  if (o.startsWith("linux")) return "Linux";
+  if (o.startsWith("macos")) return "macOS";
+  if (o.startsWith("switch")) return "Switch";
+  return os.split(" ")[0] ?? os;
+}
 
 export function Devices({ overview }: { overview: Overview | null }) {
   const t = useT();
@@ -36,22 +46,43 @@ export function Devices({ overview }: { overview: Overview | null }) {
         </div>
       ) : (
         <div className="device-list">
-          {devices.map((d) => (
-            <div key={d.id} className="panel device-card">
-              <Icon name="devices" size={26} />
-              <div>
-                <b>{d.name}</b> {d.id === overview?.deviceId && <Badge tone="info">{t.devices.thisDevice}</Badge>}
-                {outdated(d) && (
-                  <>
-                    <Badge tone="warn">{t.devices.outdated}</Badge> <Hint text={t.devices.outdatedHint} />
-                  </>
-                )}
-                <div className="muted small">
-                  {t.devices.lastSeen(relTime(d.lastSeen), dateTime(d.lastSeen))} · Ludonimbus {d.appVersion} · {d.os}
+          {devices.map((d) => {
+            const mine = d.id === overview?.deviceId;
+            const games = new Set((d.installs ?? []).map((i) => i.game)).size;
+            return (
+              <div key={d.id} className={`panel device-card${mine ? " mine" : ""}`}>
+                <span className="device-tile">
+                  <Icon name={`dev-${deviceKind(d.name, d.os)}`} size={30} />
+                </span>
+                <div className="device-body">
+                  <div className="device-title">
+                    <b>{d.name}</b>
+                    {mine && <Pill tone="info">{t.devices.thisDevice}</Pill>}
+                    {outdated(d) && (
+                      <>
+                        <Pill tone="warn">{t.devices.outdated}</Pill>
+                        <Hint text={t.devices.outdatedHint} />
+                      </>
+                    )}
+                  </div>
+                  <div className="device-facts">
+                    <Stat icon="clock" title={t.devices.lastSeen}>
+                      <When at={d.lastSeen} />
+                    </Stat>
+                    {games > 0 && (
+                      <Stat icon="library" title={t.devices.gamesTitle}>
+                        {games}
+                      </Stat>
+                    )}
+                    <span className="version-tag" title={t.devices.version}>
+                      v{d.appVersion}
+                    </span>
+                    <span className="device-os">{osName(d.os)}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

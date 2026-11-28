@@ -6,11 +6,12 @@
 // emulator, a device that keeps its own), each save compared with the one
 // here. One action per row: make it the current one, or take it here.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, errorText, GameView, Overview, PlatformMark, SaveSource, SaveSources, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot, UnsentSave } from "../api";
-import { bytes, dateTime, outcomeText, relTime, triggerLabel } from "../format";
+import { api, errorText, GameView, Overview, PlatformMark as Mark, SaveSource, SaveSources, SnapshotList, SnapshotMeta, SnapshotSummary, TrashedSnapshot, UnsentSave } from "../api";
+import { bytes, dateTime, outcomeText, triggerLabel } from "../format";
 import { msg, useT } from "../i18n";
+import { cmpOf, Delta, DeviceChip, PlatformMark, PlayDelta, playedOf, SourceHead, When } from "./kit";
 import { ApplyDialog, membersOf } from "./SaveLibrary";
-import { compareWith, GroupHead, playedText, sourceHint, useTakeHere, versionOf } from "./SaveSources";
+import { sourceWhat, useTakeHere, versionOf } from "./SaveSources";
 import { Badge, Button, Empty, Hint, Icon, Menu, MenuItem, useUi } from "./ui";
 
 /** Days a deleted save stays in 「最近删除」 (cloud::TRASH_DAYS). */
@@ -27,17 +28,6 @@ const isShared = (s: SnapshotSummary) => s.trigger === "shared";
 
 interface Row {
   s: SnapshotSummary;
-}
-
-/** What the saves were made on: the program's own logo when it is on this PC, and its name. */
-export function PlatformTag({ mark }: { mark?: PlatformMark }) {
-  if (!mark) return <span className="platform-tag" />;
-  return (
-    <span className="platform-tag">
-      {mark.logo && <img className="src-logo" src={mark.logo} alt="" width={15} height={15} />}
-      {mark.label}
-    </span>
-  );
 }
 
 /** The rows of the saves here shown first, and the ones folded away. */
@@ -128,7 +118,7 @@ export function Saves({
   }, [game.key, ui]);
 
   const { top, auto, current } = useMemo(() => (data ? arrange(data, !!cloudOnly) : { top: [], auto: [], current: null }), [data, cloudOnly]);
-  const marks: Record<string, PlatformMark> = useMemo(() => ({ ...(sources?.platforms ?? {}), ...(data?.platforms ?? {}) }), [data, sources]);
+  const marks: Record<string, Mark> = useMemo(() => ({ ...(sources?.platforms ?? {}), ...(data?.platforms ?? {}) }), [data, sources]);
   // Also with one game in the library: the dialog offers the game's versions installed here that aren't added yet.
   const canSend = membersOf(overview).length > 1 || !cloudOnly;
 
@@ -301,13 +291,14 @@ export function Saves({
     <div key={`unsent/${u.id}`} className="save side">
       <div className="save-row">
         <div className="save-main" title={dateTime(u.createdAt)}>
-          <PlatformTag mark={marks[u.platform ?? ""]} />
+          <PlatformMark mark={marks[u.platform ?? ""]} />
           <span className="save-when">
-            <b>{relTime(u.createdAt)}</b>
+            <When at={u.createdAt} strong />
             <Badge tone="warn">{v.unsent}</Badge>
             <Hint text={v.unsentHint} />
           </span>
-          <span className="device mine">{overview.deviceName}</span>
+          <DeviceChip name={overview.deviceName} here />
+          <span />
           <span className="muted save-size">{bytes(u.totalSize)}</span>
         </div>
         <div className="save-actions">
@@ -334,21 +325,28 @@ export function Saves({
     const incomplete = !!s.incomplete;
     const main = (
       <>
-        <PlatformTag mark={marks[s.platform ?? ""]} />
+        <PlatformMark mark={marks[s.platform ?? ""]} />
         <span className="save-when">
-          <b>{named ? s.comment : relTime(s.createdAt)}</b>
-          {(named || s.comment) && <span className="muted">{named ? relTime(s.createdAt) : s.comment}</span>}
+          {named ? <b>{s.comment}</b> : <When at={s.createdAt} strong />}
+          {named ? <When at={s.createdAt} /> : s.comment && <span className="muted">{s.comment}</span>}
           {isSide(s) && !isShared(s) && <Badge tone="muted">{v.replaced}</Badge>}
-          {incomplete ? (
+          {incomplete && (
             <>
               <Badge tone="warn">{v.incomplete}</Badge>
               <Hint text={v.incompleteHint} />
             </>
-          ) : (
-            isHead && !isCurrent && !cloudOnly && <Badge tone="info">{v.newest}</Badge>
           )}
         </span>
-        <span className={`device${mine ? " mine" : ""}`}>{s.deviceName}</span>
+        <DeviceChip name={s.deviceName} here={mine} />
+        <span className="save-delta">
+          {/* Newer than where this device is (another device played on): how much. */}
+          {!isCurrent && !cloudOnly && !isSide(s) && (
+            <>
+              <Delta cmp={cmpOf(s, here)} quiet />
+              <PlayDelta secs={playedOf(s, here)} quiet />
+            </>
+          )}
+        </span>
         <span className="muted save-size">{bytes(s.totalSize)}</span>
       </>
     );
@@ -421,22 +419,20 @@ export function Saves({
 
   /** A save of another source: how it compares with the one here, and taking it here. */
   const sourceRow = (src: SaveSource, s: SnapshotSummary) => {
-    const cmp = compareWith(s, here);
     const same = !!here && s.contentHash === here.contentHash;
     const named = s.locked && !!s.comment;
     const version = versionOf(s);
     const never = src.take.kind === "never" ? src.take.reason : null;
     const incomplete = !!s.incomplete;
-    const title = [dateTime(s.createdAt), triggerLabel(s.trigger), version, playedText(s, here)].filter(Boolean).join(" · ");
     return (
       <div key={`${src.id}/${s.id}`} className={`save${incomplete ? " side" : ""}`}>
         <div className="save-row">
-          <div className="save-main" title={title}>
-            <span className={`save-cmp${cmp?.newer ? " newer" : ""}`}>{cmp?.text}</span>
+          <div className="save-main" title={`${dateTime(s.createdAt)}\n${triggerLabel(s.trigger)}`}>
+            <PlatformMark mark={marks[s.platform ?? ""]} />
             <span className="save-when">
-              <b>{named ? s.comment : relTime(s.createdAt)}</b>
-              {named && <span className="muted">{relTime(s.createdAt)}</span>}
-              {version && <span className="muted">{version}</span>}
+              {named ? <b>{s.comment}</b> : <When at={s.createdAt} strong />}
+              {named && <When at={s.createdAt} />}
+              {version && <span className="version-tag">{version}</span>}
               {incomplete && (
                 <>
                   <Badge tone="warn">{v.incomplete}</Badge>
@@ -444,7 +440,11 @@ export function Saves({
                 </>
               )}
             </span>
-            <span className="device">{s.deviceName}</span>
+            <DeviceChip name={s.deviceName} here={s.deviceId === overview.deviceId} />
+            <span className="save-delta">
+              {!same && <Delta cmp={cmpOf(s, here)} />}
+              {!same && <PlayDelta secs={playedOf(s, here)} />}
+            </span>
             <span className="muted save-size">{bytes(s.totalSize)}</span>
           </div>
           <div className="save-actions">
@@ -486,10 +486,11 @@ export function Saves({
   return (
     <div className="saves">
       {groups.length > 0 && sources && (
-        <GroupHead
+        <SourceHead
           mark={marks[sources.herePlatform]}
-          name={t.sources.here}
-          devices={[sources.hereName, overview.deviceName]}
+          name={t.sources.hereName(sources.hereName)}
+          devices={[overview.deviceName]}
+          mine={overview.deviceName}
           latest={newestHere}
           hint={t.sources.hereHint}
         />
@@ -526,9 +527,9 @@ export function Saves({
             <div key={d.snapshot.id} className="save side">
               <div className="save-row">
                 <div className="save-main" title={v.deletedInfo(dateTime(d.deletedAt), d.deletedBy || "?")}>
-                  <PlatformTag mark={marks[d.snapshot.platform ?? ""]} />
+                  <PlatformMark mark={marks[d.snapshot.platform ?? ""]} />
                   <span className="save-when">
-                    <b>{relTime(d.snapshot.createdAt)}</b>
+                    <When at={d.snapshot.createdAt} strong />
                     {d.reason === "incomplete" ? (
                       // Why it is here comes first; how long it stays is in the "?".
                       <>
@@ -539,7 +540,8 @@ export function Saves({
                       <Badge tone="muted">{v.daysLeft(daysLeft(d))}</Badge>
                     )}
                   </span>
-                  <span className="device">{d.snapshot.deviceName}</span>
+                  <DeviceChip name={d.snapshot.deviceName} here={d.snapshot.deviceId === overview.deviceId} />
+                  <span />
                   <span className="muted save-size">{bytes(d.snapshot.totalSize)}</span>
                 </div>
                 <div className="save-actions">
@@ -556,13 +558,14 @@ export function Saves({
         ))}
       {groups.map((src) => (
         <div key={src.id} className="save-source">
-          <GroupHead
+          <SourceHead
             mark={marks[src.platform]}
             name={src.name}
+            device={src.kind === "device"}
             devices={src.devices}
             latest={src.snapshots[0]?.createdAt}
-            convert={src.take.kind === "convert"}
-            hint={sourceHint(src)}
+            convert={src.take.kind === "convert" ? t.sources.convertHint(src.take.how) : null}
+            hint={sourceWhat(src)}
           />
           {src.snapshots.map((s) => sourceRow(src, s))}
         </div>

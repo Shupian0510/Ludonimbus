@@ -1,8 +1,22 @@
 import { useEffect, useState } from "react";
 import { api, errorText, SaveCandidate, SaveTitle } from "../api";
-import { bytes, relTime } from "../format";
+import { bytes } from "../format";
 import { msg, useT } from "../i18n";
+import { Pill, Stat, When } from "./kit";
 import { Badge, Button, Hint, Icon, PathField, Spinner, useUi } from "./ui";
+
+/** A few of the files a folder holds, as names. */
+function Samples({ names }: { names: string[] }) {
+  return (
+    <>
+      {names.slice(0, 3).map((n) => (
+        <code key={n} className="sample">
+          {n}
+        </code>
+      ))}
+    </>
+  );
+}
 
 export interface FinderGame {
   name: string;
@@ -30,14 +44,27 @@ export function SaveCandidates({ list, isPicked, onToggle }: { list: SaveCandida
           <input type="checkbox" checked={isPicked(c.path)} onChange={() => onToggle(c)} />
           <div className="add-info">
             <div className="row">
-              <code className="path small">{c.pattern.endsWith("/**") ? c.path : `${c.path} · ${c.pattern.split("/").pop()}`}</code>
-              {c.likely && <Badge tone="ok">{f.likely}</Badge>}
+              <code className="path small">{c.path}</code>
+              {!c.pattern.endsWith("/**") && <code className="sample">{c.pattern.split("/").pop()}</code>}
+              {c.likely && <Pill tone="ok">{f.likely}</Pill>}
             </div>
-            <span className="muted small">
-              {c.files > 0 ? `${t.library.files(c.files)} · ${bytes(c.bytes)}` : f.noFilesYet}
-              {c.modified ? ` · ${f.modified(relTime(c.modified))}` : ""} · {c.reason}
+            <span className="add-facts">
+              <span className="reason-tag">{c.reason}</span>
+              {c.files > 0 ? (
+                <>
+                  <Stat icon="file">{t.library.files(c.files)}</Stat>
+                  <span className="stat">{bytes(c.bytes)}</span>
+                </>
+              ) : (
+                <span className="muted small">{f.noFilesYet}</span>
+              )}
+              {c.modified && (
+                <Stat icon="clock" title={f.modifiedTitle}>
+                  <When at={c.modified} />
+                </Stat>
+              )}
+              <Samples names={c.sample} />
             </span>
-            {c.sample.length > 0 && <span className="muted small">{f.sample(c.sample)}</span>}
           </div>
         </label>
       ))}
@@ -217,11 +244,18 @@ export function SaveFinder({
               <div className="row">
                 <b>{x.title}</b>
                 <Badge tone="info">{f.ludusavi}</Badge>
-                {x.likely && <Badge tone="ok">{f.likely}</Badge>}
+                {x.likely && <Pill tone="ok">{f.likely}</Pill>}
               </div>
-              <span className="muted small">
-                {x.reason}
-                {x.likely ? ` · ${x.files > 0 ? f.filesHere(x.files) : f.noFilesYet}` : ""}
+              <span className="add-facts">
+                <span className="reason-tag">{x.reason}</span>
+                {x.likely &&
+                  (x.files > 0 ? (
+                    <Stat icon="file" title={f.filesHere(x.files)}>
+                      {t.library.files(x.files)}
+                    </Stat>
+                  ) : (
+                    <span className="muted small">{f.noFilesYet}</span>
+                  ))}
               </span>
             </div>
           </label>

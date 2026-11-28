@@ -4,8 +4,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, inTauri } from "../api";
 import { AchievementItem, achievementsApi, AchievementSettings, AchievementsView, Candidate, RaGame, ToastPayload } from "../achievementsApi";
-import { relTime } from "../format";
 import { msg, useT } from "../i18n";
+import { DeviceChip, PlatformMark, Stat, When } from "./kit";
 import { useTauriEvent } from "../useTauriEvent";
 import { Badge, Button, Hint, Icon, Spinner, Toggle, useUi } from "./ui";
 
@@ -101,15 +101,15 @@ export function GameAchievements({ gameKey }: { gameKey: string }) {
         <div className="ach-progress">
           <div style={{ width: `${pct}%` }} />
         </div>
-        <p className="muted small">
-          {view.sourceLabel && a.from(view.sourceLabel + (view.title ? ` · ${view.title}` : ""))}
-          {view.checkedAt && ` · ${a.checked(relTime(view.checkedAt))}`}
-          {noNames && (
-            <>
-              {" "}
-              <Hint text={a.noNames} />
-            </>
+        <p className="ach-facts">
+          {view.sourceLabel && <PlatformMark label={view.sourceLabel} />}
+          {view.title && <span className="muted small">{view.title}</span>}
+          {view.checkedAt && (
+            <Stat icon="sync" title={a.checkedTitle}>
+              <When at={view.checkedAt} />
+            </Stat>
           )}
+          {noNames && <Hint text={a.noNames} />}
         </p>
         {view.lastError && <p className="health health-warn">{view.lastError}</p>}
         <div className="ach-popup">
@@ -177,9 +177,9 @@ function Row({ gameKey, item, fallback }: { gameKey: string; item: AchievementIt
         <div className="muted small">{secret ? a.hiddenDesc : item.description}</div>
       </div>
       {item.unlockedAt && (
-        <div className="ach-meta muted small">
-          <div>{new Date(item.unlockedAt).toLocaleString()}</div>
-          {item.deviceName && <div>{a.onDevice(item.deviceName)}</div>}
+        <div className="ach-meta">
+          <When at={item.unlockedAt} />
+          {item.deviceName && <DeviceChip name={item.deviceName} />}
         </div>
       )}
     </div>
@@ -286,9 +286,9 @@ function LinkSource({ gameKey, onLinked }: { gameKey: string; onLinked: (v: Achi
                       <div>
                         {g.title} <Badge tone="muted">{g.console}</Badge>
                       </div>
-                      <span className="muted small">
-                        {a.raPlayed(g.achieved, g.total)}
-                        {g.lastPlayed && ` · ${relTime(g.lastPlayed)}`}
+                      <span className="add-facts">
+                        <Stat icon="star">{a.raPlayed(g.achieved, g.total)}</Stat>
+                        {g.lastPlayed && <When at={g.lastPlayed} />}
                       </span>
                     </div>
                     <Button small kind="primary" icon="check" disabled={working} onClick={() => linkRa(g.id)}>

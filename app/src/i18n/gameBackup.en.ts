@@ -54,7 +54,7 @@ export const gameBackup: typeof Zh.gameBackup = {
     sizeResult: (files, size, exFiles, exSize) =>
       `${files} ${plural(files, "file", "files")}, ${size}${exFiles > 0 ? ` (${exFiles} ${plural(exFiles, "file", "files")}, ${exSize} left out)` : ""}`,
     fileOutside: (f) => `${f} is outside this folder and won't be backed up. To include it, choose the folder above that contains it.`,
-    latest: (when, device, size) => `Latest backup: ${when}, from ${device}, ${size}`,
+    latestTitle: "Latest backup",
     stored: (size) => `About ${size} in the cloud`,
     backup: "Back up to the cloud",
     update: "Update backup",

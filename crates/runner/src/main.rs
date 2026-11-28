@@ -248,12 +248,13 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
         local_files,
         human(local_size),
     );
+    let cfg = ludonimbus_core::config::load().ok();
+    let mut notes = Vec::new();
     // The cloud's go into the Xbox app's containers: experimental, so said
     // before the user chooses. The sync before may have just bound the game.
-    let containers = ludonimbus_core::config::load().ok().and_then(|c| c.game(&game.key).map(|g| ludonimbus_core::bind::has_wgs(&g.bind)));
+    let containers = cfg.as_ref().and_then(|c| c.game(&game.key).map(|g| ludonimbus_core::bind::has_wgs(&g.bind)));
     if containers.unwrap_or_else(|| ludonimbus_core::bind::has_wgs(&game.bind)) {
-        text.push_str("\n\n");
-        text.push_str(&tr!(
+        notes.push(tr!(
             "使用云端存档会写入 Xbox 版，这是实验性的（Xbox 应用的云同步可能把存档换回去），本机现在的存档会先保留一份。",
             "Using the cloud saves writes into the Xbox version, which is experimental (the Xbox app's own cloud sync may put its saves back); the saves on this PC are kept first."
         ));
@@ -263,18 +264,45 @@ fn ask_conflict(game: &GameEntry, local_files: usize, local_size: u64, cloud: &l
     let here = ludonimbus_core::sync::saves_version(game);
     if ludonimbus_core::sync::too_new(game, here.as_deref(), &cloud.platform, cloud.game_version.as_deref()) {
         let v = cloud.game_version.as_deref().unwrap_or_default();
-        text.push_str("\n\n");
-        text.push_str(&tr!(
+        notes.push(tr!(
             "云端这份是游戏 {} 存的，比这里的新。旧版本的游戏读不了新版本的存档：用它之前先把这里的游戏更新到 {}。",
             "The cloud's saves were made by version {} of the game, newer than here. An older game can't read a newer save: update the game here to {} before using them.",
             v,
             v
         ));
     }
+    for note in &notes {
+        text.push_str("\n\n");
+        text.push_str(note);
+    }
+    // Both changed: neither side is the newer one.
+    let compare = prompt::Compare {
+        there: prompt::Side {
+            name: tr!("云端", "Cloud"),
+            platform: cloud.platform.clone(),
+            device: cloud.device_name.clone(),
+            at: Some(cloud.created_at),
+            playtime: cloud.playtime,
+            size: Some(cloud.total_size),
+            files: Some(cloud.file_count as u64),
+            newer: false,
+        },
+        here: Some(prompt::Side {
+            name: tr!("本机", "This PC"),
+            platform: ludonimbus_core::sync::platform(game),
+            device: cfg.as_ref().map(|c| c.device.name.clone()).unwrap_or_default(),
+            size: Some(local_size),
+            files: Some(local_files as u64),
+            ..prompt::Side::default()
+        }),
+        convert: String::new(),
+        notes,
+    };
     let req = Request::new(tr!("Ludonimbus · 存档冲突", "Ludonimbus · Save conflict"), text, "warn")
         .button("cloud", tr!("使用云端存档", "Use cloud saves"), "a")
         .button("local", tr!("使用本机存档", "Use this PC's saves"), "x")
-        .button("cancel", tr!("暂不启动", "Don't start"), "b");
+        .button("cancel", tr!("暂不启动", "Don't start"), "b")
+        .compare(compare);
     match ask(&req).as_deref() {
         Some("cloud") => Choice::Cloud,
         Some("local") => Choice::Local,
@@ -866,7 +894,7 @@ fn offer_newer_elsewhere(ctx: &Arc<Ctx>, game: &GameEntry, left: Duration) {
         None => None,
     };
     let q = elsewhere::question(game, &newer, joinable.is_some(), &take_notes(game, &newer), chrono::Utc::now());
-    let mut req = Request::new(format!("Ludonimbus · {}", q.title), q.text, "info").button("take", q.take, "a").detail(q.take_note);
+    let mut req = Request::new(format!("Ludonimbus · {}", q.title), q.text, "info").button("take", q.take, "a").detail(q.take_note).compare(q.compare);
     if joinable.is_some() {
         req = req.button("join", q.join, "x");
     }

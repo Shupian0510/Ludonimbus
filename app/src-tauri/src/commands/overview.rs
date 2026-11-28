@@ -356,7 +356,7 @@ pub(crate) fn playtime_view(cfg: &config::AppConfig, summary: playtime::Summary)
     PlaytimeView { summary, platform_names }
 }
 
-pub(super) fn platform_marks<'a>(cfg: &config::AppConfig, platforms: impl IntoIterator<Item = &'a str>) -> BTreeMap<String, PlatformMark> {
+pub(crate) fn platform_marks<'a>(cfg: &config::AppConfig, platforms: impl IntoIterator<Item = &'a str>) -> BTreeMap<String, PlatformMark> {
     let mut out = BTreeMap::new();
     for p in platforms {
         if !p.is_empty() && !out.contains_key(p) {

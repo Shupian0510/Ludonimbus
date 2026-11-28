@@ -5,9 +5,23 @@
 // lists what needs a choice.
 import { useState } from "react";
 import { api, errorText, type GameView, type Outcome, type StatusReport } from "../api";
-import { outcomeText, relTime } from "../format";
+import { outcomeText } from "../format";
 import { msg, useT } from "../i18n";
+import { DeviceChip, Pill, When } from "./kit";
 import { Button, Hint, Icon, Menu, Modal, useUi } from "./ui";
+
+/** A game's small icon (its artwork's icon, else its first letter). */
+export function GameIcon({ game, size = 28 }: { game: GameView; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const icon = game.art.icon ?? game.art.cover;
+  return icon && !failed ? (
+    <img className="game-icon" src={icon} alt="" width={size} height={size} onError={() => setFailed(true)} />
+  ) : (
+    <span className="game-icon game-icon-letter" style={{ width: size, height: size }}>
+      {game.name.slice(0, 1)}
+    </span>
+  );
+}
 
 /**
  * Whether a game needs the user to choose: both sides changed, or the cloud
@@ -32,13 +46,20 @@ export function differenceKey(list: { game: GameView; check: StatusReport }[]): 
     .join("|");
 }
 
-/** One line in the library: how many games differ from the cloud, and 「处理」. */
-export function DifferBanner({ count, onReview, onDismiss }: { count: number; onReview: () => void; onDismiss: () => void }) {
+/** One line in the library: how many games differ from the cloud (their icons), and 「处理」. */
+export function DifferBanner({ games, onReview, onDismiss }: { games: GameView[]; onReview: () => void; onDismiss: () => void }) {
   const t = useT();
   return (
     <div className="banner banner-warn join-row">
       <Icon name="cloud" />
-      <span>{t.policy.differ(count)}</span>
+      <span className="banner-line">
+        {t.policy.differ(games.length)}
+        <span className="icon-stack" title={games.map((g) => g.name).join("\n")}>
+          {games.slice(0, 5).map((g) => (
+            <GameIcon key={g.key} game={g} size={22} />
+          ))}
+        </span>
+      </span>
       <Button small kind="primary" onClick={onReview}>
         {t.policy.review}
       </Button>
@@ -105,17 +126,18 @@ export function DifferDialog({
   const row = (g: GameView) => {
     const check = checks[g.key];
     const head = check.head;
-    const when = head ? relTime(head.createdAt) : "";
-    const device = head?.deviceName ?? "";
     const notes = [g.xboxContainers ? t.saves.xboxNote : "", check.tooNew ? t.saves.tooNew(check.tooNew) : ""].filter(Boolean).join("\n");
     return (
       <div key={g.key} className="differ-row">
         <span className="differ-name">
+          <GameIcon game={g} />
           <b>{g.name}</b>
-          <small className="muted">
-            {check.status === "conflict" ? t.policy.bothChanged(device, when) : t.policy.cloudNewer(device, when)}
-            {notes && <Hint text={notes} />}
-          </small>
+        </span>
+        {check.status === "conflict" ? <Pill tone="warn">{t.game.conflictTitle}</Pill> : <Pill tone="info">{t.format.status.cloudNewer}</Pill>}
+        <span className="differ-facts">
+          {head && <DeviceChip name={head.deviceName} />}
+          {head && <When at={head.createdAt} />}
+          {notes && <Hint text={notes} />}
         </span>
         <Button small kind="primary" onClick={() => take(g)} disabled={!!busy} title={t.policy.takeTitle}>
           {t.policy.take}
@@ -150,7 +172,8 @@ export function DifferDialog({
         </>
       }
     >
-      <p className="muted small">
+      <p className="caption">
+        <Icon name="shield" size={15} />
         {t.policy.dialogLead} <Hint text={t.policy.dialogHint} />
       </p>
       {rows.length === 0 ? <p className="muted">{t.policy.allDone}</p> : <div className="differ-list">{rows.map(row)}</div>}

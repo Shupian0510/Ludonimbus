@@ -5,11 +5,12 @@
 // one here; and the one-line hint on the game page when another version
 // has newer progress.
 import { useState } from "react";
-import { api, errorText, NewerElsewhere, Overview, PlatformMark, SaveSource, SnapshotSummary } from "../api";
-import { dateTime, outcomeText, relTime } from "../format";
+import { api, errorText, NewerElsewhere, Overview, PlatformMark as Mark, SaveSource, SnapshotSummary } from "../api";
+import { dateTime, outcomeText } from "../format";
 import { msg, useT } from "../i18n";
+import { cmpOf, ConvertChip, Delta, DeviceChip, PlatformMark, PlayDelta, playedOf, When } from "./kit";
 import { ApplyDialog } from "./SaveLibrary";
-import { Badge, Button, Hint, Icon, useUi } from "./ui";
+import { Button, Icon, useUi } from "./ui";
 
 /** The game the saves are taken to. `xboxContainers`: written into the Xbox app's containers (experimental). */
 export interface TakeTarget {
@@ -18,91 +19,16 @@ export interface TakeTarget {
   xboxContainers?: boolean;
 }
 
-/** A span of time, the way the comparisons say it: "3 小时", "2 天". */
-function span(ms: number): string {
-  const f = msg().format;
-  const min = Math.max(1, Math.round(ms / 60000));
-  if (min < 60) return f.minutes(min);
-  if (min < 60 * 48) return f.hours(String(Math.round(min / 60)));
-  return msg().sources.days(Math.round(min / (60 * 24)));
-}
-
-/** How a save compares with the one here: newer or older by how much, or the same saves. */
-export function compareWith(s: SnapshotSummary, here?: SnapshotSummary | null): { text: string; newer: boolean } | null {
-  if (!here) return null;
-  const m = msg().sources;
-  if (s.contentHash === here.contentHash) return { text: m.same, newer: false };
-  const ms = Date.parse(s.createdAt) - Date.parse(here.createdAt);
-  return ms > 0 ? { text: m.newerBy(span(ms)), newer: true } : { text: m.olderBy(span(-ms)), newer: false };
-}
-
-/** How much more (or less) the game had been played, where both saves say. */
-export function playedText(s: SnapshotSummary, here?: SnapshotSummary | null): string | null {
-  if (s.playtime == null || here?.playtime == null) return null;
-  const d = s.playtime - here.playtime;
-  if (Math.abs(d) < 60) return null;
-  const m = msg().sources;
-  const secs = Math.abs(d);
-  const h = Math.floor(secs / 3600);
-  const text = h > 0 ? msg().format.hours(String(h)) : msg().format.minutes(Math.round(secs / 60));
-  return d > 0 ? m.playedMore(text) : m.playedLess(text);
-}
-
 /** The game version that wrote a save, where it is known. */
 export function versionOf(s: SnapshotSummary): string | null {
   const v = s.gameVersion ?? s.installedVersion;
   return v ? `v${v}` : null;
 }
 
-/** What one save is, in one line: "Xbox 版 · LAPTOP · 2 小时前 · 多玩了 2 小时". */
-export function saveLine(name: string, s: SnapshotSummary | null | undefined, here?: SnapshotSummary | null): string {
-  const line = s ? [name, s.deviceName, relTime(s.createdAt), playedText(s, here)].filter(Boolean).join(" · ") : `${name} · ${msg().sources.noSaves}`;
-  // A full-width bracket has its own space.
-  return line.replace("） · ", "）· ");
-}
-
-/** What the "?" of a group says. */
-export function sourceHint(src: SaveSource): string {
+/** What a group of saves is, for its "?". */
+export function sourceWhat(src: SaveSource): string {
   const m = msg().sources;
-  const what = src.kind === "device" ? m.deviceHint : src.kind === "shared" ? m.sharedHint : m.versionHint;
-  const how = src.take.kind === "convert" ? m.convertHint(src.take.how) : src.take.kind === "never" ? src.take.reason : null;
-  return how ? `${what}\n${how}` : what;
-}
-
-/**
- * The head of a group: the program's own icon (when this PC has it), its
- * name, devices, its newest save, and whether its saves need converting to
- * be taken here (the "?" says how).
- */
-export function GroupHead({
-  mark,
-  name,
-  devices,
-  latest,
-  convert,
-  hint,
-}: {
-  mark?: PlatformMark;
-  name: string;
-  devices: string[];
-  latest?: string | null;
-  convert?: boolean;
-  hint: string;
-}) {
-  return (
-    <div className="save-group">
-      {mark?.logo && <img className="src-logo" src={mark.logo} alt="" width={18} height={18} />}
-      <b>{name}</b>
-      {devices.length > 0 && <span className="muted">{devices.join(" · ")}</span>}
-      {latest && (
-        <span className="muted" title={dateTime(latest)}>
-          {relTime(latest)}
-        </span>
-      )}
-      {convert && <Badge tone="muted">{msg().sources.convert}</Badge>}
-      <Hint text={hint} />
-    </div>
-  );
+  return src.kind === "device" ? m.deviceHint : src.kind === "shared" ? m.sharedHint : m.versionHint;
 }
 
 /**
@@ -178,13 +104,15 @@ export function useTakeHere(target: TakeTarget, overview: Overview, onDone: () =
 
 /**
  * One line on the game page when another version has newer progress than
- * the save here: "Xbox 版有更新的进度", the two saves in the "?", take it or
- * say no (that save isn't offered again).
+ * the save here, shown rather than told: that save (its program, device,
+ * time, how much newer and further played), an arrow, the save here; take
+ * it, or say no (that save isn't offered again).
  */
 export function NewerRow({
   target,
   overview,
   newer,
+  marks,
   disabled,
   tooNew,
   onDismiss,
@@ -193,6 +121,7 @@ export function NewerRow({
   target: TakeTarget;
   overview: Overview;
   newer: NewerElsewhere;
+  marks: Record<string, Mark>;
   disabled?: boolean;
   tooNew?: string[];
   onDismiss: () => void;
@@ -201,23 +130,33 @@ export function NewerRow({
   const t = useT();
   const m = t.sources;
   const { take, dialog } = useTakeHere(target, overview, onDone, tooNew);
-  const there = saveLine(newer.source.name, newer.snapshot, newer.here);
-  const here = saveLine(m.hereName(newer.hereName), newer.here);
-  const how = newer.source.take.kind === "convert" ? m.convertHint(newer.source.take.how) : null;
+  const there = newer.snapshot;
+  const here = newer.here;
   return (
-    <div className="banner banner-info join-row">
-      <Icon name="transfer" />
-      <span>
-        {m.newerRow(newer.source.name)} <Hint text={[there, here, how, m.keptFirst].filter(Boolean).join("\n")} />
+    <div className="banner banner-info newer-row">
+      <span className="newer-strip">
+        <span className="newer-side">
+          <PlatformMark mark={marks[there.platform ?? ""]} label={newer.source.name} strong />
+          <DeviceChip name={there.deviceName} />
+          <When at={there.createdAt} />
+          <Delta cmp={cmpOf(there, here)} />
+          <PlayDelta secs={playedOf(there, here)} quiet />
+        </span>
+        <Icon name="arrow" size={16} />
+        <span className="newer-side here">
+          <PlatformMark mark={marks[here?.platform ?? ""]} label={m.hereName(newer.hereName)} />
+          {here ? <When at={here.createdAt} /> : <span className="muted">{t.kit.noSaves}</span>}
+        </span>
+        {newer.source.take.kind === "convert" && <ConvertChip hint={m.convertHint(newer.source.take.how)} />}
       </span>
-      <Button small kind="primary" onClick={() => take(newer.source, newer.snapshot)} disabled={disabled} title={disabled ? t.savelib.running : undefined}>
+      <Button small kind="primary" onClick={() => take(newer.source, there)} disabled={disabled} title={disabled ? t.savelib.running : undefined}>
         {m.take}
       </Button>
       <Button
         small
         kind="ghost"
         onClick={() => {
-          api.dismissNewer(target.key, newer.snapshot.id).catch(() => undefined);
+          api.dismissNewer(target.key, there.id).catch(() => undefined);
           onDismiss();
         }}
       >

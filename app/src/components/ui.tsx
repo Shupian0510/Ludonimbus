@@ -87,6 +87,40 @@ const paths: Record<string, ReactNode> = {
   more: <path d="M5.5 12h.01M12 12h.01M18.5 12h.01" strokeWidth={2.6} />,
   chevron: <path d="M9 6l6 6-6 6" />,
   down: <path d="M6 9l6 6 6-6" />,
+  /** From one save to another (comparisons). */
+  arrow: <path d="M4 12h15m0 0-5-5m5 5-5 5" />,
+  "arrow-up": <path d="M12 19V6m0 0-5 5m5-5 5 5" />,
+  "arrow-down": <path d="M12 5v13m0 0-5-5m5 5 5-5" />,
+  file: <path d="M6 3h8l4 4v14H6zM14 3v4h4" />,
+  /** Kept first, can be undone. */
+  shield: <path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6zM9 12l2 2 4-4" />,
+  // Kinds of device (generic shapes; programs are shown by their own icons).
+  "dev-desktop": <path d="M3.5 5h17v11h-17zM8.5 20h7M12 16v4" />,
+  "dev-laptop": <path d="M5 6h14v9H5zM2.5 18.5h19" />,
+  "dev-handheld": (
+    <>
+      <rect x="2" y="7" width="20" height="10" rx="4" />
+      <path d="M8 9.5h8v5H8zM4.6 11.2v1.6M3.8 12h1.6" />
+      <circle cx="19" cy="12" r=".9" />
+    </>
+  ),
+  "dev-deck": (
+    <>
+      <rect x="1.5" y="7.5" width="21" height="9" rx="3.5" />
+      <path d="M7.5 9.5h9v5h-9z" />
+      <circle cx="4.5" cy="10.5" r=".9" />
+      <circle cx="19.5" cy="10.5" r=".9" />
+      <path d="M3.8 13.6h1.4M18.8 13.6h1.4" />
+    </>
+  ),
+  "dev-switch": (
+    <>
+      <path d="M8 6h8v12H8z" />
+      <path d="M8 6H6a3 3 0 0 0-3 3v6a3 3 0 0 0 3 3h2M16 6h2a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-2" />
+      <circle cx="5.5" cy="10" r=".8" />
+      <circle cx="18.5" cy="14" r=".8" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 18 }: { name: keyof typeof paths | string; size?: number }) {

@@ -9,6 +9,7 @@ import { HandheldPanel } from "./HandheldPanel";
 import { NxPanel } from "./NxPanel";
 import { SpeedTestPanel } from "./SpeedTest";
 import { AchievementSettingsPanel } from "./Achievements";
+import { Meter } from "./kit";
 import { Badge, Button, Hint, Icon, PathChoice, PathField, samePath, Spinner, Toggle, useUi } from "./ui";
 import { UpdateDialog } from "./Update";
 import { LANGS, LangPref, msg, useI18n, useT } from "../i18n";
@@ -155,6 +156,7 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
           <p className="muted">Ludonimbus {s.version}</p>
         </div>
       </header>
+      <SectionNav />
 
       <section className="panel" id="settings-cloud">
         <div className="panel-head">
@@ -169,10 +171,8 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
           <>
             <div className="cloud-current">
               <b>{t.cloudNames[s.cloud.kind]}</b>
-              <span className="muted small">
-                {account ? account.label : currentLabel(s)}
-                {account?.used != null && account.total != null && ` · ${st.used(bytes(account.used), bytes(account.total))}`}
-              </span>
+              <span className="muted small">{account ? account.label : currentLabel(s)}</span>
+              {account?.used != null && account.total != null && <Meter used={account.used} total={account.total} title={st.used(bytes(account.used), bytes(account.total))} />}
               {s.cloud.kind === "googleDrive" && <Hint text={st.googleWhere(s.cloud.folder)} />}
               {s.cloud.kind === "baiduPan" && <Hint text={st.baiduWhere(s.cloud.appName || s.baiduAppName)} />}
               <span className="grow" />
@@ -192,7 +192,7 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
 
       <LanguagePanel />
 
-      <section className="panel form">
+      <section className="panel form" id="settings-general">
         <div className="panel-head">
           <Icon name="devices" />
           <h3>{st.general}</h3>
@@ -268,7 +268,7 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
         </div>
       </section>
 
-      <section className="panel form">
+      <section className="panel form" id="settings-steam">
         <div className="panel-head">
           <Icon name="steam" />
           <h3>Steam</h3>
@@ -332,7 +332,7 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
 
       <SgdbPanel />
 
-      <section className="panel form">
+      <section className="panel form" id="settings-about">
         <div className="panel-head">
           <Icon name="settings" />
           <h3>{st.about}</h3>
@@ -385,6 +385,36 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
       </section>
       {update && <UpdateDialog info={update} onClose={() => setUpdate(null)} />}
     </div>
+  );
+}
+
+/**
+ * The sections of the page as chips at its top, read from their titles:
+ * one click to any of them instead of scrolling through all.
+ */
+function SectionNav() {
+  const [items, setItems] = useState<{ id: string; label: string }[]>([]);
+  useEffect(() => {
+    const read = () =>
+      setItems(
+        [...document.querySelectorAll<HTMLElement>(".settings > section.panel[id]")]
+          .map((s) => ({ id: s.id, label: s.querySelector(".panel-head h3")?.textContent?.trim() ?? "" }))
+          .filter((i) => i.label),
+      );
+    read();
+    // Some panels appear once what they show has loaded.
+    const later = setTimeout(read, 800);
+    return () => clearTimeout(later);
+  }, []);
+  if (items.length < 2) return null;
+  return (
+    <nav className="section-nav">
+      {items.map((i) => (
+        <button key={i.id} className="chip" onClick={() => document.getElementById(i.id)?.scrollIntoView({ block: "start" })}>
+          {i.label}
+        </button>
+      ))}
+    </nav>
   );
 }
 

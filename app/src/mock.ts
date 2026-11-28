@@ -1063,7 +1063,14 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
               { id: "join", label: L("以后自动接上", "Always continue from there"), key: "x" },
               { id: "keep", label: L("继续用 PC 版的", "Keep the PC version's"), key: "b" },
             ],
+            compare: {
+              there: { name: L("GOG 版", "GOG version"), platform: "pc", device: "LAPTOP", at: ago(20), playtime: 13.5 * 3600, size: 6480, files: 3, newer: true },
+              here: { name: L("PC 版", "PC version"), platform: "pc", device: "DESKTOP-MAIN", at: ago(50), playtime: 12.5 * 3600, size: 6210, files: 3, newer: false },
+              convert: "files",
+              notes: [],
+            },
           },
+          platforms: platformMarks,
         });
       if (q.has("prompt"))
         return delay<LaunchInfo>({
@@ -1080,9 +1087,16 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
               { id: "local", label: L("使用本机存档", "Use this PC's saves"), key: "x" },
               { id: "cancel", label: L("暂不启动", "Don't start"), key: "b" },
             ],
+            compare: {
+              there: { name: L("云端", "Cloud"), platform: "emu:shadps4", device: "GPD-Win-Mini", at: ago(300), playtime: null, size: 15309618, files: 16, newer: false },
+              here: { name: L("本机", "This PC"), platform: "emu:shadps4", device: "DESKTOP-MAIN", at: null, playtime: null, size: 15309618, files: 16, newer: false },
+              convert: "",
+              notes: [],
+            },
           },
+          platforms: platformMarks,
         });
-      return delay<LaunchInfo>({ mode: q.has("handheld") ? "handheld" : "desktop", prompt: null });
+      return delay<LaunchInfo>({ mode: q.has("handheld") ? "handheld" : "desktop", prompt: null, platforms: {} });
     }
     case "prompt_answer":
       console.info("prompt answer:", args.choice);
