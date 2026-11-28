@@ -276,6 +276,12 @@ impl Device {
         self.sync_with(Resolution::Auto)
     }
 
+    /// A sync nobody chose, started by `trigger` (the launch wrapper's).
+    fn sync_as(&self, trigger: Trigger) -> Outcome {
+        let ctx = self.ctx();
+        sync::sync(&ctx, &ctx.game(KEY).unwrap(), Resolution::Auto, trigger).unwrap()
+    }
+
     fn versions(&self) -> Vec<SnapshotSummary> {
         self.ctx().cloud().unwrap().list_snapshots(KEY).unwrap()
     }
@@ -495,12 +501,16 @@ fn taking_over(root: &Path, runner: &Path) {
     assert_eq!((status.mode, status.synchronized, status.cloud_enabled, status.global_enabled), (State::Managed, true, false, true));
     assert_eq!(status.wrapper, Some(WrapperHealth::Ok));
 
-    // Managed, the game syncs both ways like any other.
+    // Managed, the game syncs both ways like any other: the wrapper takes a
+    // newer version before the game starts. A sync in the background (the
+    // game was started without Steam) leaves it in the cloud.
     let u = Device::new(root, &store, "U");
     u.add();
     u.steam.save("slot1.sav", "u1");
     let from_u = uploaded(u.sync());
-    assert!(matches!(t.sync(), Outcome::Pulled { ref id, .. } if *id == from_u));
+    assert!(matches!(t.sync(), Outcome::UpToDate));
+    assert_eq!(t.steam.read_save("slot1.sav").as_deref(), Some("t1"));
+    assert!(matches!(t.sync_as(Trigger::PreLaunch), Outcome::Pulled { ref id, .. } if *id == from_u));
     assert_eq!(t.steam.read_save("slot1.sav").as_deref(), Some("u1"));
 
     // Steam Cloud is turned on again in Steam. The next sync goes back to

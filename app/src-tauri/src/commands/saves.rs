@@ -22,13 +22,38 @@ pub(crate) fn cache_check(key: &str, report: &StatusReport) {
 }
 
 #[tauri::command]
-pub async fn check_game(key: String) -> CmdResult<StatusReport> {
+pub async fn check_game(app: tauri::AppHandle, key: String) -> CmdResult<StatusReport> {
     blocking(move || {
         with_game(&key, |ctx, g| {
             let r = sync::check(ctx, g);
             cache_check(&key, &r);
+            crate::notify::after_check(&app, ctx.cfg.cloud_newer_notifications, g, &r);
             Ok(r)
         })
+    })
+    .await
+}
+
+/// What 「全部同步」 did with one game: the saves here uploaded, nothing
+/// written into them ([`sync::upload`]), and how the game stands now.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadResult {
+    outcome: Outcome,
+    check: StatusReport,
+}
+
+/// One game of 「全部同步」: upload what changed here, then look at how it
+/// stands (newer saves in the cloud and conflicts are for the user to
+/// choose, game by game).
+#[tauri::command]
+pub async fn upload_game(key: String) -> CmdResult<UploadResult> {
+    blocking(move || {
+        let running = ludonimbus_core::tr!("游戏正在运行，退出游戏后会自动同步", "The game is running; saves sync after you quit");
+        let outcome = with_free_game(&key, running, sync::upload)?;
+        let check = with_game(&key, |ctx, g| Ok(sync::check(ctx, g)))?;
+        cache_check(&key, &check);
+        Ok(UploadResult { outcome, check })
     })
     .await
 }

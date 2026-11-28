@@ -95,6 +95,16 @@ pub struct OpenLine {
     pub cache: LineCache,
 }
 
+/// What says which game a version of this device is, and which version
+/// ([`Cloud::identity`]).
+struct Identity {
+    ids: Vec<String>,
+    format: String,
+    def: String,
+    kind: String,
+    rule: Option<&'static crate::crosssaves::Rule>,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct KeptLine {
@@ -284,7 +294,7 @@ impl Cloud {
         let joined = known.entry.as_ref().and_then(|g| {
             let def = CloudGame::from(g);
             let (ids, format, files) = (upgrade::record_ids(&def), upgrade::line_format(&def), upgrade::line_def(&def));
-            library::line_to_join(records, &ids, &format, &files).map(|r| r.id.clone())
+            library::line_to_join(records, &ids, &format, &files, &upgrade::line_kind(g)).map(|r| r.id.clone())
         });
         match joined {
             Some(id) => {
@@ -327,13 +337,29 @@ impl Cloud {
         self.games.lock().unwrap().get(key).and_then(|g| g.entry.as_ref()).is_some_and(|g| !g.bind.is_empty())
     }
 
+    /// What kind of install the game `key` of this device is
+    /// ([`upgrade::line_kind`]), for a line it begins. `None` for a game
+    /// this device doesn't have, and for one that reads another line
+    /// through bindings (its own line holds that line's files).
+    fn kind_of(&self, key: &str) -> Option<String> {
+        let games = self.games.lock().unwrap();
+        let entry = games.get(key).and_then(|g| g.entry.as_ref())?;
+        entry.bind.is_empty().then(|| upgrade::line_kind(entry))
+    }
+
     /// What says which game `key` is and which files it keeps: its ids,
-    /// the format of its saves, the fingerprint of where they are, and the
-    /// cross-platform rule its saves follow.
-    fn identity(&self, key: &str) -> Option<(Vec<String>, String, String, Option<&'static crate::crosssaves::Rule>)> {
+    /// the format of its saves, the fingerprint of where they are, what kind
+    /// of install it is, and the cross-platform rule its saves follow.
+    fn identity(&self, key: &str) -> Option<Identity> {
         let entry = self.games.lock().unwrap().get(key).and_then(|g| g.entry.clone())?;
         let def = CloudGame::from(&entry);
-        Some((upgrade::record_ids(&def), upgrade::line_format(&def), upgrade::line_def(&def), crate::crosssaves::rule_for(&entry)))
+        Some(Identity {
+            ids: upgrade::record_ids(&def),
+            format: upgrade::line_format(&def),
+            def: upgrade::line_def(&def),
+            kind: upgrade::line_kind(&entry),
+            rule: crate::crosssaves::rule_for(&entry),
+        })
     }
 
     /// The record whose shared line the game `key` can share through
@@ -344,30 +370,34 @@ impl Cloud {
         if self.access()? == Access::Legacy {
             return Ok(None);
         }
-        let Some((ids, format, def, rule)) = self.identity(key) else { return Ok(None) };
+        let Some(me) = self.identity(key) else { return Ok(None) };
         let library = self.library()?;
         // A game with a record of its own has a history of its own.
         if library::get(&library.records, key).is_some() {
             return Ok(None);
         }
-        Ok(library::bound_line(&library.records, &ids, &format, &def, rule).map(|(r, map)| (r.id.clone(), map.to_vec())))
+        Ok(library::bound_line(&library.records, &me.ids, &me.format, &me.def, &me.kind, me.rule).map(|(r, map)| (r.id.clone(), map.to_vec())))
     }
 
-    /// The shared lines the game `key` might share although it keeps its
-    /// saves elsewhere ([`library::lines_to_ask`]): the record to belong to,
-    /// the line, where it is, and the bindings another device confirmed for
-    /// versions like this one. A line of another format than the game's is
-    /// one its cross-platform rule pairs it with.
+    /// The shared lines of other versions the game `key` could share
+    /// ([`library::lines_to_ask`]): the record to belong to, the line, where
+    /// it is, and the bindings another device confirmed for versions like
+    /// this one. A line of another format than the game's is one its
+    /// cross-platform rule pairs it with. Not the line it follows now.
     pub fn lines_to_ask(&self, key: &str) -> Result<Vec<(String, v2::Line, Place, Option<Vec<crate::bind::Bind>>)>> {
         if self.access()? == Access::Legacy {
             return Ok(Vec::new());
         }
-        let Some((ids, format, def, rule)) = self.identity(key) else { return Ok(Vec::new()) };
+        let Some(me) = self.identity(key) else { return Ok(Vec::new()) };
         let library = self.library()?;
+        let own = line_of(&library.records, &self.record_of(key, &library.records), &self.following(key)).map(|(_, l)| l.path.clone());
         let mut out = Vec::new();
-        for (record, line) in library::lines_to_ask(&library.records, &ids, &format, &def, rule) {
+        for (record, line) in library::lines_to_ask(&library.records, &me.ids, &me.format, &me.def, &me.kind, me.rule) {
+            if own.as_deref() == Some(line.path.as_str()) {
+                continue;
+            }
             let Some((card, _)) = library::resolve_line(&library.records, &record.id, library::MAIN_LINE) else { continue };
-            let confirmed = library::binds_for(line, &def).map(<[_]>::to_vec);
+            let confirmed = library::binds_for(line, &me.def, Some(&me.kind)).map(<[_]>::to_vec);
             out.push((record.id.clone(), line.clone(), Place::of(card, line), confirmed));
         }
         Ok(out)
@@ -388,23 +418,25 @@ impl Cloud {
     }
 
     /// Note on the shared line of `record` how versions that keep their
-    /// saves the way `def` says take part in it ([`v2::Line::binds`]), so
-    /// the next device with such a version doesn't ask.
-    pub fn add_bind(&self, record: &str, def: &str, map: &[crate::bind::Bind]) -> Result<()> {
+    /// saves the way `def` says, installs of the kind `kind`, take part in
+    /// it ([`v2::Line::binds`]), so the next device with such a version
+    /// shares it too. Only for what a user chose ([`crate::join::accept`]).
+    pub fn add_bind(&self, record: &str, def: &str, kind: &str, map: &[crate::bind::Bind]) -> Result<()> {
         self.writable()?;
         self.forget_library();
         let library = self.library()?;
         let Some((card, line)) = library::resolve_line(&library.records, record, library::MAIN_LINE) else {
             bail!(crate::tr!("云端还没有这条存档线", "The cloud doesn't have this save line yet"));
         };
-        if library::binds_for(line, def) == Some(map) {
+        let kind = Some(kind.to_string());
+        if line.binds.iter().any(|b| b.def == def && b.kind == kind && b.map == map) {
             return Ok(());
         }
         let mut card = card.clone();
         let path = line.path.clone();
         if let Some(l) = card.lines.iter_mut().find(|l| l.path == path) {
-            l.binds.retain(|b| b.def != def);
-            l.binds.push(v2::LineBind { def: def.to_string(), map: map.to_vec(), extra: v2::Extra::new() });
+            l.binds.retain(|b| b.def != def || b.kind != kind);
+            l.binds.push(v2::LineBind { def: def.to_string(), kind, map: map.to_vec(), extra: v2::Extra::new() });
         }
         library::save(&self.store, &card, &self.device_id, Utc::now())?;
         self.forget_library();
@@ -730,6 +762,13 @@ impl Cloud {
                 };
                 let mut record = upgrade::record_for(key, def.or(stored.as_ref()), None, has_old);
                 record.created_at = Some(now);
+                // Which kind of install begins its line: only the same kind
+                // continues it by itself ([`library::line_to_join`]).
+                if let Some(kind) = self.kind_of(key) {
+                    for l in record.lines.iter_mut().filter(|l| l.kind.is_none()) {
+                        l.kind = Some(kind.clone());
+                    }
+                }
                 record
             }
         };
@@ -744,6 +783,7 @@ impl Cloud {
             let def = def.filter(|_| !self.is_bound(key));
             let format = def.map(upgrade::line_format).or_else(|| like.map(|l| l.format.clone()));
             let files = def.map(upgrade::line_def).or_else(|| like.and_then(|l| l.def.clone()));
+            let kind = def.and(self.kind_of(key)).or_else(|| like.and_then(|l| l.kind.clone()));
             let folder = record.folders.first().cloned().unwrap_or_else(|| key.to_string());
             let own = want != library::MAIN_LINE;
             record.lines.push(v2::Line {
@@ -753,6 +793,7 @@ impl Cloud {
                 name: own.then(|| self.device_name.clone()),
                 path: v2::line_dir(&folder, &want),
                 def: files,
+                kind,
                 ..Default::default()
             });
         }

@@ -5,6 +5,7 @@ import { currentLang, msg, useT } from "../i18n";
 import { sceneIs } from "../scene";
 import { groupBySource, type Grouped, type SourceGroup, tagText } from "../source";
 import { type Member, membersOf, variantLabel } from "./SaveLibrary";
+import { DifferBanner, DifferDialog, differenceKey, needsChoice, uploadAll } from "./SyncPolicy";
 import { Badge, Button, Empty, Icon, Spinner, Toggle, useUi } from "./ui";
 
 function stored(storage: () => Storage, key: string): string | null {
@@ -289,6 +290,8 @@ export function Library({
   onChanged,
   onSettings,
   onCollection,
+  statusesReady,
+  onChecks,
 }: {
   overview: Overview;
   checks: Record<string, StatusReport>;
@@ -301,6 +304,10 @@ export function Library({
   onSettings: () => void;
   /** Open the collection, where the archived games are. */
   onCollection: () => void;
+  /** Every game was checked since the app started: the line about games that differ from the cloud can show. */
+  statusesReady?: boolean;
+  /** Statuses that came back from 「全部同步」: take them as they are. */
+  onChecks?: (reports: Record<string, StatusReport>) => Promise<void>;
 }) {
   const t = useT();
   const ui = useUi();
@@ -312,6 +319,13 @@ export function Library({
   // Kept while moving between the library and a game, not across restarts.
   const [filter, setFilter] = useState<string | null>(() => stored(session, "ln.source"));
   const [busy, setBusy] = useState<GroupAction | null>(null);
+  // The games that differ from the cloud, listed for the user to settle.
+  const [settling, setSettling] = useState<GameView[] | null>(null);
+  // 「全部同步」 over the whole library: how far it got.
+  const [syncingAll, setSyncingAll] = useState<string | null>(null);
+  const differing = overview.games.filter((g) => needsChoice(g, checks[g.key]));
+  const differKey = differenceKey(differing.map((g) => ({ game: g, check: checks[g.key] })));
+  const [dismissed, setDismissed] = useState(() => stored(session, "ln.differ"));
 
   const setViewSaved = (v: "grid" | "list") => {
     setView(v);
@@ -384,12 +398,21 @@ export function Library({
       if (c === null) return;
       comment = c.trim();
     }
+    if (mode === "sync") {
+      setBusy({ id: group.id, mode, progress: "" });
+      try {
+        await syncThen(group.label, todo, (progress) => setBusy({ id: group.id, mode, progress }));
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
     const r = { done: 0, conflicts: 0, failed: [] as string[], skipped: list.length - todo.length };
     try {
       for (const [i, g] of todo.entries()) {
         setBusy({ id: group.id, mode, progress: s.progress(i + 1, todo.length) });
         try {
-          const o = mode === "sync" ? await api.sync(g.key) : await api.backup(g.key, comment);
+          const o = await api.backup(g.key, comment);
           if (o.kind === "conflict") r.conflicts++;
           else if (o.kind === "offline" || o.kind === "noCloud") r.failed.push(g.name);
           else r.done++;
@@ -402,6 +425,34 @@ export function Library({
     }
     ui.toast(s.summary(group.label, r), r.failed.length ? "bad" : r.conflicts ? "warn" : "ok");
     await onChanged(todo.map((g) => g.key));
+  };
+
+  /**
+   * 「全部同步」: upload what changed in `games`, writing nothing into their
+   * saves, then list the ones that need a choice (newer saves in the cloud
+   * that don't come by themselves, conflicts). Only those games' own lines:
+   * never another platform's or version's.
+   */
+  const syncThen = async (label: string, games: GameView[], progress: (text: string) => void) => {
+    const r = await uploadAll(games, progress);
+    if (onChecks) await onChecks(r.reports);
+    else await onChanged(games.map((g) => g.key));
+    const choose = games.filter((g) => needsChoice(g, r.reports[g.key]));
+    if (choose.length > 0) setSettling(choose);
+    ui.toast(msg().source.summary(label, r), r.failed.length ? "bad" : choose.length ? "warn" : "ok");
+  };
+
+  const syncEverything = async () => {
+    if (overview.cloud.kind === "none") {
+      ui.toast(msg().library.noCloud, "warn");
+      return;
+    }
+    setSyncingAll("");
+    try {
+      await syncThen(msg().policy.everything, overview.games, setSyncingAll);
+    } finally {
+      setSyncingAll(null);
+    }
   };
 
   /** Where the grey games start, under a divider. */
@@ -564,6 +615,11 @@ export function Library({
           <Button icon="sync" onClick={onRefresh} title={t.library.refreshTitle}>
             {t.library.refresh}
           </Button>
+          {overview.games.length > 0 && (
+            <Button icon="upload" onClick={syncEverything} disabled={!!busy || syncingAll !== null} title={t.policy.syncAllTitle}>
+              {syncingAll !== null ? `${t.policy.syncAll} ${syncingAll}` : t.policy.syncAll}
+            </Button>
+          )}
           <Button kind="primary" icon="plus" onClick={onAdd}>
             {t.library.add}
           </Button>
@@ -588,6 +644,18 @@ export function Library({
           </Button>
         </div>
       )}
+
+      {statusesReady && differing.length > 0 && dismissed !== differKey && (
+        <DifferBanner
+          count={differing.length}
+          onReview={() => setSettling(differing)}
+          onDismiss={() => {
+            setDismissed(differKey);
+            store(session, "ln.differ", differKey);
+          }}
+        />
+      )}
+      {settling && <DifferDialog games={settling} checks={checks} onClose={() => setSettling(null)} onChanged={onChanged} />}
 
       {showChips && all.groups.length > 1 && (
         <div className="chips source-chips">

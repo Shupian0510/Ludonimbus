@@ -71,10 +71,10 @@ mod versions;
 pub use carry::{carried_for, saves_version, too_new};
 pub use gate::{Gate, Phase};
 pub use incomplete::{dismiss_unsent, export_unsent, unsent};
-pub use lock::{backlog, finish_owed, is_owed, lock_game, owe, owed_keys, sync_running, Backlog, BacklogState, GameLock};
+pub use lock::{backlog, finish_owed, is_owed, lock_game, owe, owe_passive, owed_keys, sync_running, Backlog, BacklogState, GameLock};
 pub use publish::{drop_pending, flush_pending, upload_pending};
 pub use queue::{pending_keys, pending_metas, pending_zips, queue_files, queue_files_carrying, queued_bases, Foreign};
-pub use run::{check, sync, sync_with};
+pub use run::{check, pulls_by_itself, sync, sync_with, upload};
 pub(crate) use savelines::{flush_queue, start_over};
 pub use savelines::{lines, other_saves, take_from, use_line, LineChoice, LineInfo, LineMember, OtherSave};
 pub use versions::{

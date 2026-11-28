@@ -10,6 +10,7 @@ mod commands;
 mod gamebackup;
 mod handheld;
 mod library;
+mod notify;
 mod nx;
 mod quark_login;
 mod savelibrary;
@@ -175,6 +176,7 @@ fn main() {
             commands::saves::local_files,
             commands::saves::open_path,
             commands::saves::open_save_folder,
+            commands::saves::upload_game,
             // Save lines
             commands::lines::game_lines,
             commands::lines::use_game_line,
@@ -183,6 +185,7 @@ fn main() {
             commands::lines::game_line_members,
             commands::lines::other_saves,
             commands::lines::take_save,
+            commands::lines::share_offer,
             // Adding and changing games
             commands::games::add_from_shortcut,
             commands::games::add_custom,

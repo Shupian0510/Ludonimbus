@@ -30,6 +30,7 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [showUpdate, setShowUpdate] = useState(false);
   const [guide, setGuide] = useState(false);
+  const [statusesReady, setStatusesReady] = useState(false);
   const checkingRef = useRef<Record<string, boolean>>({});
 
   const reload = useCallback(async () => {
@@ -117,7 +118,8 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
   });
 
   useEffect(() => {
-    refresh();
+    // Once every game was checked, the library says which differ from the cloud.
+    refresh().finally(() => setStatusesReady(true));
     const timer = setInterval(() => reload(), 30000);
     // Re-check every game against the cloud now and then (other devices may have uploaded).
     const recheck = setInterval(() => {
@@ -259,6 +261,11 @@ export default function App({ onHandheld }: { onHandheld?: () => void }) {
             }}
             onSettings={() => setPage({ name: "settings" })}
             onCollection={() => setPage({ name: "collection" })}
+            statusesReady={statusesReady}
+            onChecks={async (reports) => {
+              setChecks((c) => ({ ...c, ...reports }));
+              await reload();
+            }}
           />
         )}
         {overview && page.name === "collection" && <Collection overview={overview} onOpen={(key) => setPage({ name: "game", key, from: "collection" })} />}

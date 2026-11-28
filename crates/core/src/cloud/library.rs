@@ -292,32 +292,47 @@ pub fn find<'a>(records: &'a [GameRecord], ids: &[String]) -> Match<'a> {
 
 // -------------------------------------------------------------------- joining
 
-/// Two lines hold the same files: one format, and the same answer to which
-/// files those are ([`Line::def`]). A line that doesn't say is the same as
-/// none. What [`dedupe_with`] is given to decide which shared lines become
-/// one history, on every device alike.
+/// Two lines hold the same files of the same version: one format, the same
+/// answer to which files those are ([`Line::def`]), and installs of the same
+/// kind ([`Line::kind`]; a line that doesn't say is taken for any). A line
+/// that doesn't say which files it holds is the same as none. What
+/// [`dedupe_with`] is given to decide which shared lines become one history,
+/// on every device alike.
 pub fn same_saves(a: &Line, b: &Line) -> bool {
-    a.format == b.format && a.def.is_some() && a.def == b.def
+    a.format == b.format && a.def.is_some() && a.def == b.def && super::upgrade::same_kind(a.kind.as_deref(), b.kind.as_deref())
 }
 
 /// The record whose shared line a game continues, when the library has no
-/// record of it under its own id.
+/// record of it under its own id: only the same version of the game, on
+/// another device (docs/plan-positioning.md, section 3).
 ///
 /// `ids` say which game it is: only a strong id finds a card ([`find`]); a
-/// name never does. `format` and `def` say which files its saves are. Of the
-/// records that are that card now (the card itself, then the ones merged
-/// into it, oldest first), the answer is the first whose line `main` is
-/// shared and holds those files: the game follows `main` of that record,
-/// wherever [`resolve_line`] finds it.
+/// name never does. `format` and `def` say which files its saves are, and
+/// `kind` what kind of install it is ([`super::upgrade::line_kind`]). Of
+/// the records that are that card now (the card itself, then the ones
+/// merged into it, oldest first), the answer is the first whose line `main`
+/// is shared, holds those files and was begun by the same kind of install
+/// (a line that doesn't say, made before 1.0, by any): the game follows
+/// `main` of that record, wherever [`resolve_line`] finds it.
 ///
-/// `None`: the game is not in the library, or none of its lines there holds
-/// the files this version keeps. Such a game gets a record of its own, which
-/// [`dedupe_with`] then puts on the card as one more line.
-pub fn line_to_join<'a>(records: &'a [GameRecord], ids: &[String], format: &str, def: &str) -> Option<&'a GameRecord> {
+/// `None`: the game is not in the library, or none of its lines there is
+/// this version's. Such a game gets a record of its own, which
+/// [`dedupe_with`] then puts on the card as one more line. Another store's
+/// version, the Switch and its emulators, two emulators: each its own line
+/// on the same card, shared only when the user says so
+/// ([`crate::join::accept`]).
+pub fn line_to_join<'a>(records: &'a [GameRecord], ids: &[String], format: &str, def: &str, kind: &str) -> Option<&'a GameRecord> {
     let Match::Record(card) = find(records, ids) else { return None };
     let mut of_card: Vec<&GameRecord> = records.iter().filter(|r| resolve(records, &r.id).is_some_and(|now| now.id == card.id)).collect();
     of_card.sort_by(|a, b| (a.id != card.id).cmp(&(b.id != card.id)).then_with(|| seniority(a, b)));
-    of_card.into_iter().find(|r| r.lines.iter().any(|l| l.id == MAIN_LINE && l.scope == SCOPE_SHARED && l.format == format && l.def.as_deref() == Some(def)))
+    let mine = |l: &Line| {
+        l.id == MAIN_LINE
+            && l.scope == SCOPE_SHARED
+            && l.format == format
+            && l.def.as_deref() == Some(def)
+            && super::upgrade::same_kind(l.kind.as_deref(), Some(kind))
+    };
+    of_card.into_iter().find(|r| r.lines.iter().any(mine))
 }
 
 /// The shared lines `main` of the card of the game known by `ids`, as they
@@ -340,9 +355,11 @@ fn main_lines<'a>(records: &'a [GameRecord], ids: &[String]) -> Vec<(&'a GameRec
 }
 
 /// The bindings of a line for versions of the game that keep their saves
-/// the way `def` says.
-pub fn binds_for<'a>(line: &'a Line, def: &str) -> Option<&'a [crate::bind::Bind]> {
-    line.binds.iter().find(|b| b.def == def).map(|b| b.map.as_slice()).filter(|m| !m.is_empty())
+/// the way `def` says, installs of the kind `kind` ([`Line::kind`]; `None`:
+/// any). Bindings confirmed before 1.0 don't say which kind: they are for
+/// any.
+pub fn binds_for<'a>(line: &'a Line, def: &str, kind: Option<&str>) -> Option<&'a [crate::bind::Bind]> {
+    line.binds.iter().find(|b| b.def == def && super::upgrade::same_kind(b.kind.as_deref(), kind)).map(|b| b.map.as_slice()).filter(|m| !m.is_empty())
 }
 
 /// Whether one cross-platform rule says that versions with lines of format
@@ -362,44 +379,51 @@ pub fn rule_pair(records: &[GameRecord], record: &GameRecord, line: &Line, rule:
 /// confirmed on another device ([`Line::binds`]), and those bindings: the
 /// game is a version of that card (`ids`, as for [`line_to_join`]), of the
 /// line's format or of one its cross-platform rule pairs with it
-/// ([`rule_pair`]; `rule` is the game's), and keeps its saves the way `def`
-/// says.
+/// ([`rule_pair`]; `rule` is the game's), keeps its saves the way `def`
+/// says, and is an install of the kind they were confirmed for (`kind`).
+/// Bindings exist only where a user chose to share a line ("共用进度",
+/// [`crate::join::accept`]); nothing else writes them.
 pub fn bound_line<'a>(
     records: &'a [GameRecord],
     ids: &[String],
     format: &str,
     def: &str,
+    kind: &str,
     rule: Option<&crate::crosssaves::Rule>,
 ) -> Option<(&'a GameRecord, &'a [crate::bind::Bind])> {
     main_lines(records, ids)
         .into_iter()
         .filter(|(r, l)| l.format == format || rule.is_some_and(|rule| rule_pair(records, r, l, rule, format)))
-        .find_map(|(r, l)| binds_for(l, def).map(|map| (r, map)))
+        .find_map(|(r, l)| binds_for(l, def, Some(kind)).map(|map| (r, map)))
 }
 
-/// The shared lines a game might share although its saves are kept
-/// elsewhere, for the user to be asked about once: those of its card
-/// (`ids`) that say which files they hold, other than its own (`def`). Each
-/// with the record to belong to.
+/// The shared lines of another version a game could share, for the user to
+/// choose ("共用进度"): those of its card (`ids`) that say which files they
+/// hold, other than its own. Each with the record to belong to.
 ///
-/// - Lines of its format, as ever.
+/// - Lines of its format that hold other files (`def`), or the same files
+///   for another kind of install (`kind`: another store, another emulator).
 /// - Lines of another format that the game's cross-platform rule pairs
 ///   with it ([`rule_pair`]; `rule` is the game's), unless versions of that
 ///   line's kind take part in another line of the card already (their `def`
 ///   has bindings there): that line is the one they left.
+///
+/// The line the game follows itself is the caller's to leave out.
 pub fn lines_to_ask<'a>(
     records: &'a [GameRecord],
     ids: &[String],
     format: &str,
     def: &str,
+    kind: &str,
     rule: Option<&crate::crosssaves::Rule>,
 ) -> Vec<(&'a GameRecord, &'a Line)> {
     let lines = main_lines(records, ids);
-    let left = |l: &Line| l.def.as_deref().is_some_and(|d| lines.iter().any(|(_, o)| o.path != l.path && binds_for(o, d).is_some()));
+    let left = |l: &Line| l.def.as_deref().is_some_and(|d| lines.iter().any(|(_, o)| o.path != l.path && binds_for(o, d, l.kind.as_deref()).is_some()));
+    let other_version = |l: &Line| l.def.as_deref().is_some_and(|d| d != def || !super::upgrade::same_kind(l.kind.as_deref(), Some(kind)));
     lines
         .iter()
         .filter(|(r, l)| match l.format == format {
-            true => l.def.as_deref().is_some_and(|d| d != def),
+            true => other_version(l),
             false => l.def.is_some() && rule.is_some_and(|rule| rule_pair(records, r, l, rule, format)) && !left(l),
         })
         .copied()
@@ -409,7 +433,7 @@ pub fn lines_to_ask<'a>(
 /// Add bindings to a line: for versions it has none for yet.
 fn add_binds(line: &mut Line, more: &[v2::LineBind]) {
     for b in more {
-        if !line.binds.iter().any(|x| x.def == b.def) {
+        if !line.binds.iter().any(|x| x.def == b.def && x.kind == b.kind) {
             line.binds.push(b.clone());
         }
     }
@@ -945,21 +969,21 @@ mod tests {
         let ids = strings(&["LUDUSAVI:Hades", "name:hadesgoty"]);
 
         // The same game, the same files: its line.
-        assert_eq!(line_to_join(&records, &ids, "pc", "aaaa"), Some(&steam));
+        assert_eq!(line_to_join(&records, &ids, "pc", "aaaa", "steam"), Some(&steam));
         // Other files (another store's folder), or another format: no.
-        assert_eq!(line_to_join(&records, &ids, "pc", "bbbb"), None);
-        assert_eq!(line_to_join(&records, &ids, "nx", "aaaa"), None);
+        assert_eq!(line_to_join(&records, &ids, "pc", "bbbb", "steam"), None);
+        assert_eq!(line_to_join(&records, &ids, "nx", "aaaa", "steam"), None);
         // A name is never enough, and neither is nothing at all.
-        assert_eq!(line_to_join(&records, &strings(&["name:hades"]), "pc", "aaaa"), None);
-        assert_eq!(line_to_join(&records, &[], "pc", "aaaa"), None);
+        assert_eq!(line_to_join(&records, &strings(&["name:hades"]), "pc", "aaaa", "steam"), None);
+        assert_eq!(line_to_join(&records, &[], "pc", "aaaa", "steam"), None);
         // A line that doesn't say which files it holds is not assumed to
         // hold these.
         let silent = vec![record("hades-2b9d", &["ludusavi:hades"], Some(0))];
-        assert_eq!(line_to_join(&silent, &ids, "pc", "aaaa"), None);
+        assert_eq!(line_to_join(&silent, &ids, "pc", "aaaa", "steam"), None);
         // A line a device keeps to itself is not the one to share.
         let mut solo = steam.clone();
         solo.lines[0].scope = SCOPE_INDEPENDENT.into();
-        assert_eq!(line_to_join(&[solo], &ids, "pc", "aaaa"), None);
+        assert_eq!(line_to_join(&[solo], &ids, "pc", "aaaa", "steam"), None);
 
         // A card made of two records: each kept its own line. The game
         // continues the one with its files, found through the record that
@@ -968,12 +992,45 @@ mod tests {
         let merged = dedupe_with(&[steam.clone(), xbox.clone()], &same_saves).remove(0);
         assert_eq!(merged.survivor.lines.len(), 2);
         let records = vec![merged.survivor.clone(), merged.losers[0].clone()];
-        assert_eq!(line_to_join(&records, &ids, "pc", "aaaa").map(|r| r.id.as_str()), Some("hades-2b9d"));
-        let joined = line_to_join(&records, &ids, "pc", "bbbb").unwrap();
+        assert_eq!(line_to_join(&records, &ids, "pc", "aaaa", "steam").map(|r| r.id.as_str()), Some("hades-2b9d"));
+        let joined = line_to_join(&records, &ids, "pc", "bbbb", "steam").unwrap();
         assert_eq!(joined.id, "hades-xbox");
         let (card, line) = resolve_line(&records, &joined.id, MAIN_LINE).unwrap();
         assert_eq!((card.id.as_str(), line.id.as_str()), ("hades-2b9d", "main-hades-xbox"));
-        assert_eq!(line_to_join(&records, &ids, "pc", "cccc"), None);
+        assert_eq!(line_to_join(&records, &ids, "pc", "cccc", "steam"), None);
+    }
+
+    #[test]
+    fn only_the_same_kind_of_install_continues_a_line_by_itself() {
+        let kinded = |id: &str, ids: &[&str], def: &str, kind: Option<&str>| {
+            let mut r = record(id, ids, Some(0));
+            r.lines[0].format = "nx".into();
+            r.lines[0].def = Some(def.into());
+            r.lines[0].kind = kind.map(str::to_string);
+            r
+        };
+        let ids = strings(&["nx:0100770008DD8000"]);
+        let ryujinx = kinded("mhgu", &["nx:0100770008DD8000"], "nx:0100770008DD8000", Some("emu:ryujinx"));
+        let records = vec![ryujinx.clone()];
+        // Ryujinx on another device: the same version.
+        assert_eq!(line_to_join(&records, &ids, "nx", "nx:0100770008DD8000", "emu:ryujinx"), Some(&ryujinx));
+        // Eden, or the Switch itself, keep the same files and are other versions.
+        assert_eq!(line_to_join(&records, &ids, "nx", "nx:0100770008DD8000", "emu:eden"), None);
+        assert_eq!(line_to_join(&records, &ids, "nx", "nx:0100770008DD8000", "switch"), None);
+        // A line made before lines said so: the files alone decide, as before.
+        let old = kinded("mhgu", &["nx:0100770008DD8000"], "nx:0100770008DD8000", None);
+        assert_eq!(line_to_join(std::slice::from_ref(&old), &ids, "nx", "nx:0100770008DD8000", "emu:eden"), Some(&old));
+
+        // Records two devices made: one card, one line per version.
+        let eden = kinded("mhgu-eden", &["nx:0100770008DD8000"], "nx:0100770008DD8000", Some("emu:eden"));
+        assert!(!same_saves(&ryujinx.lines[0], &eden.lines[0]));
+        assert!(same_saves(&ryujinx.lines[0], &old.lines[0]));
+        let merged = dedupe_with(&[ryujinx.clone(), eden.clone()], &same_saves).remove(0);
+        assert_eq!(merged.survivor.lines.len(), 2);
+        let records = vec![merged.survivor.clone(), merged.losers[0].clone()];
+        // A third device with Eden continues Eden's line, found through its record.
+        assert_eq!(line_to_join(&records, &ids, "nx", "nx:0100770008DD8000", "emu:eden").map(|r| r.id.as_str()), Some("mhgu-eden"));
+        assert_eq!(line_to_join(&records, &ids, "nx", "nx:0100770008DD8000", "emu:ryujinx").map(|r| r.id.as_str()), Some("mhgu"));
     }
 
     #[test]

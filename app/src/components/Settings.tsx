@@ -250,6 +250,17 @@ export function SettingsPage({ onChanged, onGuide, onHandheld }: { onChanged: ()
             <Toggle checked={s.independentSaves} onChange={(v) => api.saveSettings({ independentSaves: v }).then(() => done(msg().settings.saved), (e) => ui.toast(errorText(e), "bad"))} />
           </div>
         </div>
+        <div className="field">
+          <span>
+            {t.policy.notifySetting} <Hint text={t.policy.notifySettingHint} />
+          </span>
+          <div className="row">
+            <Toggle
+              checked={s.cloudNewerNotifications}
+              onChange={(v) => api.saveSettings({ cloudNewerNotifications: v }).then(() => done(msg().settings.saved), (e) => ui.toast(errorText(e), "bad"))}
+            />
+          </div>
+        </div>
         <div className="row">
           <Button kind="primary" onClick={saveGeneral}>
             {t.common.save}

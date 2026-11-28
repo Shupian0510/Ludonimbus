@@ -43,6 +43,8 @@ pub struct SettingsView {
     exit_wait_secs: u64,
     /// After playing, always wait until the upload is done.
     wait_for_upload: bool,
+    /// In the tray: a notification when a game gets newer saves in the cloud.
+    cloud_newer_notifications: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -94,6 +96,7 @@ pub async fn get_settings() -> CmdResult<SettingsView> {
             launch_wait_secs: cfg.launch_wait_secs,
             exit_wait_secs: cfg.exit_wait_secs,
             wait_for_upload: cfg.wait_for_upload,
+            cloud_newer_notifications: cfg.cloud_newer_notifications,
         })
     })
     .await
@@ -114,6 +117,7 @@ pub struct SettingsPatch {
     launch_wait_secs: Option<u64>,
     exit_wait_secs: Option<u64>,
     wait_for_upload: Option<bool>,
+    cloud_newer_notifications: Option<bool>,
 }
 
 /// First-run guide state.
@@ -194,6 +198,9 @@ pub async fn save_settings(patch: SettingsPatch) -> CmdResult<()> {
             }
             if let Some(v) = patch.wait_for_upload {
                 c.wait_for_upload = v;
+            }
+            if let Some(v) = patch.cloud_newer_notifications {
+                c.cloud_newer_notifications = v;
             }
             Ok(())
         })?;

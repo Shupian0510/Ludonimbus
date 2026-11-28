@@ -21,6 +21,7 @@ import type {
   SteamCloudStatus,
   TrashedSnapshot,
   UnsentSave,
+  UploadResult,
 } from "./api";
 import type {
   AccountInfo,
@@ -260,6 +261,7 @@ function game(key: string, name: string, appid: number, platform: string, exe: s
     xboxContainers: false,
     replaced: null,
     store: null,
+    autoPull: !!appid,
     ...extra,
   };
 }
@@ -660,6 +662,12 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "sync_game":
     case "backup_game":
       return delay<Outcome>({ kind: "uploaded", id: "01NEW" }, 700);
+    case "upload_game":
+      return delay<UploadResult>({ outcome: { kind: "upToDate" }, check: checks[key] }, 300);
+    case "share_offer": {
+      const s = (await mockInvoke("join_suggestion", args)) as JoinSuggestion | null;
+      return s?.fit === "ready" ? { suggestion: s, label: s.rule ? (s.from ?? "PC") : "Steam" } : null;
+    }
     case "game_lines":
       return delay(mockLines(key), 200);
     case "game_line_members":
@@ -878,6 +886,7 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         launchWaitSecs: 10,
         exitWaitSecs: 10,
         waitForUpload: false,
+        cloudNewerNotifications: true,
       };
       if (mockScene && mockScene !== "settings-cloud-migrate") s.previousCloud = null;
       if (noCloudScene) s.cloud = { kind: "none" };

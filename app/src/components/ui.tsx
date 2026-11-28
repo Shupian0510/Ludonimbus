@@ -229,6 +229,8 @@ export interface MenuItem {
   checked?: boolean;
   /** A line above this item. */
   divider?: boolean;
+  /** What it does, behind a "?" after the label. */
+  hint?: string;
 }
 
 /**
@@ -309,6 +311,7 @@ export function Menu({
             >
               <span className="menu-mark">{it.checked ? <Icon name="check" size={14} /> : it.icon ? <Icon name={it.icon} size={15} /> : null}</span>
               {it.label}
+              {it.hint && <Hint text={it.hint} />}
             </button>
           ))}
         </div>

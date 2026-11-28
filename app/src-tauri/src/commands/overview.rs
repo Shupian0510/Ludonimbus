@@ -97,6 +97,10 @@ pub struct GameView {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[ts(as = "Option<_>", optional)]
     shelves: Vec<String>,
+    /// Newer saves of its own line come here by themselves (through Steam,
+    /// or Steam Cloud): a newer version in the cloud needs nothing from the
+    /// user ([`auto_pull`]).
+    auto_pull: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -176,7 +180,15 @@ fn game_view(cfg: &AppConfig, g: &GameEntry, procs: &[String], families: &HashMa
         joined: !g.bind.is_empty(),
         xbox_containers: ludonimbus_core::bind::has_wgs(&g.bind),
         store: g.store.as_ref().map(|s| StoreView { appid: s.appid, mode: steamcloud::state(g), wrapper: s.wrapper }),
+        auto_pull: auto_pull(g),
     }
+}
+
+/// Newer saves of the game's own line come here without the user: through
+/// Steam ([`sync::pulls_by_itself`]), or through Steam Cloud for a game
+/// kept backup only. Any other game waits for the user to take them.
+pub(crate) fn auto_pull(g: &GameEntry) -> bool {
+    sync::pulls_by_itself(g) || (g.auto_sync && g.backup_only())
 }
 
 /// A game the cloud has but this PC doesn't: shown grey in the library.
@@ -302,7 +314,7 @@ pub async fn get_overview() -> CmdResult<Overview> {
 #[derive(Serialize, Clone, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PlatformMark {
-    label: String,
+    pub(crate) label: String,
     logo: Option<String>,
 }
 

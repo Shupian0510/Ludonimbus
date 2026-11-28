@@ -1213,3 +1213,40 @@ export const achievements: typeof Zh.achievements = {
   toastTitle: "Achievement unlocked",
   toastTest: "Test",
 };
+
+export const policy: typeof Zh.policy = {
+  notifySetting: "Notify about newer saves in the cloud",
+  notifySettingHint:
+    'While Ludonimbus is in the tray, a system notification when a game that doesn\'t start through Steam gets newer saves in the cloud (another device played it). Click it to open the game, then choose "Get from cloud".',
+  differ: (n) => `${n} ${plural(n, "game differs", "games differ")} from the cloud`,
+  review: "Review",
+  notNow: "Not now",
+  dialogTitle: "Games that differ from the cloud",
+  dialogLead: "Before anything is replaced, the saves here are kept.",
+  dialogHint:
+    'Newer in the cloud: another device played, the saves here are older. Both changed: this PC and another device both played. "Get from cloud" takes the cloud\'s newest, "Keep this PC\'s" uploads the saves here as the newest, "This device\'s own" keeps this device\'s saves apart from now on. Before anything is replaced, the saves here are kept, and you can undo.',
+  cloudNewer: (device, when) => `Newer in the cloud · ${device} · ${when}`,
+  bothChanged: (device, when) => `Both changed · ${device} · ${when}`,
+  take: "Get from cloud",
+  takeTitle: "Replace the saves here with the cloud's newest; the ones here are kept first, and you can undo",
+  takeAll: (n) => `Get all from cloud (${n})`,
+  takeAllTitle: "Get every game whose saves here are just an older version (not changed here)",
+  keepLocal: "Keep this PC's",
+  keepLocalTitle: "Upload the saves here as the newest; the cloud's stay in the history",
+  ownLine: "This device's own",
+  ownLineTitle: "From now on this device keeps its saves on a line of its own instead of sharing them; the cloud's progress stays as it is",
+  taken: (name) => `Got the saves of ${name} from the cloud`,
+  kept: (name) => `${name}: kept this PC's saves`,
+  separate: (name) => `${name}: this device keeps its own saves from now on`,
+  allDone: "All done",
+  syncAll: "Sync all",
+  syncAllTitle: "Upload the new saves of every game; games with newer saves in the cloud are listed for you to choose",
+  everything: "All games",
+  share: (label) => `Share progress with the ${label} version`,
+  shareHint: (label) =>
+    `Progress made in the ${label} version continues here, and the other way round. Only shown when the two versions' saves are compatible; you can keep them apart again from this menu.`,
+  shareTitle: (label) => `Share progress with the ${label} version?`,
+  shareText: "Both versions follow one progress from now on. The saves here are kept first, and you can undo.",
+  shareConfirm: "Share",
+  shared: (label) => `Sharing progress with the ${label} version`,
+};

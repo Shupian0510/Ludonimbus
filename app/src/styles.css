@@ -2960,3 +2960,31 @@ button.member:hover {
   flex-direction: column;
   gap: 8px;
 }
+
+/* Games that differ from the cloud (SyncPolicy.tsx) */
+.differ-list {
+  display: flex;
+  flex-direction: column;
+}
+.differ-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.differ-row:last-child {
+  border-bottom: none;
+}
+.differ-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.differ-name small {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}

@@ -1,21 +1,25 @@
-//! Sharing a save line with a version of the game that keeps the same saves
-//! in other folders: asked once (docs/plan-v2.md, section 6).
+//! Sharing a save line with another version of the game: 「共用进度」, an
+//! advanced choice the user makes (docs/plan-positioning.md, sections 2
+//! and 3; docs/plan-v2.md, section 6).
 //!
-//! A game whose saves are where another version's are joins that version's
-//! line by itself ([`crate::cloud::library::line_to_join`]). One whose saves
-//! are elsewhere (another store's version, a copy in another place) gets a
-//! line of its own on the same card, and this:
+//! The same version on another device (the same kind of install, keeping
+//! the same files) joins that version's line by itself
+//! ([`crate::cloud::library::line_to_join`]). Any other version (another
+//! store's, the Switch and its emulators, another emulator) gets a line of
+//! its own on the same card; moving saves between them is up to the user
+//! ("发到…"), or the user chooses to share the line:
 //!
 //! - [`suggestion`]: the line it could share, and which of its folders is
 //!   which folder there ([`crate::bind::propose`]), worked out from the
 //!   line's newest version and the saves on this device. Nothing changes.
+//!   The app offers it in the version bar's menu, only where it fits.
 //! - [`accept`]: the version reads and writes that line through the
 //!   bindings from here on. The sync that follows is a first sync with the
 //!   line: the same saves on both sides are simply in sync, an older version
 //!   of the line here is replaced by the newest, and anything else is a
-//!   conflict the user settles ([`Outcome::Conflict`]). That question is the
-//!   one time the user is asked. The bindings are noted on the line, so the
-//!   next device with such a version joins without asking ([`auto`]).
+//!   conflict the user settles ([`Outcome::Conflict`]). The bindings are
+//!   noted on the line for this kind of install, so the next device with
+//!   such a version shares it too ([`auto`]): the user chose that once.
 //! - [`decline`]: not suggested again; the version keeps its own line.
 //! - [`leave`]: back to the line of its own version; that line is synced
 //!   with like any line the game comes to, and the line it leaves is not
@@ -431,8 +435,9 @@ pub fn accept(ctx: &Ctx, game: &GameEntry, s: &Suggestion) -> Result<Outcome> {
     cloud.follow(key, library::MAIN_LINE);
     log(format!("{key}: shares the saves of {} from here on, through {} folder(s)", s.record, s.binds.len()));
     if !s.confirmed {
-        // Should this fail, the next device with such a version asks too.
-        if let Err(e) = cloud.add_bind(&s.record, &def_of(game), &s.binds) {
+        // Should this fail, the next device with such a version is offered
+        // it too.
+        if let Err(e) = cloud.add_bind(&s.record, &def_of(game), &upgrade::line_kind(game), &s.binds) {
             log(format!("{key}: could not note the folders on the line: {e:#}"));
         }
     }
@@ -510,9 +515,11 @@ pub fn forget(ctx: &Ctx, game: &GameEntry) -> Result<bool> {
     Ok(true)
 }
 
-/// For a game that has not synced on this device yet: when a user confirmed
-/// on another device how versions like this one share a line of the game,
-/// share it too. Returns the game's entry as it is from then on.
+/// For a game that has not synced on this device yet: when a user chose on
+/// another device to share a line of the game with versions like this one
+/// (the same files, the same kind of install: [`accept`] notes that, and
+/// nothing else does), share it too. Returns the game's entry as it is from
+/// then on.
 ///
 /// Done before the sync reads anything, so the whole sync scans and writes
 /// through the bindings. No request of its own: a game that hasn't synced

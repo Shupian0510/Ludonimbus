@@ -136,11 +136,16 @@ fn vdf_stamp(cfg: &config::AppConfig) -> Option<SystemTime> {
 /// Sync a game after it ran, on a thread of its own: a slow cloud never
 /// holds up noticing other games start and stop, nor their playtime. One
 /// sync of a game at a time: when this app syncs it already, this one is
-/// noted as owed ([`sync::owe`]) and done after that one ([`Backlog`]).
+/// noted as owed ([`sync::owe_passive`]) and done after that one
+/// ([`Backlog`]). A sync in the background ([`Trigger::Passive`]) only
+/// uploads, unless the background keeps the game up to date itself (a
+/// Steam game Ludonimbus manages without the wrapper): a newer version in
+/// the cloud stays there, the game's status says so, and a notification
+/// tells the user while the app is in the tray ([`crate::notify`]).
 fn background_sync(app: &AppHandle, cfg: &config::AppConfig, g: &config::GameEntry, why: &str) {
     let Some(busy) = crate::busy::begin(&g.key) else {
         logger::log("watcher", format!("{}: {why}, but a sync is already running; syncing after it", g.key));
-        if let Err(e) = sync::owe(&g.key) {
+        if let Err(e) = sync::owe_passive(&g.key) {
             logger::log("watcher", format!("{}: can't note the sync for later ({e:#})", g.key));
         }
         return;

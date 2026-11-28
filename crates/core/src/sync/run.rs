@@ -1,10 +1,10 @@
 //! Running one sync of a game ([`sync`], [`sync_with`]): the game as it is
 //! settled now ([`fresh`]), one sync at a time, what waits in the queue
 //! first, then the decision ([`decide::decide`]) and what this device makes
-//! of it. A sync nobody chose ([`Resolution::Auto`]) also goes by the game:
-//! [`backup_only`], [`not_into_containers`], [`not_too_new`]. After playing
-//! comes the bookkeeping. And [`check`]: the same decision, with nothing
-//! changed.
+//! of it. A sync nobody chose ([`Resolution::Auto`]) also goes by the game
+//! and by who started it: [`backup_only`], [`upload_only`],
+//! [`not_into_containers`], [`not_too_new`]. After playing comes the
+//! bookkeeping. And [`check`]: the same decision, with nothing changed.
 
 use super::carry::{local_here, scope_of_platform, too_new, with_carried};
 use super::gate::{is_gave_up, Gate, GaveUp, Phase};
@@ -59,10 +59,36 @@ pub fn sync(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigge
 /// sync of the game on this device is waited for first ([`lock_game`]),
 /// and that wait can be given up too.
 pub fn sync_with(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
+    run(ctx, game, resolution, trigger, gate, false)
+}
+
+/// A sync that writes nothing into the game's saves, which the user asked
+/// for ("全部同步" in the app): saves changed here are uploaded; a newer
+/// version of the line stays in the cloud, and the game shows that the
+/// cloud has newer saves ([`check`]); saves that went another way than the
+/// cloud's are a conflict the user settles. What to take is chosen after,
+/// game by game.
+pub fn upload(ctx: &Ctx, game: &GameEntry) -> Result<Outcome> {
+    run(ctx, game, Resolution::Auto, Trigger::SyncNow, &Gate::default(), true)
+}
+
+/// Whether Ludonimbus writes a newer version of the game's own line into
+/// its saves without asking (docs/plan-positioning.md, section 2): a game
+/// started through Steam, by the launch wrapper before it starts (a game
+/// added to Steam, a game Steam installed that Ludonimbus manages), or in
+/// the background while it isn't running (one Ludonimbus manages without
+/// the wrapper). Any other game only uploads by itself; it shows that the
+/// cloud has newer saves, and the user takes them. A game whose saves
+/// Steam Cloud keeps is Steam's to bring up to date.
+pub fn pulls_by_itself(game: &GameEntry) -> bool {
+    game.auto_sync && (game.steam.as_ref().is_some_and(|s| s.enabled) || game.store.as_ref().is_some_and(|s| s.mode == config::StoreMode::Managed))
+}
+
+fn run(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate, upload: bool) -> Result<Outcome> {
     gate.set_phase(Phase::Checking);
     let result = gate.check().and_then(|_| {
         let _lock = lock_game(&game.key, gate)?;
-        let outcome = sync_locked(ctx, game, resolution, trigger, gate)?;
+        let outcome = sync_locked(ctx, game, resolution, trigger, gate, upload)?;
         // A sync after playing that was owed is done by any sync that ends.
         if outcome.is_final() {
             settle_owed(&game.key);
@@ -99,7 +125,7 @@ pub(super) fn fresh(ctx: &Ctx, game: &GameEntry) -> GameEntry {
     game
 }
 
-fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate) -> Result<Outcome> {
+fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Trigger, gate: &Gate, upload: bool) -> Result<Outcome> {
     // A game Steam installed is managed only while Steam Cloud stays off.
     let game = &crate::steamcloud::rechecked(&ctx.cfg, fresh(ctx, game));
     let cloud = match ctx.cloud() {
@@ -155,6 +181,9 @@ fn sync_locked(ctx: &Ctx, game: &GameEntry, resolution: Resolution, trigger: Tri
     let mut action = holding(decide::decide(&loc, &seen), &loc, &seen);
     if game.backup_only() && resolution == Resolution::Auto {
         action = backup_only(&game.key, action, &loc, &seen);
+    }
+    if (upload || only_uploads(game, trigger)) && resolution == Resolution::Auto {
+        action = upload_only(&game.key, action);
     }
     if crate::bind::has_wgs(&game.bind) && resolution == Resolution::Auto {
         action = not_into_containers(&game.key, action);
@@ -255,6 +284,39 @@ fn backup_only(key: &str, action: Action, local: &Local, view: &LineView) -> Act
         Action::Conflict { .. } => {
             log(format!("{key}: these saves differ from the cloud's; Steam Cloud decided they are current, so they are uploaded"));
             decide::settle(local, view)
+        }
+        other => other,
+    }
+}
+
+/// Whether a sync only uploads ([`upload_only`]): one in the background
+/// ([`Trigger::Passive`]: the tray app after a game that ran outside the
+/// launch wrapper, after a wrapper that was terminated, a sync after
+/// playing it was owed), unless the game is one the background keeps up
+/// to date itself, a Steam game Ludonimbus manages without the wrapper
+/// (docs/plan-v2.md, section 8.3). The launch wrapper's syncs before and
+/// after playing, and what the user starts ("立即同步", a sync from the
+/// Steam plugin), still take a newer version of the line: that is 「取回」.
+fn only_uploads(game: &GameEntry, trigger: Trigger) -> bool {
+    let kept_up = game.store.as_ref().is_some_and(|s| s.mode == config::StoreMode::Managed && !s.wrapper);
+    trigger == Trigger::Passive && !kept_up
+}
+
+/// What a sync nobody chose does for a game that wasn't started through
+/// Steam (docs/plan-positioning.md, section 2): uploading only adds a
+/// version to the cloud and is always done; writing into the game's saves
+/// overwrites something, so it isn't done by itself ([`only_uploads`]).
+///
+/// - A newer version of the line is left in the cloud; the game shows that
+///   the cloud has newer saves ([`check`]), the app tells the user, and the
+///   user takes it (「取回」).
+/// - Saves here that went another way than the cloud's are a conflict the
+///   user settles, as ever: nothing is written for that either.
+fn upload_only(key: &str, action: Action) -> Action {
+    match action {
+        Action::Pull { id } => {
+            log(format!("{key}: {id} in the cloud is newer; it is written here when the user takes it"));
+            Action::Nothing
         }
         other => other,
     }

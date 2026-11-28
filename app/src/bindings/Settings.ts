@@ -36,4 +36,8 @@ exitWaitSecs: number,
 /**
  * After playing, always wait until the upload is done.
  */
-waitForUpload: boolean, };
+waitForUpload: boolean, 
+/**
+ * In the tray: a notification when a game gets newer saves in the cloud.
+ */
+cloudNewerNotifications: boolean, };
