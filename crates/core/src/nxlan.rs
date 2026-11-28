@@ -3,10 +3,18 @@
 //!
 //! The Switch homebrew (`Ludonimbus-NX`) only reads and writes its saves;
 //! this PC does the rest with the cloud it already uses: version history,
-//! conflicts, the save library. The Switch is one more device, and one more
-//! version of each game (`nxsave-<title id>` / `nxdevice-<title id>`, the
-//! same roots as Ryujinx and Eden), so its saves carry over to emulators and
-//! back.
+//! conflicts, the save library. Each paired Switch is one more device.
+//!
+//! Protocol 3 (docs/plan-positioning.md, P4 and S5): the Switch backs up
+//! with one press and never has anything written onto it unless its user
+//! picks a save. Each Switch user's saves of a game are a save line of the
+//! game's card, one per player: users of the same nickname on several
+//! Switches share theirs, a user the owner separates keeps its own
+//! ([`user_line`]). Those lines are apart from the line the PC's emulators
+//! follow (same title, same files, `nxsave-<title id>` / `nxdevice-<title
+//! id>`); the Switch can take that one's saves, and another platform's
+//! through the game's cross-platform rule. A Switch of protocol 2 still
+//! syncs the line this PC's game of the title follows.
 //!
 //! - Off unless the user turns it on (`AppConfig::nx_lan`).
 //! - HTTPS with a self-signed certificate; the Switch keeps its
@@ -16,6 +24,7 @@
 //! - Discovery: a UDP broadcast `LUDONIMBUS_DISCOVER` on port 47717 is
 //!   answered with this PC's name, port and fingerprint.
 
+use crate::cloud::client::line_key;
 use crate::cloud::{Cloud, CloudGame, DeviceInfo};
 use crate::config::AppConfig;
 use crate::lockfile::FileLock;
@@ -36,7 +45,7 @@ use std::time::{Duration, Instant};
 pub const PORT: u16 = 47716;
 pub const DISCOVERY_PORT: u16 = 47717;
 /// Version of docs/nx-protocol.md this PC speaks.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 const DISCOVER: &[u8] = b"LUDONIMBUS_DISCOVER";
 /// Largest upload accepted (a zip of one game's saves).
 const MAX_UPLOAD: usize = 512 * 1024 * 1024;
@@ -65,12 +74,137 @@ fn dir() -> std::path::PathBuf {
 pub struct Paired {
     /// The Switch's own device id (kept on its SD card).
     pub id: String,
+    /// What it is called: the name it sent when pairing, until the owner
+    /// renames it on the PC. Its versions and its device in the cloud say it.
     pub name: String,
     /// SHA-256 of its token.
     pub token_hash: String,
     pub paired_at: DateTime<Utc>,
     #[serde(default)]
     pub last_seen: Option<DateTime<Utc>>,
+    /// Its user accounts as it last reported them (protocol 3), with what
+    /// the owner chose for each on the PC.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub users: Vec<SwitchUser>,
+}
+
+/// A user account on a paired Switch, and how its saves are kept.
+///
+/// Users with the same nickname on several Switches are one player: their
+/// saves of a game are one save line, so each Switch sees the other's newer
+/// progress (docs/plan-v2.md, section 7: the same version on several
+/// devices). A user the owner separates keeps a line of its own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchUser {
+    /// The account's id on the Switch (32 hex digits).
+    pub uid: String,
+    pub nickname: String,
+    /// Its saves are backed up (the owner can leave a user out).
+    #[serde(default = "yes")]
+    pub sync: bool,
+    /// Kept apart from users of the same nickname on other Switches.
+    #[serde(default)]
+    pub separate: bool,
+    /// When this PC first heard of it. The first user to sync is the one
+    /// whose saves are compared with the PC's version of each game.
+    pub first_seen: DateTime<Utc>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Four to six characters of a hash, for line ids that follow from what
+/// they are for (as [`crate::cloud::own_line_id`]).
+fn short_hash(what: &str, len: usize) -> String {
+    const LETTERS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+    let hash = blake3::hash(what.as_bytes());
+    let b = hash.as_bytes();
+    let n = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+    (0..len).map(|i| LETTERS[((n >> (i * 5)) & 31) as usize] as char).collect()
+}
+
+/// Which player a nickname is: the same letters, whatever the case and
+/// the spaces around them.
+fn player_of(nickname: &str) -> String {
+    nickname.trim().to_lowercase()
+}
+
+/// The save line a Switch user's saves are on, in every game's card: its id
+/// (`switch-` and six characters that follow from the player, or from the
+/// Switch and the user when separated) and the name it gets.
+pub fn user_line(d: &Paired, u: &SwitchUser) -> (String, String) {
+    let player = player_of(&u.nickname);
+    if u.separate || player.is_empty() {
+        (format!("switch-{}", short_hash(&format!("{}\0{}", d.id, u.uid), 6)), format!("Switch · {} · {}", u.nickname.trim(), d.name))
+    } else {
+        (format!("switch-{}", short_hash(&player, 6)), format!("Switch · {}", u.nickname.trim()))
+    }
+}
+
+/// The player whose saves are compared with the PC's version of each game:
+/// the user that first synced through this PC, of those that sync and
+/// aren't separated.
+fn main_player(list: &[Paired]) -> Option<String> {
+    list.iter()
+        .flat_map(|d| d.users.iter())
+        .filter(|u| u.sync && !u.separate && !player_of(&u.nickname).is_empty())
+        .min_by_key(|u| u.first_seen)
+        .map(|u| player_of(&u.nickname))
+}
+
+/// Rename a paired Switch (Settings → Switch).
+pub fn rename_device(id: &str, name: &str) -> Result<()> {
+    let name: String = name.trim().chars().take(40).collect();
+    if name.is_empty() {
+        bail!("empty name");
+    }
+    let found = update_devices(|list| list.iter_mut().find(|d| d.id == id).map(|d| d.name = name).is_some())?;
+    if !found {
+        bail!("no such Switch");
+    }
+    // Its device in the cloud gets the new name with its next request.
+    HUB.lock().unwrap_or_else(|e| e.into_inner()).device_put.remove(id);
+    Ok(())
+}
+
+/// What the owner chose on the PC for one user of a paired Switch: whether
+/// its saves are backed up, and whether it keeps them apart from users of
+/// the same nickname on other Switches.
+pub fn set_user(id: &str, uid: &str, sync: bool, separate: bool) -> Result<()> {
+    let found = update_devices(|list| {
+        list.iter_mut().find(|d| d.id == id).and_then(|d| d.users.iter_mut().find(|u| u.uid == uid)).map(|u| (u.sync, u.separate) = (sync, separate)).is_some()
+    })?;
+    if !found {
+        bail!("no such user");
+    }
+    Ok(())
+}
+
+/// The users a Switch reports: new ones are added (backed up, not
+/// separated), nicknames follow the Switch, users it no longer has go.
+/// Written only when something changed.
+fn note_users(d: &Paired, reported: &[(String, String)]) -> Result<Paired> {
+    let now = Utc::now();
+    let merged = |old: &[SwitchUser]| -> Vec<SwitchUser> {
+        reported
+            .iter()
+            .map(|(uid, nickname)| match old.iter().find(|u| &u.uid == uid) {
+                Some(u) => SwitchUser { nickname: nickname.clone(), ..u.clone() },
+                None => SwitchUser { uid: uid.clone(), nickname: nickname.clone(), sync: true, separate: false, first_seen: now },
+            })
+            .collect()
+    };
+    if merged(&d.users) == d.users {
+        return Ok(d.clone());
+    }
+    update_devices(|list| {
+        let d = list.iter_mut().find(|x| x.id == d.id)?;
+        d.users = merged(&d.users);
+        Some(d.clone())
+    })?
+    .ok_or_else(|| anyhow!("unknown device"))
 }
 
 fn devices_file() -> std::path::PathBuf {
@@ -155,8 +289,20 @@ fn pair(code: &str, id: &str, name: &str) -> Result<String, (u16, String)> {
     let mut raw = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw);
     let token = hex(&raw);
-    let paired = Paired { id: id.into(), name: name.trim().chars().take(40).collect(), token_hash: hash_token(&token), paired_at: Utc::now(), last_seen: None };
+    let mut paired = Paired {
+        id: id.into(),
+        name: name.trim().chars().take(40).collect(),
+        token_hash: hash_token(&token),
+        paired_at: Utc::now(),
+        last_seen: None,
+        users: Vec::new(),
+    };
     update_devices(|list| {
+        // Paired again: the name and users the owner set stay.
+        if let Some(old) = list.iter().find(|d| d.id == id) {
+            paired.name = old.name.clone();
+            paired.users = old.users.clone();
+        }
         list.retain(|d| d.id != id);
         list.push(paired);
     })
@@ -350,6 +496,9 @@ fn title_of(s: &str) -> Result<u64> {
 
 /// A game's newest version counts as known for this long after listing it.
 const HEAD_FRESH_FOR: Duration = Duration::from_secs(30);
+/// What only makes a hint (another version's newer progress, the lines of
+/// a card) is asked for again after this long.
+const HINT_FRESH_FOR: Duration = Duration::from_secs(300);
 /// The cloud's game list is fetched again in the background when older.
 const LIST_MAX_AGE_MINUTES: i64 = 5;
 /// One connection to the cloud serves requests for this long.
@@ -383,6 +532,16 @@ struct Hub {
     /// The last failure talking to the cloud, shown on the Switch.
     error: Option<String>,
     device_put: HashMap<String, Instant>,
+    /// The save lines of each card, by card key, as last read.
+    cards: HashMap<String, Card>,
+    /// Cards being read right now.
+    carding: HashSet<String>,
+}
+
+/// A card as last read: its record (none when the cloud has none yet).
+struct Card {
+    record: Option<crate::cloud::v2::GameRecord>,
+    at: Instant,
 }
 
 static CLOUD: Mutex<Option<OpenCloud>> = Mutex::new(None);
@@ -555,6 +714,95 @@ fn list_in_background(cfg: &AppConfig, keys: Vec<String>) {
     });
 }
 
+/// Read the save lines of these cards in the background (one look at the
+/// game records, not again within a minute), unless they're being read.
+fn cards_in_background(cfg: &AppConfig, keys: Vec<String>) {
+    let keys: Vec<String> = {
+        let mut h = hub(cfg);
+        keys.into_iter().filter(|k| h.carding.insert(k.clone())).collect()
+    };
+    if keys.is_empty() {
+        return;
+    }
+    let cfg = cfg.clone();
+    std::thread::spawn(move || {
+        let got: Vec<Result<Option<crate::cloud::v2::GameRecord>>> = match cloud(&cfg) {
+            Ok(cloud) => keys.iter().map(|k| cloud.card(k)).collect(),
+            Err(e) => keys.iter().map(|_| Err(anyhow!("{e:#}"))).collect(),
+        };
+        let mut problem = None;
+        {
+            let mut h = hub(&cfg);
+            for (k, r) in keys.iter().zip(got) {
+                h.carding.remove(k);
+                match r {
+                    Ok(record) => {
+                        h.cards.insert(k.clone(), Card { record, at: Instant::now() });
+                    }
+                    Err(e) => {
+                        // Not asked again right away; what was known stays.
+                        let record = h.cards.remove(k).and_then(|c| c.record);
+                        h.cards.insert(k.clone(), Card { record, at: Instant::now() });
+                        problem = Some(e);
+                    }
+                }
+            }
+        }
+        if let Some(e) = problem {
+            failed(&cfg, &e);
+        }
+    });
+}
+
+/// The newest progress of the game's other versions (the lines of the card
+/// `card` that aren't a Switch user's and that the Switch can take saves
+/// from) when it is newer than `own`, this player's newest version: what it
+/// is and whether it needs converting. Asked for in the background when not
+/// known.
+fn newer_elsewhere(
+    h: &Hub,
+    title: u64,
+    card: &str,
+    own: Option<&SnapshotSummary>,
+    to_list: &mut Vec<String>,
+    to_card: &mut Vec<String>,
+    fresh: &mut bool,
+) -> Option<Value> {
+    let record = match h.cards.get(card) {
+        Some(c) => {
+            if c.at.elapsed() > HINT_FRESH_FOR && !h.carding.contains(card) {
+                to_card.push(card.to_string());
+            }
+            c.record.as_ref()?
+        }
+        None => {
+            if !h.carding.contains(card) {
+                to_card.push(card.to_string());
+            }
+            *fresh = false;
+            return None;
+        }
+    };
+    let mut best: Option<(SnapshotSummary, bool)> = None;
+    for line in record.lines.iter().filter(|l| !l.id.starts_with("switch")) {
+        let Some(rule) = takes_from(title, &line.format) else { continue };
+        let now = head_now(h, &line_key(&record.id, &line.id), HINT_FRESH_FOR, to_list, fresh);
+        let Some(Some(head)) = now.listed else { continue };
+        // A Switch's version on a line it shared before protocol 3 isn't another platform's.
+        if head.device_id.starts_with("nx-") || head.incomplete {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(b, _)| head.created_at > b.created_at) {
+            best = Some((head, rule.is_some()));
+        }
+    }
+    let (head, convert) = best?;
+    if own.is_some_and(|o| o.created_at >= head.created_at) {
+        return None;
+    }
+    Some(json!({ "id": head.id, "label": platform_label(&head.platform), "deviceName": head.device_name, "createdAt": head.created_at, "convert": convert }))
+}
+
 /// Register the Switch as a device in the cloud (in the background, now and
 /// then).
 fn register_device(cfg: &AppConfig, d: &Paired, client: String) {
@@ -693,19 +941,34 @@ fn binds_of(cfg: &AppConfig, key: &str) -> Vec<crate::bind::Bind> {
     cfg.game(key).map(|g| g.bind.clone()).unwrap_or_default()
 }
 
-/// One version's files of the Switch game, as a zip for the Switch: from
-/// this PC's queue when it's still there, else from the cloud.
-fn fetch_for_switch(cfg: &AppConfig, key: &str, id: &str, title: u64, job: &str) -> Result<std::path::PathBuf> {
-    let binds = binds_of(cfg, key);
-    let queued = sync::pending_zips(key, id);
-    let local = if queued.is_empty() { None } else { repack_for_switch(&queued, title, &binds).ok() };
-    let body = match local {
-        Some(b) => b,
-        None => {
-            let tmp = paths::staging_dir().join(format!("nx-{job}.zip"));
-            let got = cloud(cfg).and_then(|c| c.download(key, id, &tmp)).and_then(|_| repack_for_switch(std::slice::from_ref(&tmp), title, &binds));
-            let _ = std::fs::remove_file(&tmp);
-            got?
+/// One version a Switch asked for.
+struct Fetch {
+    /// The game's card.
+    card: String,
+    /// The line of the card it is on, when it isn't the user's own
+    /// (protocol 3: another version of the game).
+    line: Option<String>,
+    /// The key of the user's own line (protocol 2: the card's).
+    own: String,
+    id: String,
+    /// The user's version whose other files go along with a converted one.
+    base: Option<String>,
+}
+
+/// The version a Switch asked for, as a zip for it, kept for the job.
+fn fetch_for_switch(cfg: &AppConfig, f: &Fetch, title: u64, job: &str) -> Result<std::path::PathBuf> {
+    let body = match &f.line {
+        None => version_for_switch(cfg, &f.own, &f.id, title, job)?,
+        Some(line) => {
+            // A line of the card as it is now (`sources` named it so).
+            let record = cloud(cfg)?.card(&f.card)?.ok_or_else(|| anyhow!("the cloud has no record of this game"))?;
+            let format = record.lines.iter().find(|l| l.id == *line).map(|l| l.format.clone()).ok_or_else(|| anyhow!("the game has no such save line"))?;
+            let from = line_key(&record.id, line);
+            match takes_from(title, &format) {
+                Some(None) => version_for_switch(cfg, &from, &f.id, title, job)?,
+                Some(Some(rule)) => converted_for_switch(cfg, &from, &format, rule, f, title, job)?,
+                None => bail!("the Switch can't use the saves of this version"),
+            }
         }
     };
     let out = dir().join("jobs").join(format!("{job}.zip"));
@@ -714,8 +977,297 @@ fn fetch_for_switch(cfg: &AppConfig, key: &str, id: &str, title: u64, job: &str)
     Ok(out)
 }
 
+/// One version's files of the Switch game, as a zip for the Switch: from
+/// this PC's queue when it's still there, else from the cloud.
+fn version_for_switch(cfg: &AppConfig, key: &str, id: &str, title: u64, job: &str) -> Result<Vec<u8>> {
+    let binds = binds_of(cfg, key);
+    let queued = sync::pending_zips(key, id);
+    if let Some(b) = (!queued.is_empty()).then(|| repack_for_switch(&queued, title, &binds).ok()).flatten() {
+        return Ok(b);
+    }
+    let tmp = paths::staging_dir().join(format!("nx-{job}-{id}.zip"));
+    let got = cloud(cfg).and_then(|c| c.download(key, id, &tmp)).and_then(|_| repack_for_switch(std::slice::from_ref(&tmp), title, &binds));
+    let _ = std::fs::remove_file(&tmp);
+    got
+}
+
+/// A version of another platform's line, converted for the Switch by the
+/// game's cross-platform rule (docs/plan-v2.md, section 6, "Switch ↔ PC"):
+/// the rule's save files go to the rule's Switch folder; the Switch's other
+/// files (its settings, its device save) are those of the user's version
+/// `base`, the copy the Switch kept before taking this one.
+fn converted_for_switch(cfg: &AppConfig, from: &str, format: &str, rule: &crate::crosssaves::Rule, f: &Fetch, title: u64, job: &str) -> Result<Vec<u8>> {
+    let scope = crate::cloud::upgrade::scope_of_format(format).ok_or_else(|| anyhow!("unknown save format {format}"))?;
+    let tmp = paths::staging_dir().join(format!("nx-{job}-from.zip"));
+    let got = cloud(cfg).and_then(|c| c.download(from, &f.id, &tmp)).and_then(|_| {
+        let meta = snapshot::read_meta(&tmp)?;
+        let files = files_of_zip(&tmp)?;
+        Ok(crate::crosssaves::saves_of(rule, scope, files.iter().map(|(p, d)| (p.as_str(), d)), &meta.roots)
+            .into_iter()
+            .map(|(rel, d)| (rel, d.clone()))
+            .collect::<Vec<(String, Vec<u8>)>>())
+    });
+    let _ = std::fs::remove_file(&tmp);
+    let saves = got?;
+    if saves.is_empty() {
+        bail!("this version has no saves the game's rule knows");
+    }
+    let root = switch::root_name(switch::SaveKind::Account, title);
+    let folder = rule.folders.get("switch").map(String::as_str).unwrap_or(crate::crosssaves::NXSAVE);
+    let at = |rel: &str| match folder == crate::crosssaves::NXSAVE {
+        true => format!("{root}/{rel}"),
+        false => format!("{root}/{}/{rel}", folder.trim_matches('/')),
+    };
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    if let Some(base) = &f.base {
+        let mine = version_for_switch(cfg, &f.own, base, title, job)?;
+        out.extend(unpack_from_switch(&mine, title)?.into_iter().filter(|(p, _)| crate::crosssaves::relative(rule, "switch", p, None).is_none()));
+    }
+    out.extend(saves.iter().map(|(rel, d)| (at(rel), d.clone())));
+    zip_files(&out)
+}
+
+/// The files of a snapshot zip (`files/<path>`), no more in all than an
+/// upload may hold.
+fn files_of_zip(zip: &std::path::Path) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut src = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
+    let mut out = Vec::new();
+    let mut total = 0usize;
+    for i in 0..src.len() {
+        let mut e = src.by_index(i)?;
+        let Some(path) = e.name().strip_prefix("files/").map(str::to_string) else { continue };
+        if e.is_dir() {
+            continue;
+        }
+        let data = read_entry(&mut e, MAX_UPLOAD - total)?;
+        total += data.len();
+        out.push((path, data));
+    }
+    Ok(out)
+}
+
+fn zip_files(files: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    for (path, data) in files {
+        out.start_file(path.as_str(), opts)?;
+        out.write_all(data)?;
+    }
+    Ok(out.finish()?.into_inner())
+}
+
+/// A version id (a ULID).
+fn is_id(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// A save line's id.
+fn is_line(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// The versions of `key` (a game key or a line key), newest first, with
+/// those this PC holds for the cloud (marked). The line is read now.
+fn versions_of(cfg: &AppConfig, key: &str) -> Result<Vec<(SnapshotSummary, bool)>> {
+    // The queue first: a version uploaded meanwhile is then in both.
+    let waiting = pending(key);
+    let listed = cloud(cfg)?.list_snapshots(key)?;
+    remember_head(cfg, key, sync::mainline_head(&listed));
+    let mut all: Vec<(SnapshotSummary, bool)> = listed.into_iter().map(|s| (s, false)).collect();
+    for p in waiting {
+        if !all.iter().any(|(s, _)| s.id == p.id) {
+            all.push((p, true));
+        }
+    }
+    all.sort_by_key(|(s, _)| std::cmp::Reverse(s.created_at));
+    Ok(all)
+}
+
+/// The most versions of the player's own line listed one by one (the rest
+/// of the history is on the PC).
+const SOURCES_MAX: usize = 60;
+
+/// What the Switch can take for a player's saves of a game (`sources`).
+fn sources(cfg: &AppConfig, d: &Paired, title: u64, card: &str, own_line: &str) -> Result<Value> {
+    let own_id = device_tuple(d).0;
+    let mine = versions_of(cfg, &line_key(card, own_line))?;
+    // The newest versions: those no other version (a waiting one too) goes on from.
+    let heads: Vec<&SnapshotSummary> =
+        mine.iter().map(|(s, _)| s).filter(|s| s.head && !s.side && !mine.iter().any(|(t, _)| !t.side && t.parent.as_deref() == Some(s.id.as_str()))).collect();
+    let head = sync::mainline_head(&mine.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+    let item = |s: &SnapshotSummary, line: &str, group: &str, label: String, convert: bool| {
+        json!({
+            "id": s.id, "line": line, "group": group, "label": label,
+            "deviceName": s.device_name, "createdAt": s.created_at, "trigger": s.trigger,
+            "fileCount": s.file_count, "totalSize": s.total_size, "convert": convert,
+            "head": head.as_ref().is_some_and(|h| h.id == s.id), "side": s.side,
+        })
+    };
+    let usable: Vec<&SnapshotSummary> = mine.iter().map(|(s, _)| s).filter(|s| !s.incomplete).collect();
+    let mut items = Vec::new();
+    let mut shown: HashSet<String> = HashSet::new();
+    // This Switch's newest.
+    if let Some(s) = usable.iter().find(|s| s.device_id == own_id && !s.side) {
+        items.push(item(s, own_line, "this", device_tuple(d).1, false));
+        shown.insert(s.id.clone());
+    }
+    // The kept ones.
+    for s in usable.iter().filter(|s| s.locked) {
+        if shown.insert(s.id.clone()) {
+            let label = if s.comment.is_empty() { s.device_name.clone() } else { s.comment.clone() };
+            items.push(item(s, own_line, "kept", label, false));
+        }
+    }
+    // Each other Switch's newest.
+    let mut seen_devices: HashSet<&str> = HashSet::new();
+    for s in usable.iter().filter(|s| s.device_id.starts_with("nx-") && s.device_id != own_id && !s.side) {
+        if seen_devices.insert(s.device_id.as_str()) && !shown.contains(&s.id) {
+            items.push(item(s, own_line, "switch", s.device_name.clone(), false));
+            shown.insert(s.id.clone());
+        }
+    }
+    // Each other version's newest that the Switch can take: the card's
+    // lines that aren't a Switch user's.
+    let cloud = cloud(cfg)?;
+    if let Some(record) = cloud.card(card)? {
+        for line in record.lines.iter().filter(|l| !l.id.starts_with("switch")) {
+            let Some(rule) = takes_from(title, &line.format) else { continue };
+            let listed = cloud.list_snapshots(&line_key(&record.id, &line.id))?;
+            let Some(s) = sync::mainline_head(&listed.into_iter().filter(|s| !s.incomplete).collect::<Vec<_>>()) else { continue };
+            let label = match &line.name {
+                Some(n) if !n.is_empty() => format!("{} - {n}", platform_label(&s.platform)),
+                _ => platform_label(&s.platform),
+            };
+            items.push(item(&s, &line.id, "platform", label, rule.is_some()));
+        }
+    }
+    // The rest of the player's versions.
+    for s in usable.iter().filter(|s| !shown.contains(&s.id)).take(SOURCES_MAX) {
+        items.push(item(s, own_line, "auto", s.device_name.clone(), false));
+    }
+    Ok(json!({ "key": card, "line": own_line, "headId": head.map(|h| h.id), "forked": heads.len() > 1, "items": items }))
+}
+
 fn device_tuple(d: &Paired) -> (String, String) {
     (format!("nx-{}", d.id), if d.name.is_empty() { "Switch".into() } else { d.name.clone() })
+}
+
+/// What this PC knows now of the newest version of `key` (a game key or a
+/// line key), counting its own queue. Asks for it in the background when
+/// what is known is older than `fresh_for`.
+struct HeadNow {
+    /// `None` until it has been listed (see `checking`); then the newest
+    /// version, if the line has any.
+    listed: Option<Option<SnapshotSummary>>,
+    /// Being checked with the cloud.
+    checking: bool,
+    /// This PC holds versions of it for the cloud.
+    waiting: bool,
+}
+
+fn head_now(h: &Hub, key: &str, fresh_for: Duration, to_list: &mut Vec<String>, fresh: &mut bool) -> HeadNow {
+    let pend = pending(key);
+    let entry = h.heads.get(key);
+    let busy = h.listing.contains(key);
+    let stale = entry.is_none_or(|e| e.at.elapsed() > fresh_for);
+    if stale && !busy && !to_list.iter().any(|k| k == key) {
+        to_list.push(key.to_string());
+    }
+    if stale || busy {
+        *fresh = false;
+    }
+    let listed = entry.filter(|e| e.listed).map(|e| {
+        let mut all = pend.clone();
+        all.extend(e.head.clone());
+        sync::mainline_head(&all)
+    });
+    HeadNow { listed, checking: stale || busy, waiting: !pend.is_empty() }
+}
+
+/// Who made a version, as the Switch `own` tells its user: itself, another
+/// Switch, or anything else.
+fn made_by(head: &SnapshotSummary, own: &str) -> &'static str {
+    if head.device_id == own {
+        "this"
+    } else if head.device_id.starts_with("nx-") {
+        "switch"
+    } else {
+        "other"
+    }
+}
+
+/// A version's platform as a word the Switch can show (its font has only
+/// ASCII): `emu:ryujinx` → `Ryujinx`, `pc:steam` → `Steam`.
+fn platform_label(platform: &str) -> String {
+    let word = match platform.split_once(':') {
+        Some(("console", "switch")) => return "Switch".into(),
+        Some((_, tail)) => tail,
+        None if platform.is_empty() || platform == "pc" => return "PC".into(),
+        None => platform,
+    };
+    let mut c = word.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_else(|| "PC".into())
+}
+
+/// Whether the Switch can take saves from a line of format `format` of the
+/// title's card: as they are (`nx`), or through the game's cross-platform
+/// rule (`Some(rule)`: it needs converting). `None`: it can't.
+fn takes_from(title: u64, format: &str) -> Option<Option<&'static crate::crosssaves::Rule>> {
+    if format == "nx" {
+        return Some(None);
+    }
+    let scope = crate::cloud::upgrade::scope_of_format(format)?;
+    let rule = crate::crosssaves::rule_for_ids(&[format!("nx:{title:016X}")], "switch")?;
+    rule.folders.contains_key(scope).then_some(Some(rule))
+}
+
+/// The cloud's definition of a game only a Switch has (key `nx-<title>`):
+/// emulators on any device find it by its title id.
+fn switch_def(title: u64, name: String) -> CloudGame {
+    CloudGame {
+        key: format!("nx-{title:016x}"),
+        name,
+        adapter: None,
+        saves: vec![
+            format!("{{{}}}/**", switch::root_name(switch::SaveKind::Account, title)),
+            format!("{{{}}}/**", switch::root_name(switch::SaveKind::Device, title)),
+        ],
+        exclude: vec![],
+        wait_for: vec![],
+        roots: Default::default(),
+        ludusavi_title: None,
+        source: None,
+        ids: vec![format!("nx:{title:016X}")],
+        game: None,
+    }
+}
+
+/// A Switch user id: 32 hex digits.
+fn is_uid(s: &str) -> bool {
+    s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The user a request is about (`user=<uid>`, protocol 3), when the owner
+/// lets it sync. `Ok(None)`: a request of protocol 2, about the line this
+/// PC's game of the title follows.
+fn user_of<'a>(d: &'a Paired, uid: Option<&str>) -> Result<Option<&'a SwitchUser>, Resp> {
+    match uid {
+        None => Ok(None),
+        Some(uid) => match d.users.iter().find(|u| u.uid.eq_ignore_ascii_case(uid)) {
+            Some(u) if u.sync => Ok(Some(u)),
+            Some(_) => Err(err(403, "this user isn't synced: the owner turned it off on the PC")),
+            None => Err(err(404, "unknown user: refresh the list")),
+        },
+    }
+}
+
+/// The key a request works on: the user's line of the card (a line key),
+/// or for protocol 2 the card key itself.
+fn key_for(d: &Paired, card: &str, user: Option<&SwitchUser>) -> String {
+    match user {
+        Some(u) => line_key(card, &user_line(d, u).0),
+        None => card.to_string(),
+    }
 }
 
 fn status_of(head: &Option<SnapshotSummary>, last: &Option<String>, changed: bool) -> &'static str {
@@ -748,6 +1300,10 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             #[serde(rename_all = "camelCase")]
             struct Item {
                 title: String,
+                /// Whose saves (protocol 3); none: the line this PC's game
+                /// of the title follows (protocol 2).
+                #[serde(default)]
+                user: Option<String>,
                 #[serde(default)]
                 last_synced_id: Option<String>,
                 /// Changed on the Switch since that sync.
@@ -755,78 +1311,106 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
                 changed: bool,
             }
             #[derive(Deserialize)]
+            struct User {
+                uid: String,
+                #[serde(default)]
+                nickname: String,
+            }
+            #[derive(Deserialize)]
             struct Body {
                 games: Vec<Item>,
+                /// The Switch's user accounts (protocol 3).
+                #[serde(default)]
+                users: Option<Vec<User>>,
             }
             let body: Body = serde_json::from_slice(req.body).context("bad request")?;
+            let device = match &body.users {
+                Some(users) => {
+                    let reported: Vec<(String, String)> = users
+                        .iter()
+                        .filter(|u| is_uid(&u.uid))
+                        .take(16)
+                        .map(|u| (u.uid.to_lowercase(), u.nickname.trim().chars().take(40).collect()))
+                        .collect();
+                    note_users(device, &reported)?
+                }
+                None => device.clone(),
+            };
+            let main = main_player(&devices());
+            let own = device_tuple(&device).0;
             let (known, list_fetched) = titles(&cfg);
             let mut fresh = list_fetched;
             let mut to_list = Vec::new();
+            let mut to_card = Vec::new();
             let mut out = Vec::new();
             {
                 let h = hub(&cfg);
-                for it in body.games.iter().take(500) {
+                for it in body.games.iter().take(1000) {
                     let Ok(title) = title_of(&it.title) else { continue };
-                    let key = known.get(&title);
-                    let (status, head, waiting) = match key {
+                    let user = match user_of(&device, it.user.as_deref()) {
+                        Ok(u) => u,
+                        // Not synced (any more): the Switch learns so from `users`.
+                        Err(_) => continue,
+                    };
+                    let card = known.get(&title);
+                    let (status, head, waiting) = match card {
                         None if !list_fetched => ("checking", None, false),
                         None => ("upload", None, false),
                         Some((k, _)) => {
-                            let pend = pending(k);
-                            let entry = h.heads.get(k);
-                            let busy = h.listing.contains(k);
-                            let stale = entry.is_none_or(|e| e.at.elapsed() > HEAD_FRESH_FOR);
-                            if stale && !busy {
-                                to_list.push(k.clone());
-                            }
-                            if stale || busy {
-                                fresh = false;
-                            }
-                            match entry.filter(|e| e.listed) {
-                                None if stale || busy => ("checking", None, !pend.is_empty()),
+                            let now = head_now(&h, &key_for(&device, k, user), HEAD_FRESH_FOR, &mut to_list, &mut fresh);
+                            match now.listed {
+                                None if now.checking => ("checking", None, now.waiting),
                                 // Couldn't be listed (see `error`).
-                                None => ("unknown", None, !pend.is_empty()),
-                                Some(e) => {
-                                    let mut all = pend.clone();
-                                    all.extend(e.head.clone());
-                                    let head = sync::mainline_head(&all);
-                                    (status_of(&head, &it.last_synced_id, it.changed), head, !pend.is_empty())
-                                }
+                                None => ("unknown", None, now.waiting),
+                                Some(head) => (status_of(&head, &it.last_synced_id, it.changed), head, now.waiting),
                             }
                         }
                     };
+                    // Another version of the game (the PC's, another
+                    // platform's through a rule) has newer progress: told to
+                    // the player whose saves the PC's are, as a hint.
+                    let newer = match (user, card) {
+                        (Some(u), Some((k, _))) if !u.separate && main.as_deref() == Some(player_of(&u.nickname).as_str()) => {
+                            newer_elsewhere(&h, title, k, head.as_ref(), &mut to_list, &mut to_card, &mut fresh)
+                        }
+                        _ => None,
+                    };
                     out.push(json!({
                         "title": it.title,
-                        "key": key.map(|k| &k.0),
-                        "name": key.map(|k| &k.1),
+                        "user": it.user,
+                        "key": card.map(|k| &k.0),
+                        "name": card.map(|k| &k.1),
                         "status": status,
                         "head": head,
+                        "from": head.as_ref().map(|h| made_by(h, &own)),
+                        "newer": newer,
                         "pending": waiting,
                     }));
                 }
             }
             list_in_background(&cfg, to_list);
-            register_device(&cfg, device, query_param(req.query, "client").unwrap_or_default());
+            cards_in_background(&cfg, to_card);
+            register_device(&cfg, &device, query_param(req.query, "client").unwrap_or_default());
             if waiting_uploads() > 0 {
                 upload_in_background();
             }
             let error = hub(&cfg).error.clone();
-            Ok(ok_json(json!({ "games": out, "fresh": fresh, "error": error })))
+            let users: Vec<Value> = device
+                .users
+                .iter()
+                .map(|u| json!({ "uid": u.uid, "nickname": u.nickname, "sync": u.sync, "separate": u.separate, "line": user_line(&device, u).1 }))
+                .collect();
+            Ok(ok_json(json!({ "games": out, "fresh": fresh, "error": error, "device": { "name": device_tuple(&device).1 }, "users": users })))
         }
         ("GET", ["games", title, "snapshots"]) => {
             let title = title_of(title)?;
-            let Some((key, _)) = game_key(&cfg, title)? else { return Ok(ok_json(json!({ "snapshots": [] }))) };
-            // The queue first: a version uploaded meanwhile is then in both.
-            let waiting = pending(&key);
-            let listed = cloud(&cfg)?.list_snapshots(&key)?;
-            remember_head(&cfg, &key, sync::mainline_head(&listed));
-            let mut all: Vec<(SnapshotSummary, bool)> = listed.into_iter().map(|s| (s, false)).collect();
-            for p in waiting {
-                if !all.iter().any(|(s, _)| s.id == p.id) {
-                    all.push((p, true));
-                }
-            }
-            all.sort_by_key(|(s, _)| std::cmp::Reverse(s.created_at));
+            let user = match user_of(device, query_param(req.query, "user").as_deref()) {
+                Ok(u) => u,
+                Err(r) => return Ok(r),
+            };
+            let Some((card, _)) = game_key(&cfg, title)? else { return Ok(ok_json(json!({ "snapshots": [] }))) };
+            let key = key_for(device, &card, user);
+            let all = versions_of(&cfg, &key)?;
             let head = sync::mainline_head(&all.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>()).map(|h| h.id);
             let list: Vec<Value> = all
                 .into_iter()
@@ -836,7 +1420,25 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
                     v
                 })
                 .collect();
-            Ok(ok_json(json!({ "key": key, "headId": head, "snapshots": list })))
+            Ok(ok_json(json!({ "key": card, "headId": head, "snapshots": list })))
+        }
+        // What the Switch can take for one user's saves of a game, by where
+        // it comes from (protocol 3): this Switch's newest, the kept ones,
+        // each other Switch's newest, each other version's newest that the
+        // Switch can take (as it is, or converted by the game's rule), and
+        // the rest of the player's versions.
+        ("GET", ["games", title, "sources"]) => {
+            let title = title_of(title)?;
+            let user = match user_of(device, query_param(req.query, "user").as_deref()) {
+                Ok(Some(u)) => u,
+                Ok(None) => return Ok(err(400, "which user")),
+                Err(r) => return Ok(r),
+            };
+            let (line_id, _) = user_line(device, user);
+            let Some((card, _)) = game_key(&cfg, title)? else {
+                return Ok(ok_json(json!({ "line": line_id, "headId": null, "forked": false, "items": [] })));
+            };
+            Ok(ok_json(sources(&cfg, device, title, &card, &line_id)?))
         }
         // Start fetching one version's save files for the Switch.
         ("POST", ["downloads"]) => {
@@ -844,20 +1446,41 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             struct Body {
                 title: String,
                 id: String,
+                /// Whose saves (protocol 3).
+                #[serde(default)]
+                user: Option<String>,
+                /// Another line of the game's card the version is on
+                /// (protocol 3; from `sources`).
+                #[serde(default)]
+                line: Option<String>,
+                /// The user's version whose other files go along with a
+                /// converted one (the Switch's own settings, its device save).
+                #[serde(default)]
+                base: Option<String>,
             }
             let b: Body = serde_json::from_slice(req.body).context("bad request")?;
             let title = title_of(&b.title)?;
-            if b.id.is_empty() || !b.id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if !is_id(&b.id) || b.base.as_deref().is_some_and(|x| !is_id(x)) || b.line.as_deref().is_some_and(|l| !is_line(l)) {
                 return Ok(err(400, "bad id"));
             }
-            let Some((key, _)) = game_key(&cfg, title)? else { return Ok(err(404, "no such game")) };
+            let user = match user_of(device, b.user.as_deref()) {
+                Ok(u) => u,
+                Err(r) => return Ok(r),
+            };
+            if b.line.is_some() && user.is_none() {
+                return Ok(err(400, "which user"));
+            }
+            let Some((card, _)) = game_key(&cfg, title)? else { return Ok(err(404, "no such game")) };
+            let own = key_for(device, &card, user);
+            let from = Fetch { card: card.clone(), line: b.line.clone(), own, id: b.id.clone(), base: b.base.clone() };
+            let key = card;
             let mut raw = [0u8; 8];
             rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut raw);
             let job = hex(&raw);
             jobs().insert(job.clone(), Job { state: JobState::Working, started: Instant::now(), ended: None });
             let job2 = job.clone();
             std::thread::spawn(move || {
-                let state = match fetch_for_switch(&cfg, &key, &b.id, title, &job2) {
+                let state = match fetch_for_switch(&cfg, &from, title, &job2) {
                     Ok(p) => JobState::Done(p),
                     Err(e) => {
                         note(format!("{key}: fetching {} for the Switch failed: {e:#}", b.id));
@@ -906,36 +1529,53 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             // never the newest version, never a conflict.
             let backup = flag(req.query, "backup");
             // `force`: on top of the newest version, whatever it is (the user
-            // chose to keep the Switch's).
+            // chose to keep the Switch's, or took a version onto the Switch).
             let force = flag(req.query, "force");
+            // `fork` (protocol 3, the Switch's "back up"): on top of `parent`
+            // even when the cloud moved on; the line then has two newest
+            // versions instead of the upload being refused.
+            let fork = flag(req.query, "fork");
+            let user = match user_of(device, query_param(req.query, "user").as_deref()) {
+                Ok(u) => u,
+                Err(r) => return Ok(r),
+            };
+            // What the saves were taken from (protocol 3, after the Switch
+            // took a version): that version, its line, and how.
+            let taken = match query_param(req.query, "from").filter(|f| !f.is_empty()) {
+                Some(id) if is_id(&id) => Some(id),
+                Some(_) => return Ok(err(400, "bad id")),
+                None => None,
+            };
+            let taken_line = query_param(req.query, "fromLine").filter(|l| !l.is_empty());
+            if taken_line.as_deref().is_some_and(|l| !is_line(l)) {
+                return Ok(err(400, "bad line"));
+            }
             let cloud = cloud(&cfg)?;
-            let key = match game_key(&cfg, title)? {
-                Some((k, _)) => k,
+            let name = query_param(req.query, "name").filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{title:016X}"));
+            // A game only the Switch has: defined in the cloud, so emulators
+            // on other devices find it by title id.
+            let (card, new_game) = match game_key(&cfg, title)? {
+                Some((k, _)) => (k, None),
                 None => {
-                    // A game only the Switch has: define it in the cloud,
-                    // so emulators on other devices find it by title id.
-                    let name = query_param(req.query, "name").filter(|n| !n.trim().is_empty()).unwrap_or_else(|| format!("{title:016X}"));
-                    let cg = CloudGame {
-                        key: format!("nx-{title:016x}"),
-                        name,
-                        adapter: None,
-                        saves: vec![
-                            format!("{{{}}}/**", switch::root_name(switch::SaveKind::Account, title)),
-                            format!("{{{}}}/**", switch::root_name(switch::SaveKind::Device, title)),
-                        ],
-                        exclude: vec![],
-                        wait_for: vec![],
-                        roots: Default::default(),
-                        ludusavi_title: None,
-                        source: None,
-                        ids: vec![format!("nx:{title:016X}")],
-                        game: None,
-                    };
-                    cloud.put_game(&cg)?;
-                    savelib::remember(&cfg, &cg);
-                    cg.key
+                    let cg = switch_def(title, name.clone());
+                    (cg.key.clone(), Some(cg))
                 }
             };
+            let key = key_for(device, &card, user);
+            if let Some(u) = user {
+                // The player's line on the game's card, named for the
+                // player, of the Switch's kind (only Switches continue it
+                // by themselves); made (with the card, for a game only the
+                // Switch has) when this is the first version. Before the
+                // game's definition is written, so that the card is the
+                // Switch's whether or not the cloud is upgraded on the way.
+                cloud.describe_new_line(&key, &user_line(device, u).1, "switch");
+                cloud.place_to_write(&key, Some(&switch_def(title, name.clone())), false)?;
+            }
+            if let Some(cg) = &new_game {
+                cloud.put_game(cg)?;
+                savelib::remember(&cfg, cg);
+            }
             // The newest version as it is now (the Switch's list may be
             // older), counting versions this PC hasn't uploaded yet (read
             // first: one uploaded meanwhile is then in both).
@@ -951,7 +1591,8 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
             }
             let head = sync::mainline_head(&all);
             let asked = query_param(req.query, "parent").filter(|p| !p.is_empty());
-            let parent = if backup {
+            let forked = fork && head.as_ref().is_some_and(|h| asked.as_deref() != Some(h.id.as_str()));
+            let parent = if backup || fork {
                 asked
             } else if force {
                 head.as_ref().map(|h| h.id.clone())
@@ -967,7 +1608,22 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
                     _ => asked,
                 }
             };
-            let trigger = if backup { Trigger::PreRestore } else { Trigger::SyncNow };
+            let trigger = match (backup, &taken) {
+                (true, _) => Trigger::PreRestore,
+                (false, Some(_)) => Trigger::Restore,
+                (false, None) => Trigger::SyncNow,
+            };
+            let origin = taken.as_ref().map(|id| {
+                let from_line = taken_line.clone().unwrap_or_else(|| line.place.line.clone());
+                let how = match query_param(req.query, "how").as_deref() {
+                    Some("convert") => {
+                        crate::crosssaves::rule_for_ids(&[format!("nx:{title:016X}")], "switch").map_or("convert".to_string(), |r| format!("convert:{}", r.id))
+                    }
+                    _ if from_line != line.place.line => "copy".to_string(),
+                    _ => "restore".to_string(),
+                };
+                crate::cloud::v2::Origin { game: line.place.game.clone(), line: from_line, snapshot: id.clone(), how, extra: Default::default() }
+            });
             let (id, name) = device_tuple(device);
             // The game version that wrote the saves, for games whose rule says how.
             let version = crate::crosssaves::files_version(&[format!("nx:{title:016X}")], "switch", &files, &Default::default());
@@ -1007,7 +1663,7 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
                 }
             };
             if let Some(same) = all.iter().find(|s| backup && s.content_hash == hash) {
-                return Ok(ok_json(json!({ "id": same.id, "key": key, "existing": true })));
+                return Ok(ok_json(json!({ "id": same.id, "key": card, "existing": true })));
             }
             let meta = sync::queue_files_carrying(
                 &line,
@@ -1021,12 +1677,16 @@ fn route(req: &Req, parts: &[&str], device: &Paired) -> Result<Resp> {
                     platform: "console:switch",
                     comment: "",
                     game_version: version,
-                    origin: None,
+                    origin,
                 },
                 &carried,
             )?;
+            if user.is_some() {
+                // The card may have a new line now.
+                hub(&cfg).cards.remove(&card);
+            }
             upload_in_background();
-            Ok(ok_json(json!({ "id": meta.id, "key": key, "pending": true })))
+            Ok(ok_json(json!({ "id": meta.id, "key": card, "pending": true, "forked": forked })))
         }
         _ => Ok(err(404, "not found")),
     }

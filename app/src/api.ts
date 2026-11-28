@@ -256,6 +256,8 @@ export const api = {
   nxStartPairing: () => invoke<NxStatus>("nx_start_pairing"),
   nxCancelPairing: () => invoke<NxStatus>("nx_cancel_pairing"),
   nxRemoveDevice: (id: string) => invoke<NxStatus>("nx_remove_device", { id }),
+  nxRenameDevice: (id: string, name: string) => invoke<NxStatus>("nx_rename_device", { id, name }),
+  nxSetUser: (id: string, uid: string, sync: boolean, separate: boolean) => invoke<NxStatus>("nx_set_user", { id, uid, sync, separate }),
   addFromCloud: (key: string, account: string | null, appid: number | null, exe: string | null) =>
     invoke<string>("add_from_cloud", { key, account, appid, exe }),
   updateGame: (key: string, patch: GamePatch) => invoke<void>("update_game", { key, patch }),

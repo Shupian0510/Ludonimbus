@@ -286,7 +286,7 @@ export const nx: typeof Zh.nx = {
   title: "Switch",
   on: "On",
   notRunning: "Not running",
-  intro: "Ludonimbus on the Switch (Atmosphère homebrew, in development) syncs its saves through this PC: the PC handles the cloud, version history and conflicts, and the Switch's saves carry over to the same game in Ryujinx and Eden. Only over the local network; after pairing the connection is encrypted and the Switch trusts only this PC's certificate.",
+  intro: "Ludonimbus on the Switch (Atmosphère homebrew, in development) backs up its saves to the cloud through this PC: one press on the Switch uploads them, the PC handles the cloud and the version history. Taking saves from another Switch or from Ryujinx / Eden on a PC is confirmed on the Switch, and the Switch's current saves are kept first. Only over the local network; after pairing the connection is encrypted and the Switch trusts only this PC's certificate.",
   allow: "Allow Switch connections",
   address: "This PC's address",
   fingerprint: "Certificate fingerprint (check it on the Switch when pairing)",
@@ -297,6 +297,16 @@ export const nx: typeof Zh.nx = {
   paired: (when) => `Paired ${when}`,
   lastSeen: (when) => `last connected ${when}`,
   remove: "Remove",
+  rename: "Rename",
+  renameTitle: "This Switch's name",
+  renameText: "Shown on the Switch, in the version history and on your other Switches.",
+  users: "Users",
+  usersHint:
+    "Each user's saves on the Switch are backed up separately. Users with the same name on several Switches share their saves: after playing on one, the other shows \"newer progress\" and can take it. \"Separate user\" keeps this user's saves on this Switch apart. The first user to sync is also compared with the PC's version of each game.",
+  noUsers: "Open Ludonimbus on the Switch once and its users show up here.",
+  userShared: "Shared with users of the same name",
+  userSeparate: "Separate user",
+  userOff: "Don't sync",
 };
 
 export const source: typeof Zh.source = {

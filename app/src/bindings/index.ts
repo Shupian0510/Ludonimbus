@@ -50,6 +50,7 @@ export type * from "./MillenniumInstall";
 export type * from "./NewerVersion";
 export type * from "./NxDevice";
 export type * from "./NxStatus";
+export type * from "./NxUser";
 export type * from "./Onboarding";
 export type * from "./OpenListInfo";
 export type * from "./OtherInstall";

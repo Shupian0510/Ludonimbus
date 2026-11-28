@@ -52,6 +52,23 @@ pub struct Device {
     name: String,
     paired_at: chrono::DateTime<chrono::Utc>,
     last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    /// Its user accounts, as it last reported them (empty until a Switch
+    /// app of protocol 3 connects).
+    users: Vec<User>,
+}
+
+/// A user account on a paired Switch and how its saves are kept.
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "NxUser")]
+pub struct User {
+    uid: String,
+    nickname: String,
+    sync: bool,
+    /// Kept apart from users of the same nickname on other Switches.
+    separate: bool,
+    /// The name of the save line its saves are on.
+    line: String,
 }
 
 #[derive(Serialize, TS)]
@@ -76,7 +93,20 @@ fn status() -> anyhow::Result<NxStatus> {
         address: nxlan::local_address(),
         port: nxlan::PORT,
         fingerprint: running.or_else(|| nxlan::identity().ok().map(|(_, _, fp)| fp)),
-        devices: nxlan::devices().into_iter().map(|d| Device { id: d.id, name: d.name, paired_at: d.paired_at, last_seen: d.last_seen }).collect(),
+        devices: nxlan::devices()
+            .into_iter()
+            .map(|d| Device {
+                users: d
+                    .users
+                    .iter()
+                    .map(|u| User { uid: u.uid.clone(), nickname: u.nickname.clone(), sync: u.sync, separate: u.separate, line: nxlan::user_line(&d, u).1 })
+                    .collect(),
+                id: d.id,
+                name: d.name,
+                paired_at: d.paired_at,
+                last_seen: d.last_seen,
+            })
+            .collect(),
         pairing_code: nxlan::pairing_code(),
         error: if cfg.nx_lan { LAST_ERROR.lock().unwrap().clone() } else { None },
     })
@@ -127,6 +157,26 @@ pub async fn nx_cancel_pairing() -> CmdResult<NxStatus> {
 pub async fn nx_remove_device(id: String) -> CmdResult<NxStatus> {
     blocking(move || {
         nxlan::remove_device(&id)?;
+        status()
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn nx_rename_device(id: String, name: String) -> CmdResult<NxStatus> {
+    blocking(move || {
+        nxlan::rename_device(&id, &name)?;
+        status()
+    })
+    .await
+}
+
+/// Whether a user of a paired Switch is backed up, and whether it keeps its
+/// saves apart from users of the same nickname on other Switches.
+#[tauri::command]
+pub async fn nx_set_user(id: String, uid: String, sync: bool, separate: bool) -> CmdResult<NxStatus> {
+    blocking(move || {
+        nxlan::set_user(&id, &uid, sync, separate)?;
         status()
     })
     .await
