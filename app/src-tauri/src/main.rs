@@ -186,6 +186,7 @@ fn main() {
             commands::lines::other_saves,
             commands::lines::take_save,
             commands::lines::share_offer,
+            commands::sources::save_sources,
             // Adding and changing games
             commands::games::add_from_shortcut,
             commands::games::add_custom,

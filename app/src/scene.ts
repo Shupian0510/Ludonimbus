@@ -20,6 +20,7 @@ export const SCENE_GAME: Record<string, string> = {
   "game-detail-conflict": "bloodborne-lantern",
   "game-detail-pending": "zelda-oot-longshot",
   versions: "zelda-oot-longshot",
+  "save-sources": "celeste",
   "game-settings": "zelda-oot-longshot",
   "art-picker": "fe-fortunes-weave",
   "game-screenshots": "zelda-oot-longshot",

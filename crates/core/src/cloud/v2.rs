@@ -412,6 +412,18 @@ pub struct Origin {
 const LOCKED: &str = "locked";
 const COMMENT: &str = "comment";
 
+/// How long the game had been played when a snapshot was made, in seconds:
+/// over every device and version of the game, as far as the device that
+/// made it knew (its own time to the minute, the others' as last fetched).
+/// A copy of an older version says what that version said. It rides along
+/// as an extension field (section 3.9): only shown, never decided by, and a
+/// build that doesn't know it keeps it as it is. Absent where it isn't known.
+pub const PLAYTIME: &str = "playtime";
+
+fn playtime_of(extra: &Extra) -> Option<u64> {
+    extra.get(PLAYTIME).and_then(|v| v.as_u64())
+}
+
 fn side_trigger(trigger: &str) -> bool {
     matches!(trigger, "pre-restore" | "conflict-keep")
 }
@@ -433,6 +445,11 @@ impl Manifest {
         unknown(&self.requires)
     }
 
+    /// [`PLAYTIME`], where it is known.
+    pub fn playtime(&self) -> Option<u64> {
+        playtime_of(&self.extra)
+    }
+
     /// The manifest without its file list, as kept in a line's index.
     pub fn summary(&self) -> IndexEntry {
         // What a 0.6 snapshot says in its own file and has to follow it
@@ -446,6 +463,10 @@ impl Manifest {
         }
         if let Some(note) = self.extra.get(COMMENT).and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()) {
             extra.insert(COMMENT.to_string(), note.into());
+        }
+        // Shown with the line's versions, which are read from the index.
+        if let Some(secs) = self.playtime() {
+            extra.insert(PLAYTIME.to_string(), secs.into());
         }
         IndexEntry {
             id: self.id.clone(),
@@ -628,6 +649,11 @@ impl IndexEntry {
     /// The note 0.6 kept in the snapshot's own file.
     pub fn old_note(&self) -> Option<&str> {
         self.extra.get(COMMENT).and_then(|v| v.as_str())
+    }
+
+    /// [`PLAYTIME`], where it is known.
+    pub fn playtime(&self) -> Option<u64> {
+        playtime_of(&self.extra)
     }
 }
 

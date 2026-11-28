@@ -220,10 +220,6 @@ export const savelib = {
   apply: "发过去",
   applied: (name: string) => `已发到「${name}」`,
   otherTarget: "换一个游戏",
-  newerTitle: (label: string) => `另一个版本（${label}）有更新的存档`,
-  newerText: (device: string, when: string) => `${device} 在 ${when} 保存。可以先发到这个版本再玩；这个版本现在的存档会先保留。`,
-  applyHere: "发到这个版本…",
-  notNow: "不用",
 };
 
 /** 掌机模式：全屏、手柄操作的界面和启动时的全屏提示（docs/plan-phase5.md 第 1、2 节）。 */
@@ -246,9 +242,6 @@ export const handheld = {
   useLocal: "使用本机存档",
   cloudOnly: "这台电脑上还没有这个游戏，存档在云端。在桌面模式里可以把它添加到本机。",
   notInstalled: "本机没有找到这个游戏，只有它的存档。存档照样能同步。",
-  newer: (label: string, device: string, when: string) => `另一个版本（${label}）有更新的存档：${device} 在 ${when} 保存`,
-  applyHere: "发到这个版本",
-  notNow: "不用",
   versionActions: (device: string, when: string) => `${device} 在 ${when} 的存档`,
   cancel: "取消",
   applyPick: "发到哪个游戏？",
@@ -465,8 +458,6 @@ export const saves = {
   current: "当前",
   newest: "最新",
   replaced: "替换前",
-  sharedLine: "共用",
-  ownLine: "独立",
   makeCurrent: "设为当前",
   makeCurrentTitle: "设为当前？",
   makeCurrentText: (name: string, device: string, at: string) => `「${name}」在这台设备上的存档会换成 ${device} 在 ${at} 的这一份，现在的会先保留。`,
@@ -1258,4 +1249,41 @@ export const policy = {
   shareText: "以后两个版本跟同一个进度。这里现在的存档会先保留，可以撤销。",
   shareConfirm: "共用",
   shared: (label: string) => `已和 ${label} 版共用进度`,
+};
+
+/** 中文和英文、数字之间留一个空格：名字开头或结尾是字母、数字时补上。 */
+const gap = (s: string) => `${/^[A-Za-z0-9]/.test(s) ? " " : ""}${s}${/[A-Za-z0-9]$/.test(s) ? " " : ""}`;
+
+// 别处的存档：「存档」页签里按来源分组，游戏页上「有更新的进度」那一行（docs/plan-positioning.md 第 7 节 S1、S2）。
+export const sources = {
+  here: "这里",
+  hereName: (name: string) => `${name}（这里）`,
+  hereHint: "这个版本在这台设备上跟的存档：当前的、保留的和自动存档。",
+  versionHint: "游戏另一个版本（另一个商店、平台或模拟器）的存档。取回到这里时，会写成这个版本的存档。",
+  deviceHint: "另一台设备单独存的存档，不会自动同步到这里。",
+  sharedHint: "其他设备共用的存档。这台设备现在单独存。",
+  convert: "需要转换",
+  convertHint: (how: string): string =>
+    how === "xbox"
+      ? "要在 Xbox 应用的存档容器和普通文件之间转换。"
+      : how === "rule"
+        ? "按这个游戏的跨平台规则，放进这个版本的存档文件夹。"
+        : "两个版本的存档放在不同的地方，会按文件名放进这个版本的存档文件夹。",
+  takeHere: "取回到这里",
+  takeTitle: "取回到这里？",
+  /** `device`: where it was saved, when the source isn't named after it already. */
+  takeText: (game: string, source: string, device: string | null, at: string) =>
+    `「${game}」在这台设备上的存档会换成${gap(source)}在 ${device ? `${device} ` : ""}${at} 的这一份，现在的会先保留，可以撤销。`,
+  taken: "已取回到这里",
+  newerBy: (span: string) => `新 ${span}`,
+  olderBy: (span: string) => `旧 ${span}`,
+  same: "和当前相同",
+  days: (n: number) => `${n} 天`,
+  playedMore: (d: string) => `多玩了 ${d}`,
+  playedLess: (d: string) => `少玩了 ${d}`,
+  noSaves: "还没有存档",
+  newerRow: (where: string) => `${gap(where).trimStart()}有更新的进度`,
+  keptFirst: "取回时这里现在的存档会先保留，可以撤销。",
+  take: "取回",
+  notNow: "不用",
 };

@@ -46,6 +46,8 @@ import type {
   OpenListInfo,
   OtherSaves,
   SaveCandidate,
+  SaveSource,
+  SaveSources,
   SaveTitle,
   ScreenshotReport,
   Settings,
@@ -121,7 +123,7 @@ const snapshots: Record<string, SnapshotSummary[]> = {
   hades: [snap("01HAD2", 60 * 4, "Steam Deck", "auto-exit", 2310000, 5), snap("01HAD1", 60 * 52, "DESKTOP-MAIN", "auto-exit", 2290000, 5)],
   // Two store versions on one save line: the newest of each comes first.
   celeste: [
-    snap("01CE4", 50, "DESKTOP-MAIN", "auto-exit", 6210, 3),
+    snap("01CE4", 50, "DESKTOP-MAIN", "auto-exit", 6210, 3, { playtime: 12.5 * 3600 }),
     snap("01CE3", 60 * 5, "LAPTOP", "auto-exit", 6100, 3, { platform: "pc:xbox" }),
     snap("01CE2", 60 * 30, "DESKTOP-MAIN", "manual", 5900, 3, { comment: L("第七章之前", "Before chapter 7"), locked: true }),
     snap("01CE1", 60 * 72, "LAPTOP", "auto-exit", 5040, 3, { platform: "pc:xbox" }),
@@ -166,6 +168,63 @@ let made = 0;
 const headOf = (key: string) => (snapshots[key] ?? []).find((s) => s.trigger !== "pre-restore" && s.trigger !== "conflict-keep")?.id ?? null;
 const kidLine = () => ({ id: "solo-9d2k", name: L("孩子的电脑", "Kid's PC") });
 const kidSave = () => snap("01KID1", 60 * 20, "KID-PC", "auto-exit", 905000, 11, { platform: "recomp:longshot", head: true });
+const newerDismissed = new Set<string>();
+
+/** The other sources of a game's saves (`save_sources`): Celeste's GOG and Xbox versions and a device that keeps its own; Ocarina of Time's kid's PC and its N64 version. */
+function mockSources(key: string): SaveSource[] {
+  const kid: SaveSource = {
+    id: `line:${kidLine().id}`,
+    kind: "device",
+    name: kidLine().name,
+    platform: mockPlatforms[key] ?? "pc",
+    line: kidLine().id,
+    devices: ["KID-PC"],
+    snapshots: [{ ...kidSave(), platform: mockPlatforms[key] ?? "pc" }],
+    take: { kind: "copy" },
+  };
+  if (key === "celeste")
+    return [
+      {
+        id: "version:celeste-gog",
+        kind: "version",
+        name: L("GOG 版", "GOG version"),
+        platform: "pc",
+        key: "celeste-gog",
+        devices: ["LAPTOP"],
+        snapshots: [
+          snap("01GOG3", 20, "LAPTOP", "auto-exit", 6480, 3, { platform: "pc", head: true, playtime: 13.5 * 3600, installedVersion: "1.4.0.0" }),
+          snap("01GOG1", 60 * 50, "LAPTOP", "manual", 6020, 3, { platform: "pc", comment: L("第八章之前", "Before chapter 8"), locked: true, playtime: 11 * 3600 }),
+        ],
+        take: { kind: "convert", how: "files" },
+      },
+      {
+        id: "version:celeste-xbox",
+        kind: "version",
+        name: L("Xbox 版", "Xbox version"),
+        platform: "pc:xbox",
+        key: "celeste-xbox",
+        devices: ["ROG-ALLY"],
+        snapshots: [snap("01XB2", 60 * 26 * 3, "ROG-ALLY", "auto-exit", 6150, 3, { platform: "pc:xbox", head: true, playtime: 8 * 3600 })],
+        take: { kind: "convert", how: "xbox" },
+      },
+      { ...kid, name: "KID-PC", snapshots: [snap("01CEK", 60 * 7, "KID-PC", "auto-exit", 5980, 3, { platform: "pc", head: true })], platform: "pc" },
+    ];
+  if (key === "zelda-oot-longshot")
+    return [
+      {
+        id: "version:oot-n64",
+        kind: "version",
+        name: "RetroArch",
+        platform: "pc",
+        key: "oot-n64",
+        devices: ["Steam Deck"],
+        snapshots: [snap("01N64", 60 * 24 * 9, "Steam Deck", "auto-exit", 32768, 1, { platform: "pc", head: true })],
+        take: { kind: "never", reason: L("RetroArch 和这个版本的存档格式不同，也没有规则说明它们能互相读取", "RetroArch keeps its saves in another format than this version, and no rule says they can read each other's") },
+      },
+      kid,
+    ];
+  return [];
+}
 
 /** Who is on which save line of a game. */
 function mockLines(key: string): SaveLine[] {
@@ -692,6 +751,21 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       if (key === "zelda-oot-longshot" && at !== kidLine().id) saves.push({ line: kidLine().id, name: kidLine().name, shared: false, snapshot: kidSave() });
       return delay<OtherSaves>({ saves, platforms: platformMarks }, 250);
     }
+    case "save_sources": {
+      const sources = (lineOf[key] ?? "main") === "main" ? mockSources(key) : [];
+      const here = (snapshots[key] ?? []).find((s) => s.id === (syncedId[key] ?? headOf(key))) ?? null;
+      // The newest save of another version, when newer than the one here and not waved off.
+      const candidates = sources.filter((s) => s.kind === "version" && s.take.kind !== "never" && s.snapshots[0]?.head);
+      const best = candidates.sort((a, b) => b.snapshots[0].createdAt.localeCompare(a.snapshots[0].createdAt))[0];
+      const newer =
+        best && (!here || best.snapshots[0].createdAt > here.createdAt) && !newerDismissed.has(best.snapshots[0].id)
+          ? { source: best, snapshot: best.snapshots[0], here, hereName: key === "celeste" ? L("PC 版", "PC version") : "Longshot" }
+          : undefined;
+      return delay<SaveSources>(
+        { sources, platforms: platformMarks, newer, hereName: key === "celeste" ? L("PC 版", "PC version") : "Longshot", herePlatform: mockPlatforms[key] ?? "pc" },
+        250,
+      );
+    }
     case "restore_snapshot":
     case "take_save":
     case "undo_replace": {
@@ -951,8 +1025,26 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
       return delay<NxStatus>({ ...mockNx, running: mockNx.enabled });
     }
     case "launch_mode": {
-      // Browser preview: `?handheld` opens the handheld view, `?prompt` a launch question.
+      // Browser preview: `?handheld` opens the handheld view, `?prompt` a launch question
+      // (`?prompt=newer`: another version has newer progress, as the wrapper asks it).
       const q = new URLSearchParams(location.search);
+      if (q.get("prompt") === "newer")
+        return delay<LaunchInfo>({
+          mode: "prompt",
+          prompt: {
+            title: L("Ludonimbus · 《Celeste》在 GOG 版有更新的进度", "Ludonimbus · Celeste has newer progress in the GOG version"),
+            text: L(
+              "GOG 版 · LAPTOP · 今天 21:14 · 多玩了 1 小时\nPC 版（这里）· DESKTOP-MAIN · 今天 20:44\n\n两个版本的存档放法不同，会转换成这个版本的。",
+              "GOG version · LAPTOP · today 21:14 · 1 h more play\nPC version (here) · DESKTOP-MAIN · today 20:44\n\nThe two versions keep their saves differently; they are converted for this one.",
+            ),
+            level: "info",
+            buttons: [
+              { id: "take", label: L("用 GOG 版的进度", "Use the GOG version's progress"), key: "a", detail: L("这里现在的存档会先保留，可以撤销", "The saves here are kept first; you can undo it") },
+              { id: "join", label: L("以后自动接上", "Always continue from there"), key: "x" },
+              { id: "keep", label: L("继续用 PC 版的", "Keep the PC version's"), key: "b" },
+            ],
+          },
+        });
       if (q.has("prompt"))
         return delay<LaunchInfo>({
           mode: "prompt",
@@ -978,7 +1070,9 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "set_fullscreen":
     case "quit_handheld":
     case "handheld_zoom":
+      return delay(undefined);
     case "dismiss_newer":
+      newerDismissed.add(String(args.id));
       return delay(undefined);
     case "handheld_info":
       return delay<HandheldInfo>({ device: "ROG Ally", steamGamepadUi: false, mode: mockHandheldMode, inSteam: null, xboxFse: false });

@@ -16,6 +16,7 @@ pub mod overview;
 pub mod saves;
 pub mod screenshots;
 pub mod settings;
+pub mod sources;
 pub mod steam;
 
 // What the other modules of the app use from here.

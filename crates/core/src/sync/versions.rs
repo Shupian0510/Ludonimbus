@@ -10,10 +10,10 @@ use super::gate::Gate;
 use super::housekeeping::{best_effort_housekeeping, tell_base};
 use super::lock::lock_game;
 use super::publish::{flush, ready_to_write};
-use super::queue::{stage_local, Shot};
+use super::queue::{stage_local, Played, Shot};
 use super::run::fresh;
 use super::session::Session;
-use super::{local_of, Ctx, Outcome};
+use super::{local_of, note_replaced, Ctx, Outcome};
 use crate::cloud;
 use crate::cloud::decide::{self, Action};
 use crate::cloud::line::LineView;
@@ -119,15 +119,16 @@ pub fn undo(ctx: &Ctx, game: &GameEntry) -> Result<Outcome> {
 /// Change a game's saves from outside a sync (the save library's "apply
 /// to…"): keep the current saves in the cloud first (a pre-restore version),
 /// run `change`, then upload the result as the newest version.
-pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
+pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, copy_of: Option<CopyOf>, change: impl FnOnce() -> Result<()>) -> Result<Outcome> {
     let _lock = lock_game(&game.key, &Gate::default())?;
     let game = &fresh(ctx, game);
     let cloud = ctx.cloud()?;
     let mut s = Session::open(ctx, cloud, game)?;
     flush(cloud, &mut s.line, Some(game), None)?;
-    if let Ok(local) = s.local() {
-        s.protect(&local, Trigger::PreRestore)?;
-    }
+    let back = match s.local() {
+        Ok(local) => s.protect(&local, Trigger::PreRestore)?,
+        Err(_) => None,
+    };
     change()?;
     let after = s.local()?;
     if after.is_empty() {
@@ -135,9 +136,28 @@ pub fn apply_external(ctx: &Ctx, game: &GameEntry, comment: &str, change: impl F
     }
     let loc = local_of(&after, &state::game(&game.key));
     let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
-    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), comment: comment.to_string(), ..Shot::default() }, false)?;
+    let (origin, played, device) = match copy_of {
+        Some(c) => (c.origin, Played::Was(c.playtime), c.device),
+        None => (None, Played::Now, String::new()),
+    };
+    let shot = Shot { bases, parent, trigger: Some(Trigger::Restore), comment: comment.to_string(), origin, played, ..Shot::default() };
+    let outcome = s.push(&after, shot, false)?;
+    // Taken back like any other time saves from elsewhere replaced these.
+    if let Outcome::Uploaded { id } | Outcome::Queued { id, .. } = &outcome {
+        note_replaced(&game.key, back, id, &device);
+    }
     best_effort_housekeeping(ctx, cloud, game);
     Ok(outcome)
+}
+
+/// The version of another game's line that saves [`apply_external`] writes
+/// were made from: where it is (`origin`), how long the game had been
+/// played then ([`crate::cloud::v2::PLAYTIME`]), and the device that made it.
+/// Where the cloud couldn't say, the first two are `None`.
+pub struct CopyOf {
+    pub origin: Option<crate::cloud::v2::Origin>,
+    pub playtime: Option<u64>,
+    pub device: String,
 }
 
 /// Keep a version or stop keeping it (`locked`), and name it (`comment`).

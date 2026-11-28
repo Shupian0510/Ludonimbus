@@ -22,4 +22,15 @@ side?: boolean,
  * Marked as missing a content pack in the cloud: never taken, and not
  * offered as the current one, until the pack is back.
  */
-incomplete?: boolean, };
+incomplete?: boolean, 
+/**
+ * How long the game had been played when it was made, in seconds
+ * ([`crate::cloud::v2::PLAYTIME`]); where that is known.
+ */
+playtime?: number | null, 
+/**
+ * Where a copy came from ([`crate::cloud::v2::Origin::how`]: `restore`,
+ * `copy`, `convert:…`, `share`); empty for saves made where they were
+ * played.
+ */
+copied?: string, };

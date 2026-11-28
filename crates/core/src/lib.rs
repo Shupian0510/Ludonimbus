@@ -34,6 +34,7 @@ pub mod config;
 pub mod credstore;
 pub mod crosssaves;
 pub mod discover;
+pub mod elsewhere;
 pub mod emugames;
 pub mod emulators;
 pub mod gamebackup;

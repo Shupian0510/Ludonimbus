@@ -9,7 +9,7 @@ use super::housekeeping::{best_effort_housekeeping, tell_base};
 use super::incomplete::{incomplete_error, note_missing};
 use super::lock::lock_game;
 use super::publish::{flush, ready_to_write};
-use super::queue::Shot;
+use super::queue::{Played, Shot};
 use super::run::{fresh, sync};
 use super::session::Session;
 use super::{base_manifest, local_of, log, note_replaced, platform, remember_base, Ctx, Outcome, Resolution};
@@ -251,7 +251,8 @@ pub fn take_from(ctx: &Ctx, game: &GameEntry, line: &str, id: &str) -> Result<Ou
     let loc = local_of(&after, &state::game(&game.key));
     let Action::Push { bases, parent } = decide::settle(&loc, &s.line.view) else { return Ok(Outcome::NothingToSave) };
     let origin = Origin { game: place.game.clone(), line: place.line.clone(), snapshot: id.to_string(), how: "copy".to_string(), extra: v2::Extra::new() };
-    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), origin: Some(origin), ..Shot::default() }, false)?;
+    let played = Played::Was(target.playtime());
+    let outcome = s.push(&after, Shot { bases, parent, trigger: Some(Trigger::Restore), origin: Some(origin), played, ..Shot::default() }, false)?;
     if let Outcome::Uploaded { id: made } | Outcome::Queued { id: made, .. } = &outcome {
         note_replaced(&game.key, back, made, &target.device_name);
     }

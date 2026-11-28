@@ -220,10 +220,6 @@ export const savelib: typeof Zh.savelib = {
   apply: "Send",
   applied: (name) => `Sent to "${name}"`,
   otherTarget: "Choose another game",
-  newerTitle: (label) => `Another version (${label}) has newer saves`,
-  newerText: (device, when) => `Saved by ${device} at ${when}. Send them to this version before playing; this version's current saves are kept first.`,
-  applyHere: "Send to this version…",
-  notNow: "No thanks",
 };
 
 export const handheld: typeof Zh.handheld = {
@@ -245,9 +241,6 @@ export const handheld: typeof Zh.handheld = {
   useLocal: "Use this PC's saves",
   cloudOnly: "This game isn't on this PC yet; its saves are in the cloud. Add it to this PC in desktop mode.",
   notInstalled: "The game wasn't found on this PC, only its saves. They still sync.",
-  newer: (label, device, when) => `Another version (${label}) has newer saves: saved by ${device} at ${when}`,
-  applyHere: "Send to this version",
-  notNow: "No thanks",
   versionActions: (device, when) => `The saves ${device} saved at ${when}`,
   cancel: "Cancel",
   applyPick: "Send to which game?",
@@ -462,8 +455,6 @@ export const saves: typeof Zh.saves = {
   current: "Current",
   newest: "Newest",
   replaced: "Replaced",
-  sharedLine: "Shared",
-  ownLine: "Own",
   makeCurrent: "Make current",
   makeCurrentTitle: "Make this the current save?",
   makeCurrentText: (name, device, at) => `The saves of ${name} on this device are replaced by the ones ${device} saved at ${at}; the ones here are kept first.`,
@@ -1258,4 +1249,36 @@ export const policy: typeof Zh.policy = {
   shareText: "Both versions follow one progress from now on. The saves here are kept first, and you can undo.",
   shareConfirm: "Share",
   shared: (label) => `Sharing progress with the ${label} version`,
+};
+
+export const sources: typeof Zh.sources = {
+  here: "Here",
+  hereName: (name) => `${name} (here)`,
+  hereHint: "The saves this version follows on this device: the current one, the kept ones and the automatic ones.",
+  versionHint: "Saves of another version of the game (another store, platform or emulator). Taken here, they are written the way this version keeps its saves.",
+  deviceHint: "Saves another device keeps to itself. They never sync here by themselves.",
+  sharedHint: "The saves the other devices share. This device keeps its own now.",
+  convert: "Needs converting",
+  convertHint: (how) =>
+    how === "xbox"
+      ? "Converted between the Xbox app's save containers and plain files."
+      : how === "rule"
+        ? "Placed into this version's save folder by the game's cross-platform rule."
+        : "The two versions keep their saves in different places; the files are placed into this version's save folder by name.",
+  takeHere: "Take here",
+  takeTitle: "Take it here?",
+  takeText: (game, source, device, at) =>
+    `The saves of "${game}" on this device are replaced with this one of ${source}${device ? ` from ${device}` : ""}, ${at}. The ones here now are kept first, and you can undo it.`,
+  taken: "Taken here",
+  newerBy: (span) => `${span} newer`,
+  olderBy: (span) => `${span} older`,
+  same: "Same as current",
+  days: (n) => `${n} ${plural(n, "day", "days")}`,
+  playedMore: (d) => `${d} more play`,
+  playedLess: (d) => `${d} less play`,
+  noSaves: "no saves yet",
+  newerRow: (where) => `${where} has newer progress`,
+  keptFirst: "Taking it keeps the saves here first; you can undo it.",
+  take: "Take",
+  notNow: "No thanks",
 };

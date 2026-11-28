@@ -1233,6 +1233,62 @@ button.save-main:hover:not(:disabled) {
 .saves-foot .saves-more .hint {
   margin-right: 8px;
 }
+/* Saves by where they come from (docs/plan-positioning.md §7, S1): a head
+   for each group, "here" first. */
+.save-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 2px 2px;
+  font-size: 13px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.save-group:first-child {
+  margin-top: 0;
+}
+.save-group > .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.save-source {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* How a save of another source compares with the one here: in the column
+   the platform takes in the rows of the saves here. */
+.save-cmp {
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.save-cmp.newer {
+  color: var(--accent);
+}
+.save-actions > .hint {
+  grid-column: 2;
+  justify-self: center;
+}
+.hh-source-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* A launch question's button with a small line under its name. */
+.hh-button-label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+.hh-button-label small {
+  margin-top: 2px;
+  font-size: 14px;
+  opacity: 0.75;
+}
 /* What a save was made on: the program's own logo and its name. */
 .platform-tag {
   display: inline-flex;
